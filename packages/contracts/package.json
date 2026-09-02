@@ -1,0 +1,19 @@
+{
+  "name": "@opensuite/contracts",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Shared TypeScript types and schemas for cross-package contracts (engine operations, agent tool I/O, API payloads).",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "dev": "tsc -w -p tsconfig.json",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "lint": "echo \"(no lint configured yet)\"",
+    "test": "echo \"(no runtime test runner yet; contract checks run via typecheck, see src/engine/__checks__)\""
+  },
+  "devDependencies": {
+    "typescript": "^5.7.2"
+  }
+}

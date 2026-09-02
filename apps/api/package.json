@@ -1,0 +1,30 @@
+{
+  "name": "@opensuite/api",
+  "version": "0.0.0",
+  "private": true,
+  "description": "OpenSuite backend API — Fastify HTTP service. Long-running Node process, not a Vercel/edge function.",
+  "type": "module",
+  "main": "./dist/server.js",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "dev": "tsx watch src/server.ts",
+    "start": "node dist/server.js",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "lint": "echo \"(no lint configured yet)\"",
+    "test": "tsc -p tsconfig.json && node --test \"dist/**/*.test.js\""
+  },
+  "dependencies": {
+    "@fastify/cors": "^11.3.0",
+    "@opensuite/agent-core": "workspace:*",
+    "@opensuite/contracts": "workspace:*",
+    "@opensuite/db": "workspace:*",
+    "better-auth": "^1.7.2",
+    "fastify": "^5.12.1",
+    "zod": "^4.5.4"
+  },
+  "devDependencies": {
+    "@types/node": "^22.20.1",
+    "tsx": "^4.23.13",
+    "typescript": "^5.7.2"
+  }
+}
