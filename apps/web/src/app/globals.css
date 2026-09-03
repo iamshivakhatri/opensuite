@@ -1,0 +1,65 @@
+@import "tailwindcss";
+
+/*
+ * Design tokens taken directly from opensuite_v4_modern_minimal.html
+ * (the "modern minimal refresh" palette — the visual source of truth).
+ * Do not invent new colors; extend this file if the reference introduces more.
+ */
+:root {
+  --paper: #f5f6f8;
+  --surface: #ffffff;
+  --sunken: #eef0f3;
+  --ink: #14161a;
+  --ink-soft: #626773;
+  --ink-faint: #9297a3;
+  --line: #e4e7ec;
+  --accent: #5b5ce2;
+  --accent-hover: #4d4ed0;
+  --accent-soft: #f0f0ff;
+  --accent-line: #dcddfc;
+  --success: #238a63;
+  --success-soft: #eaf7f1;
+  --danger: #c45245;
+  --danger-soft: #fff0ed;
+  --radius-sm: 8px;
+  --radius-md: 12px;
+  --radius-lg: 18px;
+}
+
+@theme inline {
+  --color-paper: var(--paper);
+  --color-surface: var(--surface);
+  --color-sunken: var(--sunken);
+  --color-ink: var(--ink);
+  --color-ink-soft: var(--ink-soft);
+  --color-ink-faint: var(--ink-faint);
+  --color-line: var(--line);
+  --color-accent: var(--accent);
+  --color-accent-hover: var(--accent-hover);
+  --color-accent-soft: var(--accent-soft);
+  --color-accent-line: var(--accent-line);
+  --color-success: var(--success);
+  --color-success-soft: var(--success-soft);
+  --color-danger: var(--danger);
+  --color-danger-soft: var(--danger-soft);
+  --radius-sm: var(--radius-sm);
+  --radius-md: var(--radius-md);
+  --radius-lg: var(--radius-lg);
+  --font-sans: var(--font-inter), -apple-system, BlinkMacSystemFont,
+    sans-serif;
+}
+
+html {
+  background: var(--paper);
+}
+
+body {
+  background: var(--paper);
+  color: var(--ink);
+  letter-spacing: -0.006em;
+  -webkit-font-smoothing: antialiased;
+}
+
+* {
+  box-sizing: border-box;
+}

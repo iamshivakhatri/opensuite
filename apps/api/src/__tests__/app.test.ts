@@ -14,6 +14,8 @@ function testConfig() {
     BETTER_AUTH_SECRET: "test-secret-that-is-at-least-32-characters-long",
     BETTER_AUTH_URL: "http://localhost:3000",
     WEB_ORIGIN: "http://localhost:3001",
+    RESEND_API_KEY: "re_test_key",
+    EMAIL_FROM: "OpenSuite <noreply@example.com>",
   });
 }
 

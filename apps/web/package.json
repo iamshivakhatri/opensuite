@@ -2,15 +2,31 @@
   "name": "@opensuite/web",
   "version": "0.0.0",
   "private": true,
-  "description": "OpenSuite web application. Not yet implemented — see opensuite_v4_modern_minimal.html for the design reference.",
+  "description": "OpenSuite web application — Next.js frontend. Visual reference: opensuite_v4_modern_minimal.html.",
   "type": "module",
   "scripts": {
-    "build": "tsc -p tsconfig.json",
-    "dev": "tsc -w -p tsconfig.json",
+    "build": "next build",
+    "dev": "next dev -p 3001",
+    "start": "next start -p 3001",
     "typecheck": "tsc --noEmit -p tsconfig.json",
-    "lint": "echo \"(no lint configured yet)\""
+    "lint": "echo \"(no lint configured yet)\"",
+    "test": "echo \"(no tests yet)\""
+  },
+  "dependencies": {
+    "better-auth": "^1.7.2",
+    "class-variance-authority": "^0.7.1",
+    "clsx": "^2.1.1",
+    "next": "^16.3.4",
+    "react": "^19.2.8",
+    "react-dom": "^19.2.8",
+    "tailwind-merge": "^3.6.0"
   },
   "devDependencies": {
+    "@tailwindcss/postcss": "^4.3.3",
+    "@types/node": "^22.20.1",
+    "@types/react": "^19.2.18",
+    "@types/react-dom": "^19.2.5",
+    "tailwindcss": "^4.3.3",
     "typescript": "^5.7.2"
   }
 }

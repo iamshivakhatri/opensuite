@@ -9,11 +9,16 @@ import {
 import { createAuth } from "./auth/index.js";
 import { buildApp } from "./app.js";
 import { loadConfig } from "./config/index.js";
+import { createResendEmailSender } from "./email/index.js";
 
 async function main(): Promise<void> {
   const config = loadConfig();
   const dbClient = createDbClient({ databaseUrl: config.databaseUrl });
-  const auth = createAuth(config, dbClient.db);
+  const emailSender = createResendEmailSender({
+    apiKey: config.resendApiKey,
+    from: config.emailFrom,
+  });
+  const auth = createAuth(config, dbClient.db, emailSender);
   const app = await buildApp(config, { auth });
 
   try {

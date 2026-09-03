@@ -8,6 +8,13 @@
       "when": 1788390951735,
       "tag": "0000_wooden_the_hood",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1788407163957,
+      "tag": "0001_flashy_rhino",
+      "breakpoints": true
     }
   ]
 }

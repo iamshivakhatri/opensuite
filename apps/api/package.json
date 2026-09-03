@@ -20,6 +20,7 @@
     "@opensuite/db": "workspace:*",
     "better-auth": "^1.7.2",
     "fastify": "^5.12.1",
+    "resend": "^6.25.0",
     "zod": "^4.5.4"
   },
   "devDependencies": {

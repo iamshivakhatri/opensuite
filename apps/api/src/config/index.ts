@@ -22,6 +22,14 @@ const EnvSchema = z.object({
     .min(32, "BETTER_AUTH_SECRET must be at least 32 characters"),
   BETTER_AUTH_URL: z.url("BETTER_AUTH_URL must be a valid URL"),
   WEB_ORIGIN: z.url("WEB_ORIGIN must be a valid URL"),
+  RESEND_API_KEY: z.string().min(1, "RESEND_API_KEY must not be empty"),
+  EMAIL_FROM: z
+    .string()
+    .min(1, "EMAIL_FROM must not be empty")
+    .refine(
+      (value) => value.includes("@"),
+      "EMAIL_FROM must contain an email address, e.g. \"OpenSuite <noreply@example.com>\"",
+    ),
 });
 
 export interface AppConfig {
@@ -40,6 +48,8 @@ export interface AppConfig {
   readonly betterAuthSecret: string;
   readonly betterAuthUrl: string;
   readonly webOrigin: string;
+  readonly resendApiKey: string;
+  readonly emailFrom: string;
 }
 
 /**
@@ -67,5 +77,7 @@ export function loadConfig(
     betterAuthSecret: result.data.BETTER_AUTH_SECRET,
     betterAuthUrl: result.data.BETTER_AUTH_URL,
     webOrigin: result.data.WEB_ORIGIN,
+    resendApiKey: result.data.RESEND_API_KEY,
+    emailFrom: result.data.EMAIL_FROM,
   };
 }

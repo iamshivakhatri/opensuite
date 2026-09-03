@@ -8,6 +8,8 @@ const baseEnv = {
   BETTER_AUTH_SECRET: "test-secret-that-is-at-least-32-characters-long",
   BETTER_AUTH_URL: "http://localhost:3000",
   WEB_ORIGIN: "http://localhost:3001",
+  RESEND_API_KEY: "re_test_key",
+  EMAIL_FROM: "OpenSuite <noreply@example.com>",
 };
 
 test("loadConfig applies defaults when auth/database env vars are provided", () => {
@@ -21,6 +23,8 @@ test("loadConfig applies defaults when auth/database env vars are provided", () 
   assert.equal(config.betterAuthSecret, baseEnv.BETTER_AUTH_SECRET);
   assert.equal(config.betterAuthUrl, baseEnv.BETTER_AUTH_URL);
   assert.equal(config.webOrigin, baseEnv.WEB_ORIGIN);
+  assert.equal(config.resendApiKey, baseEnv.RESEND_API_KEY);
+  assert.equal(config.emailFrom, baseEnv.EMAIL_FROM);
 });
 
 test("loadConfig parses provided env vars", () => {
@@ -61,5 +65,17 @@ test("loadConfig throws a descriptive error for an invalid NODE_ENV", () => {
   assert.throws(
     () => loadConfig({ ...baseEnv, NODE_ENV: "staging" }),
     /NODE_ENV/,
+  );
+});
+
+test("loadConfig throws when RESEND_API_KEY is missing", () => {
+  const { RESEND_API_KEY: _omit, ...rest } = baseEnv;
+  assert.throws(() => loadConfig(rest), /RESEND_API_KEY/);
+});
+
+test("loadConfig throws when EMAIL_FROM does not contain an email address", () => {
+  assert.throws(
+    () => loadConfig({ ...baseEnv, EMAIL_FROM: "not-an-email" }),
+    /EMAIL_FROM/,
   );
 });
