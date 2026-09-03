@@ -5,45 +5,40 @@ _Read this before starting any work. Keep it a concise current-state handoff, no
 ## What Exists
 
 * Monorepo (pnpm + Turborepo + TypeScript). Auth v1 complete (`apps/api` Better Auth + Resend; `apps/web` sign-in/up/verify/reset).
-* `packages/db` — PostgreSQL + Drizzle with:
-  * Better Auth tables (`user`, `session`, `account`, `verification`)
-  * **Product tables (this milestone):** `workspace`, `document`, `document_version` — migration `0001_flashy_rhino` applied to `opensuite`
-* Engine boundary paused at `inspect_document` (`packages/contracts`, `packages/engine-client`).
-* No product API routes, MinIO, upload, or workspace UI yet.
+* `packages/db` — PostgreSQL + Drizzle: Better Auth tables + product tables (`workspace`, `document`, `document_version`; migration `0001_flashy_rhino`).
+* **Product API (this milestone):** authenticated workspace routes in `apps/api`:
+  * `GET /api/workspaces` — list non-deleted workspaces owned by the session user
+  * `POST /api/workspaces` — create workspace for the session user (`{ name }`, trimmed/validated)
+* Engine boundary paused at `inspect_document`. No MinIO, document routes, or workspace UI yet.
 
 ## Just Completed
 
-First OpenSuite product database model in `packages/db/src/schema/product.ts`:
+Authenticated workspace API in `apps/api`:
 
-* `workspace` — owned by Better Auth `user` (`owner_user_id`, soft `deleted_at`)
-* `document` — belongs to workspace (`format` enum `docx|pptx|xlsx`, soft `deleted_at`); **no** `current_version_id`
-* `document_version` — immutable snapshot (`storage_key` object key, `size_bytes`, nullable `sha256`, `source` enum, nullable `parent_version_id` + `created_by_user_id`); unique `(document_id, version_number)`; check `version_number > 0`
-
-FKs use `ON DELETE RESTRICT` (history-safe) except `created_by_user_id` → `SET NULL`. Indexes: `workspace(owner_user_id)`, `document(workspace_id)`, unique on version pair.
+* Thin routes in `routes/workspaces.ts` using `getRequestUser`
+* `createWorkspaceService(db)` in `workspaces/service.ts` — `listOwned` / `create` only; DTO `{ id, name, createdAt, updatedAt }`
+* `buildApp` now takes `{ auth, db }`
 
 ## Current Decisions
 
-* Auth schema owned by Better Auth; product tables FK to `user.id` without competing user tables.
-* Latest document version = highest `version_number` (no pointer column).
-* `storage_key` is an object-storage key, not a URL; bytes stay out of Postgres.
+* Workspace ownership always comes from the session user — never from the request body.
+* Soft-deleted workspaces (`deleted_at`) are excluded from list; hard delete still deferred.
 * Workspace is not auto-created on signup.
-* Hard deletes are explicit product workflows later — no cascade wipe of document/version history.
+* Latest document version = highest `version_number` (no pointer column).
 
 ## Verification Status
 
 | Check | Status |
 |---|---|
-| `pnpm db:generate` → `0001_flashy_rhino.sql` | **Pass** (inspected before apply) |
-| `pnpm db:migrate` | **Pass** — tables/enums/FKs/indexes/check confirmed in `opensuite` |
 | `pnpm typecheck` / `pnpm build` / `pnpm test` | **Pass** |
-| `packages/db` product schema unit tests | **Pass** (4 new) |
+| `RUN_DB_INTEGRATION_TESTS=true` (auth + workspace) | **Pass** (20/20) |
 
 ## Intentionally Deferred
 
-* Workspace/document API + services, MinIO/S3, uploads, frontend file browsing
-* Workspace members, folders, sharing, stars/recent
-* Agent tables, agent-core, engine integration, OAuth
+* Document API, MinIO/S3, uploads, frontend workspace UI
+* Workspace members, folders, sharing
+* Agent tables, agent-core, engine integration
 
 ## Recommended Next Step
 
-Add the first **workspace + document API** in `apps/api` (create workspace for the authenticated user, create document metadata + first version row with a placeholder `storage_key` contract) — still without MinIO if needed, or pair with a minimal storage client next if uploads are the priority.
+Add the first **document API** for an owned workspace (create document metadata + first `document_version` with a placeholder `storage_key` contract) — still without MinIO if uploads are not the priority.

@@ -1,15 +1,20 @@
 import Fastify, { type FastifyError, type FastifyInstance } from "fastify";
 import cors from "@fastify/cors";
 
+import type { Db } from "@opensuite/db";
+
 import type { SessionAuth } from "./auth/session.js";
 import type { AppConfig } from "./config/index.js";
 import type { AuthHandler } from "./routes/auth.js";
 import { registerAuthRoutes } from "./routes/auth.js";
 import { registerHealthRoutes } from "./routes/health.js";
 import { registerMeRoutes } from "./routes/me.js";
+import { registerWorkspaceRoutes } from "./routes/workspaces.js";
+import { createWorkspaceService } from "./workspaces/service.js";
 
 export interface AppDependencies {
   readonly auth: AuthHandler & SessionAuth;
+  readonly db: Db;
 }
 
 /**
@@ -43,9 +48,12 @@ export async function buildApp(
     });
   });
 
+  const workspaces = createWorkspaceService(deps.db);
+
   registerHealthRoutes(app);
   registerAuthRoutes(app, deps.auth);
   registerMeRoutes(app, deps.auth);
+  registerWorkspaceRoutes(app, deps.auth, workspaces);
 
   return app;
 }

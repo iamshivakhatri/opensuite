@@ -19,7 +19,7 @@ async function main(): Promise<void> {
     from: config.emailFrom,
   });
   const auth = createAuth(config, dbClient.db, emailSender);
-  const app = await buildApp(config, { auth });
+  const app = await buildApp(config, { auth, db: dbClient.db });
 
   try {
     await app.listen({ host: config.host, port: config.port });

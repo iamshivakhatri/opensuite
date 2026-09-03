@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
+import type { Db } from "@opensuite/db";
+
 import type { AppDependencies } from "../app.js";
 import type { AuthenticatedUser } from "../auth/session.js";
 import { buildApp } from "../app.js";
@@ -43,8 +45,13 @@ function mockAuth(
   };
 }
 
+/** Unit-test placeholder — never queried by the cases below. */
+function stubDb(): Db {
+  return {} as Db;
+}
+
 async function testApp(sessionUser: AuthenticatedUser | null = null) {
-  return buildApp(testConfig(), { auth: mockAuth(sessionUser) });
+  return buildApp(testConfig(), { auth: mockAuth(sessionUser), db: stubDb() });
 }
 
 test("GET /health returns 200 with a status payload", async () => {
@@ -104,6 +111,55 @@ test("GET /api/me returns only id/name/email when authenticated", async () => {
   await app.close();
 });
 
+test("GET /api/workspaces returns 401 when there is no session", async () => {
+  const app = await testApp(null);
+
+  const response = await app.inject({ method: "GET", url: "/api/workspaces" });
+
+  assert.equal(response.statusCode, 401);
+  assert.equal(response.json().error.code, "UNAUTHENTICATED");
+
+  await app.close();
+});
+
+test("POST /api/workspaces returns 401 when there is no session", async () => {
+  const app = await testApp(null);
+
+  const response = await app.inject({
+    method: "POST",
+    url: "/api/workspaces",
+    headers: { "content-type": "application/json" },
+    payload: { name: "My Workspace" },
+  });
+
+  assert.equal(response.statusCode, 401);
+  assert.equal(response.json().error.code, "UNAUTHENTICATED");
+
+  await app.close();
+});
+
+test("POST /api/workspaces rejects an empty/whitespace workspace name", async () => {
+  const app = await testApp({
+    id: "user-1",
+    name: "Ada Lovelace",
+    email: "ada@example.com",
+  });
+
+  for (const payload of [{ name: "" }, { name: "   " }, {}, { name: 12 }]) {
+    const response = await app.inject({
+      method: "POST",
+      url: "/api/workspaces",
+      headers: { "content-type": "application/json" },
+      payload,
+    });
+
+    assert.equal(response.statusCode, 400, JSON.stringify(payload));
+    assert.equal(response.json().error.code, "INVALID_WORKSPACE_NAME");
+  }
+
+  await app.close();
+});
+
 test("an unknown route returns 404", async () => {
   const app = await testApp();
 
@@ -113,7 +169,6 @@ test("an unknown route returns 404", async () => {
 
   await app.close();
 });
-
 test("an unhandled route error is converted to a structured 500 response", async () => {
   const app = await testApp();
   app.get("/__boom", async () => {

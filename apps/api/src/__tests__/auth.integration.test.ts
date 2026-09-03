@@ -40,7 +40,7 @@ test(
     const dbClient = createDbClient({ databaseUrl: config.databaseUrl });
     const emailSender = createStubEmailSender();
     const auth = createAuth(config, dbClient.db, emailSender);
-    const app = await buildApp(config, { auth });
+    const app = await buildApp(config, { auth, db: dbClient.db });
     await app.ready();
 
     const email = `auth-test-${randomUUID()}@example.com`;
@@ -177,7 +177,7 @@ test(
     const dbClient = createDbClient({ databaseUrl: config.databaseUrl });
     const emailSender = createStubEmailSender();
     const auth = createAuth(config, dbClient.db, emailSender);
-    const app = await buildApp(config, { auth });
+    const app = await buildApp(config, { auth, db: dbClient.db });
     await app.ready();
 
     const email = `reset-test-${randomUUID()}@example.com`;
