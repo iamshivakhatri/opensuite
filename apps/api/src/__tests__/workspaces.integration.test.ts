@@ -9,10 +9,12 @@ import { createDbClient } from "@opensuite/db";
 import { createAuth } from "../auth/index.js";
 import { buildApp } from "../app.js";
 import { loadConfig } from "../config/index.js";
+import { createMemoryObjectStorage } from "../storage/index.js";
 import {
   createStubEmailSender,
   extractEmailActionUrl,
 } from "./support/stub-email-sender.js";
+import { testS3Env } from "./support/test-env.js";
 
 const runDbIntegrationTests = process.env.RUN_DB_INTEGRATION_TESTS === "true";
 const databaseUrl = process.env.DATABASE_URL;
@@ -29,6 +31,7 @@ function testConfig() {
     WEB_ORIGIN: "http://localhost:3001",
     RESEND_API_KEY: "re_test_key_unused_stub_sender_is_injected_instead",
     EMAIL_FROM: "OpenSuite <noreply@example.com>",
+    ...testS3Env,
   });
 }
 
@@ -102,7 +105,11 @@ test(
     const dbClient = createDbClient({ databaseUrl: config.databaseUrl });
     const emailSender = createStubEmailSender();
     const auth = createAuth(config, dbClient.db, emailSender);
-    const app = await buildApp(config, { auth, db: dbClient.db });
+    const app = await buildApp(config, {
+      auth,
+      db: dbClient.db,
+      storage: createMemoryObjectStorage(),
+    });
     await app.ready();
 
     try {

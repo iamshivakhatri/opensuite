@@ -4,41 +4,43 @@ _Read this before starting any work. Keep it a concise current-state handoff, no
 
 ## What Exists
 
-* Monorepo (pnpm + Turborepo + TypeScript). Auth v1 complete (`apps/api` Better Auth + Resend; `apps/web` sign-in/up/verify/reset).
-* `packages/db` — PostgreSQL + Drizzle: Better Auth tables + product tables (`workspace`, `document`, `document_version`; migration `0001_flashy_rhino`).
-* **Product API (this milestone):** authenticated workspace routes in `apps/api`:
-  * `GET /api/workspaces` — list non-deleted workspaces owned by the session user
-  * `POST /api/workspaces` — create workspace for the session user (`{ name }`, trimmed/validated)
-* Engine boundary paused at `inspect_document`. No MinIO, document routes, or workspace UI yet.
+* Monorepo (pnpm + Turborepo + TypeScript). Auth v1 complete.
+* `packages/db` — Better Auth + product tables (`workspace`, `document`, `document_version`).
+* Workspace API: `GET/POST /api/workspaces` (owner-scoped).
+* **Document upload (this milestone):** `POST /api/workspaces/:workspaceId/documents` (multipart, `.docx`/`.pptx`/`.xlsx`).
+* S3-compatible storage boundary in `apps/api` (`ObjectStorage` → AWS SDK). Works with MinIO; app code is not MinIO-specific.
+* Engine boundary paused at `inspect_document`. No download/list UI, versioning UI, or agent/engine product loop yet.
 
 ## Just Completed
 
-Authenticated workspace API in `apps/api`:
+First Office document upload path:
 
-* Thin routes in `routes/workspaces.ts` using `getRequestUser`
-* `createWorkspaceService(db)` in `workspaces/service.ts` — `listOwned` / `create` only; DTO `{ id, name, createdAt, updatedAt }`
-* `buildApp` now takes `{ auth, db }`
+* Auth + workspace ownership checks; bytes → object storage; then `document` + `document_version` v1 in one DB transaction
+* On DB failure after put → best-effort `deleteObject`
+* Storage key: `workspaces/{workspaceId}/documents/{documentId}/versions/{versionId}/content.{format}`
+* Config: canonical `S3_*` (legacy `MINIO_*` still accepted as fallback)
 
 ## Current Decisions
 
-* Workspace ownership always comes from the session user — never from the request body.
-* Soft-deleted workspaces (`deleted_at`) are excluded from list; hard delete still deferred.
-* Workspace is not auto-created on signup.
-* Latest document version = highest `version_number` (no pointer column).
+* Postgres stores `storage_key` only (never MinIO/S3 URLs).
+* Bucket is configured externally — app does not auto-create buckets.
+* Upload max size: `UPLOAD_MAX_BYTES` (default 25 MiB).
+* `sha256` left null for this milestone.
 
 ## Verification Status
 
 | Check | Status |
 |---|---|
 | `pnpm typecheck` / `pnpm build` / `pnpm test` | **Pass** |
-| `RUN_DB_INTEGRATION_TESTS=true` (auth + workspace) | **Pass** (20/20) |
+| `RUN_DB_INTEGRATION_TESTS=true` | **Pass** (28/28) |
+| Live MinIO upload (bucket `opensuite`) | **Pass** — object + document + version 1 rows confirmed |
 
 ## Intentionally Deferred
 
-* Document API, MinIO/S3, uploads, frontend workspace UI
-* Workspace members, folders, sharing
-* Agent tables, agent-core, engine integration
+* Document list/download APIs, frontend upload UI
+* Version 2+, folders, sharing, members
+* Agent-core / engine integration
 
 ## Recommended Next Step
 
-Add the first **document API** for an owned workspace (create document metadata + first `document_version` with a placeholder `storage_key` contract) — still without MinIO if uploads are not the priority.
+Add **document list + download** for an owned workspace (`GET` documents, stream bytes via storage key) so the upload path is usable end-to-end before any UI polish.

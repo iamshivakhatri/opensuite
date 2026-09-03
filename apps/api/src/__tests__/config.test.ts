@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 
 import { loadConfig } from "../config/index.js";
+import { testS3Env } from "./support/test-env.js";
 
 const baseEnv = {
   DATABASE_URL: "postgresql://user:pass@localhost:5432/opensuite",
@@ -10,6 +11,7 @@ const baseEnv = {
   WEB_ORIGIN: "http://localhost:3001",
   RESEND_API_KEY: "re_test_key",
   EMAIL_FROM: "OpenSuite <noreply@example.com>",
+  ...testS3Env,
 };
 
 test("loadConfig applies defaults when auth/database env vars are provided", () => {
@@ -25,6 +27,37 @@ test("loadConfig applies defaults when auth/database env vars are provided", () 
   assert.equal(config.webOrigin, baseEnv.WEB_ORIGIN);
   assert.equal(config.resendApiKey, baseEnv.RESEND_API_KEY);
   assert.equal(config.emailFrom, baseEnv.EMAIL_FROM);
+  assert.equal(config.s3.endpoint, testS3Env.S3_ENDPOINT);
+  assert.equal(config.s3.bucket, testS3Env.S3_BUCKET);
+  assert.equal(config.s3.forcePathStyle, true);
+  assert.equal(config.uploadMaxBytes, 25 * 1024 * 1024);
+});
+
+test("loadConfig accepts legacy MINIO_* aliases for S3 settings", () => {
+  const {
+    S3_ENDPOINT: _e,
+    S3_ACCESS_KEY_ID: _a,
+    S3_SECRET_ACCESS_KEY: _s,
+    S3_BUCKET: _b,
+    S3_REGION: _r,
+    S3_FORCE_PATH_STYLE: _f,
+    ...withoutS3
+  } = baseEnv;
+
+  const config = loadConfig({
+    ...withoutS3,
+    MINIO_ENDPOINT: "http://minio.local:9000",
+    MINIO_ACCESS_KEY: "minio-key",
+    MINIO_SECRET_KEY: "minio-secret",
+    MINIO_BUCKET: "opensuite",
+  });
+
+  assert.equal(config.s3.endpoint, "http://minio.local:9000");
+  assert.equal(config.s3.accessKeyId, "minio-key");
+  assert.equal(config.s3.secretAccessKey, "minio-secret");
+  assert.equal(config.s3.bucket, "opensuite");
+  assert.equal(config.s3.region, "us-east-1");
+  assert.equal(config.s3.forcePathStyle, true);
 });
 
 test("loadConfig parses provided env vars", () => {

@@ -30,7 +30,32 @@ const EnvSchema = z.object({
       (value) => value.includes("@"),
       "EMAIL_FROM must contain an email address, e.g. \"OpenSuite <noreply@example.com>\"",
     ),
+  S3_ENDPOINT: z.url("S3_ENDPOINT must be a valid URL"),
+  S3_ACCESS_KEY_ID: z.string().min(1, "S3_ACCESS_KEY_ID must not be empty"),
+  S3_SECRET_ACCESS_KEY: z
+    .string()
+    .min(1, "S3_SECRET_ACCESS_KEY must not be empty"),
+  S3_BUCKET: z.string().min(1, "S3_BUCKET must not be empty"),
+  S3_REGION: z.string().min(1).default("us-east-1"),
+  S3_FORCE_PATH_STYLE: z
+    .enum(["true", "false"])
+    .default("true")
+    .transform((value) => value === "true"),
+  UPLOAD_MAX_BYTES: z.coerce
+    .number()
+    .int()
+    .positive()
+    .default(25 * 1024 * 1024),
 });
+
+export interface S3Config {
+  readonly endpoint: string;
+  readonly accessKeyId: string;
+  readonly secretAccessKey: string;
+  readonly bucket: string;
+  readonly region: string;
+  readonly forcePathStyle: boolean;
+}
 
 export interface AppConfig {
   readonly nodeEnv: "development" | "production" | "test";
@@ -50,6 +75,27 @@ export interface AppConfig {
   readonly webOrigin: string;
   readonly resendApiKey: string;
   readonly emailFrom: string;
+  readonly s3: S3Config;
+  readonly uploadMaxBytes: number;
+}
+
+/**
+ * Maps legacy `MINIO_*` variables onto the application-facing `S3_*` names
+ * so open-source code stays provider-agnostic while existing local `.env`
+ * files keep working.
+ */
+function normalizeStorageEnv(
+  env: Record<string, string | undefined>,
+): Record<string, string | undefined> {
+  return {
+    ...env,
+    S3_ENDPOINT: env.S3_ENDPOINT ?? env.MINIO_ENDPOINT,
+    S3_ACCESS_KEY_ID: env.S3_ACCESS_KEY_ID ?? env.MINIO_ACCESS_KEY,
+    S3_SECRET_ACCESS_KEY: env.S3_SECRET_ACCESS_KEY ?? env.MINIO_SECRET_KEY,
+    S3_BUCKET: env.S3_BUCKET ?? env.MINIO_BUCKET,
+    S3_REGION: env.S3_REGION ?? "us-east-1",
+    S3_FORCE_PATH_STYLE: env.S3_FORCE_PATH_STYLE ?? "true",
+  };
 }
 
 /**
@@ -59,7 +105,7 @@ export interface AppConfig {
 export function loadConfig(
   env: Record<string, string | undefined> = process.env,
 ): AppConfig {
-  const result = EnvSchema.safeParse(env);
+  const result = EnvSchema.safeParse(normalizeStorageEnv(env));
 
   if (!result.success) {
     const issues = result.error.issues
@@ -79,5 +125,14 @@ export function loadConfig(
     webOrigin: result.data.WEB_ORIGIN,
     resendApiKey: result.data.RESEND_API_KEY,
     emailFrom: result.data.EMAIL_FROM,
+    s3: {
+      endpoint: result.data.S3_ENDPOINT,
+      accessKeyId: result.data.S3_ACCESS_KEY_ID,
+      secretAccessKey: result.data.S3_SECRET_ACCESS_KEY,
+      bucket: result.data.S3_BUCKET,
+      region: result.data.S3_REGION,
+      forcePathStyle: result.data.S3_FORCE_PATH_STYLE,
+    },
+    uploadMaxBytes: result.data.UPLOAD_MAX_BYTES,
   };
 }

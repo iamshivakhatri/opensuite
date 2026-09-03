@@ -2,7 +2,6 @@ import "./load-env.js";
 
 import {
   createDbClient,
-  loadDatabaseConfig,
   type DbClient,
 } from "@opensuite/db";
 
@@ -10,6 +9,7 @@ import { createAuth } from "./auth/index.js";
 import { buildApp } from "./app.js";
 import { loadConfig } from "./config/index.js";
 import { createResendEmailSender } from "./email/index.js";
+import { createS3ObjectStorage } from "./storage/index.js";
 
 async function main(): Promise<void> {
   const config = loadConfig();
@@ -19,7 +19,8 @@ async function main(): Promise<void> {
     from: config.emailFrom,
   });
   const auth = createAuth(config, dbClient.db, emailSender);
-  const app = await buildApp(config, { auth, db: dbClient.db });
+  const storage = createS3ObjectStorage(config.s3);
+  const app = await buildApp(config, { auth, db: dbClient.db, storage });
 
   try {
     await app.listen({ host: config.host, port: config.port });

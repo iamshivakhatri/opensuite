@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { randomUUID } from "node:crypto";
 import { test } from "node:test";
 
 import type { Db } from "@opensuite/db";
@@ -7,6 +8,8 @@ import type { AppDependencies } from "../app.js";
 import type { AuthenticatedUser } from "../auth/session.js";
 import { buildApp } from "../app.js";
 import { loadConfig } from "../config/index.js";
+import { createMemoryObjectStorage } from "../storage/index.js";
+import { multipartFilePayload, testS3Env } from "./support/test-env.js";
 
 function testConfig() {
   return loadConfig({
@@ -18,6 +21,7 @@ function testConfig() {
     WEB_ORIGIN: "http://localhost:3001",
     RESEND_API_KEY: "re_test_key",
     EMAIL_FROM: "OpenSuite <noreply@example.com>",
+    ...testS3Env,
   });
 }
 
@@ -51,7 +55,11 @@ function stubDb(): Db {
 }
 
 async function testApp(sessionUser: AuthenticatedUser | null = null) {
-  return buildApp(testConfig(), { auth: mockAuth(sessionUser), db: stubDb() });
+  return buildApp(testConfig(), {
+    auth: mockAuth(sessionUser),
+    db: stubDb(),
+    storage: createMemoryObjectStorage(),
+  });
 }
 
 test("GET /health returns 200 with a status payload", async () => {
@@ -156,6 +164,23 @@ test("POST /api/workspaces rejects an empty/whitespace workspace name", async ()
     assert.equal(response.statusCode, 400, JSON.stringify(payload));
     assert.equal(response.json().error.code, "INVALID_WORKSPACE_NAME");
   }
+
+  await app.close();
+});
+
+test("POST /api/workspaces/:workspaceId/documents returns 401 when there is no session", async () => {
+  const app = await testApp(null);
+  const file = multipartFilePayload("notes.docx", "PK");
+
+  const response = await app.inject({
+    method: "POST",
+    url: `/api/workspaces/${randomUUID()}/documents`,
+    headers: file.headers,
+    payload: file.payload,
+  });
+
+  assert.equal(response.statusCode, 401);
+  assert.equal(response.json().error.code, "UNAUTHENTICATED");
 
   await app.close();
 });

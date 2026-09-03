@@ -34,6 +34,34 @@ function toWorkspaceDto(row: {
  */
 export function createWorkspaceService(db: Db) {
   return {
+    /**
+     * Returns the workspace only when it is owned by `ownerUserId` and not
+     * soft-deleted. Used to authorize nested product actions (e.g. upload).
+     */
+    async getOwned(
+      workspaceId: string,
+      ownerUserId: string,
+    ): Promise<WorkspaceDto | null> {
+      const [row] = await db
+        .select({
+          id: schema.workspace.id,
+          name: schema.workspace.name,
+          createdAt: schema.workspace.createdAt,
+          updatedAt: schema.workspace.updatedAt,
+        })
+        .from(schema.workspace)
+        .where(
+          and(
+            eq(schema.workspace.id, workspaceId),
+            eq(schema.workspace.ownerUserId, ownerUserId),
+            isNull(schema.workspace.deletedAt),
+          ),
+        )
+        .limit(1);
+
+      return row ? toWorkspaceDto(row) : null;
+    },
+
     async listOwned(ownerUserId: string): Promise<WorkspaceDto[]> {
       const rows = await db
         .select({
