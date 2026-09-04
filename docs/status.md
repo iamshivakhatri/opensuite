@@ -4,43 +4,41 @@ _Read this before starting any work. Keep it a concise current-state handoff, no
 
 ## What Exists
 
-* Monorepo (pnpm + Turborepo + TypeScript). Auth v1 complete.
-* `packages/db` — Better Auth + product tables (`workspace`, `document`, `document_version`).
-* Workspace API: `GET/POST /api/workspaces` (owner-scoped).
-* **Document upload (this milestone):** `POST /api/workspaces/:workspaceId/documents` (multipart, `.docx`/`.pptx`/`.xlsx`).
-* S3-compatible storage boundary in `apps/api` (`ObjectStorage` → AWS SDK). Works with MinIO; app code is not MinIO-specific.
-* Engine boundary paused at `inspect_document`. No download/list UI, versioning UI, or agent/engine product loop yet.
+* Auth, workspaces, Office upload/list/download, Files UI, document workspace shell.
+* Agent persistence: `agent_thread` → `agent_message` / `agent_run` → `agent_step` + `apps/api/src/agent/persistence.ts` (no public chat API).
+* **Agent-core foundation (this milestone):** contracts + interfaces in `packages/agent-core` — model/tool/event/runtime boundaries, fakes, unit tests. **No agent loop yet.**
 
 ## Just Completed
 
-First Office document upload path:
+`@opensuite/agent-core` durable TypeScript contracts:
 
-* Auth + workspace ownership checks; bytes → object storage; then `document` + `document_version` v1 in one DB transaction
-* On DB failure after put → best-effort `deleteObject`
-* Storage key: `workspaces/{workspaceId}/documents/{documentId}/versions/{versionId}/content.{format}`
-* Config: canonical `S3_*` (legacy `MINIO_*` still accepted as fallback)
+* `AgentRequest` / `AgentRunContext` / runtime `AgentMessage` / `AgentResult` / `SteeringMessage`
+* `AgentModel` + `ToolRegistry` / `AgentTool` (`risk: safe|destructive`) + `AbortSignal` on execute/model
+* `AgentEvent` discriminated union + `AgentEventSink`
+* `DocumentRuntime` (capability-based inspect; optional execute) + `DocumentRef` / narrow `SemanticTarget`
+* Removed premature `engine-client` dependency from agent-core (runtime adapters come later)
 
 ## Current Decisions
 
-* Postgres stores `storage_key` only (never MinIO/S3 URLs).
-* Bucket is configured externally — app does not auto-create buckets.
-* Upload max size: `UPLOAD_MAX_BYTES` (default 25 MiB).
-* `sha256` left null for this milestone.
+* One Agent for all formats; specialization via tools + capabilities + format payloads.
+* Engine `NodeId` / XML / OPC forbidden in agent-core contracts.
+* Partial success: tool outcomes may mix succeeded + failed; no whole-run rollback assumption.
+* Immediate action by default; destructive tools flag confirmation — UI/orchestration later.
 
 ## Verification Status
 
 | Check | Status |
 |---|---|
-| `pnpm typecheck` / `pnpm build` / `pnpm test` | **Pass** |
-| `RUN_DB_INTEGRATION_TESTS=true` | **Pass** (28/28) |
-| Live MinIO upload (bucket `opensuite`) | **Pass** — object + document + version 1 rows confirmed |
-
+| `@opensuite/agent-core` typecheck/build + 13 unit tests | **Pass** |
+| `contracts` / `db` / `engine-client` / `api` typecheck + unit tests | **Pass** |
+| `apps/web` typecheck + `next build` | **Pass** |
+| Prefer `node …/tsc.js` if `pnpm`/`turbo` wrappers hang (leftover watchers) | noted |
 ## Intentionally Deferred
 
-* Document list/download APIs, frontend upload UI
-* Version 2+, folders, sharing, members
-* Agent-core / engine integration
+* Agent runner loop, real tools, LLM providers, confirmation workflow
+* Chat/agent HTTP + SSE; persistence↔event bridge
+* Engine mutate/serialize/render; canvas preview
 
 ## Recommended Next Step
 
-Add **document list + download** for an owned workspace (`GET` documents, stream bytes via storage key) so the upload path is usable end-to-end before any UI polish.
+Implement a **minimal AgentRunner loop** over these contracts (FakeAgentModel + fake tools), then application orchestration that persists events/steps — still before public chat API if preferred.

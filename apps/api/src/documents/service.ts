@@ -1,13 +1,21 @@
 import { randomUUID } from "node:crypto";
+import type { Readable } from "node:stream";
+
+import { and, desc, eq, isNull, max } from "drizzle-orm";
 
 import type { Db } from "@opensuite/db";
 import { schema } from "@opensuite/db";
 
-import type { ObjectStorage } from "../storage/types.js";
 import {
+  ObjectNotFoundError,
+  type ObjectStorage,
+} from "../storage/types.js";
+import {
+  contentDispositionForDocument,
   contentTypeForFormat,
   officeFormatFromFilename,
   sanitizeUploadFilename,
+  type OfficeFormat,
 } from "./format.js";
 import { buildDocumentVersionStorageKey } from "./storage-key.js";
 
@@ -15,7 +23,7 @@ export interface DocumentDto {
   readonly id: string;
   readonly workspaceId: string;
   readonly name: string;
-  readonly format: "docx" | "pptx" | "xlsx";
+  readonly format: OfficeFormat;
   readonly createdAt: string;
   readonly updatedAt: string;
 }
@@ -34,6 +42,33 @@ export interface DocumentVersionDto {
 export interface UploadedDocumentDto {
   readonly document: DocumentDto;
   readonly version: DocumentVersionDto;
+}
+
+export type DocumentVersionSource = "upload" | "user" | "agent" | "system";
+
+export interface ListedDocumentVersionDto {
+  readonly id: string;
+  readonly versionNumber: number;
+  readonly sizeBytes: number;
+  readonly source: DocumentVersionSource;
+  readonly createdAt: string;
+}
+
+export interface ListedDocumentDto {
+  readonly id: string;
+  readonly workspaceId: string;
+  readonly name: string;
+  readonly format: OfficeFormat;
+  readonly createdAt: string;
+  readonly updatedAt: string;
+  readonly latestVersion: ListedDocumentVersionDto;
+}
+
+export interface DocumentDownload {
+  readonly body: Readable;
+  readonly contentType: string;
+  readonly contentLength: number;
+  readonly contentDisposition: string;
 }
 
 export type DocumentUploadErrorCode =
@@ -58,18 +93,43 @@ export class DocumentUploadError extends Error {
   }
 }
 
+export type DocumentAccessErrorCode =
+  | "DOCUMENT_NOT_FOUND"
+  | "STORAGE_OBJECT_MISSING";
+
+export class DocumentAccessError extends Error {
+  readonly statusCode: number;
+  readonly code: DocumentAccessErrorCode;
+
+  constructor(
+    statusCode: number,
+    code: DocumentAccessErrorCode,
+    message: string,
+  ) {
+    super(message);
+    this.name = "DocumentAccessError";
+    this.statusCode = statusCode;
+    this.code = code;
+  }
+}
+
 export interface DocumentServiceOptions {
   readonly uploadMaxBytes: number;
   /** Injectable for tests that need deterministic IDs / forced PK conflicts. */
   readonly createId?: () => string;
-  /** Optional logger for best-effort cleanup failures after a DB error. */
+  /** Optional logger for best-effort cleanup failures after a DB write error. */
   readonly onCleanupFailure?: (error: unknown, storageKey: string) => void;
+  /** Optional logger when DB points at a missing storage object. */
+  readonly onMissingStorageObject?: (details: {
+    documentId: string;
+    versionId: string;
+    storageKey: string;
+    error: unknown;
+  }) => void;
 }
 
 /**
- * First Office document upload: put bytes in object storage, then insert
- * `document` + version 1 in one Postgres transaction. If the DB write fails,
- * best-effort delete the uploaded object.
+ * Document upload, list, and latest-version download against owned workspaces.
  */
 export function createDocumentService(
   db: Db,
@@ -223,6 +283,225 @@ export function createDocumentService(
           await storage.deleteObject(storageKey);
         } catch (cleanupError) {
           options.onCleanupFailure?.(cleanupError, storageKey);
+        }
+        throw error;
+      }
+    },
+
+    /**
+     * Lists non-deleted documents in a workspace with each document's latest
+     * version (max `version_number`). Caller must already enforce ownership.
+     * Uses a grouped join so this is not an N+1.
+     */
+    async listInWorkspace(workspaceId: string): Promise<ListedDocumentDto[]> {
+      const latestByDocument = db
+        .select({
+          documentId: schema.documentVersion.documentId,
+          maxVersionNumber: max(schema.documentVersion.versionNumber).as(
+            "max_version_number",
+          ),
+        })
+        .from(schema.documentVersion)
+        .groupBy(schema.documentVersion.documentId)
+        .as("latest_by_document");
+
+      const rows = await db
+        .select({
+          id: schema.document.id,
+          workspaceId: schema.document.workspaceId,
+          name: schema.document.name,
+          format: schema.document.format,
+          createdAt: schema.document.createdAt,
+          updatedAt: schema.document.updatedAt,
+          versionId: schema.documentVersion.id,
+          versionNumber: schema.documentVersion.versionNumber,
+          sizeBytes: schema.documentVersion.sizeBytes,
+          source: schema.documentVersion.source,
+          versionCreatedAt: schema.documentVersion.createdAt,
+        })
+        .from(schema.document)
+        .innerJoin(
+          latestByDocument,
+          eq(schema.document.id, latestByDocument.documentId),
+        )
+        .innerJoin(
+          schema.documentVersion,
+          and(
+            eq(schema.documentVersion.documentId, schema.document.id),
+            eq(
+              schema.documentVersion.versionNumber,
+              latestByDocument.maxVersionNumber,
+            ),
+          ),
+        )
+        .where(
+          and(
+            eq(schema.document.workspaceId, workspaceId),
+            isNull(schema.document.deletedAt),
+          ),
+        )
+        .orderBy(
+          desc(schema.document.updatedAt),
+          desc(schema.document.createdAt),
+          desc(schema.document.id),
+        );
+
+      return rows.map((row) => ({
+        id: row.id,
+        workspaceId: row.workspaceId,
+        name: row.name,
+        format: row.format,
+        createdAt: row.createdAt.toISOString(),
+        updatedAt: row.updatedAt.toISOString(),
+        latestVersion: {
+          id: row.versionId,
+          versionNumber: row.versionNumber,
+          sizeBytes: row.sizeBytes,
+          source: row.source,
+          createdAt: row.versionCreatedAt.toISOString(),
+        },
+      }));
+    },
+
+    /**
+     * Returns one owned, non-deleted document with its latest version.
+     * Soft-deleted document or workspace → not found.
+     */
+    async getOwnedDocument(input: {
+      documentId: string;
+      ownerUserId: string;
+    }): Promise<ListedDocumentDto> {
+      const [row] = await db
+        .select({
+          id: schema.document.id,
+          workspaceId: schema.document.workspaceId,
+          name: schema.document.name,
+          format: schema.document.format,
+          createdAt: schema.document.createdAt,
+          updatedAt: schema.document.updatedAt,
+          versionId: schema.documentVersion.id,
+          versionNumber: schema.documentVersion.versionNumber,
+          sizeBytes: schema.documentVersion.sizeBytes,
+          source: schema.documentVersion.source,
+          versionCreatedAt: schema.documentVersion.createdAt,
+        })
+        .from(schema.document)
+        .innerJoin(
+          schema.workspace,
+          eq(schema.document.workspaceId, schema.workspace.id),
+        )
+        .innerJoin(
+          schema.documentVersion,
+          eq(schema.documentVersion.documentId, schema.document.id),
+        )
+        .where(
+          and(
+            eq(schema.document.id, input.documentId),
+            eq(schema.workspace.ownerUserId, input.ownerUserId),
+            isNull(schema.document.deletedAt),
+            isNull(schema.workspace.deletedAt),
+          ),
+        )
+        .orderBy(desc(schema.documentVersion.versionNumber))
+        .limit(1);
+
+      if (!row) {
+        throw new DocumentAccessError(
+          404,
+          "DOCUMENT_NOT_FOUND",
+          "Document not found",
+        );
+      }
+
+      return {
+        id: row.id,
+        workspaceId: row.workspaceId,
+        name: row.name,
+        format: row.format,
+        createdAt: row.createdAt.toISOString(),
+        updatedAt: row.updatedAt.toISOString(),
+        latestVersion: {
+          id: row.versionId,
+          versionNumber: row.versionNumber,
+          sizeBytes: row.sizeBytes,
+          source: row.source,
+          createdAt: row.versionCreatedAt.toISOString(),
+        },
+      };
+    },
+
+    /**
+     * Opens a streaming download of the latest version for a document owned by
+     * `ownerUserId` (via its workspace). Soft-deleted document/workspace → not found.
+     */
+    async openLatestDownload(input: {
+      documentId: string;
+      ownerUserId: string;
+    }): Promise<DocumentDownload> {
+      const [row] = await db
+        .select({
+          documentId: schema.document.id,
+          name: schema.document.name,
+          format: schema.document.format,
+          versionId: schema.documentVersion.id,
+          versionNumber: schema.documentVersion.versionNumber,
+          sizeBytes: schema.documentVersion.sizeBytes,
+          storageKey: schema.documentVersion.storageKey,
+        })
+        .from(schema.document)
+        .innerJoin(
+          schema.workspace,
+          eq(schema.document.workspaceId, schema.workspace.id),
+        )
+        .innerJoin(
+          schema.documentVersion,
+          eq(schema.documentVersion.documentId, schema.document.id),
+        )
+        .where(
+          and(
+            eq(schema.document.id, input.documentId),
+            eq(schema.workspace.ownerUserId, input.ownerUserId),
+            isNull(schema.document.deletedAt),
+            isNull(schema.workspace.deletedAt),
+          ),
+        )
+        .orderBy(desc(schema.documentVersion.versionNumber))
+        .limit(1);
+
+      if (!row) {
+        throw new DocumentAccessError(
+          404,
+          "DOCUMENT_NOT_FOUND",
+          "Document not found",
+        );
+      }
+
+      try {
+        const object = await storage.getObject(row.storageKey);
+        const contentLength = object.contentLength ?? row.sizeBytes;
+
+        return {
+          body: object.body,
+          contentType: contentTypeForFormat(row.format),
+          contentLength,
+          contentDisposition: contentDispositionForDocument(
+            row.name,
+            row.format,
+          ),
+        };
+      } catch (error) {
+        if (error instanceof ObjectNotFoundError) {
+          options.onMissingStorageObject?.({
+            documentId: row.documentId,
+            versionId: row.versionId,
+            storageKey: row.storageKey,
+            error,
+          });
+          throw new DocumentAccessError(
+            500,
+            "STORAGE_OBJECT_MISSING",
+            "Document content is temporarily unavailable",
+          );
         }
         throw error;
       }

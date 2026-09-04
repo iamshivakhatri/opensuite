@@ -4,14 +4,13 @@ import * as React from "react";
 import { useRouter } from "next/navigation";
 
 import { useSession } from "@/lib/auth-client";
-import { Topbar } from "@/components/shell/topbar";
-import { Sidebar } from "@/components/shell/sidebar";
 
 /**
- * Gate for the authenticated OpenSuite shell. Restores the session on load
- * via Better Auth's `useSession`, redirects unauthenticated visitors to
- * `/sign-in`, and otherwise renders the app frame (topbar + sidebar) around
- * whatever the child route renders.
+ * Auth gate shared by every `/app/*` route. Restores the session on load via
+ * Better Auth's `useSession` and redirects unauthenticated visitors to
+ * `/sign-in`. Deliberately holds no chrome (topbar/sidebar) — the "All
+ * Files" surface and the dedicated document workspace render different
+ * chrome, so each owns its own layout beneath this gate.
  */
 export default function AppLayout({
   children,
@@ -39,15 +38,5 @@ export default function AppLayout({
     return null;
   }
 
-  return (
-    <div className="grid h-screen grid-rows-[58px_1fr]">
-      <Topbar userName={session.user.name} />
-      <div className="flex min-h-0">
-        <Sidebar />
-        <main className="min-w-0 flex-1 overflow-auto bg-[#F4F5F7]">
-          {children}
-        </main>
-      </div>
-    </div>
-  );
+  return <div className="h-screen">{children}</div>;
 }

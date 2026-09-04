@@ -79,6 +79,12 @@ export async function buildApp(
         "failed to delete object after document DB write failure",
       );
     },
+    onMissingStorageObject: ({ documentId, versionId, storageKey, error }) => {
+      app.log.error(
+        { err: error, documentId, versionId, storageKey },
+        "document version storage object missing",
+      );
+    },
   });
 
   registerHealthRoutes(app);

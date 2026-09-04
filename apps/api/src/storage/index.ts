@@ -1,4 +1,9 @@
-export type { ObjectStorage, PutObjectInput } from "./types.js";
+export type {
+  GetObjectResult,
+  ObjectStorage,
+  PutObjectInput,
+} from "./types.js";
+export { ObjectNotFoundError } from "./types.js";
 export {
   createS3ObjectStorage,
   type S3ObjectStorageConfig,

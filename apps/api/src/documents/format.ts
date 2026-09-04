@@ -49,3 +49,25 @@ export function officeFormatFromFilename(
 export function contentTypeForFormat(format: OfficeFormat): string {
   return CONTENT_TYPE_BY_FORMAT[format];
 }
+
+/**
+ * Builds a safe `Content-Disposition: attachment` value from a stored document
+ * name, ensuring the download has the correct Office extension.
+ */
+export function contentDispositionForDocument(
+  name: string,
+  format: OfficeFormat,
+): string {
+  const sanitized = sanitizeUploadFilename(name) ?? `document.${format}`;
+  const lower = sanitized.toLowerCase();
+  const withExtension = lower.endsWith(`.${format}`)
+    ? sanitized
+    : `${sanitized}.${format}`;
+
+  // ASCII fallback for legacy agents; RFC 5987 for the real UTF-8 name.
+  const asciiFallback = withExtension
+    .replace(/[^\x20-\x7E]/g, "_")
+    .replace(/["\\]/g, "_");
+
+  return `attachment; filename="${asciiFallback}"; filename*=UTF-8''${encodeURIComponent(withExtension)}`;
+}

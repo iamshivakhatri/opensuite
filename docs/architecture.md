@@ -45,7 +45,9 @@ API / Product Services
  ↓
 Agent Core
  ↓
-Engine Client
+DocumentRuntime (interface in agent-core)
+ ↓
+Engine Adapter → Engine Client
  ↓
 OpenSuite Engine
 ```
@@ -115,13 +117,19 @@ Drizzle's Postgres migrator always issues `CREATE SCHEMA IF NOT EXISTS <schema>`
 
 ### Product model
 
-Product tables live in `packages/db/src/schema/product.ts` (separate from Better Auth's generated auth schema):
+Product tables live in `packages/db/src/schema/product.ts` and `packages/db/src/schema/agent.ts` (separate from Better Auth's generated auth schema):
 
 * `workspace` → owned by `user.id`
 * `document` → belongs to a workspace (`docx` / `pptx` / `xlsx`)
 * `document_version` → immutable byte snapshot referenced by object-storage `storage_key` (not a URL; bytes are not stored in Postgres)
+* `agent_thread` → workspace-scoped conversation; optional `document_id`
+* `agent_message` → immutable user/assistant turns on a thread
+* `agent_run` → durable execution attempt on a thread
+* `agent_step` → ordered units of work within a run
 
-There is no `current_version_id`. The latest version is the highest `version_number` for a document (`UNIQUE (document_id, version_number)`). Foreign keys use `ON DELETE RESTRICT` so history cannot be cascade-wiped; `created_by_user_id` uses `SET NULL`. Soft delete is via `deleted_at` on workspace/document only. Workspaces are not created during signup.
+There is no `current_version_id`. The latest version is the highest `version_number` for a document (`UNIQUE (document_id, version_number)`). Foreign keys use `ON DELETE RESTRICT` so history cannot be cascade-wiped; user attribution columns use `SET NULL`. Soft delete is via `deleted_at` on workspace/document only; threads soft-archive via `archived_at`. Workspaces are not created during signup.
+
+Document-scoped threads are constrained by composite FK `(document_id, workspace_id) → document(id, workspace_id)` (when `document_id` is set) so a thread cannot attach a document from another workspace. Persistence access for agents lives in `apps/api` (`createAgentPersistenceService`), not in `agent-core`.
 
 ## Authentication
 

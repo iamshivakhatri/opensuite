@@ -185,6 +185,48 @@ test("POST /api/workspaces/:workspaceId/documents returns 401 when there is no s
   await app.close();
 });
 
+test("GET /api/workspaces/:workspaceId/documents returns 401 when there is no session", async () => {
+  const app = await testApp(null);
+
+  const response = await app.inject({
+    method: "GET",
+    url: `/api/workspaces/${randomUUID()}/documents`,
+  });
+
+  assert.equal(response.statusCode, 401);
+  assert.equal(response.json().error.code, "UNAUTHENTICATED");
+
+  await app.close();
+});
+
+test("GET /api/documents/:documentId/download returns 401 when there is no session", async () => {
+  const app = await testApp(null);
+
+  const response = await app.inject({
+    method: "GET",
+    url: `/api/documents/${randomUUID()}/download`,
+  });
+
+  assert.equal(response.statusCode, 401);
+  assert.equal(response.json().error.code, "UNAUTHENTICATED");
+
+  await app.close();
+});
+
+test("GET /api/documents/:documentId returns 401 when there is no session", async () => {
+  const app = await testApp(null);
+
+  const response = await app.inject({
+    method: "GET",
+    url: `/api/documents/${randomUUID()}`,
+  });
+
+  assert.equal(response.statusCode, 401);
+  assert.equal(response.json().error.code, "UNAUTHENTICATED");
+
+  await app.close();
+});
+
 test("an unknown route returns 404", async () => {
   const app = await testApp();
 

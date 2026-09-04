@@ -264,6 +264,345 @@ test(
 );
 
 test(
+  "document list and latest-version download are owner-scoped",
+  { skip: !runDbIntegrationTests || databaseUrl === undefined },
+  async () => {
+    const config = testConfig();
+    const dbClient = createDbClient({ databaseUrl: config.databaseUrl });
+    const emailSender = createStubEmailSender();
+    const auth = createAuth(config, dbClient.db, emailSender);
+    const storage = createMemoryObjectStorage();
+    const app = await buildApp(config, {
+      auth,
+      db: dbClient.db,
+      storage,
+    });
+    await app.ready();
+
+    try {
+      const alice = await signUpVerifyAndSignIn(
+        app,
+        config,
+        emailSender,
+        "ListAlice",
+      );
+      const bob = await signUpVerifyAndSignIn(
+        app,
+        config,
+        emailSender,
+        "ListBob",
+      );
+      const aliceWorkspaceId = await createWorkspace(
+        app,
+        config,
+        alice.cookie,
+        "Alice List WS",
+      );
+      const bobWorkspaceId = await createWorkspace(
+        app,
+        config,
+        bob.cookie,
+        "Bob List WS",
+      );
+
+      const crossList = await app.inject({
+        method: "GET",
+        url: `/api/workspaces/${bobWorkspaceId}/documents`,
+        headers: { cookie: alice.cookie, origin: config.webOrigin },
+      });
+      assert.equal(crossList.statusCode, 404, crossList.body);
+      assert.equal(crossList.json().error.code, "WORKSPACE_NOT_FOUND");
+
+      const v1Bytes = Buffer.from("PK version-one-bytes");
+      const upload = await app.inject({
+        method: "POST",
+        url: `/api/workspaces/${aliceWorkspaceId}/documents`,
+        headers: {
+          ...multipartFilePayload("Report.docx", v1Bytes).headers,
+          cookie: alice.cookie,
+          origin: config.webOrigin,
+        },
+        payload: multipartFilePayload("Report.docx", v1Bytes).payload,
+      });
+      assert.equal(upload.statusCode, 201, upload.body);
+      const uploaded = upload.json() as {
+        document: { id: string };
+        version: { id: string; storageKey: string };
+      };
+
+      const deletedUpload = await app.inject({
+        method: "POST",
+        url: `/api/workspaces/${aliceWorkspaceId}/documents`,
+        headers: {
+          ...multipartFilePayload("Gone.docx", "PK gone").headers,
+          cookie: alice.cookie,
+          origin: config.webOrigin,
+        },
+        payload: multipartFilePayload("Gone.docx", "PK gone").payload,
+      });
+      assert.equal(deletedUpload.statusCode, 201, deletedUpload.body);
+      const deletedDocId = (
+        deletedUpload.json() as { document: { id: string } }
+      ).document.id;
+      await dbClient.db
+        .update(schema.document)
+        .set({ deletedAt: new Date() })
+        .where(eq(schema.document.id, deletedDocId));
+
+      const v2Bytes = Buffer.from("PK version-two-bytes-latest");
+      const v2Id = randomUUID();
+      const v2Key = `workspaces/${aliceWorkspaceId}/documents/${uploaded.document.id}/versions/${v2Id}/content.docx`;
+      await storage.putObject({
+        key: v2Key,
+        body: v2Bytes,
+        contentType:
+          "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+      });
+      await dbClient.db.insert(schema.documentVersion).values({
+        id: v2Id,
+        documentId: uploaded.document.id,
+        versionNumber: 2,
+        parentVersionId: uploaded.version.id,
+        storageKey: v2Key,
+        sizeBytes: v2Bytes.byteLength,
+        sha256: null,
+        source: "user",
+        createdByUserId: alice.userId,
+      });
+
+      const list = await app.inject({
+        method: "GET",
+        url: `/api/workspaces/${aliceWorkspaceId}/documents`,
+        headers: { cookie: alice.cookie, origin: config.webOrigin },
+      });
+      assert.equal(list.statusCode, 200, list.body);
+      const listed = list.json() as {
+        documents: Array<{
+          id: string;
+          name: string;
+          latestVersion: {
+            id: string;
+            versionNumber: number;
+            sizeBytes: number;
+            source: string;
+          };
+          storageKey?: string;
+          latestVersionStorageKey?: string;
+        }>;
+      };
+      assert.equal(listed.documents.length, 1);
+      assert.equal(listed.documents[0]?.id, uploaded.document.id);
+      assert.equal(listed.documents[0]?.latestVersion.versionNumber, 2);
+      assert.equal(listed.documents[0]?.latestVersion.id, v2Id);
+      assert.equal(listed.documents[0]?.latestVersion.source, "user");
+      assert.equal(listed.documents[0]?.latestVersion.sizeBytes, v2Bytes.byteLength);
+      assert.equal(
+        JSON.stringify(listed).includes(v2Key) ||
+          JSON.stringify(listed).includes("storageKey"),
+        false,
+      );
+
+      const forbiddenDownload = await app.inject({
+        method: "GET",
+        url: `/api/documents/${uploaded.document.id}/download`,
+        headers: { cookie: bob.cookie, origin: config.webOrigin },
+      });
+      assert.equal(forbiddenDownload.statusCode, 404, forbiddenDownload.body);
+      assert.equal(forbiddenDownload.json().error.code, "DOCUMENT_NOT_FOUND");
+
+      const missingDownload = await app.inject({
+        method: "GET",
+        url: `/api/documents/${randomUUID()}/download`,
+        headers: { cookie: alice.cookie, origin: config.webOrigin },
+      });
+      assert.equal(missingDownload.statusCode, 404, missingDownload.body);
+
+      const download = await app.inject({
+        method: "GET",
+        url: `/api/documents/${uploaded.document.id}/download`,
+        headers: { cookie: alice.cookie, origin: config.webOrigin },
+      });
+      assert.equal(download.statusCode, 200, download.body);
+      assert.equal(
+        download.headers["content-type"],
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+      );
+      assert.equal(
+        download.headers["content-length"],
+        String(v2Bytes.byteLength),
+      );
+      assert.match(
+        String(download.headers["content-disposition"]),
+        /attachment;.*filename="Report\.docx"/,
+      );
+      assert.deepEqual(download.rawPayload, v2Bytes);
+
+      storage.objects.delete(v2Key);
+      const missingObject = await app.inject({
+        method: "GET",
+        url: `/api/documents/${uploaded.document.id}/download`,
+        headers: { cookie: alice.cookie, origin: config.webOrigin },
+      });
+      assert.equal(missingObject.statusCode, 500, missingObject.body);
+      assert.equal(missingObject.json().error.code, "STORAGE_OBJECT_MISSING");
+      assert.equal(
+        String(missingObject.body).toLowerCase().includes("nosuchkey"),
+        false,
+      );
+    } finally {
+      await app.close();
+      await dbClient.close();
+    }
+  },
+);
+
+test(
+  "GET /api/documents/:documentId returns owned metadata with latest version only",
+  { skip: !runDbIntegrationTests || databaseUrl === undefined },
+  async () => {
+    const config = testConfig();
+    const dbClient = createDbClient({ databaseUrl: config.databaseUrl });
+    const emailSender = createStubEmailSender();
+    const auth = createAuth(config, dbClient.db, emailSender);
+    const storage = createMemoryObjectStorage();
+    const app = await buildApp(config, {
+      auth,
+      db: dbClient.db,
+      storage,
+    });
+    await app.ready();
+
+    try {
+      const alice = await signUpVerifyAndSignIn(
+        app,
+        config,
+        emailSender,
+        "DetailAlice",
+      );
+      const bob = await signUpVerifyAndSignIn(
+        app,
+        config,
+        emailSender,
+        "DetailBob",
+      );
+      const aliceWorkspaceId = await createWorkspace(
+        app,
+        config,
+        alice.cookie,
+        "Detail WS",
+      );
+
+      const upload = await app.inject({
+        method: "POST",
+        url: `/api/workspaces/${aliceWorkspaceId}/documents`,
+        headers: {
+          ...multipartFilePayload("Brief.docx", "PK v1").headers,
+          cookie: alice.cookie,
+          origin: config.webOrigin,
+        },
+        payload: multipartFilePayload("Brief.docx", "PK v1").payload,
+      });
+      assert.equal(upload.statusCode, 201, upload.body);
+      const uploaded = upload.json() as {
+        document: { id: string; name: string };
+        version: { id: string };
+      };
+
+      const v2Id = randomUUID();
+      await dbClient.db.insert(schema.documentVersion).values({
+        id: v2Id,
+        documentId: uploaded.document.id,
+        versionNumber: 2,
+        parentVersionId: uploaded.version.id,
+        storageKey: `workspaces/${aliceWorkspaceId}/documents/${uploaded.document.id}/versions/${v2Id}/content.docx`,
+        sizeBytes: 42,
+        sha256: null,
+        source: "user",
+        createdByUserId: alice.userId,
+      });
+
+      const detail = await app.inject({
+        method: "GET",
+        url: `/api/documents/${uploaded.document.id}`,
+        headers: { cookie: alice.cookie, origin: config.webOrigin },
+      });
+      assert.equal(detail.statusCode, 200, detail.body);
+      const body = detail.json() as {
+        document: {
+          id: string;
+          workspaceId: string;
+          name: string;
+          format: string;
+          latestVersion: { id: string; versionNumber: number; sizeBytes: number };
+        };
+      };
+      assert.equal(body.document.id, uploaded.document.id);
+      assert.equal(body.document.workspaceId, aliceWorkspaceId);
+      assert.equal(body.document.name, "Brief.docx");
+      assert.equal(body.document.format, "docx");
+      assert.equal(body.document.latestVersion.id, v2Id);
+      assert.equal(body.document.latestVersion.versionNumber, 2);
+      assert.equal(body.document.latestVersion.sizeBytes, 42);
+      assert.equal(JSON.stringify(body).includes("storageKey"), false);
+
+      const crossUser = await app.inject({
+        method: "GET",
+        url: `/api/documents/${uploaded.document.id}`,
+        headers: { cookie: bob.cookie, origin: config.webOrigin },
+      });
+      assert.equal(crossUser.statusCode, 404, crossUser.body);
+      assert.equal(crossUser.json().error.code, "DOCUMENT_NOT_FOUND");
+
+      const missing = await app.inject({
+        method: "GET",
+        url: `/api/documents/${randomUUID()}`,
+        headers: { cookie: alice.cookie, origin: config.webOrigin },
+      });
+      assert.equal(missing.statusCode, 404, missing.body);
+
+      await dbClient.db
+        .update(schema.document)
+        .set({ deletedAt: new Date() })
+        .where(eq(schema.document.id, uploaded.document.id));
+      const softDeletedDoc = await app.inject({
+        method: "GET",
+        url: `/api/documents/${uploaded.document.id}`,
+        headers: { cookie: alice.cookie, origin: config.webOrigin },
+      });
+      assert.equal(softDeletedDoc.statusCode, 404, softDeletedDoc.body);
+
+      const otherUpload = await app.inject({
+        method: "POST",
+        url: `/api/workspaces/${aliceWorkspaceId}/documents`,
+        headers: {
+          ...multipartFilePayload("Alive.docx", "PK alive").headers,
+          cookie: alice.cookie,
+          origin: config.webOrigin,
+        },
+        payload: multipartFilePayload("Alive.docx", "PK alive").payload,
+      });
+      assert.equal(otherUpload.statusCode, 201, otherUpload.body);
+      const otherId = (otherUpload.json() as { document: { id: string } })
+        .document.id;
+
+      await dbClient.db
+        .update(schema.workspace)
+        .set({ deletedAt: new Date() })
+        .where(eq(schema.workspace.id, aliceWorkspaceId));
+      const softDeletedWs = await app.inject({
+        method: "GET",
+        url: `/api/documents/${otherId}`,
+        headers: { cookie: alice.cookie, origin: config.webOrigin },
+      });
+      assert.equal(softDeletedWs.statusCode, 404, softDeletedWs.body);
+    } finally {
+      await app.close();
+      await dbClient.close();
+    }
+  },
+);
+
+test(
   "storage failure during upload creates no document rows",
   { skip: !runDbIntegrationTests || databaseUrl === undefined },
   async () => {

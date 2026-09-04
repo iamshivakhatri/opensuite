@@ -79,7 +79,12 @@ export const document = pgTable(
       .notNull(),
     deletedAt: timestamp("deleted_at"),
   },
-  (table) => [index("document_workspace_id_idx").on(table.workspaceId)],
+  (table) => [
+    index("document_workspace_id_idx").on(table.workspaceId),
+    // Enables composite FK from agent_thread (document_id, workspace_id) so a
+    // document-scoped thread cannot reference a document from another workspace.
+    unique("document_id_workspace_id_uidx").on(table.id, table.workspaceId),
+  ],
 );
 
 /**

@@ -1,4 +1,11 @@
-import type { ObjectStorage, PutObjectInput } from "./types.js";
+import { Readable } from "node:stream";
+
+import {
+  ObjectNotFoundError,
+  type GetObjectResult,
+  type ObjectStorage,
+  type PutObjectInput,
+} from "./types.js";
 
 /**
  * In-memory ObjectStorage for automated tests. Never talks to a network.
@@ -23,6 +30,17 @@ export function createMemoryObjectStorage(options?: {
         body: Buffer.from(input.body),
         contentType: input.contentType,
       });
+    },
+    async getObject(key: string): Promise<GetObjectResult> {
+      const object = objects.get(key);
+      if (!object) {
+        throw new ObjectNotFoundError(key);
+      }
+      return {
+        body: Readable.from(object.body),
+        contentLength: object.body.byteLength,
+        contentType: object.contentType,
+      };
     },
     async deleteObject(key: string): Promise<void> {
       if (options?.failDeletes) {

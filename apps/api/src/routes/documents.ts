@@ -3,6 +3,7 @@ import { z } from "zod";
 
 import { getRequestUser, type SessionAuth } from "../auth/session.js";
 import {
+  DocumentAccessError,
   DocumentUploadError,
   type DocumentService,
 } from "../documents/service.js";
@@ -10,6 +11,10 @@ import type { WorkspaceService } from "../workspaces/service.js";
 
 const WorkspaceIdParams = z.object({
   workspaceId: z.uuid("workspaceId must be a UUID"),
+});
+
+const DocumentIdParams = z.object({
+  documentId: z.uuid("documentId must be a UUID"),
 });
 
 function unauthenticated() {
@@ -23,7 +28,7 @@ function unauthenticated() {
 }
 
 /**
- * Authenticated Office document upload into a workspace the caller owns.
+ * Authenticated Office document upload, list, and latest-version download.
  */
 export function registerDocumentRoutes(
   app: FastifyInstance,
@@ -31,6 +36,44 @@ export function registerDocumentRoutes(
   workspaces: WorkspaceService,
   documents: DocumentService,
 ): void {
+  app.get(
+    "/api/workspaces/:workspaceId/documents",
+    async (request, reply) => {
+      const user = await getRequestUser(auth, request);
+      if (!user) {
+        return reply.status(401).send(unauthenticated());
+      }
+
+      const params = WorkspaceIdParams.safeParse(request.params);
+      if (!params.success) {
+        return reply.status(400).send({
+          error: {
+            statusCode: 400,
+            message: params.error.issues[0]?.message ?? "Invalid workspace id",
+            code: "INVALID_WORKSPACE_ID",
+          },
+        });
+      }
+
+      const workspace = await workspaces.getOwned(
+        params.data.workspaceId,
+        user.id,
+      );
+      if (!workspace) {
+        return reply.status(404).send({
+          error: {
+            statusCode: 404,
+            message: "Workspace not found",
+            code: "WORKSPACE_NOT_FOUND",
+          },
+        });
+      }
+
+      const list = await documents.listInWorkspace(workspace.id);
+      return reply.send({ documents: list });
+    },
+  );
+
   app.post(
     "/api/workspaces/:workspaceId/documents",
     async (request, reply) => {
@@ -122,4 +165,83 @@ export function registerDocumentRoutes(
       }
     },
   );
+
+  app.get("/api/documents/:documentId", async (request, reply) => {
+    const user = await getRequestUser(auth, request);
+    if (!user) {
+      return reply.status(401).send(unauthenticated());
+    }
+
+    const params = DocumentIdParams.safeParse(request.params);
+    if (!params.success) {
+      return reply.status(400).send({
+        error: {
+          statusCode: 400,
+          message: params.error.issues[0]?.message ?? "Invalid document id",
+          code: "INVALID_DOCUMENT_ID",
+        },
+      });
+    }
+
+    try {
+      const document = await documents.getOwnedDocument({
+        documentId: params.data.documentId,
+        ownerUserId: user.id,
+      });
+      return reply.send({ document });
+    } catch (error) {
+      if (error instanceof DocumentAccessError) {
+        return reply.status(error.statusCode).send({
+          error: {
+            statusCode: error.statusCode,
+            message: error.message,
+            code: error.code,
+          },
+        });
+      }
+      throw error;
+    }
+  });
+
+  app.get("/api/documents/:documentId/download", async (request, reply) => {
+    const user = await getRequestUser(auth, request);
+    if (!user) {
+      return reply.status(401).send(unauthenticated());
+    }
+
+    const params = DocumentIdParams.safeParse(request.params);
+    if (!params.success) {
+      return reply.status(400).send({
+        error: {
+          statusCode: 400,
+          message: params.error.issues[0]?.message ?? "Invalid document id",
+          code: "INVALID_DOCUMENT_ID",
+        },
+      });
+    }
+
+    try {
+      const download = await documents.openLatestDownload({
+        documentId: params.data.documentId,
+        ownerUserId: user.id,
+      });
+
+      return reply
+        .header("Content-Type", download.contentType)
+        .header("Content-Disposition", download.contentDisposition)
+        .header("Content-Length", String(download.contentLength))
+        .send(download.body);
+    } catch (error) {
+      if (error instanceof DocumentAccessError) {
+        return reply.status(error.statusCode).send({
+          error: {
+            statusCode: error.statusCode,
+            message: error.message,
+            code: error.code,
+          },
+        });
+      }
+      throw error;
+    }
+  });
 }

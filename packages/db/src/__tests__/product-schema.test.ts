@@ -3,6 +3,16 @@ import { test } from "node:test";
 import { getTableName } from "drizzle-orm";
 
 import {
+  agentMessage,
+  agentMessageRoleEnum,
+  agentRun,
+  agentRunStatusEnum,
+  agentStep,
+  agentStepKindEnum,
+  agentStepStatusEnum,
+  agentThread,
+} from "../schema/agent.js";
+import {
   document,
   documentFormatEnum,
   documentVersion,
@@ -37,4 +47,47 @@ test("format and source enums match the decided product vocabulary", () => {
     "agent",
     "system",
   ]);
+});
+
+test("agent schema exports thread, message, run, and step tables", () => {
+  assert.equal(getTableName(agentThread), "agent_thread");
+  assert.equal(getTableName(agentMessage), "agent_message");
+  assert.equal(getTableName(agentRun), "agent_run");
+  assert.equal(getTableName(agentStep), "agent_step");
+});
+
+test("agent enums match the decided persistence vocabulary", () => {
+  assert.deepEqual(agentMessageRoleEnum.enumValues, ["user", "assistant"]);
+  assert.deepEqual(agentRunStatusEnum.enumValues, [
+    "queued",
+    "planning",
+    "running",
+    "waiting_for_confirmation",
+    "completed",
+    "failed",
+    "cancelled",
+  ]);
+  assert.deepEqual(agentStepKindEnum.enumValues, [
+    "plan",
+    "inspect",
+    "tool",
+    "confirmation",
+    "validation",
+    "final",
+  ]);
+  assert.deepEqual(agentStepStatusEnum.enumValues, [
+    "pending",
+    "running",
+    "completed",
+    "failed",
+    "cancelled",
+  ]);
+});
+
+test("agent_thread soft-archives; messages/runs/steps are immutable history", () => {
+  assert.ok("archivedAt" in agentThread);
+  assert.equal("deletedAt" in agentThread, false);
+  assert.equal("deletedAt" in agentMessage, false);
+  assert.equal("deletedAt" in agentRun, false);
+  assert.equal("deletedAt" in agentStep, false);
 });
