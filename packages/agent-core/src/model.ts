@@ -1,7 +1,6 @@
 import type { AgentEventSink } from "./events.js";
-import type { AgentMessage } from "./request.js";
 import type { DocumentRuntime } from "./runtime.js";
-import type { DocumentRef } from "./types.js";
+import type { Diagnostic, DocumentRef, RuntimeCapabilities } from "./types.js";
 
 /**
  * JSON-Schema-shaped description of tool input for models.
@@ -19,8 +18,7 @@ export interface ModelToolDefinition {
 }
 
 /**
- * One tool invocation requested by the model. Multiple may appear in a turn
- * (parallel scheduling policy is deferred).
+ * One tool invocation requested by the model. Multiple may appear in a turn.
  */
 export interface ModelToolCall {
   readonly id: string;
@@ -28,10 +26,38 @@ export interface ModelToolCall {
   readonly input: unknown;
 }
 
+/**
+ * Provider-neutral model transcript.
+ * Broader than persisted DB `agent_message` (user|assistant only) — includes
+ * tool-call requests and tool results for the next model turn.
+ * Not OpenAI/Anthropic raw message shapes.
+ */
+export type ModelMessage =
+  | {
+      readonly role: "user";
+      readonly content: string;
+    }
+  | {
+      readonly role: "assistant";
+      readonly content: string;
+      readonly toolCalls?: readonly ModelToolCall[];
+    }
+  | {
+      readonly role: "tool";
+      readonly toolCallId: string;
+      readonly toolName: string;
+      readonly status: "succeeded" | "failed" | "skipped";
+      readonly summary?: string;
+      readonly output?: unknown;
+      readonly diagnostic?: Diagnostic;
+    };
+
 export interface ModelRequest {
-  readonly messages: readonly AgentMessage[];
+  readonly messages: readonly ModelMessage[];
   readonly tools: readonly ModelToolDefinition[];
   readonly signal?: AbortSignal;
+  /** Optional runtime capabilities for model/prompt adapters. */
+  readonly capabilities?: RuntimeCapabilities;
 }
 
 /**
@@ -70,6 +96,13 @@ export interface ToolExecutionContext {
 export type ToolRisk = "safe" | "destructive";
 
 /**
+ * Conservative concurrency hint for tools within a single model turn.
+ * - sequential (default): barrier — never auto-parallelized
+ * - parallel-safe: may run concurrently with other parallel-safe calls
+ */
+export type ToolExecutionMode = "sequential" | "parallel-safe";
+
+/**
  * Generic agent tool. Stable names should eventually be namespaced
  * (`document.inspect`, `slides.create_slide`, …) — concrete tools deferred.
  */
@@ -77,6 +110,8 @@ export interface AgentTool<TInput = unknown, TResult = unknown> {
   readonly name: string;
   readonly description: string;
   readonly risk: ToolRisk;
+  /** Defaults to `sequential` when omitted. */
+  readonly executionMode?: ToolExecutionMode;
   readonly inputSchema: ToolInputSchema;
   /**
    * Validate/coerce raw model input into typed input.
@@ -88,6 +123,12 @@ export interface AgentTool<TInput = unknown, TResult = unknown> {
 
 export function requiresConfirmation(tool: Pick<AgentTool, "risk">): boolean {
   return tool.risk === "destructive";
+}
+
+export function toolExecutionMode(
+  tool: Pick<AgentTool, "executionMode">,
+): ToolExecutionMode {
+  return tool.executionMode ?? "sequential";
 }
 
 export function toModelToolDefinition(

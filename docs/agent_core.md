@@ -14,70 +14,48 @@ Pi fork or coding-agent clone.
 * One primary document initially; architecture leaves room for multi-doc later
 * Immutable document versions/checkpoints live in the **application** layer
 
+## AgentRunner (deterministic loop)
+
+```text
+AgentRequest
+  → AgentModel
+  → 0..N tool calls
+  → ToolRegistry / AgentTool (DocumentRuntime inside tools)
+  → tool observations on transcript
+  → AgentModel …
+  → AgentResult
+```
+
+* Safe tools execute immediately; destructive tools use `ConfirmationGate`
+* `executionMode: parallel-safe | sequential` — consecutive parallel-safe calls
+  may run concurrently; sequential (default) is a barrier. No conflict graph.
+* Steering (`SteeringSource` / `InMemorySteeringQueue`) injects mid-run user
+  corrections before the next model turn. Follow-up = a later separate run
+  (not implemented).
+* Cancellation via `AbortSignal` → `agent.cancelled` (not a generic failure)
+* `maxTurns` (default 20) → `MAX_TURNS_EXCEEDED` with outcomes preserved
+* Internal `ModelMessage` transcript includes `user` / `assistant` / `tool`
+  (broader than DB `agent_message` user|assistant)
+
+No PostgreSQL, SSE, provider SDKs, or Rust engine inside agent-core.
+
 ## Boundaries
 
-Agent Core owns:
+Agent Core owns: messages, model boundary, tools/registry/policy, events,
+DocumentRuntime contracts, AgentRunner, diagnostics/errors, AbortSignal,
+steering/confirmation interfaces.
 
-* messages / run context contracts
-* model boundary (`AgentModel`)
-* tools / registry / risk policy
-* events + event sink
-* DocumentRuntime + capabilities
-* structured diagnostics / results / typed errors
-* cancellation via `AbortSignal`; steering type (queue deferred)
-
-Agent Core does NOT own:
-
-* PostgreSQL / Drizzle / Better Auth
-* Fastify / Next / React / storage / MinIO
-* provider SDKs (OpenAI/Anthropic/…)
-* Office XML, OPC, Rust `NodeId`
+Agent Core does NOT own: auth, DB, storage, HTTP/UI, Office XML/OPC/NodeId,
+provider SDKs.
 
 ## Persistence independence
 
-Durable history is application-owned (`apps/api` + `packages/db`):
-
-```text
-AgentThread → AgentMessage | AgentRun → AgentStep
-```
-
-Application orchestration will later map `AgentEvent` → steps / SSE.
-Agent-core must not import that persistence layer.
-
-## Key contracts
-
-```text
-AgentRequest / AgentRunContext
-    ↓
-AgentModel  ←→  ToolRegistry (AgentTool*)
-    ↓
-DocumentRuntime (capabilities / inspect / optional execute)
-    ↓
-(future) engine adapter → opensuite-engine
-```
-
-* **AgentModel** — provider-neutral `complete({ messages, tools, signal? })`
-* **AgentTool** — stable name, typed parse/execute, `risk: safe | destructive`
-* **AgentEvent** — discriminated lifecycle events; sink is `emit(event)` only
-* **DocumentRef** — `{ documentId, versionId, format }` only
-* **RuntimeCapabilities** — extensible `Set<CapabilityId>` (not a giant boolean bag)
-* **SemanticTarget** — opaque `{ documentId, versionId, handle }` (intentionally narrow)
-
-## Application persistence (product layer)
-
-See also status.md. Run/step statuses in DB are application vocabulary;
-agent-core events are the runtime vocabulary that orchestration will bridge.
+Durable history remains application-owned. Orchestration later maps
+`AgentEvent` → AgentStep / SSE. Agent-core must not import that layer.
 
 ## Intentionally deferred
 
-* Full agent loop / tool scheduler / parallel execution policy
-* Real LLM providers, concrete document tools, confirmation UI
-* Steering queue, SSE, chat HTTP endpoints
-* Full mutation language / format-specific semantic addressing
-
-## Target Execution Loop (future)
-
-```text
-intent → inspect → reason → plan → typed engine op → diagnostics
-  → render → visual inspection → correct if needed → complete
-```
+* Real LLM providers and Office tools
+* Durable confirmation resume / chat HTTP / SSE
+* Semantic conflict detection for parallel mutations
+* Engine mutate/serialize/render adapters

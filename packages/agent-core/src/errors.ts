@@ -8,7 +8,10 @@ export type AgentCoreErrorCode =
   | "UNSUPPORTED_CAPABILITY"
   | "INVALID_TOOL_INPUT"
   | "DUPLICATE_TOOL_NAME"
-  | "TOOL_NOT_FOUND";
+  | "TOOL_NOT_FOUND"
+  | "MAX_TURNS_EXCEEDED"
+  | "CONFIRMATION_DENIED"
+  | "UNKNOWN_TOOL";
 
 /**
  * Typed agent-core failure. Prefer this (or structured diagnostics on results)

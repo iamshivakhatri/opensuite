@@ -4,41 +4,39 @@ _Read this before starting any work. Keep it a concise current-state handoff, no
 
 ## What Exists
 
-* Auth, workspaces, Office upload/list/download, Files UI, document workspace shell.
-* Agent persistence: `agent_thread` → `agent_message` / `agent_run` → `agent_step` + `apps/api/src/agent/persistence.ts` (no public chat API).
-* **Agent-core foundation (this milestone):** contracts + interfaces in `packages/agent-core` — model/tool/event/runtime boundaries, fakes, unit tests. **No agent loop yet.**
+* Auth, workspaces, documents, Files UI, document workspace shell.
+* Agent persistence (DB + service) — no public chat API.
+* Agent-core contracts + **AgentRunner v1** (deterministic fake/model loop). **No real LLM.**
 
 ## Just Completed
 
-`@opensuite/agent-core` durable TypeScript contracts:
+`AgentRunner` execution loop in `packages/agent-core`:
 
-* `AgentRequest` / `AgentRunContext` / runtime `AgentMessage` / `AgentResult` / `SteeringMessage`
-* `AgentModel` + `ToolRegistry` / `AgentTool` (`risk: safe|destructive`) + `AbortSignal` on execute/model
-* `AgentEvent` discriminated union + `AgentEventSink`
-* `DocumentRuntime` (capability-based inspect; optional execute) + `DocumentRef` / narrow `SemanticTarget`
-* Removed premature `engine-client` dependency from agent-core (runtime adapters come later)
+* request → model → 0..N tools → observations → model → `AgentResult`
+* `ModelMessage` transcript (`user` | `assistant` | `tool`); `maxTurns` default 20
+* `executionMode` parallel-safe vs sequential; `ConfirmationGate`; `InMemorySteeringQueue`
+* Partial success: tool failures feed the model; earlier outcomes kept
+* Unit tests with FakeAgentModel / fake tools only (no DB/network/Rust/LLM)
 
 ## Current Decisions
 
-* One Agent for all formats; specialization via tools + capabilities + format payloads.
-* Engine `NodeId` / XML / OPC forbidden in agent-core contracts.
-* Partial success: tool outcomes may mix succeeded + failed; no whole-run rollback assumption.
-* Immediate action by default; destructive tools flag confirmation — UI/orchestration later.
+* Immediate action; destructive tools need confirmation gate (not UI yet).
+* Steering ≠ follow-up run; runner only drains in-memory steering mid-run.
+* DocumentRuntime used by tools, not called directly by AgentRunner.
 
 ## Verification Status
 
 | Check | Status |
 |---|---|
-| `@opensuite/agent-core` typecheck/build + 13 unit tests | **Pass** |
-| `contracts` / `db` / `engine-client` / `api` typecheck + unit tests | **Pass** |
+| `@opensuite/agent-core` (30 unit tests) | **Pass** |
+| `contracts` / `db` / `engine-client` / `api` typecheck + tests | **Pass** |
 | `apps/web` typecheck + `next build` | **Pass** |
-| Prefer `node …/tsc.js` if `pnpm`/`turbo` wrappers hang (leftover watchers) | noted |
+
 ## Intentionally Deferred
 
-* Agent runner loop, real tools, LLM providers, confirmation workflow
-* Chat/agent HTTP + SSE; persistence↔event bridge
-* Engine mutate/serialize/render; canvas preview
+* Real providers, Office tools, chat HTTP, SSE, persistence↔event bridge
+* Engine mutate/render; durable confirmation waiting
 
 ## Recommended Next Step
 
-Implement a **minimal AgentRunner loop** over these contracts (FakeAgentModel + fake tools), then application orchestration that persists events/steps — still before public chat API if preferred.
+Application orchestration: map AgentRunner events → AgentStep persistence, then a minimal Fastify agent endpoint (still FakeAgentModel or stub provider).

@@ -7,6 +7,7 @@ import type {
   ModelResponse,
   ModelToolCall,
   ToolExecutionContext,
+  ToolExecutionMode,
   ToolInputSchema,
   ToolRisk,
 } from "./model.js";
@@ -26,7 +27,7 @@ import {
 } from "./types.js";
 
 /**
- * Test doubles for contract tests and future orchestration unit tests.
+ * Test doubles for contract tests and AgentRunner unit tests.
  * Not production implementations.
  */
 
@@ -34,6 +35,7 @@ export function createFakeTool<TInput, TResult>(options: {
   name: string;
   description?: string;
   risk?: ToolRisk;
+  executionMode?: ToolExecutionMode;
   inputSchema?: ToolInputSchema;
   parseInput?: (raw: unknown) => TInput;
   execute: (input: TInput, ctx: ToolExecutionContext) => Promise<TResult>;
@@ -42,9 +44,9 @@ export function createFakeTool<TInput, TResult>(options: {
     name: options.name,
     description: options.description ?? options.name,
     risk: options.risk ?? "safe",
+    executionMode: options.executionMode,
     inputSchema: options.inputSchema ?? { type: "object" },
-    parseInput:
-      options.parseInput ?? ((raw: unknown) => raw as TInput),
+    parseInput: options.parseInput ?? ((raw: unknown) => raw as TInput),
     execute: options.execute,
   };
 }
@@ -92,6 +94,31 @@ export function createFakeAgentModel(
       };
     },
   };
+}
+
+/**
+ * Deterministic multi-turn fake: each complete() consumes the next scripted step.
+ */
+export function createScriptedAgentModel(
+  steps: ReadonlyArray<
+    | ModelResponse
+    | ((request: ModelRequest) => ModelResponse | Promise<ModelResponse>)
+  >,
+): AgentModel {
+  let index = 0;
+  return createFakeAgentModel({
+    async respond(request) {
+      if (index >= steps.length) {
+        throw new AgentCoreError(
+          "MODEL_FAILURE",
+          "Scripted model has no more responses",
+        );
+      }
+      const step = steps[index]!;
+      index += 1;
+      return typeof step === "function" ? step(request) : step;
+    },
+  });
 }
 
 export function assistantOnlyResponse(content: string): ModelResponse {
@@ -166,4 +193,22 @@ export function createFakeDocumentRuntime(
       return unsupportedCapabilityOperation(Capabilities.DocumentMutate);
     },
   };
+}
+
+export function delay(ms: number, signal?: AbortSignal): Promise<void> {
+  return new Promise((resolve, reject) => {
+    if (signal?.aborted) {
+      reject(new AgentCoreError("CANCELLED", "Delay aborted"));
+      return;
+    }
+    const timer = setTimeout(resolve, ms);
+    signal?.addEventListener(
+      "abort",
+      () => {
+        clearTimeout(timer);
+        reject(new AgentCoreError("CANCELLED", "Delay aborted"));
+      },
+      { once: true },
+    );
+  });
 }

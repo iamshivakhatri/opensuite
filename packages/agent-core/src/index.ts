@@ -1,11 +1,9 @@
 /**
- * OpenSuite Agent Core — contracts and runtime interfaces.
+ * OpenSuite Agent Core — contracts, runtime interfaces, and AgentRunner.
  *
  * This package owns the agent execution model (messages, models, tools,
- * events, DocumentRuntime). It does NOT own persistence, HTTP, UI, or
- * Office internals. See docs/agent_core.md.
- *
- * Full agent loop / orchestration is intentionally not implemented yet.
+ * events, DocumentRuntime, runner loop). It does NOT own persistence, HTTP,
+ * UI, or Office internals. See docs/agent_core.md.
  */
 
 export type {
@@ -45,15 +43,21 @@ export { createAgentRunContext } from "./context.js";
 export type {
   AgentModel,
   AgentTool,
+  ModelMessage,
   ModelRequest,
   ModelResponse,
   ModelToolCall,
   ModelToolDefinition,
   ToolExecutionContext,
+  ToolExecutionMode,
   ToolInputSchema,
   ToolRisk,
 } from "./model.js";
-export { requiresConfirmation, toModelToolDefinition } from "./model.js";
+export {
+  requiresConfirmation,
+  toolExecutionMode,
+  toModelToolDefinition,
+} from "./model.js";
 
 export { ToolRegistry } from "./tools.js";
 
@@ -76,12 +80,27 @@ export {
   unsupportedCapabilityResult,
 } from "./runtime.js";
 
+export type { ConfirmationGate, ConfirmationRequest } from "./confirmation.js";
+export {
+  autoApproveConfirmationGate,
+  createScriptedConfirmationGate,
+  denyAllConfirmationGate,
+} from "./confirmation.js";
+
+export type { SteeringSource } from "./steering.js";
+export { InMemorySteeringQueue } from "./steering.js";
+
+export type { AgentRunOptions, AgentRunnerOptions } from "./runner.js";
+export { AgentRunner } from "./runner.js";
+
 export {
   assistantOnlyResponse,
   createFakeAgentModel,
   createFakeDocumentRuntime,
   createFakeTool,
   createFakeToolExecutionContext,
+  createScriptedAgentModel,
+  delay,
   toolCallResponse,
 } from "./testing.js";
 export type {

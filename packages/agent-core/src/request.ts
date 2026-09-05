@@ -60,6 +60,8 @@ export interface ToolOutcome {
     | "skipped"
     | "awaiting_confirmation";
   readonly summary?: string;
+  /** Structured tool output when status is succeeded (not persisted by agent-core). */
+  readonly output?: unknown;
   readonly diagnostic?: Diagnostic;
 }
 
