@@ -9,6 +9,17 @@ import {
   createUnconfiguredAgentModel,
 } from "../agent/model/index.js";
 import type { AnthropicMessagesClient } from "../agent/model/anthropic.js";
+import type { OpenAIResponsesClient } from "../agent/model/openai.js";
+import type { OpenAIChatCompletionsClient } from "../agent/model/openrouter.js";
+
+const emptyKeys = {
+  anthropicApiKey: null as string | null,
+  anthropicModel: "claude-sonnet-4-5",
+  openaiApiKey: null as string | null,
+  openaiModel: "gpt-4.1",
+  openrouterApiKey: null as string | null,
+  openrouterModel: null as string | null,
+};
 
 test("unconfigured model fails safely", async () => {
   const model = createUnconfiguredAgentModel();
@@ -32,14 +43,10 @@ test("fake development model returns deterministic text", async () => {
   assert.deepEqual(result.toolCalls, []);
 });
 
-test("createConfiguredAgentModel selects fake and anthropic", async () => {
+test("createConfiguredAgentModel selects fake, openai, and openrouter", async () => {
   const fake = createConfiguredAgentModel({
     nodeEnv: "development",
-    agent: {
-      provider: "fake",
-      anthropicApiKey: null,
-      anthropicModel: "claude-sonnet-4-5",
-    },
+    agent: { ...emptyKeys, provider: "fake" },
   });
   const fakeResult = await fake.complete({
     messages: [{ role: "user", content: "Hello" }],
@@ -47,7 +54,74 @@ test("createConfiguredAgentModel selects fake and anthropic", async () => {
   });
   assert.match(fakeResult.content, /fake model/i);
 
-  const client: AnthropicMessagesClient = {
+  const openaiClient: OpenAIResponsesClient = {
+    responses: {
+      async create() {
+        return {
+          output: [
+            {
+              type: "message",
+              content: [{ type: "output_text", text: "From OpenAI" }],
+            },
+          ],
+        };
+      },
+    },
+  };
+  const openai = createConfiguredAgentModel(
+    {
+      nodeEnv: "development",
+      agent: {
+        ...emptyKeys,
+        provider: "openai",
+        openaiApiKey: "test-key",
+        openaiModel: "gpt-test",
+      },
+    },
+    { openaiClient },
+  );
+  assert.equal(
+    (
+      await openai.complete({
+        messages: [{ role: "user", content: "Hi" }],
+        tools: [],
+      })
+    ).content,
+    "From OpenAI",
+  );
+
+  const openrouterClient: OpenAIChatCompletionsClient = {
+    chat: {
+      completions: {
+        async create() {
+          return { choices: [{ message: { content: "From OpenRouter" } }] };
+        },
+      },
+    },
+  };
+  const openrouter = createConfiguredAgentModel(
+    {
+      nodeEnv: "development",
+      agent: {
+        ...emptyKeys,
+        provider: "openrouter",
+        openrouterApiKey: "or-key",
+        openrouterModel: "meta-llama/test",
+      },
+    },
+    { openrouterClient },
+  );
+  assert.equal(
+    (
+      await openrouter.complete({
+        messages: [{ role: "user", content: "Hi" }],
+        tools: [],
+      })
+    ).content,
+    "From OpenRouter",
+  );
+
+  const anthropicClient: AnthropicMessagesClient = {
     messages: {
       async create() {
         return { content: [{ type: "text", text: "From Anthropic" }] };
@@ -58,16 +132,21 @@ test("createConfiguredAgentModel selects fake and anthropic", async () => {
     {
       nodeEnv: "development",
       agent: {
+        ...emptyKeys,
         provider: "anthropic",
         anthropicApiKey: "test-key",
         anthropicModel: "claude-test",
       },
     },
-    { anthropicClient: client },
+    { anthropicClient },
   );
-  const result = await anthropic.complete({
-    messages: [{ role: "user", content: "Hi" }],
-    tools: [],
-  });
-  assert.equal(result.content, "From Anthropic");
+  assert.equal(
+    (
+      await anthropic.complete({
+        messages: [{ role: "user", content: "Hi" }],
+        tools: [],
+      })
+    ).content,
+    "From Anthropic",
+  );
 });

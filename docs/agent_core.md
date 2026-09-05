@@ -84,8 +84,9 @@ GET /runs/:id/events → SSE (live ordered events; heartbeat comments)
 * `GET /api/agent/runs/:runId/events` → SSE
 
 Inject model/tools via `buildApp` deps / `createConfiguredAgentModel(config)`.
-`AGENT_MODEL_PROVIDER=unconfigured|fake|anthropic` (fake banned in production).
-Anthropic SDK adapter lives in `apps/api` — not agent-core.
+`AGENT_MODEL_PROVIDER=unconfigured|fake|anthropic|openai|openrouter`
+(fake banned in production; OpenRouter requires explicit `OPENROUTER_MODEL`).
+Provider SDKs/adapters live in `apps/api` — not agent-core.
 Document workspace Agent panel is wired.
 
 ## Boundaries
@@ -104,7 +105,7 @@ Durable history is application-owned. `AgentExecutionService` maps selected
 
 ## Intentionally deferred
 
-* Additional LLM providers / token streaming / Office tools
+* Token streaming / Office tools / model routing-fallback
 * Durable confirmation resume / durable event log / Redis workers
 * Semantic conflict detection for parallel mutations
 * Engine mutate/serialize/render adapters

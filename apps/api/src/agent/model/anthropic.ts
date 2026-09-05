@@ -1,5 +1,4 @@
 import {
-  AgentCoreError,
   type AgentModel,
   type ModelMessage,
   type ModelRequest,
@@ -7,6 +6,17 @@ import {
   type ModelToolCall,
   type ModelToolDefinition,
 } from "@opensuite/agent-core";
+
+import {
+  cancelledError,
+  DEFAULT_AGENT_SYSTEM,
+  ensureObjectSchema,
+  formatToolResultContent,
+  isAbortLike,
+  normalizeProviderError,
+} from "./shared.js";
+
+export { normalizeProviderError };
 
 /** Minimal Anthropic Messages shapes used by the adapter (SDK-agnostic for tests). */
 export interface AnthropicToolDefinition {
@@ -64,10 +74,6 @@ export interface AnthropicAgentModelOptions {
   readonly system?: string;
 }
 
-const DEFAULT_SYSTEM =
-  "You are OpenSuite, an AI office assistant. Be concise and helpful. " +
-  "Do not claim you inspected or edited Office file contents unless a tool result confirms it.";
-
 /**
  * Anthropic Messages API → OpenSuite AgentModel adapter.
  * Lives in apps/api — agent-core never imports the Anthropic SDK.
@@ -76,7 +82,7 @@ export function createAnthropicAgentModel(
   options: AnthropicAgentModelOptions,
 ): AgentModel {
   const maxTokens = options.maxTokens ?? 4096;
-  const system = options.system ?? DEFAULT_SYSTEM;
+  const system = options.system ?? DEFAULT_AGENT_SYSTEM;
 
   return {
     async complete(request: ModelRequest): Promise<ModelResponse> {
@@ -103,7 +109,7 @@ export function createAnthropicAgentModel(
         if (request.signal?.aborted || isAbortLike(error)) {
           throw cancelledError(error);
         }
-        throw normalizeProviderError(error);
+        throw normalizeProviderError(error, "Anthropic");
       }
     },
   };
@@ -112,17 +118,10 @@ export function createAnthropicAgentModel(
 export function toAnthropicTool(
   tool: ModelToolDefinition,
 ): AnthropicToolDefinition {
-  const schema: Record<string, unknown> =
-    tool.inputSchema && typeof tool.inputSchema === "object"
-      ? { ...tool.inputSchema }
-      : {};
-  if (schema.type === undefined) {
-    schema.type = "object";
-  }
   return {
     name: tool.name,
     description: tool.description,
-    input_schema: schema,
+    input_schema: ensureObjectSchema(tool.inputSchema),
   };
 }
 
@@ -167,7 +166,6 @@ export function toAnthropicMessages(
       continue;
     }
 
-    // role === "tool" — gather consecutive tool results
     const toolBlocks: AnthropicContentBlock[] = [];
     while (i < messages.length && messages[i]!.role === "tool") {
       const toolMessage = messages[i]!;
@@ -206,80 +204,4 @@ export function fromAnthropicMessage(message: AnthropicMessage): ModelResponse {
     content: textParts.join("\n").trim(),
     toolCalls,
   };
-}
-
-function formatToolResultContent(
-  message: Extract<ModelMessage, { role: "tool" }>,
-): string {
-  const parts: string[] = [];
-  parts.push(`status=${message.status}`);
-  if (message.summary) {
-    parts.push(message.summary);
-  }
-  if (message.output !== undefined) {
-    try {
-      parts.push(JSON.stringify(message.output));
-    } catch {
-      parts.push(String(message.output));
-    }
-  }
-  if (message.diagnostic?.message) {
-    parts.push(message.diagnostic.message);
-  }
-  return parts.join("\n").slice(0, 8_000);
-}
-
-function cancelledError(cause?: unknown): AgentCoreError {
-  return new AgentCoreError("CANCELLED", "Model call aborted", {
-    diagnostic: {
-      code: "CANCELLED",
-      severity: "error",
-      message: "Model call aborted",
-    },
-    cause,
-  });
-}
-
-function isAbortLike(error: unknown): boolean {
-  if (!error || typeof error !== "object") {
-    return false;
-  }
-  const name = "name" in error ? String(error.name) : "";
-  return (
-    name === "AbortError" ||
-    name === "APIUserAbortError" ||
-    ("code" in error && error.code === "CANCELLED")
-  );
-}
-
-/**
- * Map provider exceptions to AgentCoreError without leaking raw payloads.
- */
-export function normalizeProviderError(error: unknown): AgentCoreError {
-  if (error instanceof AgentCoreError) {
-    return error;
-  }
-
-  const status =
-    error && typeof error === "object" && "status" in error
-      ? Number(error.status)
-      : undefined;
-
-  let message = "Anthropic model request failed";
-  if (status === 401 || status === 403) {
-    message = "Anthropic authentication failed";
-  } else if (status === 429) {
-    message = "Anthropic rate limit exceeded";
-  } else if (status !== undefined && status >= 500) {
-    message = "Anthropic service unavailable";
-  }
-
-  return new AgentCoreError("MODEL_FAILURE", message, {
-    diagnostic: {
-      code: "MODEL_FAILURE",
-      severity: "error",
-      message,
-    },
-    cause: error,
-  });
 }

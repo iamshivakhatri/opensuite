@@ -279,11 +279,14 @@ test("Anthropic adapter: mid-flight abort maps to CANCELLED", async () => {
 });
 
 test("normalizeProviderError hides provider internals", () => {
-  const normalized = normalizeProviderError({
-    status: 401,
-    message: "invalid x-api-key sk-ant-secret",
-    error: { type: "authentication_error" },
-  });
+  const normalized = normalizeProviderError(
+    {
+      status: 401,
+      message: "invalid x-api-key sk-ant-secret",
+      error: { type: "authentication_error" },
+    },
+    "Anthropic",
+  );
   assert.equal(normalized.code, "MODEL_FAILURE");
   assert.equal(normalized.message, "Anthropic authentication failed");
   assert.equal(normalized.message.includes("sk-ant"), false);

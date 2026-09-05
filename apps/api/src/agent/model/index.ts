@@ -5,12 +5,23 @@ import {
   type ModelRequest,
 } from "@opensuite/agent-core";
 import Anthropic from "@anthropic-ai/sdk";
+import OpenAI from "openai";
 
 import type { AgentModelConfig, AppConfig } from "../../config/index.js";
 import {
   createAnthropicAgentModel,
   type AnthropicMessagesClient,
 } from "./anthropic.js";
+import {
+  createOpenAIAgentModel,
+  type OpenAIResponsesClient,
+} from "./openai.js";
+import {
+  createOpenRouterAgentModel,
+  type OpenAIChatCompletionsClient,
+} from "./openrouter.js";
+
+export const OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1";
 
 /**
  * Safe stub when no provider is configured. Routes never construct providers.
@@ -60,6 +71,10 @@ export function createDevelopmentFakeAgentModel(): AgentModel {
 export interface CreateConfiguredAgentModelOptions {
   /** Inject a mock Anthropic client in tests. */
   readonly anthropicClient?: AnthropicMessagesClient;
+  /** Inject a mock OpenAI Responses client in tests. */
+  readonly openaiClient?: OpenAIResponsesClient;
+  /** Inject a mock OpenAI Chat Completions client (OpenRouter) in tests. */
+  readonly openrouterClient?: OpenAIChatCompletionsClient;
 }
 
 /**
@@ -91,6 +106,39 @@ export function createConfiguredAgentModel(
       return createAnthropicAgentModel({
         client,
         model: agent.anthropicModel,
+      });
+    }
+    case "openai": {
+      if (!agent.openaiApiKey) {
+        throw new Error(
+          "OPENAI_API_KEY is required when AGENT_MODEL_PROVIDER=openai",
+        );
+      }
+      const client =
+        options.openaiClient ??
+        (new OpenAI({
+          apiKey: agent.openaiApiKey,
+        }) as unknown as OpenAIResponsesClient);
+      return createOpenAIAgentModel({
+        client,
+        model: agent.openaiModel,
+      });
+    }
+    case "openrouter": {
+      if (!agent.openrouterApiKey || !agent.openrouterModel) {
+        throw new Error(
+          "OPENROUTER_API_KEY and OPENROUTER_MODEL are required when AGENT_MODEL_PROVIDER=openrouter",
+        );
+      }
+      const client =
+        options.openrouterClient ??
+        (new OpenAI({
+          apiKey: agent.openrouterApiKey,
+          baseURL: OPENROUTER_BASE_URL,
+        }) as unknown as OpenAIChatCompletionsClient);
+      return createOpenRouterAgentModel({
+        client,
+        model: agent.openrouterModel,
       });
     }
     default: {

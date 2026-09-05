@@ -1,6 +1,12 @@
 import { z } from "zod";
 
-const AgentModelProviderSchema = z.enum(["unconfigured", "fake", "anthropic"]);
+const AgentModelProviderSchema = z.enum([
+  "unconfigured",
+  "fake",
+  "anthropic",
+  "openai",
+  "openrouter",
+]);
 
 const EnvSchema = z
   .object({
@@ -52,6 +58,11 @@ const EnvSchema = z
     AGENT_MODEL_PROVIDER: AgentModelProviderSchema.default("unconfigured"),
     ANTHROPIC_API_KEY: z.string().optional(),
     ANTHROPIC_MODEL: z.string().min(1).default("claude-sonnet-4-5"),
+    OPENAI_API_KEY: z.string().optional(),
+    OPENAI_MODEL: z.string().min(1).default("gpt-4.1"),
+    OPENROUTER_API_KEY: z.string().optional(),
+    /** Required when provider=openrouter — no default; pick an explicit model slug. */
+    OPENROUTER_MODEL: z.string().optional(),
   })
   .superRefine((data, ctx) => {
     if (data.AGENT_MODEL_PROVIDER === "fake" && data.NODE_ENV === "production") {
@@ -59,18 +70,47 @@ const EnvSchema = z
         code: "custom",
         path: ["AGENT_MODEL_PROVIDER"],
         message:
-          'AGENT_MODEL_PROVIDER=fake is not allowed when NODE_ENV=production',
+          "AGENT_MODEL_PROVIDER=fake is not allowed when NODE_ENV=production",
       });
     }
 
     if (data.AGENT_MODEL_PROVIDER === "anthropic") {
-      const key = data.ANTHROPIC_API_KEY?.trim() ?? "";
-      if (!key) {
+      if (!(data.ANTHROPIC_API_KEY?.trim() ?? "")) {
         ctx.addIssue({
           code: "custom",
           path: ["ANTHROPIC_API_KEY"],
           message:
             "ANTHROPIC_API_KEY is required when AGENT_MODEL_PROVIDER=anthropic",
+        });
+      }
+    }
+
+    if (data.AGENT_MODEL_PROVIDER === "openai") {
+      if (!(data.OPENAI_API_KEY?.trim() ?? "")) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["OPENAI_API_KEY"],
+          message:
+            "OPENAI_API_KEY is required when AGENT_MODEL_PROVIDER=openai",
+        });
+      }
+    }
+
+    if (data.AGENT_MODEL_PROVIDER === "openrouter") {
+      if (!(data.OPENROUTER_API_KEY?.trim() ?? "")) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["OPENROUTER_API_KEY"],
+          message:
+            "OPENROUTER_API_KEY is required when AGENT_MODEL_PROVIDER=openrouter",
+        });
+      }
+      if (!(data.OPENROUTER_MODEL?.trim() ?? "")) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["OPENROUTER_MODEL"],
+          message:
+            "OPENROUTER_MODEL is required when AGENT_MODEL_PROVIDER=openrouter (e.g. meta-llama/llama-3.3-70b-instruct)",
         });
       }
     }
@@ -89,9 +129,12 @@ export interface S3Config {
 
 export interface AgentModelConfig {
   readonly provider: AgentModelProvider;
-  /** Present only when provider is anthropic. Never logged. */
   readonly anthropicApiKey: string | null;
   readonly anthropicModel: string;
+  readonly openaiApiKey: string | null;
+  readonly openaiModel: string;
+  readonly openrouterApiKey: string | null;
+  readonly openrouterModel: string | null;
 }
 
 export interface AppConfig {
@@ -152,7 +195,11 @@ export function loadConfig(
     throw new Error(`Invalid environment configuration: ${issues}`);
   }
 
+  const provider = result.data.AGENT_MODEL_PROVIDER;
   const anthropicKey = result.data.ANTHROPIC_API_KEY?.trim() || null;
+  const openaiKey = result.data.OPENAI_API_KEY?.trim() || null;
+  const openrouterKey = result.data.OPENROUTER_API_KEY?.trim() || null;
+  const openrouterModel = result.data.OPENROUTER_MODEL?.trim() || null;
 
   return {
     nodeEnv: result.data.NODE_ENV,
@@ -175,10 +222,13 @@ export function loadConfig(
     },
     uploadMaxBytes: result.data.UPLOAD_MAX_BYTES,
     agent: {
-      provider: result.data.AGENT_MODEL_PROVIDER,
-      anthropicApiKey:
-        result.data.AGENT_MODEL_PROVIDER === "anthropic" ? anthropicKey : null,
+      provider,
+      anthropicApiKey: provider === "anthropic" ? anthropicKey : null,
       anthropicModel: result.data.ANTHROPIC_MODEL,
+      openaiApiKey: provider === "openai" ? openaiKey : null,
+      openaiModel: result.data.OPENAI_MODEL,
+      openrouterApiKey: provider === "openrouter" ? openrouterKey : null,
+      openrouterModel: provider === "openrouter" ? openrouterModel : null,
     },
   };
 }

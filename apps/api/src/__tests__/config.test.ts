@@ -34,6 +34,10 @@ test("loadConfig applies defaults when auth/database env vars are provided", () 
   assert.equal(config.agent.provider, "unconfigured");
   assert.equal(config.agent.anthropicApiKey, null);
   assert.equal(config.agent.anthropicModel, "claude-sonnet-4-5");
+  assert.equal(config.agent.openaiApiKey, null);
+  assert.equal(config.agent.openaiModel, "gpt-4.1");
+  assert.equal(config.agent.openrouterApiKey, null);
+  assert.equal(config.agent.openrouterModel, null);
 });
 
 test("loadConfig accepts legacy MINIO_* aliases for S3 settings", () => {
@@ -160,12 +164,71 @@ test("loadConfig accepts anthropic provider with key and model", () => {
   assert.equal(config.agent.anthropicModel, "claude-test-model");
 });
 
-test("loadConfig rejects invalid AGENT_MODEL_PROVIDER", () => {
+test("loadConfig requires OPENAI_API_KEY for openai provider", () => {
   assert.throws(
     () =>
       loadConfig({
         ...baseEnv,
         AGENT_MODEL_PROVIDER: "openai",
+      }),
+    /OPENAI_API_KEY/,
+  );
+});
+
+test("loadConfig accepts openai provider with key and model", () => {
+  const config = loadConfig({
+    ...baseEnv,
+    AGENT_MODEL_PROVIDER: "openai",
+    OPENAI_API_KEY: "sk-test",
+    OPENAI_MODEL: "gpt-test",
+  });
+  assert.equal(config.agent.provider, "openai");
+  assert.equal(config.agent.openaiApiKey, "sk-test");
+  assert.equal(config.agent.openaiModel, "gpt-test");
+});
+
+test("loadConfig requires OPENROUTER_API_KEY and OPENROUTER_MODEL", () => {
+  assert.throws(
+    () =>
+      loadConfig({
+        ...baseEnv,
+        AGENT_MODEL_PROVIDER: "openrouter",
+        OPENROUTER_API_KEY: "or-test",
+      }),
+    /OPENROUTER_MODEL/,
+  );
+  assert.throws(
+    () =>
+      loadConfig({
+        ...baseEnv,
+        AGENT_MODEL_PROVIDER: "openrouter",
+        OPENROUTER_MODEL: "meta-llama/llama-3.3-70b-instruct",
+      }),
+    /OPENROUTER_API_KEY/,
+  );
+});
+
+test("loadConfig accepts openrouter provider with key and model slug", () => {
+  const config = loadConfig({
+    ...baseEnv,
+    AGENT_MODEL_PROVIDER: "openrouter",
+    OPENROUTER_API_KEY: "or-test",
+    OPENROUTER_MODEL: "meta-llama/llama-3.3-70b-instruct",
+  });
+  assert.equal(config.agent.provider, "openrouter");
+  assert.equal(config.agent.openrouterApiKey, "or-test");
+  assert.equal(
+    config.agent.openrouterModel,
+    "meta-llama/llama-3.3-70b-instruct",
+  );
+});
+
+test("loadConfig rejects invalid AGENT_MODEL_PROVIDER", () => {
+  assert.throws(
+    () =>
+      loadConfig({
+        ...baseEnv,
+        AGENT_MODEL_PROVIDER: "azure",
       }),
     /AGENT_MODEL_PROVIDER/,
   );
