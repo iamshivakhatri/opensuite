@@ -7,6 +7,7 @@ import {
   InMemorySteeringQueue,
   ToolRegistry,
   assistantOnlyResponse,
+  createFakeAgentModel,
   createFakeTool,
   createRecordingEventSink,
   createScriptedAgentModel,
@@ -414,6 +415,67 @@ test("CONFIRMATION: denied destructive tool does not execute", async () => {
   assert.equal(
     result.toolOutcomes[0]?.diagnostic?.code,
     "CONFIRMATION_DENIED",
+  );
+});
+
+test("CONFIRMATION: no gate defaults to deny for destructive tools", async () => {
+  let executed = false;
+  const tool = createFakeTool({
+    name: "slides.delete_slide",
+    risk: "destructive",
+    async execute() {
+      executed = true;
+      return true;
+    },
+  });
+  const runner = new AgentRunner({
+    model: createScriptedAgentModel([
+      toolCallResponse("", [
+        { id: "1", name: "slides.delete_slide", input: {} },
+      ]),
+      assistantOnlyResponse("denied by default"),
+    ]),
+    tools: ToolRegistry.create([tool]),
+  });
+
+  const result = await runner.run(baseRequest());
+  assert.equal(executed, false);
+  assert.equal(result.toolOutcomes[0]?.status, "skipped");
+  assert.equal(
+    result.toolOutcomes[0]?.diagnostic?.code,
+    "CONFIRMATION_DENIED",
+  );
+});
+
+test("CONTEXT: priorMessages precede current instruction without duplication", async () => {
+  let observed: ModelMessage[] = [];
+  const runner = new AgentRunner({
+    model: createFakeAgentModel({
+      respond(request) {
+        observed = [...request.messages];
+        return assistantOnlyResponse("ok");
+      },
+    }),
+    tools: ToolRegistry.create([]),
+  });
+
+  await runner.run(
+    baseRequest({
+      instruction: "third",
+      priorMessages: [
+        { role: "user", content: "first" },
+        { role: "assistant", content: "second" },
+      ],
+    }),
+  );
+
+  assert.deepEqual(
+    observed.filter((m) => m.role === "user" || m.role === "assistant"),
+    [
+      { role: "user", content: "first" },
+      { role: "assistant", content: "second" },
+      { role: "user", content: "third" },
+    ],
   );
 });
 

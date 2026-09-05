@@ -29,6 +29,11 @@ export interface AgentRequest {
   readonly instruction: string;
   readonly threadId: string;
   readonly runId: string;
+  /**
+   * Prior user-visible turns (user|assistant) excluding the current
+   * `instruction`. Application layer loads these from durable messages.
+   */
+  readonly priorMessages?: readonly AgentMessage[];
   /** Primary/open document. Null for workspace-level intents later. */
   readonly primaryDocument?: DocumentRef | null;
   /** Reserved for multi-doc / attachments; unused by the first runner. */

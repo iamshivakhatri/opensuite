@@ -129,7 +129,7 @@ Product tables live in `packages/db/src/schema/product.ts` and `packages/db/src/
 
 There is no `current_version_id`. The latest version is the highest `version_number` for a document (`UNIQUE (document_id, version_number)`). Foreign keys use `ON DELETE RESTRICT` so history cannot be cascade-wiped; user attribution columns use `SET NULL`. Soft delete is via `deleted_at` on workspace/document only; threads soft-archive via `archived_at`. Workspaces are not created during signup.
 
-Document-scoped threads are constrained by composite FK `(document_id, workspace_id) → document(id, workspace_id)` (when `document_id` is set) so a thread cannot attach a document from another workspace. Persistence access for agents lives in `apps/api` (`createAgentPersistenceService`), not in `agent-core`.
+Document-scoped threads are constrained by composite FK `(document_id, workspace_id) → document(id, workspace_id)` (when `document_id` is set) so a thread cannot attach a document from another workspace. Persistence access for agents lives in `apps/api` (`createAgentPersistenceService`); durable execution orchestration is `createAgentExecutionService` (persistence ↔ `AgentRunner`, no HTTP yet).
 
 ## Authentication
 

@@ -44,6 +44,8 @@ export type AgentEvent =
       readonly runId: string;
       readonly toolCallId: string;
       readonly toolName: string;
+      /** Validated tool input when available (application-owned, not provider raw). */
+      readonly input?: unknown;
       readonly at: string;
     }
   | {
@@ -52,6 +54,8 @@ export type AgentEvent =
       readonly toolCallId: string;
       readonly toolName: string;
       readonly summary?: string;
+      /** Structured tool output when available (application-owned). */
+      readonly output?: unknown;
       readonly at: string;
     }
   | {
@@ -68,6 +72,8 @@ export type AgentEvent =
       readonly toolCallId: string;
       readonly toolName: string;
       readonly reason: string;
+      /** Validated tool input pending confirmation. */
+      readonly input?: unknown;
       readonly at: string;
     }
   | {

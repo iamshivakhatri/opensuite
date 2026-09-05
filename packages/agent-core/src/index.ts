@@ -82,6 +82,7 @@ export {
 
 export type { ConfirmationGate, ConfirmationRequest } from "./confirmation.js";
 export {
+  AutoApproveConfirmationGate,
   autoApproveConfirmationGate,
   createScriptedConfirmationGate,
   denyAllConfirmationGate,

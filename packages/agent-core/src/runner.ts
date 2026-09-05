@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 
 import {
-  autoApproveConfirmationGate,
+  denyAllConfirmationGate,
   type ConfirmationGate,
 } from "./confirmation.js";
 import { AgentCoreError, isAbortError } from "./errors.js";
@@ -58,7 +58,8 @@ export interface AgentRunOptions {
 
 /**
  * Deterministic model ↔ tool execution loop.
- * Immediate action for safe tools; destructive tools go through ConfirmationGate.
+ * Safe tools execute immediately; destructive tools require ConfirmationGate.
+ * No gate → destructive tools are denied (dangerous behavior is opt-in).
  * No persistence, HTTP, or engine coupling.
  */
 export class AgentRunner {
@@ -78,7 +79,7 @@ export class AgentRunner {
     this.tools = options.tools;
     this.events = options.events ?? noopEventSink;
     this.runtime = options.runtime;
-    this.confirmation = options.confirmation ?? autoApproveConfirmationGate;
+    this.confirmation = options.confirmation ?? denyAllConfirmationGate;
     this.steering = options.steering;
     this.capabilities = options.capabilities ?? createCapabilities();
     this.maxTurns = options.maxTurns ?? DEFAULT_MAX_TURNS;
@@ -94,6 +95,10 @@ export class AgentRunner {
     const toolOutcomes: ToolOutcome[] = [];
     const diagnostics: Diagnostic[] = [];
     const transcript: ModelMessage[] = [
+      ...(request.priorMessages ?? []).map((message) => ({
+        role: message.role,
+        content: message.content,
+      })),
       { role: "user", content: request.instruction },
     ];
 
@@ -370,6 +375,7 @@ export class AgentRunner {
         toolCallId: call.id,
         toolName: tool.name,
         reason,
+        input,
         at: this.timestamp(),
       });
 
@@ -443,6 +449,7 @@ export class AgentRunner {
       runId: request.runId,
       toolCallId: call.id,
       toolName: tool.name,
+      input,
       at: this.timestamp(),
     });
 
@@ -464,6 +471,7 @@ export class AgentRunner {
         toolCallId: call.id,
         toolName: tool.name,
         summary,
+        output,
         at: this.timestamp(),
       });
       return {
