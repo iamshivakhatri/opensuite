@@ -1,52 +1,82 @@
 import { z } from "zod";
 
-const EnvSchema = z.object({
-  NODE_ENV: z
-    .enum(["development", "production", "test"])
-    .default("development"),
-  HOST: z.string().min(1).default("0.0.0.0"),
-  PORT: z.coerce.number().int().positive().default(3000),
-  LOG_LEVEL: z
-    .enum(["fatal", "error", "warn", "info", "debug", "trace", "silent"])
-    .default("info"),
-  DATABASE_URL: z
-    .string()
-    .min(1, "DATABASE_URL must not be empty")
-    .refine(
-      (url) =>
-        url.startsWith("postgresql://") || url.startsWith("postgres://"),
-      "DATABASE_URL must be a PostgreSQL connection string (postgresql://...)",
-    ),
-  BETTER_AUTH_SECRET: z
-    .string()
-    .min(32, "BETTER_AUTH_SECRET must be at least 32 characters"),
-  BETTER_AUTH_URL: z.url("BETTER_AUTH_URL must be a valid URL"),
-  WEB_ORIGIN: z.url("WEB_ORIGIN must be a valid URL"),
-  RESEND_API_KEY: z.string().min(1, "RESEND_API_KEY must not be empty"),
-  EMAIL_FROM: z
-    .string()
-    .min(1, "EMAIL_FROM must not be empty")
-    .refine(
-      (value) => value.includes("@"),
-      "EMAIL_FROM must contain an email address, e.g. \"OpenSuite <noreply@example.com>\"",
-    ),
-  S3_ENDPOINT: z.url("S3_ENDPOINT must be a valid URL"),
-  S3_ACCESS_KEY_ID: z.string().min(1, "S3_ACCESS_KEY_ID must not be empty"),
-  S3_SECRET_ACCESS_KEY: z
-    .string()
-    .min(1, "S3_SECRET_ACCESS_KEY must not be empty"),
-  S3_BUCKET: z.string().min(1, "S3_BUCKET must not be empty"),
-  S3_REGION: z.string().min(1).default("us-east-1"),
-  S3_FORCE_PATH_STYLE: z
-    .enum(["true", "false"])
-    .default("true")
-    .transform((value) => value === "true"),
-  UPLOAD_MAX_BYTES: z.coerce
-    .number()
-    .int()
-    .positive()
-    .default(25 * 1024 * 1024),
-});
+const AgentModelProviderSchema = z.enum(["unconfigured", "fake", "anthropic"]);
+
+const EnvSchema = z
+  .object({
+    NODE_ENV: z
+      .enum(["development", "production", "test"])
+      .default("development"),
+    HOST: z.string().min(1).default("0.0.0.0"),
+    PORT: z.coerce.number().int().positive().default(3000),
+    LOG_LEVEL: z
+      .enum(["fatal", "error", "warn", "info", "debug", "trace", "silent"])
+      .default("info"),
+    DATABASE_URL: z
+      .string()
+      .min(1, "DATABASE_URL must not be empty")
+      .refine(
+        (url) =>
+          url.startsWith("postgresql://") || url.startsWith("postgres://"),
+        "DATABASE_URL must be a PostgreSQL connection string (postgresql://...)",
+      ),
+    BETTER_AUTH_SECRET: z
+      .string()
+      .min(32, "BETTER_AUTH_SECRET must be at least 32 characters"),
+    BETTER_AUTH_URL: z.url("BETTER_AUTH_URL must be a valid URL"),
+    WEB_ORIGIN: z.url("WEB_ORIGIN must be a valid URL"),
+    RESEND_API_KEY: z.string().min(1, "RESEND_API_KEY must not be empty"),
+    EMAIL_FROM: z
+      .string()
+      .min(1, "EMAIL_FROM must not be empty")
+      .refine(
+        (value) => value.includes("@"),
+        "EMAIL_FROM must contain an email address, e.g. \"OpenSuite <noreply@example.com>\"",
+      ),
+    S3_ENDPOINT: z.url("S3_ENDPOINT must be a valid URL"),
+    S3_ACCESS_KEY_ID: z.string().min(1, "S3_ACCESS_KEY_ID must not be empty"),
+    S3_SECRET_ACCESS_KEY: z
+      .string()
+      .min(1, "S3_SECRET_ACCESS_KEY must not be empty"),
+    S3_BUCKET: z.string().min(1, "S3_BUCKET must not be empty"),
+    S3_REGION: z.string().min(1).default("us-east-1"),
+    S3_FORCE_PATH_STYLE: z
+      .enum(["true", "false"])
+      .default("true")
+      .transform((value) => value === "true"),
+    UPLOAD_MAX_BYTES: z.coerce
+      .number()
+      .int()
+      .positive()
+      .default(25 * 1024 * 1024),
+    AGENT_MODEL_PROVIDER: AgentModelProviderSchema.default("unconfigured"),
+    ANTHROPIC_API_KEY: z.string().optional(),
+    ANTHROPIC_MODEL: z.string().min(1).default("claude-sonnet-4-5"),
+  })
+  .superRefine((data, ctx) => {
+    if (data.AGENT_MODEL_PROVIDER === "fake" && data.NODE_ENV === "production") {
+      ctx.addIssue({
+        code: "custom",
+        path: ["AGENT_MODEL_PROVIDER"],
+        message:
+          'AGENT_MODEL_PROVIDER=fake is not allowed when NODE_ENV=production',
+      });
+    }
+
+    if (data.AGENT_MODEL_PROVIDER === "anthropic") {
+      const key = data.ANTHROPIC_API_KEY?.trim() ?? "";
+      if (!key) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["ANTHROPIC_API_KEY"],
+          message:
+            "ANTHROPIC_API_KEY is required when AGENT_MODEL_PROVIDER=anthropic",
+        });
+      }
+    }
+  });
+
+export type AgentModelProvider = z.infer<typeof AgentModelProviderSchema>;
 
 export interface S3Config {
   readonly endpoint: string;
@@ -55,6 +85,13 @@ export interface S3Config {
   readonly bucket: string;
   readonly region: string;
   readonly forcePathStyle: boolean;
+}
+
+export interface AgentModelConfig {
+  readonly provider: AgentModelProvider;
+  /** Present only when provider is anthropic. Never logged. */
+  readonly anthropicApiKey: string | null;
+  readonly anthropicModel: string;
 }
 
 export interface AppConfig {
@@ -77,6 +114,7 @@ export interface AppConfig {
   readonly emailFrom: string;
   readonly s3: S3Config;
   readonly uploadMaxBytes: number;
+  readonly agent: AgentModelConfig;
 }
 
 /**
@@ -114,6 +152,8 @@ export function loadConfig(
     throw new Error(`Invalid environment configuration: ${issues}`);
   }
 
+  const anthropicKey = result.data.ANTHROPIC_API_KEY?.trim() || null;
+
   return {
     nodeEnv: result.data.NODE_ENV,
     host: result.data.HOST,
@@ -134,5 +174,11 @@ export function loadConfig(
       forcePathStyle: result.data.S3_FORCE_PATH_STYLE,
     },
     uploadMaxBytes: result.data.UPLOAD_MAX_BYTES,
+    agent: {
+      provider: result.data.AGENT_MODEL_PROVIDER,
+      anthropicApiKey:
+        result.data.AGENT_MODEL_PROVIDER === "anthropic" ? anthropicKey : null,
+      anthropicModel: result.data.ANTHROPIC_MODEL,
+    },
   };
 }

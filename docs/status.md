@@ -4,26 +4,26 @@ _Read this before starting any work. Keep it a concise current-state handoff, no
 
 ## What Exists
 
-* Auth, workspaces, documents, Files UI, document workspace shell.
+* Auth, workspaces, documents, Files UI, document workspace shell + Agent panel.
 * Agent persistence + **AgentExecutionService** + **AgentRunManager** (live in-process).
-* Agent-core `AgentRunner` (deterministic fake/model loop). **No real LLM.**
-* Authenticated agent HTTP + **SSE** + document Agent panel (end-to-end).
+* Agent-core `AgentRunner` + **Anthropic AgentModel adapter** (apps/api).
+* Authenticated agent HTTP + SSE end-to-end.
 
 ## Just Completed
 
-Document Agent panel wired end-to-end (still FakeAgentModel via DI in tests):
+First real model provider (Anthropic) behind existing `AgentModel`:
 
-* `GET /api/documents/:documentId/agent/threads` — owned document threads (newest first)
-* `POST /api/agent/runs/:runId/cancel` — abort in-process run; terminal idempotent; 404 non-owned
-* Panel: reuse latest non-archived document thread; lazy-create on first submit
-* Composer → 202 run → SSE Cursor-style progress → refresh messages/snapshot
-* Stop action; SSE disconnect recovers via `GET /runs/:id` (does not cancel)
-* `GET …/messages` also returns `latestRun` for refresh recovery of active runs
+* `AGENT_MODEL_PROVIDER=unconfigured|fake|anthropic` (+ `ANTHROPIC_API_KEY` / `ANTHROPIC_MODEL`)
+* `createConfiguredAgentModel(config)` at API composition — routes stay provider-agnostic
+* Anthropic Messages adapter: text, 0..N tool calls, tool-result turns, AbortSignal, normalized errors
+* `fake` for local/UI QA; **rejected when `NODE_ENV=production`**
+* No token streaming; user progress remains AgentEvent/SSE
 
 ## Current Decisions
 
 * Document-first threads; sync start + async execution (no job workers).
-* Durable recovery = AgentRun/AgentStep rows (+ `latestRun` on messages), not an event log.
+* Provider SDKs live in `apps/api` adapters — never in agent-core.
+* Durable recovery = AgentRun/AgentStep rows (+ `latestRun` on messages).
 
 ## Verification Status
 
@@ -32,14 +32,13 @@ Document Agent panel wired end-to-end (still FakeAgentModel via DI in tests):
 | `@opensuite/agent-core` unit tests | **Pass** |
 | `contracts` / `db` / `engine-client` typecheck | **Pass** |
 | `api` typecheck + unit + DB integration tests | **Pass** |
-| `apps/web` typecheck + progress unit tests + `next build` | **Pass** |
+| `apps/web` typecheck + tests + `next build` | **Pass** |
 
 ## Intentionally Deferred
 
-* Real LLM providers, Office tools, Rust engine
+* Office tools / Rust engine / token streaming / other providers
 * Durable event log, Redis/BullMQ/workers, confirmation resume API
-* Workspace-level agent threads
 
 ## Recommended Next Step
 
-Inject a local FakeAgentModel (or first real provider) for manual panel QA, then Office inspect tools.
+Set `AGENT_MODEL_PROVIDER=fake` (or anthropic + key) for panel QA, then add a real document inspect tool.

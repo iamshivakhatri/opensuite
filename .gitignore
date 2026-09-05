@@ -10,3 +10,5 @@ dist/
 .env
 .turbo
 packages/db/migrations
+
+.pnpm-store

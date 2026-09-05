@@ -1,8 +1,6 @@
 import type { FastifyInstance, FastifyReply } from "fastify";
 import { z } from "zod";
 
-import { AgentCoreError, type AgentModel } from "@opensuite/agent-core";
-
 import {
   toAgentMessageDto,
   toAgentRunDto,
@@ -66,28 +64,6 @@ function unauthenticated() {
       statusCode: 401 as const,
       message: "Unauthorized",
       code: "UNAUTHENTICATED" as const,
-    },
-  };
-}
-
-/**
- * Placeholder model for production composition until a real provider is wired.
- * Routes never construct FakeAgentModel — tests inject deterministic models.
- */
-export function createUnconfiguredAgentModel(): AgentModel {
-  return {
-    async complete() {
-      throw new AgentCoreError(
-        "MODEL_FAILURE",
-        "Agent model provider is not configured",
-        {
-          diagnostic: {
-            code: "MODEL_FAILURE",
-            severity: "error",
-            message: "Agent model provider is not configured",
-          },
-        },
-      );
     },
   };
 }

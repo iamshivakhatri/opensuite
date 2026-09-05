@@ -24,14 +24,14 @@ import {
   createAgentRunManager,
   type AgentRunManager,
 } from "./agent/run-manager.js";
+import {
+  createConfiguredAgentModel,
+} from "./agent/model/index.js";
 import type { SessionAuth } from "./auth/session.js";
 import type { AppConfig } from "./config/index.js";
 import { createDocumentService } from "./documents/service.js";
 import type { AuthHandler } from "./routes/auth.js";
-import {
-  createUnconfiguredAgentModel,
-  registerAgentRoutes,
-} from "./routes/agent.js";
+import { registerAgentRoutes } from "./routes/agent.js";
 import { registerAuthRoutes } from "./routes/auth.js";
 import { registerDocumentRoutes } from "./routes/documents.js";
 import { registerHealthRoutes } from "./routes/health.js";
@@ -43,7 +43,8 @@ import { createWorkspaceService } from "./workspaces/service.js";
 /**
  * Optional agent stack overrides for tests / future provider wiring.
  * Routes never construct FakeAgentModel — inject model/tools (or a full
- * execution service) from composition.
+ * execution service) from composition. Production model comes from
+ * createConfiguredAgentModel(config) unless overridden here.
  */
 export interface AgentAppDependencies {
   readonly persistence?: AgentPersistenceService;
@@ -139,7 +140,7 @@ export async function buildApp(
     createAgentExecutionService({
       persistence: agentPersistence,
       documents,
-      model: deps.agent?.model ?? createUnconfiguredAgentModel(),
+      model: deps.agent?.model ?? createConfiguredAgentModel(config),
       tools: deps.agent?.tools ?? ToolRegistry.create([]),
       runtime: deps.agent?.runtime,
       confirmation: deps.agent?.confirmation,

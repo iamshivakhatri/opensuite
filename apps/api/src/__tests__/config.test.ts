@@ -31,6 +31,9 @@ test("loadConfig applies defaults when auth/database env vars are provided", () 
   assert.equal(config.s3.bucket, testS3Env.S3_BUCKET);
   assert.equal(config.s3.forcePathStyle, true);
   assert.equal(config.uploadMaxBytes, 25 * 1024 * 1024);
+  assert.equal(config.agent.provider, "unconfigured");
+  assert.equal(config.agent.anthropicApiKey, null);
+  assert.equal(config.agent.anthropicModel, "claude-sonnet-4-5");
 });
 
 test("loadConfig accepts legacy MINIO_* aliases for S3 settings", () => {
@@ -110,5 +113,60 @@ test("loadConfig throws when EMAIL_FROM does not contain an email address", () =
   assert.throws(
     () => loadConfig({ ...baseEnv, EMAIL_FROM: "not-an-email" }),
     /EMAIL_FROM/,
+  );
+});
+
+test("loadConfig allows fake provider outside production", () => {
+  const config = loadConfig({
+    ...baseEnv,
+    NODE_ENV: "development",
+    AGENT_MODEL_PROVIDER: "fake",
+  });
+  assert.equal(config.agent.provider, "fake");
+});
+
+test("loadConfig rejects fake provider in production", () => {
+  assert.throws(
+    () =>
+      loadConfig({
+        ...baseEnv,
+        NODE_ENV: "production",
+        AGENT_MODEL_PROVIDER: "fake",
+      }),
+    /AGENT_MODEL_PROVIDER/,
+  );
+});
+
+test("loadConfig requires ANTHROPIC_API_KEY for anthropic provider", () => {
+  assert.throws(
+    () =>
+      loadConfig({
+        ...baseEnv,
+        AGENT_MODEL_PROVIDER: "anthropic",
+      }),
+    /ANTHROPIC_API_KEY/,
+  );
+});
+
+test("loadConfig accepts anthropic provider with key and model", () => {
+  const config = loadConfig({
+    ...baseEnv,
+    AGENT_MODEL_PROVIDER: "anthropic",
+    ANTHROPIC_API_KEY: "sk-ant-test",
+    ANTHROPIC_MODEL: "claude-test-model",
+  });
+  assert.equal(config.agent.provider, "anthropic");
+  assert.equal(config.agent.anthropicApiKey, "sk-ant-test");
+  assert.equal(config.agent.anthropicModel, "claude-test-model");
+});
+
+test("loadConfig rejects invalid AGENT_MODEL_PROVIDER", () => {
+  assert.throws(
+    () =>
+      loadConfig({
+        ...baseEnv,
+        AGENT_MODEL_PROVIDER: "openai",
+      }),
+    /AGENT_MODEL_PROVIDER/,
   );
 });
