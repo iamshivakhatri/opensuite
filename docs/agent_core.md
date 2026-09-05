@@ -46,30 +46,43 @@ No PostgreSQL, SSE, provider SDKs, or Rust engine inside agent-core.
 Lives in `apps/api` (not agent-core):
 
 ```text
-execute(user instruction)
+start(user instruction)
   → verify owned thread
   → tx: append user message + create run(queued)
-  → resolve DocumentRef (latest version) when document-scoped
-  → AgentRunner + event→step bridge
-  → tx: assistant message (if non-empty summary) + finalize run
+  → return handle immediately
+  → (async) AgentRunner + event→step bridge + finalize
 ```
 
-* Maps `tool.*` / `confirmation.required` → durable `AgentStep` (not every event)
+* `execute()` = `start()` then await `handle.result` (tests / sync callers)
+* Optional `liveEvents` sink fans out after persistence bridge (SSE hub)
 * Parallel tools: per-run in-memory sequence counter; start-order sequences
 * Tool step failure ≠ run failure; runner `completed` → run `completed`
 * Cancel → `cancelled`; model failure → `failed` + safe error fields
-* Durable confirmation resume deferred
+
+## Live runs (`AgentRunManager` + HTTP)
+
+```text
+POST /runs → 202 { run }
+  → AgentRunManager tracks active run + event hub
+GET /runs/:id → durable snapshot
+GET /runs/:id/events → SSE (live ordered events; heartbeat comments)
+```
+
+* Multi-subscriber; disconnect unsubscribes (does not cancel the run)
+* After terminal + short grace, hub is dropped — history via GET /runs
+* **API process restart abandons in-memory runs** (no Redis/workers yet)
 
 ## HTTP API (Fastify)
-
-Document-scoped, authenticated, synchronous:
 
 * `POST /api/documents/:documentId/agent/threads`
 * `GET /api/agent/threads/:threadId`
 * `GET /api/agent/threads/:threadId/messages`
-* `POST /api/agent/threads/:threadId/runs` → awaits execution, returns durable run/messages/steps
+* `POST /api/agent/threads/:threadId/runs` → **202** queued run
+* `GET /api/agent/runs/:runId`
+* `GET /api/agent/runs/:runId/events` → SSE
 
-Inject model/tools (or full execution service) via `buildApp` deps — not FakeAgentModel in route handlers. Default production model is an unconfigured stub. No SSE, no frontend Agent panel, no real LLM yet.
+Inject model/tools via `buildApp` deps. Default production model = unconfigured stub.
+No frontend Agent panel / real LLM yet.
 
 ## Boundaries
 
@@ -88,7 +101,7 @@ Durable history is application-owned. `AgentExecutionService` maps selected
 ## Intentionally deferred
 
 * Real LLM providers and Office tools
-* Durable confirmation resume / SSE
+* Durable confirmation resume / durable event log / Redis workers
 * Semantic conflict detection for parallel mutations
 * Engine mutate/serialize/render adapters
 * Frontend Agent panel wiring

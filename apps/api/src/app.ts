@@ -20,6 +20,10 @@ import {
   createAgentPersistenceService,
   type AgentPersistenceService,
 } from "./agent/persistence.js";
+import {
+  createAgentRunManager,
+  type AgentRunManager,
+} from "./agent/run-manager.js";
 import type { SessionAuth } from "./auth/session.js";
 import type { AppConfig } from "./config/index.js";
 import { createDocumentService } from "./documents/service.js";
@@ -44,6 +48,7 @@ import { createWorkspaceService } from "./workspaces/service.js";
 export interface AgentAppDependencies {
   readonly persistence?: AgentPersistenceService;
   readonly execution?: AgentExecutionService;
+  readonly runManager?: AgentRunManager;
   readonly model?: AgentModel;
   readonly tools?: ToolRegistry;
   readonly runtime?: DocumentRuntime;
@@ -51,6 +56,8 @@ export interface AgentAppDependencies {
   readonly steering?: SteeringSource;
   readonly capabilities?: RuntimeCapabilities;
   readonly maxTurns?: number;
+  /** Shorter grace for SSE tests. */
+  readonly liveGraceMs?: number;
 }
 
 export interface AppDependencies {
@@ -140,6 +147,13 @@ export async function buildApp(
       capabilities: deps.agent?.capabilities,
       maxTurns: deps.agent?.maxTurns,
     });
+  const agentRunManager =
+    deps.agent?.runManager ??
+    createAgentRunManager({
+      execution: agentExecution,
+      persistence: agentPersistence,
+      liveGraceMs: deps.agent?.liveGraceMs,
+    });
 
   registerHealthRoutes(app);
   registerAuthRoutes(app, deps.auth);
@@ -151,6 +165,7 @@ export async function buildApp(
     documents,
     persistence: agentPersistence,
     execution: agentExecution,
+    runManager: agentRunManager,
   });
 
   return app;

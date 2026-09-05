@@ -5,29 +5,27 @@ _Read this before starting any work. Keep it a concise current-state handoff, no
 ## What Exists
 
 * Auth, workspaces, documents, Files UI, document workspace shell.
-* Agent persistence + **AgentExecutionService** (durable Thread → Message → Run → Step).
+* Agent persistence + **AgentExecutionService** + **AgentRunManager** (live in-process).
 * Agent-core `AgentRunner` (deterministic fake/model loop). **No real LLM.**
-* **Authenticated agent HTTP API** (sync runs; no SSE/frontend yet).
+* Authenticated agent HTTP + **SSE** for live run progress.
 
 ## Just Completed
 
-Fastify agent routes (`apps/api/src/routes/agent.ts`):
+Live agent runs:
 
-* `POST /api/documents/:documentId/agent/threads` — document-scoped thread
-* `GET /api/agent/threads/:threadId`
-* `GET /api/agent/threads/:threadId/messages` — user/assistant only
-* `POST /api/agent/threads/:threadId/runs` — await `AgentExecutionService.execute`
-* Ownership: session user; non-owned → 404; unauthenticated → 401
-* Composition injects model/tools via `AppDependencies.agent` (routes never build FakeAgentModel)
-* Production default model = unconfigured stub until a real provider is wired
-* Destructive tools deny-by-default (no confirmation gate in default wiring)
-* Client disconnect aborts the in-flight run when the socket closes
+* `POST /api/agent/threads/:threadId/runs` → **202 `{ run }`** after durable queued run; execution continues in-process
+* `GET /api/agent/runs/:runId` → durable run + steps snapshot
+* `GET /api/agent/runs/:runId/events` → SSE (`text/event-stream`) of meaningful live events
+* `AgentRunManager` hubs ordered events, multi-subscriber, grace cleanup after terminal
+* `AgentExecutionService.start()` returns after message+run persist; `execute()` still awaits full result
+* SSE is live-only; reconnect after hub eviction uses GET /runs (or a terminal SSE hint)
+* **Process restart loses in-memory execution** — no Redis/queues yet
+* Destructive tools still deny-by-default; no frontend / real LLM / engine
 
 ## Current Decisions
 
-* Document-first threads only (no workspace-level agent API yet).
-* Sync POST run (no job queue / SSE).
-* Dangerous confirmation remains opt-in for tests only.
+* Document-first threads; sync start + async execution (no job workers).
+* Durable recovery = AgentRun/AgentStep rows, not an event log.
 
 ## Verification Status
 
@@ -39,10 +37,9 @@ Fastify agent routes (`apps/api/src/routes/agent.ts`):
 
 ## Intentionally Deferred
 
-* SSE / streaming, frontend Agent panel
-* Real providers, Office tools, engine mutate/render
-* Durable confirmation resume, run-list endpoints, job queues
+* Frontend Agent panel, real providers, Office tools, Rust engine
+* Durable event log, Redis/BullMQ/workers, confirmation resume API
 
 ## Recommended Next Step
 
-SSE (or similar) progress events for an in-flight run, still on FakeAgentModel.
+Wire the document workspace Agent panel to thread/run/SSE (still FakeAgentModel).

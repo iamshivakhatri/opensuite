@@ -49,6 +49,11 @@ export interface AgentExecutionInput {
   readonly threadId: string;
   readonly instruction: string;
   readonly signal?: AbortSignal;
+  /**
+   * Optional live sink (SSE hub). Invoked after the persistence bridge
+   * handles each AgentEvent — does not replace durable step mapping.
+   */
+  readonly liveEvents?: AgentEventSink;
 }
 
 export interface AgentExecutionResult {
@@ -58,6 +63,15 @@ export interface AgentExecutionResult {
   readonly assistantMessage: AgentMessage | null;
   readonly steps: readonly AgentStep[];
   readonly result: AgentResult;
+}
+
+/** Returned as soon as the user message + queued run are durable. */
+export interface AgentExecutionHandle {
+  readonly thread: AgentThread;
+  readonly userMessage: AgentMessage;
+  readonly run: AgentRun;
+  /** Settles when the in-process runner + final persistence finish. */
+  readonly result: Promise<AgentExecutionResult>;
 }
 
 export interface AgentExecutionServiceDeps {
@@ -81,7 +95,8 @@ export interface AgentExecutionServiceDeps {
 
 /**
  * Application orchestration: durable Thread/Message/Run/Step ↔ AgentRunner.
- * Awaits the runner in-process (no job queue). No HTTP/SSE.
+ * `start` returns after the queued run is durable; runner continues in-process.
+ * `execute` awaits the full result (tests / sync callers).
  *
  * Step sequences are assigned by an in-memory monotonic counter owned by the
  * per-run event adapter (safe for one in-process execution; not distributed).
@@ -89,9 +104,9 @@ export interface AgentExecutionServiceDeps {
 export function createAgentExecutionService(deps: AgentExecutionServiceDeps) {
   const { persistence, documents } = deps;
 
-  async function execute(
+  async function start(
     input: AgentExecutionInput,
-  ): Promise<AgentExecutionResult> {
+  ): Promise<AgentExecutionHandle> {
     const thread = await persistence.getOwnedThread({
       threadId: input.threadId,
       ownerUserId: input.userId,
@@ -137,146 +152,205 @@ export function createAgentExecutionService(deps: AgentExecutionServiceDeps) {
       throw mapStartPersistenceError(error);
     }
 
-    const allMessages = await persistence.listMessagesForThread({
-      threadId: thread.id,
-      ownerUserId: input.userId,
-    });
-    const priorMessages = allMessages
-      .filter((message) => message.id !== userMessage.id)
-      .map((message) => ({
-        role: message.role,
-        content: message.content,
-      }));
-
-    const request: AgentRequest = {
-      instruction: input.instruction,
-      threadId: thread.id,
-      runId: run.id,
-      priorMessages,
-      primaryDocument,
-    };
-
-    const bridge = createRunEventBridge({
+    const result = continueExecution({
+      deps,
       persistence,
-      ownerUserId: input.userId,
-      runId: run.id,
-    });
-
-    const runner = new AgentRunner({
-      model: deps.model,
-      tools: deps.tools,
-      events: bridge,
-      runtime: deps.runtime,
-      confirmation: deps.confirmation,
-      steering: deps.steering,
-      capabilities: deps.capabilities,
-      maxTurns: deps.maxTurns,
-    });
-
-    let agentResult: AgentResult;
-    try {
-      agentResult = await runner.run(request, { signal: input.signal });
-    } catch {
-      await bestEffortFailRun(
-        persistence,
-        input.userId,
-        run.id,
-        "AGENT_EXECUTION_FAILED",
-        "Agent runner failed unexpectedly",
-      );
-      throw new AgentExecutionError(
-        "AGENT_EXECUTION_FAILED",
-        "Agent runner failed unexpectedly",
-      );
-    }
-
-    try {
-      await bridge.flush();
-    } catch {
-      await bestEffortFailRun(
-        persistence,
-        input.userId,
-        run.id,
-        "AGENT_PERSISTENCE_FAILED",
-        "Failed to persist agent steps",
-      );
-      throw new AgentExecutionError(
-        "AGENT_PERSISTENCE_FAILED",
-        "Failed to persist agent steps",
-      );
-    }
-
-    let assistantMessage: AgentMessage | null = null;
-    let finalRun: AgentRun;
-
-    try {
-      if (agentResult.status === "completed") {
-        const finalized = await finalizeCompletedRun({
-          persistence,
-          ownerUserId: input.userId,
-          threadId: thread.id,
-          runId: run.id,
-          summary: agentResult.summary,
-        });
-        assistantMessage = finalized.assistantMessage;
-        finalRun = finalized.run;
-      } else if (agentResult.status === "cancelled") {
-        await bridge.cancelOpenSteps();
-        finalRun = await persistence.updateRunStatus({
-          runId: run.id,
-          ownerUserId: input.userId,
-          status: "cancelled",
-        });
-      } else {
-        // failed (and any other non-completed status treated as failure)
-        const diagnostic = agentResult.diagnostics[0];
-        finalRun = await persistence.updateRunStatus({
-          runId: run.id,
-          ownerUserId: input.userId,
-          status: "failed",
-          errorCode: safeErrorCode(diagnostic?.code, "AGENT_EXECUTION_FAILED"),
-          errorMessage: safeErrorMessage(
-            diagnostic?.message ?? agentResult.summary,
-            "Agent run failed",
-          ),
-        });
-      }
-    } catch (error) {
-      if (
-        error instanceof AgentPersistenceError ||
-        error instanceof AgentExecutionError
-      ) {
-        await bestEffortFailRun(
-          persistence,
-          input.userId,
-          run.id,
-          "AGENT_PERSISTENCE_FAILED",
-          "Failed to finalize agent run",
-        );
-        throw new AgentExecutionError(
-          "AGENT_PERSISTENCE_FAILED",
-          "Failed to finalize agent run",
-        );
-      }
-      throw error;
-    }
-
-    const steps = await persistence.listStepsForRun({
-      runId: finalRun.id,
-      ownerUserId: input.userId,
-    });
-
-    return {
       thread,
       userMessage,
-      run: finalRun,
-      assistantMessage,
-      steps,
-      result: agentResult,
-    };
+      run,
+      ownerUserId: input.userId,
+      instruction: input.instruction,
+      primaryDocument,
+      signal: input.signal,
+      liveEvents: input.liveEvents,
+    });
+    // Detached callers (HTTP 202) must not leave unhandled rejections.
+    void result.catch(() => undefined);
+
+    return { thread, userMessage, run, result };
   }
 
-  return { execute };
+  async function execute(
+    input: AgentExecutionInput,
+  ): Promise<AgentExecutionResult> {
+    const handle = await start(input);
+    return handle.result;
+  }
+
+  return { start, execute };
+}
+
+async function continueExecution(input: {
+  deps: AgentExecutionServiceDeps;
+  persistence: AgentPersistenceService;
+  thread: AgentThread;
+  userMessage: AgentMessage;
+  run: AgentRun;
+  ownerUserId: string;
+  instruction: string;
+  primaryDocument: DocumentRef | null;
+  signal?: AbortSignal;
+  liveEvents?: AgentEventSink;
+}): Promise<AgentExecutionResult> {
+  const {
+    deps,
+    persistence,
+    thread,
+    userMessage,
+    run,
+    ownerUserId,
+    instruction,
+    primaryDocument,
+    signal,
+    liveEvents,
+  } = input;
+
+  const priorMessages = (
+    await persistence.listMessagesForThread({
+      threadId: thread.id,
+      ownerUserId,
+    })
+  )
+    .filter((message) => message.id !== userMessage.id)
+    .map((message) => ({
+      role: message.role,
+      content: message.content,
+    }));
+
+  const request: AgentRequest = {
+    instruction,
+    threadId: thread.id,
+    runId: run.id,
+    priorMessages,
+    primaryDocument,
+  };
+
+  const bridge = createRunEventBridge({
+    persistence,
+    ownerUserId,
+    runId: run.id,
+  });
+
+  const events: AgentEventSink = liveEvents
+    ? {
+        async emit(event) {
+          await bridge.emit(event);
+          await liveEvents.emit(event);
+        },
+      }
+    : bridge;
+
+  const runner = new AgentRunner({
+    model: deps.model,
+    tools: deps.tools,
+    events,
+    runtime: deps.runtime,
+    confirmation: deps.confirmation,
+    steering: deps.steering,
+    capabilities: deps.capabilities,
+    maxTurns: deps.maxTurns,
+  });
+
+  let agentResult: AgentResult;
+  try {
+    agentResult = await runner.run(request, { signal });
+  } catch {
+    await bestEffortFailRun(
+      persistence,
+      ownerUserId,
+      run.id,
+      "AGENT_EXECUTION_FAILED",
+      "Agent runner failed unexpectedly",
+    );
+    throw new AgentExecutionError(
+      "AGENT_EXECUTION_FAILED",
+      "Agent runner failed unexpectedly",
+    );
+  }
+
+  try {
+    await bridge.flush();
+  } catch {
+    await bestEffortFailRun(
+      persistence,
+      ownerUserId,
+      run.id,
+      "AGENT_PERSISTENCE_FAILED",
+      "Failed to persist agent steps",
+    );
+    throw new AgentExecutionError(
+      "AGENT_PERSISTENCE_FAILED",
+      "Failed to persist agent steps",
+    );
+  }
+
+  let assistantMessage: AgentMessage | null = null;
+  let finalRun: AgentRun;
+
+  try {
+    if (agentResult.status === "completed") {
+      const finalized = await finalizeCompletedRun({
+        persistence,
+        ownerUserId,
+        threadId: thread.id,
+        runId: run.id,
+        summary: agentResult.summary,
+      });
+      assistantMessage = finalized.assistantMessage;
+      finalRun = finalized.run;
+    } else if (agentResult.status === "cancelled") {
+      await bridge.cancelOpenSteps();
+      finalRun = await persistence.updateRunStatus({
+        runId: run.id,
+        ownerUserId,
+        status: "cancelled",
+      });
+    } else {
+      const diagnostic = agentResult.diagnostics[0];
+      finalRun = await persistence.updateRunStatus({
+        runId: run.id,
+        ownerUserId,
+        status: "failed",
+        errorCode: safeErrorCode(diagnostic?.code, "AGENT_EXECUTION_FAILED"),
+        errorMessage: safeErrorMessage(
+          diagnostic?.message ?? agentResult.summary,
+          "Agent run failed",
+        ),
+      });
+    }
+  } catch (error) {
+    if (
+      error instanceof AgentPersistenceError ||
+      error instanceof AgentExecutionError
+    ) {
+      await bestEffortFailRun(
+        persistence,
+        ownerUserId,
+        run.id,
+        "AGENT_PERSISTENCE_FAILED",
+        "Failed to finalize agent run",
+      );
+      throw new AgentExecutionError(
+        "AGENT_PERSISTENCE_FAILED",
+        "Failed to finalize agent run",
+      );
+    }
+    throw error;
+  }
+
+  const steps = await persistence.listStepsForRun({
+    runId: finalRun.id,
+    ownerUserId,
+  });
+
+  return {
+    thread,
+    userMessage,
+    run: finalRun,
+    assistantMessage,
+    steps,
+    result: agentResult,
+  };
 }
 
 export type AgentExecutionService = ReturnType<

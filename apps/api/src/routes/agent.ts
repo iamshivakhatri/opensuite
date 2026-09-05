@@ -1,4 +1,4 @@
-import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
+import type { FastifyInstance, FastifyReply } from "fastify";
 import { z } from "zod";
 
 import { AgentCoreError, type AgentModel } from "@opensuite/agent-core";
@@ -17,6 +17,12 @@ import {
   AgentPersistenceError,
   type AgentPersistenceService,
 } from "../agent/persistence.js";
+import {
+  formatSseComment,
+  formatSseEvent,
+  type AgentRunManager,
+  type LiveEvent,
+} from "../agent/run-manager.js";
 import { getRequestUser, type SessionAuth } from "../auth/session.js";
 import {
   DocumentAccessError,
@@ -29,6 +35,10 @@ const DocumentIdParams = z.object({
 
 const ThreadIdParams = z.object({
   threadId: z.uuid("threadId must be a UUID"),
+});
+
+const RunIdParams = z.object({
+  runId: z.uuid("runId must be a UUID"),
 });
 
 const CreateThreadBody = z.object({
@@ -48,6 +58,8 @@ const CreateRunBody = z.object({
     .max(20_000, "Instruction must be at most 20000 characters"),
 });
 
+const SSE_HEARTBEAT_MS = 15_000;
+
 function unauthenticated() {
   return {
     error: {
@@ -56,25 +68,6 @@ function unauthenticated() {
       code: "UNAUTHENTICATED" as const,
     },
   };
-}
-
-/**
- * Abort when the client disconnects before the response finishes.
- * Reliable for real HTTP sockets; `app.inject()` may not emit the same close.
- */
-export function createRequestAbortSignal(
-  request: FastifyRequest,
-  reply: FastifyReply,
-): AbortSignal {
-  const controller = new AbortController();
-  const onClose = () => {
-    if (!reply.raw.writableEnded && !controller.signal.aborted) {
-      controller.abort();
-    }
-  };
-  request.raw.on("close", onClose);
-  reply.raw.on("close", onClose);
-  return controller.signal;
 }
 
 /**
@@ -104,17 +97,18 @@ export interface AgentRouteDeps {
   readonly documents: DocumentService;
   readonly persistence: AgentPersistenceService;
   readonly execution: AgentExecutionService;
+  readonly runManager: AgentRunManager;
 }
 
 /**
- * Document-scoped agent thread + synchronous run HTTP surface.
- * No SSE, no workspace-level threads, no run-list endpoints.
+ * Document-scoped agent thread + async run + SSE surface.
+ * POST /runs returns 202 quickly; progress via SSE; recovery via GET /runs.
  */
 export function registerAgentRoutes(
   app: FastifyInstance,
   deps: AgentRouteDeps,
 ): void {
-  const { auth, documents, persistence, execution } = deps;
+  const { auth, documents, persistence, runManager } = deps;
 
   app.post(
     "/api/documents/:documentId/agent/threads",
@@ -272,45 +266,212 @@ export function registerAgentRoutes(
       });
     }
 
-    const signal = createRequestAbortSignal(request, reply);
-
     try {
-      const result = await execution.execute({
+      const started = await runManager.startRun({
         userId: user.id,
         threadId: params.data.threadId,
         instruction: body.data.instruction,
-        signal,
       });
+      return reply.status(202).send({
+        run: toAgentRunDto(started.run),
+      });
+    } catch (error) {
+      return mapExecutionError(reply, error);
+    }
+  });
 
-      if (reply.sent || reply.raw.writableEnded) {
-        return;
-      }
+  app.get("/api/agent/runs/:runId", async (request, reply) => {
+    const user = await getRequestUser(auth, request);
+    if (!user) {
+      return reply.status(401).send(unauthenticated());
+    }
 
-      if (result.run.status === "failed") {
-        return reply.status(500).send({
+    const params = RunIdParams.safeParse(request.params);
+    if (!params.success) {
+      return reply.status(400).send({
+        error: {
+          statusCode: 400,
+          message: params.error.issues[0]?.message ?? "Invalid run id",
+          code: "INVALID_RUN_ID",
+        },
+      });
+    }
+
+    try {
+      const run = await persistence.getRun({
+        runId: params.data.runId,
+        ownerUserId: user.id,
+      });
+      if (!run) {
+        return reply.status(404).send({
           error: {
-            statusCode: 500,
-            message: "Agent run failed",
-            code: "AGENT_EXECUTION_FAILED",
+            statusCode: 404,
+            message: "Agent run not found",
+            code: "RUN_NOT_FOUND",
           },
-          run: toAgentRunDto(result.run),
         });
       }
 
-      return reply.status(200).send({
-        run: toAgentRunDto(result.run),
-        userMessage: toAgentMessageDto(result.userMessage),
-        assistantMessage: result.assistantMessage
-          ? toAgentMessageDto(result.assistantMessage)
-          : null,
-        steps: result.steps.map(toAgentStepDto),
+      const steps = await persistence.listStepsForRun({
+        runId: run.id,
+        ownerUserId: user.id,
+      });
+
+      return reply.send({
+        run: toAgentRunDto(run),
+        steps: steps.map(toAgentStepDto),
       });
     } catch (error) {
-      if (reply.sent || reply.raw.writableEnded) {
+      return mapPersistenceError(reply, error);
+    }
+  });
+
+  app.get("/api/agent/runs/:runId/events", async (request, reply) => {
+    const user = await getRequestUser(auth, request);
+    if (!user) {
+      return reply.status(401).send(unauthenticated());
+    }
+
+    const params = RunIdParams.safeParse(request.params);
+    if (!params.success) {
+      return reply.status(400).send({
+        error: {
+          statusCode: 400,
+          message: params.error.issues[0]?.message ?? "Invalid run id",
+          code: "INVALID_RUN_ID",
+        },
+      });
+    }
+
+    const run = await persistence.getRun({
+      runId: params.data.runId,
+      ownerUserId: user.id,
+    });
+    if (!run) {
+      return reply.status(404).send({
+        error: {
+          statusCode: 404,
+          message: "Agent run not found",
+          code: "RUN_NOT_FOUND",
+        },
+      });
+    }
+
+    reply.hijack();
+    reply.raw.writeHead(200, {
+      "Content-Type": "text/event-stream; charset=utf-8",
+      "Cache-Control": "no-cache, no-transform",
+      Connection: "keep-alive",
+      "X-Accel-Buffering": "no",
+    });
+    reply.raw.write(formatSseComment("connected"));
+
+    const terminalStatuses = new Set(["completed", "failed", "cancelled"]);
+    let cleaned = false;
+    let unsubscribe: (() => void) | null = null;
+    let heartbeat: NodeJS.Timeout | null = null;
+
+    const cleanup = () => {
+      if (cleaned) {
         return;
       }
-      return mapExecutionError(reply, error);
+      cleaned = true;
+      if (heartbeat) {
+        clearInterval(heartbeat);
+        heartbeat = null;
+      }
+      unsubscribe?.();
+      unsubscribe = null;
+      request.raw.off("close", cleanup);
+      if (!reply.raw.writableEnded) {
+        reply.raw.end();
+      }
+    };
+
+    const writeEvent = (event: LiveEvent) => {
+      if (cleaned || reply.raw.writableEnded) {
+        return;
+      }
+      reply.raw.write(formatSseEvent(event));
+      if (
+        event.type === "agent.completed" ||
+        event.type === "agent.failed" ||
+        event.type === "agent.cancelled"
+      ) {
+        cleanup();
+      }
+    };
+
+    const sub = runManager.subscribeEvents({
+      runId: run.id,
+      ownerUserId: user.id,
+      onEvent: writeEvent,
+    });
+
+    if (sub.status === "not_found") {
+      reply.raw.write(
+        formatSseEvent({
+          id: 0,
+          runId: run.id,
+          type: "agent.failed",
+          at: new Date().toISOString(),
+          data: { code: "RUN_NOT_FOUND", message: "Agent run not found" },
+        }),
+      );
+      cleanup();
+      return;
     }
+
+    if (sub.status === "not_live") {
+      // Live hub gone — durable recovery is GET /runs. Send terminal hint then close.
+      const type =
+        run.status === "failed"
+          ? "agent.failed"
+          : run.status === "cancelled"
+            ? "agent.cancelled"
+            : run.status === "completed"
+              ? "agent.completed"
+              : "agent.failed";
+      reply.raw.write(
+        formatSseEvent({
+          id: 0,
+          runId: run.id,
+          type,
+          at: new Date().toISOString(),
+          data: {
+            status: run.status,
+            live: false,
+            ...(run.status === "failed"
+              ? {
+                  code: "AGENT_EXECUTION_FAILED",
+                  message: "Agent run is no longer live",
+                }
+              : {}),
+          },
+        }),
+      );
+      cleanup();
+      return;
+    }
+
+    unsubscribe = sub.unsubscribe;
+
+    // If durable status is already terminal and we somehow still subscribed,
+    // the hub should still deliver agent.* terminal from buffer/grace.
+    if (terminalStatuses.has(run.status) && !runManager.isLive(run.id)) {
+      cleanup();
+      return;
+    }
+
+    heartbeat = setInterval(() => {
+      if (cleaned || reply.raw.writableEnded) {
+        return;
+      }
+      reply.raw.write(formatSseComment("heartbeat"));
+    }, SSE_HEARTBEAT_MS);
+    heartbeat.unref?.();
+
+    request.raw.on("close", cleanup);
   });
 }
 
@@ -322,6 +483,15 @@ function mapPersistenceError(reply: FastifyReply, error: unknown) {
           statusCode: 404,
           message: "Agent thread not found",
           code: "THREAD_NOT_FOUND",
+        },
+      });
+    }
+    if (error.code === "RUN_NOT_FOUND") {
+      return reply.status(404).send({
+        error: {
+          statusCode: 404,
+          message: "Agent run not found",
+          code: "RUN_NOT_FOUND",
         },
       });
     }
