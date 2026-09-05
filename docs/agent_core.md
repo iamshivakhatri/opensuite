@@ -58,7 +58,18 @@ execute(user instruction)
 * Parallel tools: per-run in-memory sequence counter; start-order sequences
 * Tool step failure ≠ run failure; runner `completed` → run `completed`
 * Cancel → `cancelled`; model failure → `failed` + safe error fields
-* Durable confirmation resume / HTTP / SSE deferred
+* Durable confirmation resume deferred
+
+## HTTP API (Fastify)
+
+Document-scoped, authenticated, synchronous:
+
+* `POST /api/documents/:documentId/agent/threads`
+* `GET /api/agent/threads/:threadId`
+* `GET /api/agent/threads/:threadId/messages`
+* `POST /api/agent/threads/:threadId/runs` → awaits execution, returns durable run/messages/steps
+
+Inject model/tools (or full execution service) via `buildApp` deps — not FakeAgentModel in route handlers. Default production model is an unconfigured stub. No SSE, no frontend Agent panel, no real LLM yet.
 
 ## Boundaries
 
@@ -77,6 +88,7 @@ Durable history is application-owned. `AgentExecutionService` maps selected
 ## Intentionally deferred
 
 * Real LLM providers and Office tools
-* Durable confirmation resume / chat HTTP / SSE
+* Durable confirmation resume / SSE
 * Semantic conflict detection for parallel mutations
 * Engine mutate/serialize/render adapters
+* Frontend Agent panel wiring

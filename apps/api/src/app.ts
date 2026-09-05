@@ -2,12 +2,32 @@ import Fastify, { type FastifyError, type FastifyInstance } from "fastify";
 import cors from "@fastify/cors";
 import multipart from "@fastify/multipart";
 
+import {
+  ToolRegistry,
+  type AgentModel,
+  type ConfirmationGate,
+  type DocumentRuntime,
+  type RuntimeCapabilities,
+  type SteeringSource,
+} from "@opensuite/agent-core";
 import type { Db } from "@opensuite/db";
 
+import {
+  createAgentExecutionService,
+  type AgentExecutionService,
+} from "./agent/execution.js";
+import {
+  createAgentPersistenceService,
+  type AgentPersistenceService,
+} from "./agent/persistence.js";
 import type { SessionAuth } from "./auth/session.js";
 import type { AppConfig } from "./config/index.js";
 import { createDocumentService } from "./documents/service.js";
 import type { AuthHandler } from "./routes/auth.js";
+import {
+  createUnconfiguredAgentModel,
+  registerAgentRoutes,
+} from "./routes/agent.js";
 import { registerAuthRoutes } from "./routes/auth.js";
 import { registerDocumentRoutes } from "./routes/documents.js";
 import { registerHealthRoutes } from "./routes/health.js";
@@ -16,10 +36,28 @@ import { registerWorkspaceRoutes } from "./routes/workspaces.js";
 import type { ObjectStorage } from "./storage/types.js";
 import { createWorkspaceService } from "./workspaces/service.js";
 
+/**
+ * Optional agent stack overrides for tests / future provider wiring.
+ * Routes never construct FakeAgentModel — inject model/tools (or a full
+ * execution service) from composition.
+ */
+export interface AgentAppDependencies {
+  readonly persistence?: AgentPersistenceService;
+  readonly execution?: AgentExecutionService;
+  readonly model?: AgentModel;
+  readonly tools?: ToolRegistry;
+  readonly runtime?: DocumentRuntime;
+  readonly confirmation?: ConfirmationGate;
+  readonly steering?: SteeringSource;
+  readonly capabilities?: RuntimeCapabilities;
+  readonly maxTurns?: number;
+}
+
 export interface AppDependencies {
   readonly auth: AuthHandler & SessionAuth;
   readonly db: Db;
   readonly storage: ObjectStorage;
+  readonly agent?: AgentAppDependencies;
 }
 
 /**
@@ -87,11 +125,33 @@ export async function buildApp(
     },
   });
 
+  const agentPersistence =
+    deps.agent?.persistence ?? createAgentPersistenceService(deps.db);
+  const agentExecution =
+    deps.agent?.execution ??
+    createAgentExecutionService({
+      persistence: agentPersistence,
+      documents,
+      model: deps.agent?.model ?? createUnconfiguredAgentModel(),
+      tools: deps.agent?.tools ?? ToolRegistry.create([]),
+      runtime: deps.agent?.runtime,
+      confirmation: deps.agent?.confirmation,
+      steering: deps.agent?.steering,
+      capabilities: deps.agent?.capabilities,
+      maxTurns: deps.agent?.maxTurns,
+    });
+
   registerHealthRoutes(app);
   registerAuthRoutes(app, deps.auth);
   registerMeRoutes(app, deps.auth);
   registerWorkspaceRoutes(app, deps.auth, workspaces);
   registerDocumentRoutes(app, deps.auth, workspaces, documents);
+  registerAgentRoutes(app, {
+    auth: deps.auth,
+    documents,
+    persistence: agentPersistence,
+    execution: agentExecution,
+  });
 
   return app;
 }

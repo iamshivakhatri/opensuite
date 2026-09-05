@@ -5,31 +5,29 @@ _Read this before starting any work. Keep it a concise current-state handoff, no
 ## What Exists
 
 * Auth, workspaces, documents, Files UI, document workspace shell.
-* Agent persistence (DB + service) — no public chat API.
+* Agent persistence + **AgentExecutionService** (durable Thread → Message → Run → Step).
 * Agent-core `AgentRunner` (deterministic fake/model loop). **No real LLM.**
-* **AgentExecutionService** (`apps/api`) — durable run orchestration via persistence ↔ runner.
+* **Authenticated agent HTTP API** (sync runs; no SSE/frontend yet).
 
 ## Just Completed
 
-`AgentExecutionService` in `apps/api/src/agent/execution.ts`:
+Fastify agent routes (`apps/api/src/routes/agent.ts`):
 
-* `execute({ userId, threadId, instruction, signal? })` awaits `AgentRunner` in-process
-* Ownership: thread → workspace → owner (non-owned → `THREAD_NOT_FOUND`)
-* Atomic start: user `AgentMessage` + `AgentRun(queued)` in one transaction
-* Document-scoped threads resolve latest `DocumentRef` (id/version/format); no version rows created
-* Conversation context = prior persisted user/assistant messages + current instruction (no dup)
-* Event bridge persists meaningful steps (tool/confirmation); in-memory sequence per run
-* Partial success: failed tools keep run `completed` when runner succeeds
-* Cancel → run `cancelled`; failure → run `failed` + safe error fields; no fake assistant
-* Empty runner summary → no assistant message
-* Confirmation: inject gate (tests use `AutoApproveConfirmationGate`); no gate → deny destructive
-* No HTTP/SSE/jobs/real LLM/Rust/Office tools
+* `POST /api/documents/:documentId/agent/threads` — document-scoped thread
+* `GET /api/agent/threads/:threadId`
+* `GET /api/agent/threads/:threadId/messages` — user/assistant only
+* `POST /api/agent/threads/:threadId/runs` — await `AgentExecutionService.execute`
+* Ownership: session user; non-owned → 404; unauthenticated → 401
+* Composition injects model/tools via `AppDependencies.agent` (routes never build FakeAgentModel)
+* Production default model = unconfigured stub until a real provider is wired
+* Destructive tools deny-by-default (no confirmation gate in default wiring)
+* Client disconnect aborts the in-flight run when the socket closes
 
 ## Current Decisions
 
-* Dangerous confirmation is opt-in (`AutoApproveConfirmationGate`); default deny.
-* Steering stays in-memory (`InMemorySteeringQueue`); durable wait/resume deferred.
-* Step sequence owned by the in-process event adapter (not distributed).
+* Document-first threads only (no workspace-level agent API yet).
+* Sync POST run (no job queue / SSE).
+* Dangerous confirmation remains opt-in for tests only.
 
 ## Verification Status
 
@@ -41,11 +39,10 @@ _Read this before starting any work. Keep it a concise current-state handoff, no
 
 ## Intentionally Deferred
 
-* Chat HTTP, SSE, frontend Agent panel
+* SSE / streaming, frontend Agent panel
 * Real providers, Office tools, engine mutate/render
-* Durable confirmation resume / cross-request steering
-* Background job queues
+* Durable confirmation resume, run-list endpoints, job queues
 
 ## Recommended Next Step
 
-Minimal Fastify agent endpoint that calls `AgentExecutionService` (still FakeAgentModel).
+SSE (or similar) progress events for an in-flight run, still on FakeAgentModel.
