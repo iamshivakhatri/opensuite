@@ -39,6 +39,7 @@ import { registerAuthRoutes } from "./routes/auth.js";
 import { registerDocumentRoutes } from "./routes/documents.js";
 import { registerHealthRoutes } from "./routes/health.js";
 import { registerMeRoutes } from "./routes/me.js";
+import { registerTrashRoutes } from "./routes/trash.js";
 import { registerWorkspaceRoutes } from "./routes/workspaces.js";
 import type { ObjectStorage } from "./storage/types.js";
 import { createWorkspaceService } from "./workspaces/service.js";
@@ -173,6 +174,7 @@ export async function buildApp(
   registerMeRoutes(app, deps.auth);
   registerWorkspaceRoutes(app, deps.auth, workspaces);
   registerDocumentRoutes(app, deps.auth, workspaces, documents, preferences);
+  registerTrashRoutes(app, deps.auth, workspaces, documents);
   registerAgentRoutes(app, {
     auth: deps.auth,
     documents,

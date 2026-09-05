@@ -22,6 +22,14 @@ const SetStarBody = z.object({
   starred: z.boolean(),
 });
 
+const RenameDocumentBody = z.object({
+  name: z
+    .string()
+    .trim()
+    .min(1, "Document name is required")
+    .max(255, "Document name must be at most 255 characters"),
+});
+
 const LibraryFormatQuery = z.object({
   format: z.enum(["docx", "pptx", "xlsx"]),
 });
@@ -305,6 +313,129 @@ export function registerDocumentRoutes(
         starred: body.data.starred,
       });
       return reply.send(result);
+    } catch (error) {
+      if (error instanceof DocumentAccessError) {
+        return reply.status(error.statusCode).send({
+          error: {
+            statusCode: error.statusCode,
+            message: error.message,
+            code: error.code,
+          },
+        });
+      }
+      throw error;
+    }
+  });
+
+  app.patch("/api/documents/:documentId", async (request, reply) => {
+    const user = await getRequestUser(auth, request);
+    if (!user) {
+      return reply.status(401).send(unauthenticated());
+    }
+
+    const params = DocumentIdParams.safeParse(request.params);
+    if (!params.success) {
+      return reply.status(400).send({
+        error: {
+          statusCode: 400,
+          message: params.error.issues[0]?.message ?? "Invalid document id",
+          code: "INVALID_DOCUMENT_ID",
+        },
+      });
+    }
+
+    const body = RenameDocumentBody.safeParse(request.body);
+    if (!body.success) {
+      return reply.status(400).send({
+        error: {
+          statusCode: 400,
+          message: body.error.issues[0]?.message ?? "Invalid document name",
+          code: "INVALID_DOCUMENT_NAME",
+        },
+      });
+    }
+
+    try {
+      const document = await documents.rename({
+        documentId: params.data.documentId,
+        ownerUserId: user.id,
+        name: body.data.name,
+      });
+      return reply.send({ document });
+    } catch (error) {
+      if (error instanceof DocumentAccessError) {
+        return reply.status(error.statusCode).send({
+          error: {
+            statusCode: error.statusCode,
+            message: error.message,
+            code: error.code,
+          },
+        });
+      }
+      throw error;
+    }
+  });
+
+  app.delete("/api/documents/:documentId", async (request, reply) => {
+    const user = await getRequestUser(auth, request);
+    if (!user) {
+      return reply.status(401).send(unauthenticated());
+    }
+
+    const params = DocumentIdParams.safeParse(request.params);
+    if (!params.success) {
+      return reply.status(400).send({
+        error: {
+          statusCode: 400,
+          message: params.error.issues[0]?.message ?? "Invalid document id",
+          code: "INVALID_DOCUMENT_ID",
+        },
+      });
+    }
+
+    try {
+      await documents.softDelete({
+        documentId: params.data.documentId,
+        ownerUserId: user.id,
+      });
+      return reply.status(204).send();
+    } catch (error) {
+      if (error instanceof DocumentAccessError) {
+        return reply.status(error.statusCode).send({
+          error: {
+            statusCode: error.statusCode,
+            message: error.message,
+            code: error.code,
+          },
+        });
+      }
+      throw error;
+    }
+  });
+
+  app.post("/api/documents/:documentId/restore", async (request, reply) => {
+    const user = await getRequestUser(auth, request);
+    if (!user) {
+      return reply.status(401).send(unauthenticated());
+    }
+
+    const params = DocumentIdParams.safeParse(request.params);
+    if (!params.success) {
+      return reply.status(400).send({
+        error: {
+          statusCode: 400,
+          message: params.error.issues[0]?.message ?? "Invalid document id",
+          code: "INVALID_DOCUMENT_ID",
+        },
+      });
+    }
+
+    try {
+      const document = await documents.restore({
+        documentId: params.data.documentId,
+        ownerUserId: user.id,
+      });
+      return reply.send({ document });
     } catch (error) {
       if (error instanceof DocumentAccessError) {
         return reply.status(error.statusCode).send({

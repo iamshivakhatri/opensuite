@@ -158,4 +158,32 @@ export function registerWorkspaceRoutes(
 
     return reply.status(204).send();
   });
+
+  app.post("/api/workspaces/:workspaceId/restore", async (request, reply) => {
+    const user = await getRequestUser(auth, request);
+    if (!user) {
+      return reply.status(401).send(unauthenticated());
+    }
+
+    const params = WorkspaceIdParams.safeParse(request.params);
+    if (!params.success) {
+      return reply.status(400).send({
+        error: {
+          statusCode: 400,
+          message: params.error.issues[0]?.message ?? "Invalid workspace id",
+          code: "INVALID_WORKSPACE_ID",
+        },
+      });
+    }
+
+    const workspace = await workspaces.restore({
+      workspaceId: params.data.workspaceId,
+      ownerUserId: user.id,
+    });
+    if (!workspace) {
+      return reply.status(404).send(workspaceNotFound());
+    }
+
+    return reply.send({ workspace });
+  });
 }

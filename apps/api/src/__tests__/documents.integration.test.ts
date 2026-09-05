@@ -833,3 +833,251 @@ test(
     }
   },
 );
+
+test(
+  "document rename, soft-delete, restore, and trash filtering",
+  { skip: !runDbIntegrationTests || databaseUrl === undefined },
+  async () => {
+    const config = testConfig();
+    const dbClient = createDbClient({ databaseUrl: config.databaseUrl });
+    const emailSender = createStubEmailSender();
+    const auth = createAuth(config, dbClient.db, emailSender);
+    const app = await buildApp(config, {
+      auth,
+      db: dbClient.db,
+      storage: createMemoryObjectStorage(),
+    });
+    await app.ready();
+
+    try {
+      const alice = await signUpVerifyAndSignIn(
+        app,
+        config,
+        emailSender,
+        "LifecycleAlice",
+      );
+      const bob = await signUpVerifyAndSignIn(
+        app,
+        config,
+        emailSender,
+        "LifecycleBob",
+      );
+      const workspaceId = await createWorkspace(
+        app,
+        config,
+        alice.cookie,
+        "Lifecycle WS",
+      );
+
+      const file = multipartFilePayload("notes.docx", "PK");
+      const upload = await app.inject({
+        method: "POST",
+        url: `/api/workspaces/${workspaceId}/documents`,
+        headers: {
+          ...file.headers,
+          cookie: alice.cookie,
+          origin: config.webOrigin,
+        },
+        payload: file.payload,
+      });
+      assert.equal(upload.statusCode, 201, upload.body);
+      const documentId = (
+        upload.json() as { document: { id: string } }
+      ).document.id;
+
+      const rename = await app.inject({
+        method: "PATCH",
+        url: `/api/documents/${documentId}`,
+        headers: {
+          "content-type": "application/json",
+          cookie: alice.cookie,
+          origin: config.webOrigin,
+        },
+        payload: { name: "  Quarterly Notes  " },
+      });
+      assert.equal(rename.statusCode, 200, rename.body);
+      assert.equal(
+        (rename.json() as { document: { name: string } }).document.name,
+        "Quarterly Notes.docx",
+      );
+
+      const badFormat = await app.inject({
+        method: "PATCH",
+        url: `/api/documents/${documentId}`,
+        headers: {
+          "content-type": "application/json",
+          cookie: alice.cookie,
+          origin: config.webOrigin,
+        },
+        payload: { name: "hack.pptx" },
+      });
+      assert.equal(badFormat.statusCode, 400, badFormat.body);
+
+      const bobRename = await app.inject({
+        method: "PATCH",
+        url: `/api/documents/${documentId}`,
+        headers: {
+          "content-type": "application/json",
+          cookie: bob.cookie,
+          origin: config.webOrigin,
+        },
+        payload: { name: "Stolen.docx" },
+      });
+      assert.equal(bobRename.statusCode, 404, bobRename.body);
+
+      await app.inject({
+        method: "GET",
+        url: `/api/documents/${documentId}`,
+        headers: { cookie: alice.cookie, origin: config.webOrigin },
+      });
+      await app.inject({
+        method: "PUT",
+        url: `/api/documents/${documentId}/star`,
+        headers: {
+          "content-type": "application/json",
+          cookie: alice.cookie,
+          origin: config.webOrigin,
+        },
+        payload: { starred: true },
+      });
+
+      const del = await app.inject({
+        method: "DELETE",
+        url: `/api/documents/${documentId}`,
+        headers: { cookie: alice.cookie, origin: config.webOrigin },
+      });
+      assert.equal(del.statusCode, 204, del.body);
+
+      const getDeleted = await app.inject({
+        method: "GET",
+        url: `/api/documents/${documentId}`,
+        headers: { cookie: alice.cookie, origin: config.webOrigin },
+      });
+      assert.equal(getDeleted.statusCode, 404, getDeleted.body);
+
+      const list = await app.inject({
+        method: "GET",
+        url: `/api/workspaces/${workspaceId}/documents`,
+        headers: { cookie: alice.cookie, origin: config.webOrigin },
+      });
+      assert.equal(list.statusCode, 200, list.body);
+      assert.equal(
+        (
+          list.json() as { documents: Array<{ id: string }> }
+        ).documents.some((doc) => doc.id === documentId),
+        false,
+      );
+
+      for (const path of [
+        "/api/documents/recent",
+        "/api/documents/starred",
+        "/api/documents/library?format=docx",
+      ]) {
+        const response = await app.inject({
+          method: "GET",
+          url: path,
+          headers: { cookie: alice.cookie, origin: config.webOrigin },
+        });
+        assert.equal(response.statusCode, 200, response.body);
+        assert.equal(
+          (
+            response.json() as { documents: Array<{ id: string }> }
+          ).documents.some((doc) => doc.id === documentId),
+          false,
+          `${path} must hide trashed docs`,
+        );
+      }
+
+      const trash = await app.inject({
+        method: "GET",
+        url: "/api/trash",
+        headers: { cookie: alice.cookie, origin: config.webOrigin },
+      });
+      assert.equal(trash.statusCode, 200, trash.body);
+      const trashBody = trash.json() as {
+        documents: Array<{ id: string; name: string }>;
+        workspaces: unknown[];
+      };
+      assert.ok(trashBody.documents.some((doc) => doc.id === documentId));
+
+      const bobTrash = await app.inject({
+        method: "GET",
+        url: "/api/trash",
+        headers: { cookie: bob.cookie, origin: config.webOrigin },
+      });
+      assert.equal(bobTrash.statusCode, 200, bobTrash.body);
+      assert.equal(
+        (
+          bobTrash.json() as { documents: Array<{ id: string }> }
+        ).documents.some((doc) => doc.id === documentId),
+        false,
+      );
+
+      const restore = await app.inject({
+        method: "POST",
+        url: `/api/documents/${documentId}/restore`,
+        headers: { cookie: alice.cookie, origin: config.webOrigin },
+      });
+      assert.equal(restore.statusCode, 200, restore.body);
+      assert.equal(
+        (restore.json() as { document: { name: string } }).document.name,
+        "Quarterly Notes.docx",
+      );
+
+      const getRestored = await app.inject({
+        method: "GET",
+        url: `/api/documents/${documentId}`,
+        headers: { cookie: alice.cookie, origin: config.webOrigin },
+      });
+      assert.equal(getRestored.statusCode, 200, getRestored.body);
+
+      // Trash workspace while document is active, then trash document, restore order.
+      await app.inject({
+        method: "DELETE",
+        url: `/api/documents/${documentId}`,
+        headers: { cookie: alice.cookie, origin: config.webOrigin },
+      });
+      const trashWs = await app.inject({
+        method: "DELETE",
+        url: `/api/workspaces/${workspaceId}`,
+        headers: { cookie: alice.cookie, origin: config.webOrigin },
+      });
+      assert.equal(trashWs.statusCode, 204, trashWs.body);
+
+      const restoreDocBlocked = await app.inject({
+        method: "POST",
+        url: `/api/documents/${documentId}/restore`,
+        headers: { cookie: alice.cookie, origin: config.webOrigin },
+      });
+      assert.equal(restoreDocBlocked.statusCode, 409, restoreDocBlocked.body);
+      assert.equal(
+        (restoreDocBlocked.json() as { error: { code: string } }).error.code,
+        "WORKSPACE_DELETED",
+      );
+
+      const restoreWs = await app.inject({
+        method: "POST",
+        url: `/api/workspaces/${workspaceId}/restore`,
+        headers: { cookie: alice.cookie, origin: config.webOrigin },
+      });
+      assert.equal(restoreWs.statusCode, 200, restoreWs.body);
+
+      const restoreDoc = await app.inject({
+        method: "POST",
+        url: `/api/documents/${documentId}/restore`,
+        headers: { cookie: alice.cookie, origin: config.webOrigin },
+      });
+      assert.equal(restoreDoc.statusCode, 200, restoreDoc.body);
+
+      const download = await app.inject({
+        method: "GET",
+        url: `/api/documents/${documentId}/download`,
+        headers: { cookie: alice.cookie, origin: config.webOrigin },
+      });
+      assert.equal(download.statusCode, 200, download.body);
+    } finally {
+      await app.close();
+      await dbClient.close();
+    }
+  },
+);

@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, isNull } from "drizzle-orm";
+import { and, asc, desc, eq, isNotNull, isNull, or } from "drizzle-orm";
 
 import type { Db } from "@opensuite/db";
 import { schema } from "@opensuite/db";
@@ -328,11 +328,22 @@ export function createAgentPersistenceService(db: Db) {
         schema.workspace,
         eq(schema.agentThread.workspaceId, schema.workspace.id),
       )
+      .leftJoin(
+        schema.document,
+        eq(schema.agentThread.documentId, schema.document.id),
+      )
       .where(
         and(
           eq(schema.agentThread.id, threadId),
           eq(schema.workspace.ownerUserId, ownerUserId),
           isNull(schema.workspace.deletedAt),
+          or(
+            isNull(schema.agentThread.documentId),
+            and(
+              isNotNull(schema.document.id),
+              isNull(schema.document.deletedAt),
+            ),
+          ),
         ),
       )
       .limit(1);
@@ -373,11 +384,22 @@ export function createAgentPersistenceService(db: Db) {
         schema.workspace,
         eq(schema.agentThread.workspaceId, schema.workspace.id),
       )
+      .leftJoin(
+        schema.document,
+        eq(schema.agentThread.documentId, schema.document.id),
+      )
       .where(
         and(
           eq(schema.agentRun.id, input.runId),
           eq(schema.workspace.ownerUserId, input.ownerUserId),
           isNull(schema.workspace.deletedAt),
+          or(
+            isNull(schema.agentThread.documentId),
+            and(
+              isNotNull(schema.document.id),
+              isNull(schema.document.deletedAt),
+            ),
+          ),
         ),
       )
       .limit(1);

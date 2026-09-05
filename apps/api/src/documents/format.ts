@@ -51,6 +51,37 @@ export function contentTypeForFormat(format: OfficeFormat): string {
 }
 
 /**
+ * Normalizes a rename target: sanitize basename, preserve `format` extension,
+ * reject cross-format renames. Does not touch storage keys.
+ */
+export function normalizeDocumentRenameName(
+  raw: string,
+  format: OfficeFormat,
+): string | null {
+  const sanitized = sanitizeUploadFilename(raw);
+  if (!sanitized) {
+    return null;
+  }
+
+  const detected = officeFormatFromFilename(sanitized);
+  if (detected != null && detected !== format) {
+    return null;
+  }
+
+  const lower = sanitized.toLowerCase();
+  if (lower.endsWith(`.${format}`)) {
+    return sanitized;
+  }
+
+  // Unknown extension (e.g. .pdf) — reject rather than silently rewrite.
+  if (/\.[a-z0-9]{1,10}$/i.test(sanitized)) {
+    return null;
+  }
+
+  return `${sanitized}.${format}`;
+}
+
+/**
  * Builds a safe `Content-Disposition: attachment` value from a stored document
  * name, ensuring the download has the correct Office extension.
  */

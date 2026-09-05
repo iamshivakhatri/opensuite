@@ -257,7 +257,7 @@ export function WorkspacesHome() {
                     setDeleteTarget(workspace);
                   }}
                 >
-                  Delete
+                  Move to Trash
                 </button>
               </div>
             ) : null}
@@ -290,10 +290,10 @@ export function WorkspacesHome() {
       ) : null}
 
       {deleteTarget ? (
-        <Dialog title="Delete workspace?" onClose={() => setDeleteTarget(null)}>
+        <Dialog title="Move workspace to Trash?" onClose={() => setDeleteTarget(null)}>
           <p className="mb-4 text-[12px] leading-relaxed text-ink-soft">
-            Soft-delete <span className="font-medium text-ink">{deleteTarget.name}</span>.
-            Files remain in history but the workspace leaves your lists.
+            Move <span className="font-medium text-ink">{deleteTarget.name}</span>{" "}
+            to Trash. Files remain recoverable from Trash.
           </p>
           {actionError ? (
             <p className="mb-3 text-[11px] text-danger">{actionError}</p>
@@ -309,7 +309,7 @@ export function WorkspacesHome() {
               disabled={busy}
               onClick={() => void handleDelete()}
             >
-              {busy ? "Deleting…" : "Delete"}
+              {busy ? "Moving…" : "Move to Trash"}
             </Button>
           </div>
         </Dialog>

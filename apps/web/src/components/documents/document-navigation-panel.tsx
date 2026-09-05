@@ -2,15 +2,29 @@
 
 import * as React from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 
 import {
+  deleteDocument,
+  downloadDocument,
   listDocuments,
+  renameDocument,
   setDocumentStarred,
   uploadDocument,
   type ListedDocument,
 } from "@/lib/api";
 import { formatLabel, userFacingError } from "@/components/files/format";
+import {
+  ConfirmDialog,
+  ContextMenu,
+  PromptDialog,
+} from "@/components/ui/context-menu";
 import { documentPath, workspacePath } from "@/lib/paths";
+import {
+  readStoredTabs,
+  removeStoredTab,
+  writeStoredTabs,
+} from "@/components/documents/document-open-tabs";
 
 /**
  * Left explorer for the workspace IDE — all files in the workspace.
@@ -20,24 +34,35 @@ export function DocumentNavigationPanel({
   activeDocumentId,
   collapsed,
   onToggle,
+  onDocumentRenamed,
+  onDocumentTrashed,
 }: {
   workspaceId: string;
   activeDocumentId: string | null;
   collapsed: boolean;
   onToggle: () => void;
+  onDocumentRenamed?: (document: ListedDocument) => void;
+  onDocumentTrashed?: (documentId: string) => void;
 }) {
+  const router = useRouter();
   const [siblings, setSiblings] = React.useState<ListedDocument[] | null>(null);
   const [loadError, setLoadError] = React.useState<string | null>(null);
   const [uploading, setUploading] = React.useState(false);
   const [uploadError, setUploadError] = React.useState<string | null>(null);
-  const [hoverId, setHoverId] = React.useState<string | null>(null);
+  const [menuDocId, setMenuDocId] = React.useState<string | null>(null);
+  const [renameDoc, setRenameDoc] = React.useState<ListedDocument | null>(null);
+  const [trashDoc, setTrashDoc] = React.useState<ListedDocument | null>(null);
+  const [busy, setBusy] = React.useState(false);
+  const [actionError, setActionError] = React.useState<string | null>(null);
   const fileRef = React.useRef<HTMLInputElement>(null);
+  const menuAnchorRefs = React.useRef<Map<string, HTMLButtonElement>>(
+    new Map(),
+  );
 
   const refresh = React.useCallback(async () => {
     setLoadError(null);
     try {
-      const docs = await listDocuments(workspaceId);
-      setSiblings(docs);
+      setSiblings(await listDocuments(workspaceId));
     } catch (error) {
       setLoadError(userFacingError(error, "Could not load workspace files."));
     }
@@ -63,23 +88,56 @@ export function DocumentNavigationPanel({
     }
   }
 
-  async function toggleStar(event: React.MouseEvent, doc: ListedDocument) {
-    event.preventDefault();
-    event.stopPropagation();
-    const next = !doc.starred;
-    setSiblings((current) =>
-      (current ?? []).map((item) =>
-        item.id === doc.id ? { ...item, starred: next } : item,
-      ),
-    );
+  async function handleRename(name: string) {
+    if (!renameDoc || busy) return;
+    setBusy(true);
+    setActionError(null);
     try {
-      await setDocumentStarred(doc.id, next);
-    } catch {
+      const updated = await renameDocument(renameDoc.id, name);
       setSiblings((current) =>
         (current ?? []).map((item) =>
-          item.id === doc.id ? { ...item, starred: !next } : item,
+          item.id === updated.id ? { ...item, ...updated } : item,
         ),
       );
+      const tabs = readStoredTabs(workspaceId).map((tab) =>
+        tab.id === updated.id
+          ? { ...tab, name: updated.name, format: updated.format }
+          : tab,
+      );
+      writeStoredTabs(workspaceId, tabs);
+      onDocumentRenamed?.(updated);
+      setRenameDoc(null);
+    } catch (error) {
+      setActionError(userFacingError(error, "Could not rename file."));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function handleTrash() {
+    if (!trashDoc || busy) return;
+    setBusy(true);
+    setActionError(null);
+    try {
+      const id = trashDoc.id;
+      await deleteDocument(id);
+      setSiblings((current) => (current ?? []).filter((item) => item.id !== id));
+      removeStoredTab(workspaceId, id);
+      setTrashDoc(null);
+      onDocumentTrashed?.(id);
+      if (activeDocumentId === id) {
+        const remaining = readStoredTabs(workspaceId);
+        const fallback = remaining[remaining.length - 1];
+        if (fallback) {
+          router.push(documentPath(workspaceId, fallback.id));
+        } else {
+          router.push(workspacePath(workspaceId));
+        }
+      }
+    } catch (error) {
+      setActionError(userFacingError(error, "Could not move file to Trash."));
+    } finally {
+      setBusy(false);
     }
   }
 
@@ -99,6 +157,7 @@ export function DocumentNavigationPanel({
   }
 
   const files = siblings ?? [];
+  const menuDoc = files.find((file) => file.id === menuDocId) ?? null;
 
   return (
     <aside className="flex h-full w-[220px] shrink-0 flex-col border-r border-line bg-[var(--sidebar)]">
@@ -179,15 +238,8 @@ export function DocumentNavigationPanel({
 
         {files.map((file) => {
           const active = file.id === activeDocumentId;
-          const starred = Boolean(file.starred);
-          const showStar = hoverId === file.id || starred || active;
           return (
-            <div
-              key={file.id}
-              className="relative"
-              onMouseEnter={() => setHoverId(file.id)}
-              onMouseLeave={() => setHoverId(null)}
-            >
+            <div key={file.id} className="group relative">
               <Link
                 href={documentPath(workspaceId, file.id)}
                 className={`flex w-full items-center gap-2 rounded-[8px] py-1.5 pl-2 pr-7 text-left text-[11px] ${
@@ -206,16 +258,24 @@ export function DocumentNavigationPanel({
                   {formatLabel(file.format)}
                 </span>
               </Link>
-              {showStar ? (
-                <button
-                  type="button"
-                  title={starred ? "Unstar" : "Star"}
-                  onClick={(event) => void toggleStar(event, file)}
-                  className="absolute right-1 top-1/2 grid h-5 w-5 -translate-y-1/2 place-items-center rounded text-[11px] text-ink-faint hover:text-accent"
-                >
-                  {starred ? "★" : "☆"}
-                </button>
-              ) : null}
+              <button
+                type="button"
+                title="File actions"
+                ref={(node) => {
+                  if (node) menuAnchorRefs.current.set(file.id, node);
+                  else menuAnchorRefs.current.delete(file.id);
+                }}
+                onClick={(event) => {
+                  event.preventDefault();
+                  event.stopPropagation();
+                  setMenuDocId((current) =>
+                    current === file.id ? null : file.id,
+                  );
+                }}
+                className="absolute right-0.5 top-1/2 grid h-5 w-5 -translate-y-1/2 place-items-center rounded text-[11px] text-ink-faint opacity-0 hover:bg-sunken hover:text-ink group-hover:opacity-100"
+              >
+                ···
+              </button>
             </div>
           );
         })}
@@ -226,6 +286,100 @@ export function DocumentNavigationPanel({
           </p>
         ) : null}
       </div>
+
+      {menuDoc ? (
+        <ContextMenu
+          open={menuDocId === menuDoc.id}
+          onClose={() => setMenuDocId(null)}
+          anchorRef={{
+            current: menuAnchorRefs.current.get(menuDoc.id) ?? null,
+          }}
+          items={[
+            {
+              id: "open",
+              label: "Open",
+              onSelect: () =>
+                router.push(documentPath(workspaceId, menuDoc.id)),
+            },
+            {
+              id: "rename",
+              label: "Rename",
+              onSelect: () => {
+                setActionError(null);
+                setRenameDoc(menuDoc);
+              },
+            },
+            {
+              id: "star",
+              label: menuDoc.starred ? "Unstar" : "Star",
+              onSelect: () => {
+                const next = !menuDoc.starred;
+                setSiblings((current) =>
+                  (current ?? []).map((item) =>
+                    item.id === menuDoc.id ? { ...item, starred: next } : item,
+                  ),
+                );
+                void setDocumentStarred(menuDoc.id, next).catch(() => {
+                  setSiblings((current) =>
+                    (current ?? []).map((item) =>
+                      item.id === menuDoc.id
+                        ? { ...item, starred: !next }
+                        : item,
+                    ),
+                  );
+                });
+              },
+            },
+            {
+              id: "download",
+              label: "Download",
+              onSelect: () => {
+                void downloadDocument(menuDoc.id).catch(() => {
+                  setUploadError("Could not download this file.");
+                });
+              },
+            },
+            {
+              id: "trash",
+              label: "Move to Trash",
+              danger: true,
+              onSelect: () => {
+                setActionError(null);
+                setTrashDoc(menuDoc);
+              },
+            },
+          ]}
+        />
+      ) : null}
+
+      {renameDoc ? (
+        <PromptDialog
+          title="Rename file"
+          initialValue={renameDoc.name}
+          busy={busy}
+          error={actionError}
+          onCancel={() => setRenameDoc(null)}
+          onSubmit={(name) => void handleRename(name)}
+        />
+      ) : null}
+
+      {trashDoc ? (
+        <ConfirmDialog
+          title="Move to Trash?"
+          body={
+            <>
+              Move{" "}
+              <span className="font-medium text-ink">{trashDoc.name}</span> to
+              Trash. You can restore it later.
+            </>
+          }
+          confirmLabel="Move to Trash"
+          busy={busy}
+          error={actionError}
+          onCancel={() => setTrashDoc(null)}
+          onConfirm={() => void handleTrash()}
+        />
+      ) : null}
     </aside>
   );
 }

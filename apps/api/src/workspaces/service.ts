@@ -1,4 +1,4 @@
-import { and, desc, eq, inArray, isNull } from "drizzle-orm";
+import { and, desc, eq, inArray, isNotNull, isNull } from "drizzle-orm";
 
 import type { Db } from "@opensuite/db";
 import { schema } from "@opensuite/db";
@@ -244,6 +244,69 @@ export function createWorkspaceService(db: Db) {
         .returning({ id: schema.workspace.id });
 
       return Boolean(row);
+    },
+
+    /**
+     * Restores a soft-deleted workspace. Nested documents keep their own
+     * deletedAt — only previously active docs become accessible again.
+     */
+    async restore(input: {
+      workspaceId: string;
+      ownerUserId: string;
+    }): Promise<WorkspaceDto | null> {
+      const [row] = await db
+        .update(schema.workspace)
+        .set({
+          deletedAt: null,
+          updatedAt: new Date(),
+        })
+        .where(
+          and(
+            eq(schema.workspace.id, input.workspaceId),
+            eq(schema.workspace.ownerUserId, input.ownerUserId),
+            isNotNull(schema.workspace.deletedAt),
+          ),
+        )
+        .returning({
+          id: schema.workspace.id,
+          name: schema.workspace.name,
+          createdAt: schema.workspace.createdAt,
+          updatedAt: schema.workspace.updatedAt,
+        });
+
+      return row ? toWorkspaceDto(row) : null;
+    },
+
+    async listTrash(ownerUserId: string): Promise<
+      Array<
+        WorkspaceDto & {
+          readonly deletedAt: string;
+        }
+      >
+    > {
+      const rows = await db
+        .select({
+          id: schema.workspace.id,
+          name: schema.workspace.name,
+          createdAt: schema.workspace.createdAt,
+          updatedAt: schema.workspace.updatedAt,
+          deletedAt: schema.workspace.deletedAt,
+        })
+        .from(schema.workspace)
+        .where(
+          and(
+            eq(schema.workspace.ownerUserId, ownerUserId),
+            isNotNull(schema.workspace.deletedAt),
+          ),
+        )
+        .orderBy(desc(schema.workspace.deletedAt));
+
+      return rows
+        .filter((row) => row.deletedAt != null)
+        .map((row) => ({
+          ...toWorkspaceDto(row),
+          deletedAt: row.deletedAt!.toISOString(),
+        }));
     },
   };
 }

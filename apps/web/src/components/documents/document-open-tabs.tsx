@@ -48,6 +48,11 @@ export function writeStoredTabs(
   window.sessionStorage.setItem(storageKey(workspaceId), JSON.stringify(tabs));
 }
 
+export function removeStoredTab(workspaceId: string, documentId: string): void {
+  const next = readStoredTabs(workspaceId).filter((tab) => tab.id !== documentId);
+  writeStoredTabs(workspaceId, next);
+}
+
 /**
  * Open-document tab strip. ＋ opens a file picker (does not leave the workspace).
  */

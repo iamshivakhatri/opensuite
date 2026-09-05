@@ -16,6 +16,8 @@ export function DocumentHeader({
   onDownload,
   starred,
   onToggleStar,
+  onRename,
+  onTrash,
 }: {
   workspaceId: string;
   workspaceName?: string | null;
@@ -24,6 +26,8 @@ export function DocumentHeader({
   onDownload?: () => void;
   starred?: boolean;
   onToggleStar?: () => void;
+  onRename?: () => void;
+  onTrash?: () => void;
 }) {
   return (
     <header
@@ -43,9 +47,14 @@ export function DocumentHeader({
       {document ? (
         <>
           <div className="flex min-w-0 items-center gap-2">
-            <span className="truncate text-[11.5px] font-semibold text-ink">
+            <button
+              type="button"
+              title="Rename"
+              onClick={onRename}
+              className="truncate text-left text-[11.5px] font-semibold text-ink hover:underline"
+            >
               {document.name}
-            </span>
+            </button>
             <span className="shrink-0 rounded-full border border-line bg-surface px-[6px] py-[2px] font-mono text-[7.5px] font-medium text-ink-faint">
               {formatLabel(document.format)}
             </span>
@@ -62,6 +71,16 @@ export function DocumentHeader({
               className="grid h-[30px] w-[30px] place-items-center rounded-[9px] text-[14px] text-ink-faint hover:bg-sunken hover:text-accent"
             >
               {starred ? "★" : "☆"}
+            </button>
+          ) : null}
+          {onTrash ? (
+            <button
+              type="button"
+              title="Move to Trash"
+              onClick={onTrash}
+              className="grid h-[30px] w-[30px] place-items-center rounded-[9px] text-[12px] text-ink-faint hover:bg-danger-soft hover:text-danger"
+            >
+              ⌫
             </button>
           ) : null}
           {onDownload ? (

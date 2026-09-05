@@ -185,6 +185,91 @@ export async function deleteWorkspace(workspaceId: string): Promise<void> {
   }
 }
 
+export async function restoreWorkspace(workspaceId: string): Promise<Workspace> {
+  const response = await apiFetch(`/api/workspaces/${workspaceId}/restore`, {
+    method: "POST",
+  });
+  if (!response.ok) {
+    throw await parseError(response);
+  }
+  const body = (await response.json()) as { workspace: Workspace };
+  return {
+    ...body.workspace,
+    documentCount: body.workspace.documentCount ?? 0,
+    recentDocuments: body.workspace.recentDocuments ?? [],
+  };
+}
+
+export interface TrashedWorkspace {
+  readonly id: string;
+  readonly name: string;
+  readonly createdAt: string;
+  readonly updatedAt: string;
+  readonly deletedAt: string;
+}
+
+export interface TrashedDocument {
+  readonly id: string;
+  readonly workspaceId: string;
+  readonly workspaceName: string;
+  readonly workspaceDeleted: boolean;
+  readonly name: string;
+  readonly format: DocumentFormat;
+  readonly deletedAt: string;
+}
+
+export async function listTrash(): Promise<{
+  workspaces: TrashedWorkspace[];
+  documents: TrashedDocument[];
+}> {
+  const response = await apiFetch("/api/trash");
+  if (!response.ok) {
+    throw await parseError(response);
+  }
+  return (await response.json()) as {
+    workspaces: TrashedWorkspace[];
+    documents: TrashedDocument[];
+  };
+}
+
+export async function renameDocument(
+  documentId: string,
+  name: string,
+): Promise<ListedDocument> {
+  const response = await apiFetch(`/api/documents/${documentId}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ name }),
+  });
+  if (!response.ok) {
+    throw await parseError(response);
+  }
+  const body = (await response.json()) as { document: ListedDocument };
+  return body.document;
+}
+
+export async function deleteDocument(documentId: string): Promise<void> {
+  const response = await apiFetch(`/api/documents/${documentId}`, {
+    method: "DELETE",
+  });
+  if (!response.ok) {
+    throw await parseError(response);
+  }
+}
+
+export async function restoreDocument(
+  documentId: string,
+): Promise<ListedDocument> {
+  const response = await apiFetch(`/api/documents/${documentId}/restore`, {
+    method: "POST",
+  });
+  if (!response.ok) {
+    throw await parseError(response);
+  }
+  const body = (await response.json()) as { document: ListedDocument };
+  return body.document;
+}
+
 export async function listRecentDocuments(): Promise<LibraryDocument[]> {
   const response = await apiFetch("/api/documents/recent");
   if (!response.ok) {

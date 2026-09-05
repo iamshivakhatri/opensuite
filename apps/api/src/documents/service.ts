@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import type { Readable } from "node:stream";
 
-import { and, desc, eq, isNull, max } from "drizzle-orm";
+import { and, desc, eq, isNotNull, isNull, max } from "drizzle-orm";
 
 import type { Db } from "@opensuite/db";
 import { schema } from "@opensuite/db";
@@ -13,6 +13,7 @@ import {
 import {
   contentDispositionForDocument,
   contentTypeForFormat,
+  normalizeDocumentRenameName,
   officeFormatFromFilename,
   sanitizeUploadFilename,
   type OfficeFormat,
@@ -64,6 +65,16 @@ export interface ListedDocumentDto {
   readonly latestVersion: ListedDocumentVersionDto;
 }
 
+export interface TrashedDocumentDto {
+  readonly id: string;
+  readonly workspaceId: string;
+  readonly workspaceName: string;
+  readonly workspaceDeleted: boolean;
+  readonly name: string;
+  readonly format: OfficeFormat;
+  readonly deletedAt: string;
+}
+
 export interface DocumentDownload {
   readonly body: Readable;
   readonly contentType: string;
@@ -95,7 +106,9 @@ export class DocumentUploadError extends Error {
 
 export type DocumentAccessErrorCode =
   | "DOCUMENT_NOT_FOUND"
-  | "STORAGE_OBJECT_MISSING";
+  | "STORAGE_OBJECT_MISSING"
+  | "INVALID_DOCUMENT_NAME"
+  | "WORKSPACE_DELETED";
 
 export class DocumentAccessError extends Error {
   readonly statusCode: number;
@@ -522,6 +535,202 @@ export function createDocumentService(
         }
         throw error;
       }
+    },
+
+    /**
+     * Renames an owned, non-deleted document. Preserves format; does not touch
+     * storage keys or version artifacts.
+     */
+    async rename(input: {
+      documentId: string;
+      ownerUserId: string;
+      name: string;
+    }): Promise<ListedDocumentDto> {
+      const existing = await this.getOwnedDocument({
+        documentId: input.documentId,
+        ownerUserId: input.ownerUserId,
+      });
+
+      const nextName = normalizeDocumentRenameName(input.name, existing.format);
+      if (!nextName) {
+        throw new DocumentAccessError(
+          400,
+          "INVALID_DOCUMENT_NAME",
+          "Invalid document name for this format",
+        );
+      }
+
+      const [row] = await db
+        .update(schema.document)
+        .set({
+          name: nextName,
+          updatedAt: new Date(),
+        })
+        .where(
+          and(
+            eq(schema.document.id, input.documentId),
+            isNull(schema.document.deletedAt),
+          ),
+        )
+        .returning({ id: schema.document.id });
+
+      if (!row) {
+        throw new DocumentAccessError(
+          404,
+          "DOCUMENT_NOT_FOUND",
+          "Document not found",
+        );
+      }
+
+      await db
+        .update(schema.workspace)
+        .set({ updatedAt: new Date() })
+        .where(eq(schema.workspace.id, existing.workspaceId));
+
+      return this.getOwnedDocument({
+        documentId: input.documentId,
+        ownerUserId: input.ownerUserId,
+      });
+    },
+
+    /**
+     * Soft-deletes an owned document. Versions and storage objects are kept.
+     */
+    async softDelete(input: {
+      documentId: string;
+      ownerUserId: string;
+    }): Promise<boolean> {
+      // Ownership + active workspace/document via getOwnedDocument.
+      const existing = await this.getOwnedDocument({
+        documentId: input.documentId,
+        ownerUserId: input.ownerUserId,
+      });
+
+      const [row] = await db
+        .update(schema.document)
+        .set({
+          deletedAt: new Date(),
+          updatedAt: new Date(),
+        })
+        .where(
+          and(
+            eq(schema.document.id, existing.id),
+            isNull(schema.document.deletedAt),
+          ),
+        )
+        .returning({ id: schema.document.id });
+
+      if (row) {
+        await db
+          .update(schema.workspace)
+          .set({ updatedAt: new Date() })
+          .where(eq(schema.workspace.id, existing.workspaceId));
+      }
+
+      return Boolean(row);
+    },
+
+    /**
+     * Restores a soft-deleted document. Parent workspace must be active.
+     */
+    async restore(input: {
+      documentId: string;
+      ownerUserId: string;
+    }): Promise<ListedDocumentDto> {
+      const [row] = await db
+        .select({
+          id: schema.document.id,
+          workspaceId: schema.document.workspaceId,
+          workspaceDeletedAt: schema.workspace.deletedAt,
+          documentDeletedAt: schema.document.deletedAt,
+        })
+        .from(schema.document)
+        .innerJoin(
+          schema.workspace,
+          eq(schema.document.workspaceId, schema.workspace.id),
+        )
+        .where(
+          and(
+            eq(schema.document.id, input.documentId),
+            eq(schema.workspace.ownerUserId, input.ownerUserId),
+          ),
+        )
+        .limit(1);
+
+      if (!row || row.documentDeletedAt == null) {
+        throw new DocumentAccessError(
+          404,
+          "DOCUMENT_NOT_FOUND",
+          "Document not found",
+        );
+      }
+
+      if (row.workspaceDeletedAt != null) {
+        throw new DocumentAccessError(
+          409,
+          "WORKSPACE_DELETED",
+          "Restore the workspace before restoring this document",
+        );
+      }
+
+      await db
+        .update(schema.document)
+        .set({
+          deletedAt: null,
+          updatedAt: new Date(),
+        })
+        .where(eq(schema.document.id, input.documentId));
+
+      await db
+        .update(schema.workspace)
+        .set({ updatedAt: new Date() })
+        .where(eq(schema.workspace.id, row.workspaceId));
+
+      return this.getOwnedDocument({
+        documentId: input.documentId,
+        ownerUserId: input.ownerUserId,
+      });
+    },
+
+    /**
+     * Soft-deleted documents owned by the user (for Trash), including those
+     * whose parent workspace is also trashed.
+     */
+    async listTrash(ownerUserId: string): Promise<TrashedDocumentDto[]> {
+      const rows = await db
+        .select({
+          id: schema.document.id,
+          workspaceId: schema.document.workspaceId,
+          workspaceName: schema.workspace.name,
+          workspaceDeletedAt: schema.workspace.deletedAt,
+          name: schema.document.name,
+          format: schema.document.format,
+          deletedAt: schema.document.deletedAt,
+        })
+        .from(schema.document)
+        .innerJoin(
+          schema.workspace,
+          eq(schema.document.workspaceId, schema.workspace.id),
+        )
+        .where(
+          and(
+            eq(schema.workspace.ownerUserId, ownerUserId),
+            isNotNull(schema.document.deletedAt),
+          ),
+        )
+        .orderBy(desc(schema.document.deletedAt));
+
+      return rows
+        .filter((row) => row.deletedAt != null)
+        .map((row) => ({
+          id: row.id,
+          workspaceId: row.workspaceId,
+          workspaceName: row.workspaceName,
+          workspaceDeleted: row.workspaceDeletedAt != null,
+          name: row.name,
+          format: row.format,
+          deletedAt: row.deletedAt!.toISOString(),
+        }));
     },
   };
 }

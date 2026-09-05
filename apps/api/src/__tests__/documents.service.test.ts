@@ -4,7 +4,10 @@ import { test } from "node:test";
 
 import type { Db } from "@opensuite/db";
 
-import { contentDispositionForDocument } from "../documents/format.js";
+import {
+  contentDispositionForDocument,
+  normalizeDocumentRenameName,
+} from "../documents/format.js";
 import {
   createDocumentService,
   DocumentAccessError,
@@ -34,6 +37,17 @@ test("contentDispositionForDocument quotes a safe attachment filename", () => {
   assert.match(header, /^attachment;/);
   assert.match(header, /filename="Q1 Report.docx"/);
   assert.match(header, /filename\*=UTF-8''Q1%20Report\.docx/);
+});
+
+test("normalizeDocumentRenameName preserves format and rejects cross-format names", () => {
+  assert.equal(normalizeDocumentRenameName("  Brief  ", "docx"), "Brief.docx");
+  assert.equal(
+    normalizeDocumentRenameName("Brief.docx", "docx"),
+    "Brief.docx",
+  );
+  assert.equal(normalizeDocumentRenameName("Brief.pptx", "docx"), null);
+  assert.equal(normalizeDocumentRenameName("Brief.pdf", "docx"), null);
+  assert.equal(normalizeDocumentRenameName("", "docx"), null);
 });
 
 test("memory storage getObject streams stored bytes and throws ObjectNotFoundError", async () => {

@@ -25,6 +25,7 @@ const mainNav = [
     icon: "☆",
     match: "prefix" as const,
   },
+  { href: "/app/trash", label: "Trash", icon: "⌫", match: "prefix" as const },
 ];
 
 const appFilters = [
@@ -289,7 +290,7 @@ export function Sidebar() {
                         setDeleteTarget(workspace);
                       }}
                     >
-                      Delete
+                      Move to Trash
                     </button>
                   </div>
                 ) : null}
@@ -416,12 +417,11 @@ export function Sidebar() {
       {deleteTarget ? (
         <Modal
           onClose={() => setDeleteTarget(null)}
-          title="Delete workspace?"
+          title="Move workspace to Trash?"
         >
           <p className="mb-4 text-[12px] leading-relaxed text-ink-soft">
-            Soft-delete <span className="font-medium text-ink">{deleteTarget.name}</span>.
-            Documents and history stay in the database but this workspace will
-            disappear from your lists.
+            Move <span className="font-medium text-ink">{deleteTarget.name}</span>{" "}
+            to Trash. Documents and history are kept and can be restored later.
           </p>
           {actionError ? (
             <p className="mb-3 text-[11px] text-danger">{actionError}</p>
@@ -442,7 +442,7 @@ export function Sidebar() {
               disabled={busy}
               onClick={() => void handleDelete()}
             >
-              {busy ? "Deleting…" : "Delete"}
+              {busy ? "Moving…" : "Move to Trash"}
             </Button>
           </div>
         </Modal>
