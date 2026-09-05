@@ -1,6 +1,7 @@
 "use client";
 
 import * as React from "react";
+import Link from "next/link";
 
 import { FileRow } from "@/components/files/file-row";
 import { userFacingError } from "@/components/files/format";
@@ -246,8 +247,9 @@ export function FilesView() {
             All Files
           </h1>
           <p className="max-w-[620px] text-[12.5px] leading-relaxed text-[#777D87]">
-            One place for Word, PowerPoint, and Excel. Upload a file to keep it
-            in {activeWorkspace?.name ?? "your workspace"}.
+            Open the workspace like a project folder, or open a single file.
+            Upload Word, PowerPoint, or Excel into{" "}
+            {activeWorkspace?.name ?? "your workspace"}.
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
@@ -256,6 +258,12 @@ export function FilesView() {
             activeId={phase.workspaceId}
             onChange={selectWorkspace}
           />
+          <Link
+            href={`/app/workspaces/${phase.workspaceId}`}
+            className="inline-flex h-9 items-center justify-center rounded-[var(--radius-md)] bg-ink px-3.5 text-[12px] font-medium text-white hover:bg-[#2A2D33]"
+          >
+            Open workspace
+          </Link>
           <UploadDocumentButton
             uploading={uploading}
             disabled={phase.documentsStatus === "loading"}
@@ -292,13 +300,21 @@ export function FilesView() {
             No files yet
           </h2>
           <p className="mb-6 text-[12px] leading-relaxed text-ink-soft">
-            Upload a Word, PowerPoint, or Excel document to get started.
-            OpenSuite currently supports .docx, .pptx, and .xlsx.
+            Upload a Word, PowerPoint, or Excel document, or open the empty
+            workspace and add files later.
           </p>
-          <UploadDocumentButton
-            uploading={uploading}
-            onFileSelected={(file) => void handleUpload(file)}
-          />
+          <div className="flex flex-wrap items-center justify-center gap-2">
+            <Link
+              href={`/app/workspaces/${phase.workspaceId}`}
+              className="inline-flex h-9 items-center justify-center rounded-[var(--radius-md)] bg-ink px-3.5 text-[12px] font-medium text-white hover:bg-[#2A2D33]"
+            >
+              Open workspace
+            </Link>
+            <UploadDocumentButton
+              uploading={uploading}
+              onFileSelected={(file) => void handleUpload(file)}
+            />
+          </div>
         </div>
       ) : (
         <div>

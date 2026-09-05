@@ -7,10 +7,8 @@ import { Topbar } from "@/components/shell/topbar";
 import { Sidebar } from "@/components/shell/sidebar";
 
 /**
- * Standard OpenSuite application chrome (topbar + sidebar) for the "All
- * Files" surface and future non-document-workspace routes. The dedicated
- * document workspace lives outside this route group and supplies its own
- * chrome instead.
+ * Standard OpenSuite application chrome (topbar + sidebar) for library
+ * surfaces. The dedicated workspace IDE lives outside this route group.
  */
 export default function ShellLayout({
   children,
@@ -28,7 +26,7 @@ export default function ShellLayout({
       <Topbar userName={session.user.name} />
       <div className="flex min-h-0">
         <Sidebar />
-        <main className="min-w-0 flex-1 overflow-auto bg-[#F4F5F7]">
+        <main className="min-w-0 flex-1 overflow-auto bg-[var(--shell-main)]">
           {children}
         </main>
       </div>

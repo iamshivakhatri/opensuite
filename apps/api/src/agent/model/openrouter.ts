@@ -62,6 +62,24 @@ export interface OpenAIChatCompletionsCreateParams {
   readonly messages: readonly OpenAIChatMessage[];
   readonly tools?: readonly OpenAIChatTool[];
   readonly tool_choice?: "auto";
+  readonly stream?: boolean;
+}
+
+export interface OpenAIChatCompletionChunk {
+  readonly choices: ReadonlyArray<{
+    readonly delta?: {
+      readonly content?: string | null;
+      readonly tool_calls?: ReadonlyArray<{
+        readonly index?: number;
+        readonly id?: string;
+        readonly type?: string;
+        readonly function?: {
+          readonly name?: string;
+          readonly arguments?: string;
+        };
+      }>;
+    };
+  }>;
 }
 
 export interface OpenAIChatCompletionsClient {
@@ -70,7 +88,9 @@ export interface OpenAIChatCompletionsClient {
       create(
         params: OpenAIChatCompletionsCreateParams,
         options?: { signal?: AbortSignal },
-      ): Promise<OpenAIChatCompletion>;
+      ): Promise<
+        OpenAIChatCompletion | AsyncIterable<OpenAIChatCompletionChunk>
+      >;
     };
   };
 }
@@ -84,7 +104,7 @@ export interface OpenRouterAgentModelOptions {
 
 /**
  * OpenRouter via OpenAI Chat Completions compatibility.
- * Separate from the OpenAI Responses adapter — OpenRouter's stable surface is chat/completions.
+ * Streams token deltas when `request.onTextDelta` is set.
  */
 export function createOpenRouterAgentModel(
   options: OpenRouterAgentModelOptions,
@@ -98,23 +118,87 @@ export function createOpenRouterAgentModel(
         throw cancelledError();
       }
 
+      const baseParams = {
+        model: options.model,
+        messages: [
+          { role: "system" as const, content: system },
+          ...toOpenAIChatMessages(request.messages),
+        ],
+        ...(request.tools.length > 0
+          ? {
+              tools: request.tools.map(toOpenAIChatTool),
+              tool_choice: "auto" as const,
+            }
+          : {}),
+      };
+      const callOptions = request.signal
+        ? { signal: request.signal }
+        : undefined;
+
       try {
-        const completion = await options.client.chat.completions.create(
-          {
-            model: options.model,
-            messages: [
-              { role: "system", content: system },
-              ...toOpenAIChatMessages(request.messages),
-            ],
-            ...(request.tools.length > 0
-              ? {
-                  tools: request.tools.map(toOpenAIChatTool),
-                  tool_choice: "auto" as const,
-                }
-              : {}),
-          },
-          request.signal ? { signal: request.signal } : undefined,
-        );
+        if (request.onTextDelta) {
+          const stream = (await options.client.chat.completions.create(
+            { ...baseParams, stream: true },
+            callOptions,
+          )) as AsyncIterable<OpenAIChatCompletionChunk>;
+
+          let content = "";
+          const toolAcc = new Map<
+            number,
+            { id: string; name: string; arguments: string }
+          >();
+
+          for await (const chunk of stream) {
+            if (request.signal?.aborted) {
+              throw cancelledError();
+            }
+            const delta = chunk.choices[0]?.delta;
+            if (!delta) continue;
+
+            if (typeof delta.content === "string" && delta.content.length > 0) {
+              content += delta.content;
+              await request.onTextDelta(delta.content);
+            }
+
+            for (const toolDelta of delta.tool_calls ?? []) {
+              const index = toolDelta.index ?? 0;
+              const current = toolAcc.get(index) ?? {
+                id: "",
+                name: "",
+                arguments: "",
+              };
+              if (toolDelta.id) {
+                current.id = toolDelta.id;
+              }
+              if (toolDelta.function?.name) {
+                current.name += toolDelta.function.name;
+              }
+              if (toolDelta.function?.arguments) {
+                current.arguments += toolDelta.function.arguments;
+              }
+              toolAcc.set(index, current);
+            }
+          }
+
+          const toolCalls: ModelToolCall[] = [...toolAcc.entries()]
+            .sort((a, b) => a[0] - b[0])
+            .map(([, call]) => ({
+              id: call.id || `tool_${call.name || "call"}`,
+              name: call.name,
+              input: parseJsonObject(call.arguments),
+            }))
+            .filter((call) => call.name.length > 0);
+
+          return {
+            content: content.trim(),
+            toolCalls,
+          };
+        }
+
+        const completion = (await options.client.chat.completions.create(
+          { ...baseParams, stream: false },
+          callOptions,
+        )) as OpenAIChatCompletion;
         return fromOpenAIChatCompletion(completion);
       } catch (error) {
         if (request.signal?.aborted || isAbortLike(error)) {

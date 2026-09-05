@@ -20,6 +20,7 @@ import {
   type ModelRequest,
 } from "../index.js";
 
+
 function baseRequest(overrides: Partial<AgentRequest> = {}): AgentRequest {
   return {
     instruction: "Do the task",
@@ -48,9 +49,32 @@ test("BASIC: user request → model final response", async () => {
   assert.deepEqual(eventTypes(sink.events), [
     "agent.started",
     "turn.started",
+    "message.started",
+    "message.delta",
+    "message.completed",
     "turn.completed",
     "agent.completed",
   ]);
+});
+
+test("STREAM: onTextDelta emits message.delta chunks", async () => {
+  const sink = createRecordingEventSink();
+  const runner = new AgentRunner({
+    model: createFakeAgentModel({
+      respond: { content: "Hello streaming world from OpenSuite", toolCalls: [] },
+    }),
+    tools: ToolRegistry.create([]),
+    events: sink,
+  });
+
+  const result = await runner.run(baseRequest());
+  assert.equal(result.status, "completed");
+  const deltas = sink.events.filter((e) => e.type === "message.delta");
+  assert.ok(deltas.length >= 2);
+  const joined = deltas
+    .map((e) => (e.type === "message.delta" ? e.delta : ""))
+    .join("");
+  assert.equal(joined, "Hello streaming world from OpenSuite");
 });
 
 test("BASIC: one tool call → result → model completion", async () => {

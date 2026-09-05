@@ -12,13 +12,19 @@ import type {
   ToolRisk,
 } from "./model.js";
 import type {
+  DocumentFindQuery,
+  DocumentInspectOptions,
   DocumentOperation,
   DocumentRuntime,
   DocumentRuntimeOptions,
+  FindResult,
   InspectionResult,
   OperationResult,
 } from "./runtime.js";
-import { unsupportedCapabilityOperation } from "./runtime.js";
+import {
+  unsupportedCapabilityFind,
+  unsupportedCapabilityOperation,
+} from "./runtime.js";
 import {
   Capabilities,
   createCapabilities,
@@ -35,6 +41,7 @@ export function createFakeTool<TInput, TResult>(options: {
   name: string;
   description?: string;
   risk?: ToolRisk;
+  effect?: import("./model.js").ToolEffect;
   executionMode?: ToolExecutionMode;
   inputSchema?: ToolInputSchema;
   parseInput?: (raw: unknown) => TInput;
@@ -44,6 +51,7 @@ export function createFakeTool<TInput, TResult>(options: {
     name: options.name,
     description: options.description ?? options.name,
     risk: options.risk ?? "safe",
+    effect: options.effect,
     executionMode: options.executionMode,
     inputSchema: options.inputSchema ?? { type: "object" },
     parseInput: options.parseInput ?? ((raw: unknown) => raw as TInput),
@@ -88,6 +96,13 @@ export function createFakeAgentModel(
         typeof options.respond === "function"
           ? await options.respond(request)
           : options.respond;
+      if (request.onTextDelta && response.content) {
+        // Deterministic small chunks for tests / fake provider.
+        const chunkSize = 12;
+        for (let i = 0; i < response.content.length; i += chunkSize) {
+          await request.onTextDelta(response.content.slice(i, i + chunkSize));
+        }
+      }
       return {
         content: response.content,
         toolCalls: response.toolCalls ?? [],
@@ -136,8 +151,13 @@ export interface FakeDocumentRuntimeOptions {
   readonly capabilities?: RuntimeCapabilities;
   readonly inspect?: (
     document: DocumentRef,
-    options?: DocumentRuntimeOptions,
+    options?: DocumentInspectOptions,
   ) => Promise<InspectionResult>;
+  readonly find?: (
+    document: DocumentRef,
+    query: DocumentFindQuery,
+    options?: DocumentRuntimeOptions,
+  ) => Promise<FindResult>;
   readonly execute?: (
     document: DocumentRef,
     operation: DocumentOperation,
@@ -173,6 +193,7 @@ export function createFakeDocumentRuntime(
         format: document.format,
         capabilities,
         diagnostics: [],
+        focus: runtimeOptions?.focus ?? { kind: "overview" },
         payload: {
           format: document.format,
           summary: {
@@ -182,6 +203,15 @@ export function createFakeDocumentRuntime(
           },
         },
       };
+    },
+    async find(document, query, runtimeOptions) {
+      if (runtimeOptions?.signal?.aborted) {
+        throw new AgentCoreError("CANCELLED", "Find aborted");
+      }
+      if (options.find) {
+        return options.find(document, query, runtimeOptions);
+      }
+      return unsupportedCapabilityFind(Capabilities.DocumentFind);
     },
     async execute(document, operation, runtimeOptions) {
       if (runtimeOptions?.signal?.aborted) {

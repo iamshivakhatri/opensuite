@@ -1,9 +1,14 @@
-import { AgentCoreError } from "@opensuite/agent-core";
+import {
+  AgentCoreError,
+  buildDocumentAgentSystemPrompt,
+  mutableDocumentCapabilities,
+} from "@opensuite/agent-core";
 import type { ModelMessage } from "@opensuite/agent-core";
 
-export const DEFAULT_AGENT_SYSTEM =
-  "You are OpenSuite, an AI office assistant. Be concise and helpful. " +
-  "Do not claim you inspected or edited Office file contents unless a tool result confirms it.";
+/** Provider-neutral Office agent instruction (capability-aware, mock mutations on). */
+export const DEFAULT_AGENT_SYSTEM = buildDocumentAgentSystemPrompt(
+  mutableDocumentCapabilities(),
+);
 
 export function cancelledError(cause?: unknown): AgentCoreError {
   return new AgentCoreError("CANCELLED", "Model call aborted", {

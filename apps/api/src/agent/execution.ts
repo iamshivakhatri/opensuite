@@ -1,5 +1,6 @@
 import {
   AgentRunner,
+  createDocumentToolRegistry,
   type AgentEvent,
   type AgentEventSink,
   type AgentModel,
@@ -50,8 +51,8 @@ export interface AgentExecutionInput {
   readonly instruction: string;
   readonly signal?: AbortSignal;
   /**
-   * Optional live sink (SSE hub). Invoked after the persistence bridge
-   * handles each AgentEvent — does not replace durable step mapping.
+   * Optional live sink (SSE hub). Non-terminal events fan out after the
+   * persistence bridge; terminal events are emitted only after durable finalize.
    */
   readonly liveEvents?: AgentEventSink;
 }
@@ -79,7 +80,11 @@ export interface AgentExecutionServiceDeps {
   /** Used to resolve latest DocumentRef for document-scoped threads. */
   readonly documents: Pick<DocumentService, "getOwnedDocument">;
   readonly model: AgentModel;
-  readonly tools: ToolRegistry;
+  /**
+   * Optional fixed tool registry (tests). When omitted, a format-filtered
+   * document tool registry is built per run from capabilities + primaryDocument.
+   */
+  readonly tools?: ToolRegistry;
   readonly runtime?: DocumentRuntime;
   /**
    * Confirmation gate for destructive tools. Omit → agent-core denies.
@@ -231,9 +236,31 @@ async function continueExecution(input: {
     runId: run.id,
   });
 
+  // Defer terminal live SSE until after durable finalize. Otherwise the UI can
+  // receive agent.completed/failed, GET /runs while status is still active,
+  // drop the SSE subscription, and stick on "Working…".
+  // Stream tokens to the hub before the persistence queue so DB latency cannot
+  // batch message.delta behind unrelated step writes.
   const events: AgentEventSink = liveEvents
     ? {
         async emit(event) {
+          if (
+            event.type === "agent.completed" ||
+            event.type === "agent.failed" ||
+            event.type === "agent.cancelled"
+          ) {
+            await bridge.emit(event);
+            return;
+          }
+          if (
+            event.type === "message.started" ||
+            event.type === "message.delta" ||
+            event.type === "message.completed"
+          ) {
+            await liveEvents.emit(event);
+            await bridge.emit(event);
+            return;
+          }
           await bridge.emit(event);
           await liveEvents.emit(event);
         },
@@ -242,7 +269,11 @@ async function continueExecution(input: {
 
   const runner = new AgentRunner({
     model: deps.model,
-    tools: deps.tools,
+    tools:
+      deps.tools ??
+      createDocumentToolRegistry(deps.capabilities ?? { ids: new Set() }, {
+        format: primaryDocument?.format,
+      }),
     events,
     runtime: deps.runtime,
     confirmation: deps.confirmation,
@@ -262,6 +293,16 @@ async function continueExecution(input: {
       "AGENT_EXECUTION_FAILED",
       "Agent runner failed unexpectedly",
     );
+    await emitTerminalLive(liveEvents, {
+      type: "agent.failed",
+      runId: run.id,
+      at: new Date().toISOString(),
+      diagnostic: {
+        code: "AGENT_EXECUTION_FAILED",
+        severity: "error",
+        message: "Agent runner failed unexpectedly",
+      },
+    });
     throw new AgentExecutionError(
       "AGENT_EXECUTION_FAILED",
       "Agent runner failed unexpectedly",
@@ -278,6 +319,16 @@ async function continueExecution(input: {
       "AGENT_PERSISTENCE_FAILED",
       "Failed to persist agent steps",
     );
+    await emitTerminalLive(liveEvents, {
+      type: "agent.failed",
+      runId: run.id,
+      at: new Date().toISOString(),
+      diagnostic: {
+        code: "AGENT_PERSISTENCE_FAILED",
+        severity: "error",
+        message: "Failed to persist agent steps",
+      },
+    });
     throw new AgentExecutionError(
       "AGENT_PERSISTENCE_FAILED",
       "Failed to persist agent steps",
@@ -298,12 +349,22 @@ async function continueExecution(input: {
       });
       assistantMessage = finalized.assistantMessage;
       finalRun = finalized.run;
+      await emitTerminalLive(liveEvents, {
+        type: "agent.completed",
+        runId: run.id,
+        at: new Date().toISOString(),
+      });
     } else if (agentResult.status === "cancelled") {
       await bridge.cancelOpenSteps();
       finalRun = await persistence.updateRunStatus({
         runId: run.id,
         ownerUserId,
         status: "cancelled",
+      });
+      await emitTerminalLive(liveEvents, {
+        type: "agent.cancelled",
+        runId: run.id,
+        at: new Date().toISOString(),
       });
     } else {
       const diagnostic = agentResult.diagnostics[0];
@@ -316,6 +377,16 @@ async function continueExecution(input: {
           diagnostic?.message ?? agentResult.summary,
           "Agent run failed",
         ),
+      });
+      await emitTerminalLive(liveEvents, {
+        type: "agent.failed",
+        runId: run.id,
+        at: new Date().toISOString(),
+        diagnostic: diagnostic ?? {
+          code: "AGENT_EXECUTION_FAILED",
+          severity: "error",
+          message: "Agent run failed",
+        },
       });
     }
   } catch (error) {
@@ -330,6 +401,16 @@ async function continueExecution(input: {
         "AGENT_PERSISTENCE_FAILED",
         "Failed to finalize agent run",
       );
+      await emitTerminalLive(liveEvents, {
+        type: "agent.failed",
+        runId: run.id,
+        at: new Date().toISOString(),
+        diagnostic: {
+          code: "AGENT_PERSISTENCE_FAILED",
+          severity: "error",
+          message: "Failed to finalize agent run",
+        },
+      });
       throw new AgentExecutionError(
         "AGENT_PERSISTENCE_FAILED",
         "Failed to finalize agent run",
@@ -351,6 +432,21 @@ async function continueExecution(input: {
     steps,
     result: agentResult,
   };
+}
+
+async function emitTerminalLive(
+  liveEvents: AgentEventSink | undefined,
+  event: Extract<
+    AgentEvent,
+    | { type: "agent.completed" }
+    | { type: "agent.failed" }
+    | { type: "agent.cancelled" }
+  >,
+): Promise<void> {
+  if (!liveEvents) {
+    return;
+  }
+  await liveEvents.emit(event);
 }
 
 export type AgentExecutionService = ReturnType<
@@ -664,6 +760,7 @@ function createRunEventBridge(input: {
       case "turn.started":
       case "turn.completed":
       case "message.started":
+      case "message.delta":
       case "message.completed":
         return;
       default: {

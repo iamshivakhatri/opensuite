@@ -1,5 +1,8 @@
+"use client";
+
 import type { ReactNode } from "react";
 
+import { RedirectIfAuthenticated } from "@/components/auth/redirect-if-authenticated";
 import { Wordmark } from "@/components/wordmark";
 
 export default function AuthLayout({ children }: { children: ReactNode }) {
@@ -10,7 +13,7 @@ export default function AuthLayout({ children }: { children: ReactNode }) {
           <Wordmark />
         </div>
         <div className="rounded-[var(--radius-lg)] border border-line bg-surface p-7 shadow-[0_1px_2px_rgba(16,24,40,0.03),0_12px_32px_rgba(16,24,40,0.07)]">
-          {children}
+          <RedirectIfAuthenticated>{children}</RedirectIfAuthenticated>
         </div>
       </div>
     </div>

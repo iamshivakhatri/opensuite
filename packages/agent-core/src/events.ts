@@ -32,6 +32,15 @@ export type AgentEvent =
       readonly at: string;
     }
   | {
+      /** Incremental assistant text from a streaming model turn. */
+      readonly type: "message.delta";
+      readonly runId: string;
+      readonly messageId: string;
+      readonly role: AgentMessageRole;
+      readonly delta: string;
+      readonly at: string;
+    }
+  | {
       readonly type: "message.completed";
       readonly runId: string;
       readonly messageId: string;

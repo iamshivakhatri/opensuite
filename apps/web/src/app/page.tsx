@@ -11,7 +11,16 @@ export default function RootPage() {
 
   React.useEffect(() => {
     if (isPending) return;
-    router.replace(session ? "/app" : "/sign-in");
+    if (session) {
+      router.replace("/app");
+      return;
+    }
+    // Debounce unauthenticated redirect so a slow session hydrate does not
+    // flash the sign-in page for logged-in users.
+    const timer = window.setTimeout(() => {
+      router.replace("/sign-in");
+    }, 250);
+    return () => window.clearTimeout(timer);
   }, [isPending, session, router]);
 
   return (

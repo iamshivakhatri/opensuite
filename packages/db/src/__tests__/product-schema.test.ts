@@ -15,6 +15,7 @@ import {
 import {
   document,
   documentFormatEnum,
+  documentUserState,
   documentVersion,
   documentVersionSourceEnum,
   workspace,
@@ -24,6 +25,14 @@ test("product schema exports workspace, document, and document_version", () => {
   assert.equal(getTableName(workspace), "workspace");
   assert.equal(getTableName(document), "document");
   assert.equal(getTableName(documentVersion), "document_version");
+});
+
+test("document_user_state tracks per-user star and last-opened", () => {
+  assert.equal(getTableName(documentUserState), "document_user_state");
+  assert.ok("starred" in documentUserState);
+  assert.ok("starredAt" in documentUserState);
+  assert.ok("lastOpenedAt" in documentUserState);
+  assert.equal("deletedAt" in documentUserState, false);
 });
 
 test("workspace and document support soft delete; document_version does not", () => {

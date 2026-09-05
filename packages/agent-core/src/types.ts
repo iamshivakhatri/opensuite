@@ -59,6 +59,7 @@ export type CapabilityId = string;
  */
 export const Capabilities = {
   DocumentInspect: "document.inspect",
+  DocumentFind: "document.find",
   DocumentMutate: "document.mutate",
   DocumentValidate: "document.validate",
   DocumentRender: "document.render",

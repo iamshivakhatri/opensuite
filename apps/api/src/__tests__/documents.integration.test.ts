@@ -662,3 +662,174 @@ test(
     }
   },
 );
+
+test(
+  "document recent/starred preferences are per-user and ownership-scoped",
+  { skip: !runDbIntegrationTests || databaseUrl === undefined },
+  async () => {
+    const config = testConfig();
+    const dbClient = createDbClient({ databaseUrl: config.databaseUrl });
+    const emailSender = createStubEmailSender();
+    const auth = createAuth(config, dbClient.db, emailSender);
+    const app = await buildApp(config, {
+      auth,
+      db: dbClient.db,
+      storage: createMemoryObjectStorage(),
+    });
+    await app.ready();
+
+    try {
+      const alice = await signUpVerifyAndSignIn(
+        app,
+        config,
+        emailSender,
+        "PrefsAlice",
+      );
+      const bob = await signUpVerifyAndSignIn(
+        app,
+        config,
+        emailSender,
+        "PrefsBob",
+      );
+      const workspaceId = await createWorkspace(
+        app,
+        config,
+        alice.cookie,
+        "Prefs WS",
+      );
+
+      const file = multipartFilePayload("brief.docx", "PK");
+      const upload = await app.inject({
+        method: "POST",
+        url: `/api/workspaces/${workspaceId}/documents`,
+        headers: {
+          ...file.headers,
+          cookie: alice.cookie,
+          origin: config.webOrigin,
+        },
+        payload: file.payload,
+      });
+      assert.equal(upload.statusCode, 201, upload.body);
+      const documentId = (
+        upload.json() as { document: { id: string } }
+      ).document.id;
+
+      const get = await app.inject({
+        method: "GET",
+        url: `/api/documents/${documentId}`,
+        headers: { cookie: alice.cookie, origin: config.webOrigin },
+      });
+      assert.equal(get.statusCode, 200, get.body);
+      assert.equal(
+        (get.json() as { document: { starred: boolean } }).document.starred,
+        false,
+      );
+
+      const recent = await app.inject({
+        method: "GET",
+        url: "/api/documents/recent",
+        headers: { cookie: alice.cookie, origin: config.webOrigin },
+      });
+      assert.equal(recent.statusCode, 200, recent.body);
+      const recentDocs = (
+        recent.json() as { documents: Array<{ id: string; lastOpenedAt: string }> }
+      ).documents;
+      assert.ok(recentDocs.some((doc) => doc.id === documentId));
+      assert.ok(recentDocs.find((doc) => doc.id === documentId)?.lastOpenedAt);
+
+      const star = await app.inject({
+        method: "PUT",
+        url: `/api/documents/${documentId}/star`,
+        headers: {
+          "content-type": "application/json",
+          cookie: alice.cookie,
+          origin: config.webOrigin,
+        },
+        payload: { starred: true },
+      });
+      assert.equal(star.statusCode, 200, star.body);
+      assert.equal(
+        (star.json() as { starred: boolean }).starred,
+        true,
+      );
+
+      const starred = await app.inject({
+        method: "GET",
+        url: "/api/documents/starred",
+        headers: { cookie: alice.cookie, origin: config.webOrigin },
+      });
+      assert.equal(starred.statusCode, 200, starred.body);
+      assert.ok(
+        (
+          starred.json() as { documents: Array<{ id: string }> }
+        ).documents.some((doc) => doc.id === documentId),
+      );
+
+      const library = await app.inject({
+        method: "GET",
+        url: "/api/documents/library?format=docx",
+        headers: { cookie: alice.cookie, origin: config.webOrigin },
+      });
+      assert.equal(library.statusCode, 200, library.body);
+      assert.ok(
+        (
+          library.json() as { documents: Array<{ id: string; format: string }> }
+        ).documents.some(
+          (doc) => doc.id === documentId && doc.format === "docx",
+        ),
+      );
+
+      const bobStar = await app.inject({
+        method: "PUT",
+        url: `/api/documents/${documentId}/star`,
+        headers: {
+          "content-type": "application/json",
+          cookie: bob.cookie,
+          origin: config.webOrigin,
+        },
+        payload: { starred: true },
+      });
+      assert.equal(bobStar.statusCode, 404, bobStar.body);
+
+      const bobRecent = await app.inject({
+        method: "GET",
+        url: "/api/documents/recent",
+        headers: { cookie: bob.cookie, origin: config.webOrigin },
+      });
+      assert.equal(bobRecent.statusCode, 200, bobRecent.body);
+      assert.equal(
+        (
+          bobRecent.json() as { documents: Array<{ id: string }> }
+        ).documents.some((doc) => doc.id === documentId),
+        false,
+      );
+
+      const unstar = await app.inject({
+        method: "PUT",
+        url: `/api/documents/${documentId}/star`,
+        headers: {
+          "content-type": "application/json",
+          cookie: alice.cookie,
+          origin: config.webOrigin,
+        },
+        payload: { starred: false },
+      });
+      assert.equal(unstar.statusCode, 200, unstar.body);
+
+      const starredAfter = await app.inject({
+        method: "GET",
+        url: "/api/documents/starred",
+        headers: { cookie: alice.cookie, origin: config.webOrigin },
+      });
+      assert.equal(
+        (
+          starredAfter.json() as { documents: Array<{ id: string }> }
+        ).documents.some((doc) => doc.id === documentId),
+        false,
+      );
+    } finally {
+      await app.close();
+      await dbClient.close();
+    }
+  },
+);

@@ -48,6 +48,7 @@ export type {
   ModelResponse,
   ModelToolCall,
   ModelToolDefinition,
+  ToolEffect,
   ToolExecutionContext,
   ToolExecutionMode,
   ToolInputSchema,
@@ -55,6 +56,7 @@ export type {
 } from "./model.js";
 export {
   requiresConfirmation,
+  toolEffect,
   toolExecutionMode,
   toModelToolDefinition,
 } from "./model.js";
@@ -65,10 +67,22 @@ export type { AgentEvent, AgentEventSink } from "./events.js";
 export { createRecordingEventSink, noopEventSink } from "./events.js";
 
 export type {
+  DocumentChangeSummary,
+  DocumentFindQuery,
+  DocumentInspectFocus,
+  DocumentInspectOptions,
   DocumentInspectionSummary,
   DocumentOperation,
   DocumentRuntime,
   DocumentRuntimeOptions,
+  FindMatch,
+  FindResult,
+  InspectedBlock,
+  InspectedCell,
+  InspectedHeading,
+  InspectedSheet,
+  InspectedSlide,
+  InspectedTable,
   InspectionPayload,
   InspectionResult,
   OperationFailureCode,
@@ -76,9 +90,41 @@ export type {
 } from "./runtime.js";
 export {
   runtimeSupports,
+  unsupportedCapabilityFind,
   unsupportedCapabilityOperation,
   unsupportedCapabilityResult,
 } from "./runtime.js";
+
+export {
+  MOCK_DOCUMENT_CAPABILITIES,
+  MOCK_MUTABLE_DOCUMENT_CAPABILITIES,
+  createMockDocumentRuntime,
+  mockBaseHeadingText,
+  mockFixtureTitle,
+} from "./mock-runtime.js";
+export type { MockDocumentRuntimeOptions } from "./mock-runtime.js";
+
+export {
+  DOCUMENT_TOOL_NAMES,
+  createDocumentCapabilitiesTool,
+  createDocumentFindTool,
+  createDocumentInspectTool,
+  createDocumentReplaceTextTool,
+  createDocumentToolRegistry,
+  createSlidesUpdateTextTool,
+  createWorkbookSetCellsTool,
+  mutableDocumentCapabilities,
+  readOnlyDocumentCapabilities,
+} from "./document-tools.js";
+export type {
+  DocumentFindToolInput,
+  DocumentInspectToolInput,
+  DocumentReplaceTextInput,
+  SlidesUpdateTextInput,
+  WorkbookSetCellsInput,
+} from "./document-tools.js";
+
+export { buildDocumentAgentSystemPrompt } from "./instructions.js";
 
 export type { ConfirmationGate, ConfirmationRequest } from "./confirmation.js";
 export {

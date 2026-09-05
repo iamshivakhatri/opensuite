@@ -152,9 +152,39 @@ function toLiveAgentEvent(
       };
     case "turn.started":
     case "turn.completed":
-    case "message.started":
-    case "message.completed":
       return null;
+    case "message.started":
+      return {
+        runId: event.runId,
+        type: event.type,
+        at: event.at,
+        data: {
+          messageId: event.messageId,
+          role: event.role,
+        },
+      };
+    case "message.delta":
+      return {
+        runId: event.runId,
+        type: event.type,
+        at: event.at,
+        data: {
+          messageId: event.messageId,
+          role: event.role,
+          delta: truncate(event.delta, 2_000),
+        },
+      };
+    case "message.completed":
+      return {
+        runId: event.runId,
+        type: event.type,
+        at: event.at,
+        data: {
+          messageId: event.messageId,
+          role: event.role,
+          content: truncate(event.content, 8_000),
+        },
+      };
     default: {
       const _exhaustive: never = event;
       void _exhaustive;
@@ -163,9 +193,9 @@ function toLiveAgentEvent(
   }
 }
 
+/** Cap payload size without trimming — deltas often start/end with spaces/newlines. */
 function truncate(value: string, max: number): string {
-  const trimmed = value.trim();
-  return trimmed.length > max ? `${trimmed.slice(0, max - 3)}...` : trimmed;
+  return value.length > max ? `${value.slice(0, max - 3)}...` : value;
 }
 
 interface ActiveRun {

@@ -25,6 +25,7 @@ test("FakeDocumentRuntime inspect returns format-discriminated payload", async (
   assert.equal(result.format, "docx");
   assert.equal(result.payload.format, "docx");
   assert.equal(result.payload.summary.unitKind, "page");
+  assert.equal(result.focus.kind, "overview");
   assert.equal(
     hasCapability(result.capabilities, Capabilities.DocumentInspect),
     true,

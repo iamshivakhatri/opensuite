@@ -2,11 +2,13 @@ import { relations, sql } from "drizzle-orm";
 import {
   type AnyPgColumn,
   bigint,
+  boolean,
   check,
   index,
   integer,
   pgEnum,
   pgTable,
+  primaryKey,
   text,
   timestamp,
   unique,
@@ -155,6 +157,54 @@ export const documentVersionRelations = relations(
     createdBy: one(user, {
       fields: [documentVersion.createdByUserId],
       references: [user.id],
+    }),
+  }),
+);
+
+/**
+ * Per-user document preferences (star + last-opened). Separate from document
+ * rows so starring stays private when sharing exists later.
+ */
+export const documentUserState = pgTable(
+  "document_user_state",
+  {
+    userId: text("user_id")
+      .notNull()
+      .references(() => user.id, { onDelete: "cascade" }),
+    documentId: uuid("document_id")
+      .notNull()
+      .references(() => document.id, { onDelete: "cascade" }),
+    starred: boolean("starred").notNull().default(false),
+    starredAt: timestamp("starred_at"),
+    lastOpenedAt: timestamp("last_opened_at"),
+    updatedAt: timestamp("updated_at")
+      .defaultNow()
+      .$onUpdate(() => new Date())
+      .notNull(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.userId, table.documentId] }),
+    index("document_user_state_user_starred_idx").on(
+      table.userId,
+      table.starred,
+    ),
+    index("document_user_state_user_last_opened_idx").on(
+      table.userId,
+      table.lastOpenedAt,
+    ),
+  ],
+);
+
+export const documentUserStateRelations = relations(
+  documentUserState,
+  ({ one }) => ({
+    user: one(user, {
+      fields: [documentUserState.userId],
+      references: [user.id],
+    }),
+    document: one(document, {
+      fields: [documentUserState.documentId],
+      references: [document.id],
     }),
   }),
 );

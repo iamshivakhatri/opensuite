@@ -58,12 +58,30 @@ export interface AnthropicMessagesCreateParams {
   readonly system?: string;
 }
 
+/** Subset of Anthropic stream events needed for text + final message. */
+export type AnthropicStreamEvent = {
+  readonly type: string;
+  readonly delta?: {
+    readonly type?: string;
+    readonly text?: string;
+  };
+};
+
+export interface AnthropicMessageStream {
+  [Symbol.asyncIterator](): AsyncIterator<AnthropicStreamEvent>;
+  finalMessage(): Promise<AnthropicMessage>;
+}
+
 export interface AnthropicMessagesClient {
   messages: {
     create(
       params: AnthropicMessagesCreateParams,
       options?: { signal?: AbortSignal },
     ): Promise<AnthropicMessage>;
+    stream?(
+      params: AnthropicMessagesCreateParams,
+      options?: { signal?: AbortSignal },
+    ): AnthropicMessageStream;
   };
 }
 
@@ -76,7 +94,7 @@ export interface AnthropicAgentModelOptions {
 
 /**
  * Anthropic Messages API → OpenSuite AgentModel adapter.
- * Lives in apps/api — agent-core never imports the Anthropic SDK.
+ * Streams text deltas when `request.onTextDelta` is set and `client.messages.stream` exists.
  */
 export function createAnthropicAgentModel(
   options: AnthropicAgentModelOptions,
@@ -90,21 +108,54 @@ export function createAnthropicAgentModel(
         throw cancelledError();
       }
 
+      const params: AnthropicMessagesCreateParams = {
+        model: options.model,
+        max_tokens: maxTokens,
+        system,
+        messages: toAnthropicMessages(request.messages),
+        tools:
+          request.tools.length > 0
+            ? request.tools.map(toAnthropicTool)
+            : undefined,
+      };
+      const callOptions = request.signal
+        ? { signal: request.signal }
+        : undefined;
+
       try {
+        if (request.onTextDelta && options.client.messages.stream) {
+          const stream = options.client.messages.stream(params, callOptions);
+          for await (const event of stream) {
+            if (request.signal?.aborted) {
+              throw cancelledError();
+            }
+            if (event.type === "content_block_delta") {
+              const delta = event.delta;
+              if (
+                delta &&
+                typeof delta === "object" &&
+                "type" in delta &&
+                delta.type === "text_delta" &&
+                "text" in delta &&
+                typeof delta.text === "string" &&
+                delta.text.length > 0
+              ) {
+                await request.onTextDelta(delta.text);
+              }
+            }
+          }
+          return fromAnthropicMessage(await stream.finalMessage());
+        }
+
         const message = await options.client.messages.create(
-          {
-            model: options.model,
-            max_tokens: maxTokens,
-            system,
-            messages: toAnthropicMessages(request.messages),
-            tools:
-              request.tools.length > 0
-                ? request.tools.map(toAnthropicTool)
-                : undefined,
-          },
-          request.signal ? { signal: request.signal } : undefined,
+          params,
+          callOptions,
         );
-        return fromAnthropicMessage(message);
+        const response = fromAnthropicMessage(message);
+        if (request.onTextDelta && response.content) {
+          await request.onTextDelta(response.content);
+        }
+        return response;
       } catch (error) {
         if (request.signal?.aborted || isAbortLike(error)) {
           throw cancelledError(error);

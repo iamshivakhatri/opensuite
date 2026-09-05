@@ -124,12 +124,41 @@ export class AgentRunner {
         });
 
         let response;
+        const messageId = this.createId();
         try {
+          await this.emit({
+            type: "message.started",
+            runId: request.runId,
+            messageId,
+            role: "assistant",
+            at: this.timestamp(),
+          });
+
           response = await this.model.complete({
             messages: transcript,
             tools: this.tools.definitions(),
             signal,
             capabilities: this.capabilities,
+            onTextDelta: async (delta) => {
+              if (!delta) return;
+              await this.emit({
+                type: "message.delta",
+                runId: request.runId,
+                messageId,
+                role: "assistant",
+                delta,
+                at: this.timestamp(),
+              });
+            },
+          });
+
+          await this.emit({
+            type: "message.completed",
+            runId: request.runId,
+            messageId,
+            role: "assistant",
+            content: response.content,
+            at: this.timestamp(),
           });
         } catch (error) {
           if (this.isCancellation(error, signal)) {

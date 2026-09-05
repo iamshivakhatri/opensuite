@@ -249,6 +249,11 @@ export function createDocumentService(
             throw new Error("Failed to create document version");
           }
 
+          await tx
+            .update(schema.workspace)
+            .set({ updatedAt: new Date() })
+            .where(eq(schema.workspace.id, input.workspaceId));
+
           return {
             doc,
             version: {
@@ -293,7 +298,10 @@ export function createDocumentService(
      * version (max `version_number`). Caller must already enforce ownership.
      * Uses a grouped join so this is not an N+1.
      */
-    async listInWorkspace(workspaceId: string): Promise<ListedDocumentDto[]> {
+    async listInWorkspace(
+      workspaceId: string,
+      ownerUserId: string,
+    ): Promise<Array<ListedDocumentDto & { starred: boolean }>> {
       const latestByDocument = db
         .select({
           documentId: schema.documentVersion.documentId,
@@ -318,6 +326,7 @@ export function createDocumentService(
           sizeBytes: schema.documentVersion.sizeBytes,
           source: schema.documentVersion.source,
           versionCreatedAt: schema.documentVersion.createdAt,
+          starred: schema.documentUserState.starred,
         })
         .from(schema.document)
         .innerJoin(
@@ -332,6 +341,13 @@ export function createDocumentService(
               schema.documentVersion.versionNumber,
               latestByDocument.maxVersionNumber,
             ),
+          ),
+        )
+        .leftJoin(
+          schema.documentUserState,
+          and(
+            eq(schema.documentUserState.documentId, schema.document.id),
+            eq(schema.documentUserState.userId, ownerUserId),
           ),
         )
         .where(
@@ -353,6 +369,7 @@ export function createDocumentService(
         format: row.format,
         createdAt: row.createdAt.toISOString(),
         updatedAt: row.updatedAt.toISOString(),
+        starred: row.starred ?? false,
         latestVersion: {
           id: row.versionId,
           versionNumber: row.versionNumber,

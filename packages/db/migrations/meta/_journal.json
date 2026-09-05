@@ -22,6 +22,13 @@
       "when": 1788550743929,
       "tag": "0002_past_wraith",
       "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1788619319123,
+      "tag": "0003_unusual_ironclad",
+      "breakpoints": true
     }
   ]
 }

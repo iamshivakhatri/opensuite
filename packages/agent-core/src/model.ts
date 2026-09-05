@@ -58,6 +58,12 @@ export interface ModelRequest {
   readonly signal?: AbortSignal;
   /** Optional runtime capabilities for model/prompt adapters. */
   readonly capabilities?: RuntimeCapabilities;
+  /**
+   * When set, streaming-capable adapters should invoke this with text chunks
+   * as they arrive. Non-streaming adapters may ignore it and return the full
+   * completion normally.
+   */
+  readonly onTextDelta?: (delta: string) => void | Promise<void>;
 }
 
 /**
@@ -96,6 +102,11 @@ export interface ToolExecutionContext {
 export type ToolRisk = "safe" | "destructive";
 
 /**
+ * Side-effect class for tools. Writes default to sequential execution.
+ */
+export type ToolEffect = "read" | "write";
+
+/**
  * Conservative concurrency hint for tools within a single model turn.
  * - sequential (default): barrier — never auto-parallelized
  * - parallel-safe: may run concurrently with other parallel-safe calls
@@ -110,7 +121,9 @@ export interface AgentTool<TInput = unknown, TResult = unknown> {
   readonly name: string;
   readonly description: string;
   readonly risk: ToolRisk;
-  /** Defaults to `sequential` when omitted. */
+  /** Defaults to `read`. Write tools should use sequential execution. */
+  readonly effect?: ToolEffect;
+  /** Defaults to `sequential` when omitted (and for write effects). */
   readonly executionMode?: ToolExecutionMode;
   readonly inputSchema: ToolInputSchema;
   /**
@@ -125,10 +138,21 @@ export function requiresConfirmation(tool: Pick<AgentTool, "risk">): boolean {
   return tool.risk === "destructive";
 }
 
+export function toolEffect(tool: Pick<AgentTool, "effect">): ToolEffect {
+  return tool.effect ?? "read";
+}
+
 export function toolExecutionMode(
-  tool: Pick<AgentTool, "executionMode">,
+  tool: Pick<AgentTool, "executionMode" | "effect">,
 ): ToolExecutionMode {
-  return tool.executionMode ?? "sequential";
+  if (tool.executionMode) {
+    return tool.executionMode;
+  }
+  // Writes default to sequential so concurrent edits cannot race a working copy.
+  if (toolEffect(tool) === "write") {
+    return "sequential";
+  }
+  return "sequential";
 }
 
 export function toModelToolDefinition(

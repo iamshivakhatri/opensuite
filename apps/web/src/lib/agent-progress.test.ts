@@ -4,6 +4,7 @@ import { test } from "node:test";
 import {
   progressMarker,
   reduceAgentProgress,
+  visibleAgentProgress,
   type AgentProgressLine,
 } from "./agent-progress.ts";
 import { shouldAcceptSubmit } from "./agent-submit.ts";
@@ -25,6 +26,8 @@ function event(
 test("reduceAgentProgress builds concise Cursor-style lines", () => {
   let lines: AgentProgressLine[] = [];
   lines = reduceAgentProgress(lines, event("agent.started"));
+  assert.equal(lines[0]?.label, "Thinking…");
+
   lines = reduceAgentProgress(
     lines,
     event("tool.started", {
@@ -32,6 +35,11 @@ test("reduceAgentProgress builds concise Cursor-style lines", () => {
       toolName: "document.inspect",
     }),
   );
+  assert.deepEqual(
+    lines.map((line) => ({ status: line.status, label: line.label })),
+    [{ status: "active", label: "Inspecting document…" }],
+  );
+
   lines = reduceAgentProgress(
     lines,
     event("tool.completed", {
@@ -39,23 +47,47 @@ test("reduceAgentProgress builds concise Cursor-style lines", () => {
       toolName: "document.inspect",
     }),
   );
+  assert.deepEqual(
+    lines.map((line) => ({ status: line.status, label: line.label })),
+    [{ status: "active", label: "Thinking…" }],
+  );
+
   lines = reduceAgentProgress(
     lines,
     event("tool.started", { toolCallId: "t2", toolName: "other.tool" }),
   );
-  lines = reduceAgentProgress(lines, event("agent.completed"));
-
-  assert.deepEqual(
-    lines.map((line) => ({
-      marker: progressMarker(line.status),
-      label: line.label,
-    })),
-    [
-      { marker: "✓", label: "Working…" },
-      { marker: "✓", label: "Inspected document" },
-      { marker: "✓", label: "Running tool…" },
-    ],
+  assert.ok(
+    lines.some((line) => line.label === "Running tool…" && line.status === "active"),
   );
+
+  lines = reduceAgentProgress(
+    lines,
+    event("tool.completed", { toolCallId: "t2", toolName: "other.tool" }),
+  );
+  assert.ok(lines.some((line) => line.label === "Thinking…" && line.status === "active"));
+
+  lines = reduceAgentProgress(lines, event("message.started"));
+  assert.deepEqual(lines, []);
+});
+
+test("reduceAgentProgress clears status once text streams", () => {
+  let lines = reduceAgentProgress([], event("agent.started"));
+  assert.equal(lines[0]?.label, "Thinking…");
+  lines = reduceAgentProgress(lines, event("message.delta", { delta: "Hi" }));
+  assert.deepEqual(lines, []);
+});
+
+test("visibleAgentProgress hides done rows", () => {
+  const lines: AgentProgressLine[] = [
+    { id: "a", label: "Working…", status: "done" },
+    { id: "b", label: "Inspecting…", status: "active" },
+    { id: "c", label: "failed", status: "error" },
+  ];
+  assert.deepEqual(
+    visibleAgentProgress(lines).map((line) => line.id),
+    ["b", "c"],
+  );
+  assert.equal(progressMarker("active"), "●");
 });
 
 test("reduceAgentProgress maps failed and cancelled terminals", () => {

@@ -4,43 +4,42 @@ _Read this before starting any work. Keep it a concise current-state handoff, no
 
 ## What Exists
 
-* Auth, workspaces, documents, Files UI, document workspace shell + Agent panel.
-* Agent persistence + **AgentExecutionService** + **AgentRunManager** (live in-process).
-* Agent-core `AgentRunner` + multi-provider **AgentModel** adapters in `apps/api`.
-* Authenticated agent HTTP + SSE end-to-end.
+* Auth + workspace-first product shell (Workspaces / Recent / Starred / Write / Slides / Sheets / Settings).
+* Workspace CRUD (create, rename, soft-delete) + summary list (counts + recent filenames).
+* Per-user `document_user_state` (star + last-opened) for Recent/Starred.
+* Workspace IDE: explorer + session tabs + placeholder canvas + document-scoped Agent.
+* Agent persistence + execution + SSE streaming (unchanged).
 
 ## Just Completed
 
-Multi-provider AgentModel composition:
-
-* `AGENT_MODEL_PROVIDER=unconfigured|fake|anthropic|openai|openrouter`
-* Keys/models: `ANTHROPIC_*`, `OPENAI_*`, `OPENROUTER_*` (`OPENROUTER_MODEL` required, no default)
-* Adapters: Anthropic Messages, OpenAI **Responses**, OpenRouter via OpenAI Chat Completions + `https://openrouter.ai/api/v1`
-* `createConfiguredAgentModel(config)` — routes stay provider-agnostic
-* `fake` rejected in production; tool rejection from OSS models → safe `MODEL_FAILURE`
-* No token streaming; user progress remains AgentEvent/SSE
+* `/app` = workspaces home (not implicit file library).
+* Routes: `/app/workspaces/:id`, `/app/workspaces/:id/documents/:id`; old `/app/documents/:id` redirects.
+* Functional sidebar (no Shared); Settings account + theme (system/light/dark).
+* Format libraries with destination-workspace upload.
 
 ## Current Decisions
 
-* Document-first threads; sync start + async execution (no job workers).
-* Provider SDKs live in `apps/api` adapters — never in agent-core.
-* OpenRouter uses Chat Completions (compat); OpenAI uses Responses API.
-* Durable recovery = AgentRun/AgentStep rows (+ `latestRun` on messages).
+* Document-first agent only — no workspace-wide agent yet.
+* Soft-delete workspaces/documents; history retained.
+* Mock mutations in-memory per run — do not modify Office binaries yet.
+* `pnpm db:migrate` required after schema pulls (`document_user_state`).
 
 ## Verification Status
 
 | Check | Status |
 |---|---|
-| `@opensuite/agent-core` unit tests | **Pass** |
-| `contracts` / `db` / `engine-client` typecheck | **Pass** |
-| `api` typecheck + unit + DB integration tests | **Pass** |
-| `apps/web` typecheck + tests + `next build` | **Pass** |
+| `pnpm typecheck` | **Pass** |
+| `pnpm test` | **Pass** |
+| `RUN_DB_INTEGRATION_TESTS=true` (workspace rename/delete, recent/starred) | **Pass** |
+| `pnpm build` | **Pass** |
+| Real Office rendering / binary mutation | **Not implemented** |
 
 ## Intentionally Deferred
 
-* Office tools / Rust engine / token streaming / model routing
-* Durable event log, Redis/BullMQ/workers, confirmation resume API
+* Real Office binary mutation / Rust engine / document_version from agent
+* Workspace-scoped agent / folders / sharing / collaboration
+* Blank-document creation / Trash / checkpoints
 
 ## Recommended Next Step
 
-Configure a provider in `.env` and smoke the document Agent panel, then add a real document inspect tool.
+Manual QA the workspace-first flow (create → open → upload → star → recent → settings), then engine-backed DocumentRuntime when ready.

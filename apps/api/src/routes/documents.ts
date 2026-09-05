@@ -7,6 +7,7 @@ import {
   DocumentUploadError,
   type DocumentService,
 } from "../documents/service.js";
+import type { DocumentPreferenceService } from "../documents/preferences.js";
 import type { WorkspaceService } from "../workspaces/service.js";
 
 const WorkspaceIdParams = z.object({
@@ -15,6 +16,14 @@ const WorkspaceIdParams = z.object({
 
 const DocumentIdParams = z.object({
   documentId: z.uuid("documentId must be a UUID"),
+});
+
+const SetStarBody = z.object({
+  starred: z.boolean(),
+});
+
+const LibraryFormatQuery = z.object({
+  format: z.enum(["docx", "pptx", "xlsx"]),
 });
 
 function unauthenticated() {
@@ -28,14 +37,59 @@ function unauthenticated() {
 }
 
 /**
- * Authenticated Office document upload, list, and latest-version download.
+ * Authenticated Office document upload, list, download, and per-user prefs
+ * (recent / starred / format library).
  */
 export function registerDocumentRoutes(
   app: FastifyInstance,
   auth: SessionAuth,
   workspaces: WorkspaceService,
   documents: DocumentService,
+  preferences: DocumentPreferenceService,
 ): void {
+  // Static library routes before parametric /:documentId.
+  app.get("/api/documents/recent", async (request, reply) => {
+    const user = await getRequestUser(auth, request);
+    if (!user) {
+      return reply.status(401).send(unauthenticated());
+    }
+    const list = await preferences.listRecent(user.id);
+    return reply.send({ documents: list });
+  });
+
+  app.get("/api/documents/starred", async (request, reply) => {
+    const user = await getRequestUser(auth, request);
+    if (!user) {
+      return reply.status(401).send(unauthenticated());
+    }
+    const list = await preferences.listStarred(user.id);
+    return reply.send({ documents: list });
+  });
+
+  app.get("/api/documents/library", async (request, reply) => {
+    const user = await getRequestUser(auth, request);
+    if (!user) {
+      return reply.status(401).send(unauthenticated());
+    }
+
+    const query = LibraryFormatQuery.safeParse(request.query);
+    if (!query.success) {
+      return reply.status(400).send({
+        error: {
+          statusCode: 400,
+          message: "format must be docx, pptx, or xlsx",
+          code: "INVALID_FORMAT",
+        },
+      });
+    }
+
+    const list = await preferences.listByFormat({
+      ownerUserId: user.id,
+      format: query.data.format,
+    });
+    return reply.send({ documents: list });
+  });
+
   app.get(
     "/api/workspaces/:workspaceId/documents",
     async (request, reply) => {
@@ -69,7 +123,7 @@ export function registerDocumentRoutes(
         });
       }
 
-      const list = await documents.listInWorkspace(workspace.id);
+      const list = await documents.listInWorkspace(workspace.id, user.id);
       return reply.send({ documents: list });
     },
   );
@@ -188,7 +242,69 @@ export function registerDocumentRoutes(
         documentId: params.data.documentId,
         ownerUserId: user.id,
       });
-      return reply.send({ document });
+      // Best-effort open tracking for Recent — do not fail the GET.
+      try {
+        await preferences.recordOpened({
+          documentId: document.id,
+          ownerUserId: user.id,
+        });
+      } catch {
+        // ignore preference write failures
+      }
+      const star = await preferences.getStarState({
+        documentId: document.id,
+        ownerUserId: user.id,
+      });
+      return reply.send({ document: { ...document, starred: star.starred } });
+    } catch (error) {
+      if (error instanceof DocumentAccessError) {
+        return reply.status(error.statusCode).send({
+          error: {
+            statusCode: error.statusCode,
+            message: error.message,
+            code: error.code,
+          },
+        });
+      }
+      throw error;
+    }
+  });
+
+  app.put("/api/documents/:documentId/star", async (request, reply) => {
+    const user = await getRequestUser(auth, request);
+    if (!user) {
+      return reply.status(401).send(unauthenticated());
+    }
+
+    const params = DocumentIdParams.safeParse(request.params);
+    if (!params.success) {
+      return reply.status(400).send({
+        error: {
+          statusCode: 400,
+          message: params.error.issues[0]?.message ?? "Invalid document id",
+          code: "INVALID_DOCUMENT_ID",
+        },
+      });
+    }
+
+    const body = SetStarBody.safeParse(request.body);
+    if (!body.success) {
+      return reply.status(400).send({
+        error: {
+          statusCode: 400,
+          message: "starred must be a boolean",
+          code: "INVALID_STAR_BODY",
+        },
+      });
+    }
+
+    try {
+      const result = await preferences.setStarred({
+        documentId: params.data.documentId,
+        ownerUserId: user.id,
+        starred: body.data.starred,
+      });
+      return reply.send(result);
     } catch (error) {
       if (error instanceof DocumentAccessError) {
         return reply.status(error.statusCode).send({

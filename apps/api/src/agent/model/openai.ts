@@ -66,14 +66,25 @@ export interface OpenAIResponsesCreateParams {
   readonly tools?: readonly OpenAIResponsesTool[];
   readonly instructions?: string;
   readonly max_output_tokens?: number;
+  readonly stream?: boolean;
 }
+
+export type OpenAIResponsesStreamEvent =
+  | { readonly type: "response.output_text.delta"; readonly delta: string }
+  | {
+      readonly type: "response.completed";
+      readonly response: OpenAIResponsesResult;
+    }
+  | { readonly type: string; readonly [key: string]: unknown };
 
 export interface OpenAIResponsesClient {
   responses: {
     create(
       params: OpenAIResponsesCreateParams,
       options?: { signal?: AbortSignal },
-    ): Promise<OpenAIResponsesResult>;
+    ): Promise<
+      OpenAIResponsesResult | AsyncIterable<OpenAIResponsesStreamEvent>
+    >;
   };
 }
 
@@ -87,6 +98,7 @@ export interface OpenAIAgentModelOptions {
 
 /**
  * OpenAI Responses API → OpenSuite AgentModel adapter.
+ * Streams text when `onTextDelta` is set (`stream: true`).
  */
 export function createOpenAIAgentModel(
   options: OpenAIAgentModelOptions,
@@ -101,20 +113,61 @@ export function createOpenAIAgentModel(
         throw cancelledError();
       }
 
+      const baseParams = {
+        model: options.model,
+        instructions: system,
+        max_output_tokens: maxOutputTokens,
+        input: toOpenAIResponsesInput(request.messages),
+        tools:
+          request.tools.length > 0
+            ? request.tools.map(toOpenAIResponsesTool)
+            : undefined,
+      };
+      const callOptions = request.signal
+        ? { signal: request.signal }
+        : undefined;
+
       try {
-        const result = await options.client.responses.create(
-          {
-            model: options.model,
-            instructions: system,
-            max_output_tokens: maxOutputTokens,
-            input: toOpenAIResponsesInput(request.messages),
-            tools:
-              request.tools.length > 0
-                ? request.tools.map(toOpenAIResponsesTool)
-                : undefined,
-          },
-          request.signal ? { signal: request.signal } : undefined,
-        );
+        if (request.onTextDelta) {
+          const stream = (await options.client.responses.create(
+            { ...baseParams, stream: true },
+            callOptions,
+          )) as AsyncIterable<OpenAIResponsesStreamEvent>;
+
+          let final: OpenAIResponsesResult | null = null;
+          let streamed = "";
+
+          for await (const event of stream) {
+            if (request.signal?.aborted) {
+              throw cancelledError();
+            }
+            if (
+              event.type === "response.output_text.delta" &&
+              typeof event.delta === "string" &&
+              event.delta.length > 0
+            ) {
+              streamed += event.delta;
+              await request.onTextDelta(event.delta);
+            }
+            if (
+              event.type === "response.completed" &&
+              event.response &&
+              typeof event.response === "object"
+            ) {
+              final = event.response as OpenAIResponsesResult;
+            }
+          }
+
+          if (final) {
+            return fromOpenAIResponsesResult(final);
+          }
+          return { content: streamed.trim(), toolCalls: [] };
+        }
+
+        const result = (await options.client.responses.create(
+          { ...baseParams, stream: false },
+          callOptions,
+        )) as OpenAIResponsesResult;
         return fromOpenAIResponsesResult(result);
       } catch (error) {
         if (request.signal?.aborted || isAbortLike(error)) {

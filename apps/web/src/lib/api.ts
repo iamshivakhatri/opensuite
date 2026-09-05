@@ -6,14 +6,22 @@ export interface Me {
   readonly email: string;
 }
 
+export type DocumentFormat = "docx" | "pptx" | "xlsx";
+
 export interface Workspace {
   readonly id: string;
   readonly name: string;
   readonly createdAt: string;
   readonly updatedAt: string;
+  readonly documentCount: number;
+  readonly recentDocuments: readonly WorkspaceRecentDocument[];
 }
 
-export type DocumentFormat = "docx" | "pptx" | "xlsx";
+export interface WorkspaceRecentDocument {
+  readonly id: string;
+  readonly name: string;
+  readonly format: DocumentFormat;
+}
 
 export interface ListedDocumentVersion {
   readonly id: string;
@@ -31,6 +39,21 @@ export interface ListedDocument {
   readonly createdAt: string;
   readonly updatedAt: string;
   readonly latestVersion: ListedDocumentVersion;
+  readonly starred?: boolean;
+}
+
+/** Cross-workspace library row (recent / starred / format libraries). */
+export interface LibraryDocument {
+  readonly id: string;
+  readonly workspaceId: string;
+  readonly workspaceName: string;
+  readonly name: string;
+  readonly format: DocumentFormat;
+  readonly createdAt: string;
+  readonly updatedAt: string;
+  readonly lastOpenedAt: string | null;
+  readonly starred: boolean;
+  readonly starredAt: string | null;
 }
 
 export class ApiError extends Error {
@@ -109,7 +132,11 @@ export async function listWorkspaces(): Promise<Workspace[]> {
     throw await parseError(response);
   }
   const body = (await response.json()) as { workspaces: Workspace[] };
-  return body.workspaces;
+  return body.workspaces.map((workspace) => ({
+    ...workspace,
+    documentCount: workspace.documentCount ?? 0,
+    recentDocuments: workspace.recentDocuments ?? [],
+  }));
 }
 
 export async function createWorkspace(name: string): Promise<Workspace> {
@@ -122,7 +149,89 @@ export async function createWorkspace(name: string): Promise<Workspace> {
     throw await parseError(response);
   }
   const body = (await response.json()) as { workspace: Workspace };
-  return body.workspace;
+  return {
+    ...body.workspace,
+    documentCount: body.workspace.documentCount ?? 0,
+    recentDocuments: body.workspace.recentDocuments ?? [],
+  };
+}
+
+export async function renameWorkspace(
+  workspaceId: string,
+  name: string,
+): Promise<Workspace> {
+  const response = await apiFetch(`/api/workspaces/${workspaceId}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ name }),
+  });
+  if (!response.ok) {
+    throw await parseError(response);
+  }
+  const body = (await response.json()) as { workspace: Workspace };
+  return {
+    ...body.workspace,
+    documentCount: body.workspace.documentCount ?? 0,
+    recentDocuments: body.workspace.recentDocuments ?? [],
+  };
+}
+
+export async function deleteWorkspace(workspaceId: string): Promise<void> {
+  const response = await apiFetch(`/api/workspaces/${workspaceId}`, {
+    method: "DELETE",
+  });
+  if (!response.ok) {
+    throw await parseError(response);
+  }
+}
+
+export async function listRecentDocuments(): Promise<LibraryDocument[]> {
+  const response = await apiFetch("/api/documents/recent");
+  if (!response.ok) {
+    throw await parseError(response);
+  }
+  const body = (await response.json()) as { documents: LibraryDocument[] };
+  return body.documents;
+}
+
+export async function listStarredDocuments(): Promise<LibraryDocument[]> {
+  const response = await apiFetch("/api/documents/starred");
+  if (!response.ok) {
+    throw await parseError(response);
+  }
+  const body = (await response.json()) as { documents: LibraryDocument[] };
+  return body.documents;
+}
+
+export async function listLibraryDocuments(
+  format: DocumentFormat,
+): Promise<LibraryDocument[]> {
+  const response = await apiFetch(
+    `/api/documents/library?format=${encodeURIComponent(format)}`,
+  );
+  if (!response.ok) {
+    throw await parseError(response);
+  }
+  const body = (await response.json()) as { documents: LibraryDocument[] };
+  return body.documents;
+}
+
+export async function setDocumentStarred(
+  documentId: string,
+  starred: boolean,
+): Promise<{ starred: boolean; starredAt: string | null }> {
+  const response = await apiFetch(`/api/documents/${documentId}/star`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ starred }),
+  });
+  if (!response.ok) {
+    throw await parseError(response);
+  }
+  return (await response.json()) as {
+    starred: boolean;
+    starredAt: string | null;
+  };
 }
 
 export async function listDocuments(
@@ -356,6 +465,30 @@ export async function getAgentRun(runId: string): Promise<{
   return (await response.json()) as { run: AgentRun; steps: AgentStep[] };
 }
 
+/**
+ * Poll durable run snapshot until terminal (or timeout).
+ * Used after SSE terminal/disconnect so we don't race DB finalize.
+ */
+export async function waitForAgentRunTerminal(
+  runId: string,
+  options?: { timeoutMs?: number; intervalMs?: number },
+): Promise<{ run: AgentRun; steps: AgentStep[] }> {
+  const timeoutMs = options?.timeoutMs ?? 60_000;
+  const intervalMs = options?.intervalMs ?? 200;
+  const started = Date.now();
+  let last = await getAgentRun(runId);
+
+  while (isActiveAgentRunStatus(last.run.status)) {
+    if (Date.now() - started >= timeoutMs) {
+      return last;
+    }
+    await new Promise((resolve) => setTimeout(resolve, intervalMs));
+    last = await getAgentRun(runId);
+  }
+
+  return last;
+}
+
 export async function cancelAgentRun(runId: string): Promise<{
   run: AgentRun;
   steps: AgentStep[];
@@ -387,6 +520,7 @@ export function subscribeAgentRunEvents(
   const controller = new AbortController();
 
   void (async () => {
+    let reader: ReadableStreamDefaultReader<Uint8Array> | null = null;
     try {
       const response = await apiFetch(`/api/agent/runs/${runId}/events`, {
         headers: { Accept: "text/event-stream" },
@@ -399,7 +533,7 @@ export function subscribeAgentRunEvents(
         throw new ApiError(500, "SSE_UNAVAILABLE", "SSE stream unavailable");
       }
 
-      const reader = response.body.getReader();
+      reader = response.body.getReader();
       const decoder = new TextDecoder();
       let buffer = "";
       let sawTerminal = false;
@@ -415,7 +549,12 @@ export function subscribeAgentRunEvents(
         for (const block of parts) {
           const event = parseSseBlock(block);
           if (!event) continue;
-          options.onEvent(event);
+          // Keep the stream alive if a UI handler throws.
+          try {
+            options.onEvent(event);
+          } catch {
+            // ignore listener errors
+          }
           if (
             event.type === "agent.completed" ||
             event.type === "agent.failed" ||
@@ -434,6 +573,12 @@ export function subscribeAgentRunEvents(
         return;
       }
       options.onError?.(error);
+    } finally {
+      try {
+        reader?.releaseLock();
+      } catch {
+        // already released / cancelled
+      }
     }
   })();
 

@@ -13,6 +13,26 @@ const TOOL_LABELS: Record<string, { active: string; done: string }> = {
     active: "Inspecting document…",
     done: "Inspected document",
   },
+  "document.find": {
+    active: "Searching document…",
+    done: "Search complete",
+  },
+  "document.capabilities": {
+    active: "Checking capabilities…",
+    done: "Capabilities ready",
+  },
+  "document.replace_text": {
+    active: "Replacing text…",
+    done: "Replaced text",
+  },
+  "slides.update_text": {
+    active: "Updating slide text…",
+    done: "Updated slide text",
+  },
+  "workbook.set_cells": {
+    active: "Updating cells…",
+    done: "Updated cells",
+  },
 };
 
 function toolLabels(toolName: string): { active: string; done: string } {
@@ -25,8 +45,8 @@ function toolLabels(toolName: string): { active: string; done: string } {
 }
 
 /**
- * Fold live SSE events into concise Cursor-style progress lines.
- * Hides CoT, provider payloads, and tool I/O JSON.
+ * Fold live SSE events into concise status lines shown *before* assistant text.
+ * Cleared once tokens stream. Never keeps a ✓ Working/Thinking pile under tools.
  */
 export function reduceAgentProgress(
   lines: readonly AgentProgressLine[],
@@ -34,21 +54,20 @@ export function reduceAgentProgress(
 ): AgentProgressLine[] {
   switch (event.type) {
     case "agent.started": {
-      if (lines.some((line) => line.id === "working")) {
+      if (lines.some((line) => line.id === "thinking" && line.status === "active")) {
         return [...lines];
       }
-      return [
-        ...lines,
-        { id: "working", label: "Working…", status: "active" },
-      ];
+      return [{ id: "thinking", label: "Thinking…", status: "active" }];
     }
+    case "message.started":
+    case "message.delta":
+    case "message.completed":
+      return [];
     case "tool.started": {
       const toolCallId = String(event.data.toolCallId ?? "tool");
       const toolName = String(event.data.toolName ?? "tool");
       const labels = toolLabels(toolName);
-      const next = markWorkingDone(lines);
       return [
-        ...next.filter((line) => line.id !== `tool:${toolCallId}`),
         {
           id: `tool:${toolCallId}`,
           label: labels.active,
@@ -57,38 +76,24 @@ export function reduceAgentProgress(
       ];
     }
     case "tool.completed": {
-      const toolCallId = String(event.data.toolCallId ?? "tool");
-      const toolName = String(event.data.toolName ?? "tool");
-      const labels = toolLabels(toolName);
-      const next = markWorkingDone(lines);
-      const without = next.filter((line) => line.id !== `tool:${toolCallId}`);
-      return [
-        ...without,
-        {
-          id: `tool:${toolCallId}`,
-          label: labels.done,
-          status: "done",
-        },
-      ];
+      // Drop completed tool chrome — resume Thinking until text streams.
+      return [{ id: "thinking", label: "Thinking…", status: "active" }];
     }
     case "tool.failed": {
       const toolCallId = String(event.data.toolCallId ?? "tool");
       const toolName = String(event.data.toolName ?? "tool");
-      const next = markWorkingDone(lines);
       return [
-        ...next.filter((line) => line.id !== `tool:${toolCallId}`),
         {
           id: `tool:${toolCallId}`,
           label: `${toolName} failed`,
           status: "error",
         },
+        { id: "thinking", label: "Thinking…", status: "active" },
       ];
     }
     case "confirmation.required": {
       const toolCallId = String(event.data.toolCallId ?? "confirm");
-      const next = markWorkingDone(lines);
       return [
-        ...next.filter((line) => line.id !== `confirm:${toolCallId}`),
         {
           id: `confirm:${toolCallId}`,
           label: "Waiting for confirmation…",
@@ -97,18 +102,9 @@ export function reduceAgentProgress(
       ];
     }
     case "agent.completed":
-      return markWorkingDone(lines).map((line) =>
-        line.status === "active"
-          ? { ...line, status: "done" as const }
-          : line,
-      );
+      return [];
     case "agent.failed":
       return [
-        ...markWorkingDone(lines).map((line) =>
-          line.status === "active"
-            ? { ...line, status: "done" as const }
-            : line,
-        ),
         {
           id: "failed",
           label: "Something went wrong",
@@ -117,11 +113,6 @@ export function reduceAgentProgress(
       ];
     case "agent.cancelled":
       return [
-        ...markWorkingDone(lines).map((line) =>
-          line.status === "active"
-            ? { ...line, status: "done" as const }
-            : line,
-        ),
         {
           id: "cancelled",
           label: "Stopped",
@@ -133,13 +124,12 @@ export function reduceAgentProgress(
   }
 }
 
-function markWorkingDone(
+/** UI helper: only active / error rows (no stale ✓ pile). */
+export function visibleAgentProgress(
   lines: readonly AgentProgressLine[],
 ): AgentProgressLine[] {
-  return lines.map((line) =>
-    line.id === "working" && line.status === "active"
-      ? { ...line, status: "done", label: "Working…" }
-      : line,
+  return lines.filter(
+    (line) => line.status === "active" || line.status === "error",
   );
 }
 

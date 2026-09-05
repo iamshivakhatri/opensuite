@@ -3,12 +3,14 @@ import cors from "@fastify/cors";
 import multipart from "@fastify/multipart";
 
 import {
-  ToolRegistry,
+  createMockDocumentRuntime,
+  mutableDocumentCapabilities,
   type AgentModel,
   type ConfirmationGate,
   type DocumentRuntime,
   type RuntimeCapabilities,
   type SteeringSource,
+  type ToolRegistry,
 } from "@opensuite/agent-core";
 import type { Db } from "@opensuite/db";
 
@@ -30,6 +32,7 @@ import {
 import type { SessionAuth } from "./auth/session.js";
 import type { AppConfig } from "./config/index.js";
 import { createDocumentService } from "./documents/service.js";
+import { createDocumentPreferenceService } from "./documents/preferences.js";
 import type { AuthHandler } from "./routes/auth.js";
 import { registerAgentRoutes } from "./routes/agent.js";
 import { registerAuthRoutes } from "./routes/auth.js";
@@ -81,7 +84,7 @@ export async function buildApp(
 
   await app.register(cors, {
     origin: config.webOrigin,
-    methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
     allowedHeaders: ["Content-Type", "Authorization", "X-Requested-With"],
     credentials: true,
     maxAge: 86_400,
@@ -132,20 +135,29 @@ export async function buildApp(
       );
     },
   });
+  const preferences = createDocumentPreferenceService(deps.db);
 
   const agentPersistence =
     deps.agent?.persistence ?? createAgentPersistenceService(deps.db);
+  const documentCapabilities =
+    deps.agent?.capabilities ?? mutableDocumentCapabilities();
+  const documentRuntime =
+    deps.agent?.runtime ??
+    createMockDocumentRuntime({ capabilities: documentCapabilities });
+  // Prefer per-run format-filtered registry in AgentExecutionService when
+  // tools are not explicitly injected (tests may still pass a fixed registry).
+  const documentTools = deps.agent?.tools;
   const agentExecution =
     deps.agent?.execution ??
     createAgentExecutionService({
       persistence: agentPersistence,
       documents,
       model: deps.agent?.model ?? createConfiguredAgentModel(config),
-      tools: deps.agent?.tools ?? ToolRegistry.create([]),
-      runtime: deps.agent?.runtime,
+      tools: documentTools,
+      runtime: documentRuntime,
       confirmation: deps.agent?.confirmation,
       steering: deps.agent?.steering,
-      capabilities: deps.agent?.capabilities,
+      capabilities: documentCapabilities,
       maxTurns: deps.agent?.maxTurns,
     });
   const agentRunManager =
@@ -160,13 +172,14 @@ export async function buildApp(
   registerAuthRoutes(app, deps.auth);
   registerMeRoutes(app, deps.auth);
   registerWorkspaceRoutes(app, deps.auth, workspaces);
-  registerDocumentRoutes(app, deps.auth, workspaces, documents);
+  registerDocumentRoutes(app, deps.auth, workspaces, documents, preferences);
   registerAgentRoutes(app, {
     auth: deps.auth,
     documents,
     persistence: agentPersistence,
     execution: agentExecution,
     runManager: agentRunManager,
+    webOrigin: config.webOrigin,
   });
 
   return app;

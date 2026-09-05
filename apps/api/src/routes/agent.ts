@@ -74,6 +74,8 @@ export interface AgentRouteDeps {
   readonly persistence: AgentPersistenceService;
   readonly execution: AgentExecutionService;
   readonly runManager: AgentRunManager;
+  /** Required on hijacked SSE — reply.hijack bypasses @fastify/cors. */
+  readonly webOrigin: string;
 }
 
 const TERMINAL_RUN_STATUSES = new Set([
@@ -90,7 +92,7 @@ export function registerAgentRoutes(
   app: FastifyInstance,
   deps: AgentRouteDeps,
 ): void {
-  const { auth, documents, persistence, runManager } = deps;
+  const { auth, documents, persistence, runManager, webOrigin } = deps;
 
   app.get(
     "/api/documents/:documentId/agent/threads",
@@ -468,14 +470,33 @@ export function registerAgentRoutes(
       });
     }
 
+    // reply.hijack() skips @fastify/cors — without these headers the browser
+    // blocks reading the stream (CORS) while the server still holds the socket.
+    const requestOrigin = request.headers.origin;
+    const allowOrigin =
+      typeof requestOrigin === "string" && requestOrigin === webOrigin
+        ? requestOrigin
+        : webOrigin;
+
     reply.hijack();
     reply.raw.writeHead(200, {
       "Content-Type": "text/event-stream; charset=utf-8",
       "Cache-Control": "no-cache, no-transform",
       Connection: "keep-alive",
       "X-Accel-Buffering": "no",
+      "Access-Control-Allow-Origin": allowOrigin,
+      "Access-Control-Allow-Credentials": "true",
+      Vary: "Origin",
     });
+    // Push headers + first bytes immediately (some proxies buffer until flush).
+    const raw = reply.raw as typeof reply.raw & {
+      flushHeaders?: () => void;
+      flush?: () => void;
+    };
+    raw.flushHeaders?.();
+    reply.raw.socket?.setNoDelay?.(true);
     reply.raw.write(formatSseComment("connected"));
+    raw.flush?.();
 
     const terminalStatuses = TERMINAL_RUN_STATUSES;
     let cleaned = false;
@@ -504,6 +525,9 @@ export function registerAgentRoutes(
         return;
       }
       reply.raw.write(formatSseEvent(event));
+      // Avoid OS/TCP buffering so message.delta reaches the browser promptly.
+      const raw = reply.raw as typeof reply.raw & { flush?: () => void };
+      raw.flush?.();
       if (
         event.type === "agent.completed" ||
         event.type === "agent.failed" ||
@@ -534,15 +558,24 @@ export function registerAgentRoutes(
     }
 
     if (sub.status === "not_live") {
-      // Live hub gone — durable recovery is GET /runs. Send terminal hint then close.
+      // Live hub gone. Only emit a terminal event when the durable run is
+      // already terminal — never fake-fail an in-flight run (that made the UI
+      // poll GET /runs while the model was still working).
+      if (
+        run.status !== "completed" &&
+        run.status !== "failed" &&
+        run.status !== "cancelled"
+      ) {
+        reply.raw.write(formatSseComment("not_live"));
+        cleanup();
+        return;
+      }
       const type =
         run.status === "failed"
           ? "agent.failed"
           : run.status === "cancelled"
             ? "agent.cancelled"
-            : run.status === "completed"
-              ? "agent.completed"
-              : "agent.failed";
+            : "agent.completed";
       reply.raw.write(
         formatSseEvent({
           id: 0,

@@ -1,7 +1,7 @@
 "use client";
 
-import { FilesView } from "@/components/files/files-view";
+import { WorkspacesHome } from "@/components/workspaces/workspaces-home";
 
 export default function AppHomePage() {
-  return <FilesView />;
+  return <WorkspacesHome />;
 }

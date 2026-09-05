@@ -9,8 +9,9 @@
   "scripts": {
     "build": "turbo run build",
     "dev": "turbo run dev",
-    "dev:api": "pnpm --filter @opensuite/api dev",
+    "dev:api": "pnpm --filter @opensuite/agent-core build && pnpm --filter @opensuite/api dev",
     "dev:web": "pnpm --filter @opensuite/web dev",
+    "dev:agent-core": "pnpm --filter @opensuite/agent-core dev",
     "lint": "turbo run lint",
     "typecheck": "turbo run typecheck",
     "test": "turbo run test",

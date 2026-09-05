@@ -103,6 +103,39 @@ test("fromOpenAIChatCompletion extracts text and tool calls", () => {
   assert.equal(response.toolCalls.length, 2);
 });
 
+test("OpenRouter adapter: streams text deltas", async () => {
+  const deltas: string[] = [];
+  const model = createOpenRouterAgentModel({
+    model: "meta-llama/test",
+    client: {
+      chat: {
+        completions: {
+          async create(params) {
+            assert.equal(params.stream, true);
+            async function* chunks() {
+              yield { choices: [{ delta: { content: "Hel" } }] };
+              yield { choices: [{ delta: { content: "lo" } }] };
+              yield { choices: [{ delta: {} }] };
+            }
+            return chunks();
+          },
+        },
+      },
+    },
+  });
+
+  const result = await model.complete({
+    messages: [{ role: "user", content: "Hi" }],
+    tools: [],
+    onTextDelta: (delta) => {
+      deltas.push(delta);
+    },
+  });
+
+  assert.deepEqual(deltas, ["Hel", "lo"]);
+  assert.deepEqual(result, { content: "Hello", toolCalls: [] });
+});
+
 test("OpenRouter adapter: text-only response", async () => {
   const model = createOpenRouterAgentModel({
     model: "meta-llama/test",

@@ -61,7 +61,7 @@ export function createDevelopmentFakeAgentModel(): AgentModel {
       return {
         content:
           `Understood. (fake model) I received: "${truncate(instruction, 240)}". ` +
-          "No Office tools are connected yet, so I cannot inspect or edit document contents.",
+          "Document tools may be available; this fake model does not call them.",
         toolCalls: [],
       };
     },

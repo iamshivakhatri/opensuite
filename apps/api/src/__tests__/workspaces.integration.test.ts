@@ -4,7 +4,8 @@ import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import { test } from "node:test";
 
-import { createDbClient } from "@opensuite/db";
+import { createDbClient, schema } from "@opensuite/db";
+import { eq } from "drizzle-orm";
 
 import { createAuth } from "../auth/index.js";
 import { buildApp } from "../app.js";
@@ -139,13 +140,15 @@ test(
             name: string;
             createdAt: string;
             updatedAt: string;
+            documentCount: number;
+            recentDocuments: unknown[];
           };
         }
       ).workspace;
       assert.equal(aliceWorkspace.name, "Alice Workspace");
       assert.ok(aliceWorkspace.id);
-      assert.ok(aliceWorkspace.createdAt);
-      assert.ok(aliceWorkspace.updatedAt);
+      assert.equal(aliceWorkspace.documentCount, 0);
+      assert.deepEqual(aliceWorkspace.recentDocuments, []);
       assert.equal(
         "ownerUserId" in aliceWorkspace,
         false,
@@ -175,10 +178,17 @@ test(
       });
       assert.equal(aliceList.statusCode, 200, aliceList.body);
       const aliceWorkspaces = (
-        aliceList.json() as { workspaces: Array<{ id: string; name: string }> }
+        aliceList.json() as {
+          workspaces: Array<{
+            id: string;
+            name: string;
+            documentCount: number;
+          }>;
+        }
       ).workspaces;
       assert.equal(aliceWorkspaces.length, 1);
       assert.equal(aliceWorkspaces[0]?.id, aliceWorkspace.id);
+      assert.equal(aliceWorkspaces[0]?.documentCount, 0);
       assert.equal(
         aliceWorkspaces.some((w) => w.id === bobWorkspace.id),
         false,
@@ -199,6 +209,138 @@ test(
         bobWorkspaces.some((w) => w.id === aliceWorkspace.id),
         false,
       );
+    } finally {
+      await app.close();
+      await dbClient.close();
+    }
+  },
+);
+
+test(
+  "workspace rename and soft-delete are owner-scoped",
+  { skip: !runDbIntegrationTests || databaseUrl === undefined },
+  async () => {
+    const config = testConfig();
+    const dbClient = createDbClient({ databaseUrl: config.databaseUrl });
+    const emailSender = createStubEmailSender();
+    const auth = createAuth(config, dbClient.db, emailSender);
+    const app = await buildApp(config, {
+      auth,
+      db: dbClient.db,
+      storage: createMemoryObjectStorage(),
+    });
+    await app.ready();
+
+    try {
+      const alice = await signUpVerifyAndSignIn(
+        app,
+        config,
+        emailSender,
+        "AliceRename",
+      );
+      const bob = await signUpVerifyAndSignIn(
+        app,
+        config,
+        emailSender,
+        "BobRename",
+      );
+
+      const create = await app.inject({
+        method: "POST",
+        url: "/api/workspaces",
+        headers: {
+          "content-type": "application/json",
+          cookie: alice.cookie,
+          origin: config.webOrigin,
+        },
+        payload: { name: "Original" },
+      });
+      assert.equal(create.statusCode, 201, create.body);
+      const workspaceId = (
+        create.json() as { workspace: { id: string } }
+      ).workspace.id;
+
+      const rename = await app.inject({
+        method: "PATCH",
+        url: `/api/workspaces/${workspaceId}`,
+        headers: {
+          "content-type": "application/json",
+          cookie: alice.cookie,
+          origin: config.webOrigin,
+        },
+        payload: { name: "  Renamed Workspace  " },
+      });
+      assert.equal(rename.statusCode, 200, rename.body);
+      assert.equal(
+        (rename.json() as { workspace: { name: string } }).workspace.name,
+        "Renamed Workspace",
+      );
+
+      const bobRename = await app.inject({
+        method: "PATCH",
+        url: `/api/workspaces/${workspaceId}`,
+        headers: {
+          "content-type": "application/json",
+          cookie: bob.cookie,
+          origin: config.webOrigin,
+        },
+        payload: { name: "Hijack" },
+      });
+      assert.equal(bobRename.statusCode, 404, bobRename.body);
+
+      const bobDelete = await app.inject({
+        method: "DELETE",
+        url: `/api/workspaces/${workspaceId}`,
+        headers: { cookie: bob.cookie, origin: config.webOrigin },
+      });
+      assert.equal(bobDelete.statusCode, 404, bobDelete.body);
+
+      const del = await app.inject({
+        method: "DELETE",
+        url: `/api/workspaces/${workspaceId}`,
+        headers: { cookie: alice.cookie, origin: config.webOrigin },
+      });
+      assert.equal(del.statusCode, 204, del.body);
+
+      const list = await app.inject({
+        method: "GET",
+        url: "/api/workspaces",
+        headers: { cookie: alice.cookie, origin: config.webOrigin },
+      });
+      assert.equal(list.statusCode, 200, list.body);
+      const workspaces = (
+        list.json() as { workspaces: Array<{ id: string }> }
+      ).workspaces;
+      assert.equal(
+        workspaces.some((workspace) => workspace.id === workspaceId),
+        false,
+      );
+
+      const docs = await app.inject({
+        method: "GET",
+        url: `/api/workspaces/${workspaceId}/documents`,
+        headers: { cookie: alice.cookie, origin: config.webOrigin },
+      });
+      assert.equal(docs.statusCode, 404, docs.body);
+
+      const renameDeleted = await app.inject({
+        method: "PATCH",
+        url: `/api/workspaces/${workspaceId}`,
+        headers: {
+          "content-type": "application/json",
+          cookie: alice.cookie,
+          origin: config.webOrigin,
+        },
+        payload: { name: "Again" },
+      });
+      assert.equal(renameDeleted.statusCode, 404, renameDeleted.body);
+
+      const [row] = await dbClient.db
+        .select({ deletedAt: schema.workspace.deletedAt })
+        .from(schema.workspace)
+        .where(eq(schema.workspace.id, workspaceId))
+        .limit(1);
+      assert.ok(row?.deletedAt, "soft-delete should set deleted_at");
     } finally {
       await app.close();
       await dbClient.close();

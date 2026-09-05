@@ -10,6 +10,7 @@ Pi fork or coding-agent clone.
 * Acts immediately by default — no plan-approval gate for normal edits
 * Destructive tools require confirmation (via tool `risk: "destructive"`)
 * Concise progress via events; hidden chain-of-thought is not normal UI
+* Assistant text streams via `message.delta` when the model adapter supports it
 * Partial success survives — later failures do not erase earlier tool outcomes
 * One primary document initially; architecture leaves room for multi-doc later
 * Immutable document versions/checkpoints live in the **application** layer
@@ -26,9 +27,36 @@ AgentRequest
   → AgentResult
 ```
 
-* Safe tools execute immediately
-* Destructive + `ConfirmationGate` → ask gate; **no gate → deny** (opt-in approve via
-  `AutoApproveConfirmationGate` for tests/local only)
+### Document tools
+
+**Read**
+
+* `document.capabilities` — list runtime caps for the primary document
+* `document.inspect` — targeted focus (`overview` / `headings` / `slides` / `sheets` / `range` / …)
+* `document.find` — text or semantic matches
+
+**Safe writes (mock)**
+
+* `document.replace_text` — DOCX find/replace in headings/paragraphs
+* `slides.update_text` — PPTX slide title or existing→new text
+* `workbook.set_cells` — XLSX small cell writes
+
+`DocumentRef` always comes from `ToolExecutionContext.primaryDocument` — never from model input.
+Tools pass `runId` into `DocumentRuntimeOptions` so the runtime can keep a **run-scoped working copy**.
+Immutable base fixtures / DocumentRef are never mutated in place.
+
+Write tools use `effect: "write"` and `executionMode: "sequential"`.
+Format-filtered registration: DOCX runs do not receive workbook/slide tools (and vice versa).
+
+Default product stack: `createMockDocumentRuntime({ capabilities: mutableDocumentCapabilities() })`.
+Mutation results include a small `change` summary (`operation`, `area`, `before`, `after`) — not a durable diff/version system.
+
+System instruction: `buildDocumentAgentSystemPrompt` — capability-driven:
+mutate advertised → may edit with tools + must verify; otherwise say edits unavailable.
+Never claim an edit succeeded without a successful mutation tool result.
+
+* Safe tools execute immediately; write tools default sequential
+* Destructive + `ConfirmationGate` → ask gate; **no gate → deny**
 * `priorMessages` (user|assistant) seed the transcript before `instruction`
 * `executionMode: parallel-safe | sequential` — consecutive parallel-safe calls
   may run concurrently; sequential (default) is a barrier. No conflict graph.
@@ -37,7 +65,6 @@ AgentRequest
 * Cancellation via `AbortSignal` → `agent.cancelled` (not a generic failure)
 * `maxTurns` (default 20) → `MAX_TURNS_EXCEEDED` with outcomes preserved
 * Internal `ModelMessage` transcript includes `user` / `assistant` / `tool`
-  (broader than DB `agent_message` user|assistant)
 
 No PostgreSQL, SSE, provider SDKs, or Rust engine inside agent-core.
 
@@ -50,7 +77,7 @@ start(user instruction)
   → verify owned thread
   → tx: append user message + create run(queued)
   → return handle immediately
-  → (async) AgentRunner + event→step bridge + finalize
+  → (async) format-filtered tools + AgentRunner + event→step bridge + finalize
 ```
 
 * `execute()` = `start()` then await `handle.result` (tests / sync callers)
@@ -71,6 +98,7 @@ GET /runs/:id/events → SSE (live ordered events; heartbeat comments)
 * Multi-subscriber; disconnect unsubscribes (does not cancel the run)
 * After terminal + short grace, hub is dropped — history via GET /runs
 * **API process restart abandons in-memory runs** (no Redis/workers yet)
+* Hijacked SSE sets CORS headers manually (`reply.hijack` bypasses `@fastify/cors`)
 
 ## HTTP API (Fastify)
 
@@ -93,10 +121,10 @@ Document workspace Agent panel is wired.
 
 Agent Core owns: messages, model boundary, tools/registry/policy, events,
 DocumentRuntime contracts, AgentRunner, diagnostics/errors, AbortSignal,
-steering/confirmation interfaces.
+steering/confirmation interfaces, mock working copies.
 
 Agent Core does NOT own: auth, DB, storage, HTTP/UI, Office XML/OPC/NodeId,
-provider SDKs.
+provider SDKs, durable document versions.
 
 ## Persistence independence
 
@@ -105,7 +133,7 @@ Durable history is application-owned. `AgentExecutionService` maps selected
 
 ## Intentionally deferred
 
-* Token streaming / Office tools / model routing-fallback
-* Durable confirmation resume / durable event log / Redis workers
+* Real Office binary mutation / Rust engine / document_version / S3 artifacts
+* Checkpoints/revert / rendering / destructive deletes
+* Model routing-fallback / durable confirmation resume / Redis workers
 * Semantic conflict detection for parallel mutations
-* Engine mutate/serialize/render adapters

@@ -1,6 +1,8 @@
 import type { Metadata } from "next";
 import { Inter } from "next/font/google";
 
+import { AppProviders } from "@/components/providers";
+
 import "./globals.css";
 
 const inter = Inter({
@@ -19,8 +21,17 @@ export default function RootLayout({
   children: React.ReactNode;
 }) {
   return (
-    <html lang="en" className={inter.variable}>
-      <body className="font-sans antialiased">{children}</body>
+    <html lang="en" className={inter.variable} suppressHydrationWarning>
+      <head>
+        <script
+          dangerouslySetInnerHTML={{
+            __html: `(function(){try{var t=localStorage.getItem("opensuite.theme")||"system";var r=t==="dark"||(t==="system"&&matchMedia("(prefers-color-scheme: dark)").matches)?"dark":"light";document.documentElement.dataset.theme=r;document.documentElement.style.colorScheme=r;}catch(e){}})();`,
+          }}
+        />
+      </head>
+      <body className="font-sans antialiased">
+        <AppProviders>{children}</AppProviders>
+      </body>
     </html>
   );
 }

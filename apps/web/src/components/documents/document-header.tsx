@@ -1,3 +1,5 @@
+"use client";
+
 import Link from "next/link";
 
 import { Button } from "@/components/ui/button";
@@ -5,55 +7,91 @@ import { formatBytes, formatLabel } from "@/components/files/format";
 import type { ListedDocument } from "@/lib/api";
 
 /**
- * Compact, document-focused header for the workspace shell. Replaces the
- * general app topbar for this route.
+ * Compact header for the workspace IDE — workspace home or active file.
  */
 export function DocumentHeader({
+  workspaceName,
   document,
   downloading,
   onDownload,
+  starred,
+  onToggleStar,
 }: {
-  document: ListedDocument;
-  downloading: boolean;
-  onDownload: () => void;
+  workspaceId: string;
+  workspaceName?: string | null;
+  document: ListedDocument | null;
+  downloading?: boolean;
+  onDownload?: () => void;
+  starred?: boolean;
+  onToggleStar?: () => void;
 }) {
   return (
     <header
-      className="flex h-[48px] shrink-0 items-center gap-3 border-b border-[#E2E5EA] px-3.5 backdrop-saturate-150"
+      className="flex h-[48px] shrink-0 items-center gap-3 border-b border-line px-3.5 backdrop-saturate-150"
       style={{
-        background: "rgba(250,250,252,0.86)",
+        background: "color-mix(in srgb, var(--surface) 86%, transparent)",
         backdropFilter: "blur(18px) saturate(1.18)",
       }}
     >
       <Link
         href="/app"
-        className="shrink-0 text-[10.5px] font-medium text-[#969BA5] hover:text-ink"
+        className="shrink-0 text-[10.5px] font-medium text-ink-faint hover:text-ink"
       >
-        ← All Files
+        ← Workspaces
       </Link>
-      <div className="h-3.5 w-px shrink-0 bg-[#E2E5EA]" />
-      <div className="flex min-w-0 items-center gap-2">
-        <span className="truncate text-[11.5px] font-semibold text-[#1C1F24]">
-          {document.name}
-        </span>
-        <span className="shrink-0 rounded-full border border-[#E0E3E8] bg-white px-[6px] py-[2px] font-mono text-[7.5px] font-medium text-[#8F949E]">
-          {formatLabel(document.format)}
-        </span>
-      </div>
-      <div className="min-w-0 flex-1 truncate text-[10px] text-ink-faint">
-        Version {document.latestVersion.versionNumber} ·{" "}
-        {formatBytes(document.latestVersion.sizeBytes)}
-      </div>
-      <Button
-        type="button"
-        variant="outline"
-        size="sm"
-        className="h-[30px] shrink-0 rounded-[9px] border-[#E0E3E8] px-[10px] text-[11px]"
-        disabled={downloading}
-        onClick={onDownload}
-      >
-        {downloading ? "Downloading…" : "Download"}
-      </Button>
+      <div className="h-3.5 w-px shrink-0 bg-line" />
+      {document ? (
+        <>
+          <div className="flex min-w-0 items-center gap-2">
+            <span className="truncate text-[11.5px] font-semibold text-ink">
+              {document.name}
+            </span>
+            <span className="shrink-0 rounded-full border border-line bg-surface px-[6px] py-[2px] font-mono text-[7.5px] font-medium text-ink-faint">
+              {formatLabel(document.format)}
+            </span>
+          </div>
+          <div className="min-w-0 flex-1 truncate text-[10px] text-ink-faint">
+            Version {document.latestVersion.versionNumber} ·{" "}
+            {formatBytes(document.latestVersion.sizeBytes)}
+          </div>
+          {onToggleStar ? (
+            <button
+              type="button"
+              title={starred ? "Unstar" : "Star"}
+              onClick={onToggleStar}
+              className="grid h-[30px] w-[30px] place-items-center rounded-[9px] text-[14px] text-ink-faint hover:bg-sunken hover:text-accent"
+            >
+              {starred ? "★" : "☆"}
+            </button>
+          ) : null}
+          {onDownload ? (
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className="h-[30px] shrink-0 rounded-[9px] border-line px-[10px] text-[11px]"
+              disabled={downloading}
+              onClick={onDownload}
+            >
+              {downloading ? "Downloading…" : "Download"}
+            </Button>
+          ) : null}
+        </>
+      ) : (
+        <>
+          <div className="flex min-w-0 items-center gap-2">
+            <span className="truncate text-[11.5px] font-semibold text-ink">
+              {workspaceName?.trim() || "Workspace"}
+            </span>
+            <span className="shrink-0 rounded-full border border-line bg-surface px-[6px] py-[2px] font-mono text-[7.5px] font-medium text-ink-faint">
+              WS
+            </span>
+          </div>
+          <div className="min-w-0 flex-1 truncate text-[10px] text-ink-faint">
+            Open any file from the explorer — Word, PowerPoint, or Excel.
+          </div>
+        </>
+      )}
     </header>
   );
 }
