@@ -8,6 +8,7 @@ import {
   userFacingError,
 } from "@/components/files/format";
 import { Button } from "@/components/ui/button";
+import { PageEmpty, PageError, PageLoading } from "@/components/ui/page-state";
 import {
   listTrash,
   restoreDocument,
@@ -15,8 +16,10 @@ import {
   type TrashedDocument,
   type TrashedWorkspace,
 } from "@/lib/api";
+import { useToast } from "@/lib/toast";
 
 export function TrashView() {
+  const { toast } = useToast();
   const [workspaces, setWorkspaces] = React.useState<TrashedWorkspace[] | null>(
     null,
   );
@@ -49,8 +52,11 @@ export function TrashView() {
     try {
       await restoreWorkspace(item.id);
       await load();
+      toast({ tone: "success", title: "Workspace restored" });
     } catch (err) {
-      setActionError(userFacingError(err, "Could not restore workspace."));
+      const message = userFacingError(err, "Could not restore workspace.");
+      setActionError(message);
+      toast({ tone: "error", title: "Restore failed", description: message });
     } finally {
       setBusyId(null);
     }
@@ -63,8 +69,11 @@ export function TrashView() {
     try {
       await restoreDocument(item.id);
       await load();
+      toast({ tone: "success", title: "File restored" });
     } catch (err) {
-      setActionError(userFacingError(err, "Could not restore document."));
+      const message = userFacingError(err, "Could not restore document.");
+      setActionError(message);
+      toast({ tone: "error", title: "Restore failed", description: message });
     } finally {
       setBusyId(null);
     }
@@ -92,30 +101,25 @@ export function TrashView() {
       </div>
 
       {error ? (
-        <div className="mb-4 rounded-[12px] bg-danger-soft px-3 py-2 text-[12px] text-danger">
-          {error}
-          <button type="button" className="ml-2 underline" onClick={() => void load()}>
-            Retry
-          </button>
+        <div className="mb-4">
+          <PageError message={error} onRetry={() => void load()} />
         </div>
       ) : null}
       {actionError ? (
-        <div className="mb-4 rounded-[12px] bg-danger-soft px-3 py-2 text-[12px] text-danger">
-          {actionError}
+        <div className="mb-4">
+          <PageError message={actionError} />
         </div>
       ) : null}
 
       {workspaces === null && !error ? (
-        <p className="text-[12px] text-ink-faint">Loading…</p>
+        <PageLoading label="Loading trash…" />
       ) : null}
 
       {empty ? (
-        <div className="rounded-[16px] border border-dashed border-line px-6 py-14 text-center">
-          <p className="text-[13px] font-medium text-ink">Trash is empty</p>
-          <p className="mt-1 text-[12px] text-ink-soft">
-            Items you move to trash will appear here.
-          </p>
-        </div>
+        <PageEmpty
+          title="Trash is empty"
+          description="Items you move to trash will appear here."
+        />
       ) : null}
 
       {(workspaces?.length ?? 0) > 0 ? (

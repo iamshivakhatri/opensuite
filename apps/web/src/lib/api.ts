@@ -270,6 +270,39 @@ export async function restoreDocument(
   return body.document;
 }
 
+export interface SearchDocumentHit {
+  readonly id: string;
+  readonly workspaceId: string;
+  readonly workspaceName: string;
+  readonly name: string;
+  readonly format: DocumentFormat;
+  readonly updatedAt: string;
+  readonly rank: number;
+}
+
+export interface SearchWorkspaceHit {
+  readonly id: string;
+  readonly name: string;
+  readonly updatedAt: string;
+  readonly rank: number;
+}
+
+export async function searchMetadata(query: string): Promise<{
+  documents: SearchDocumentHit[];
+  workspaces: SearchWorkspaceHit[];
+}> {
+  const response = await apiFetch(
+    `/api/search?q=${encodeURIComponent(query)}`,
+  );
+  if (!response.ok) {
+    throw await parseError(response);
+  }
+  return (await response.json()) as {
+    documents: SearchDocumentHit[];
+    workspaces: SearchWorkspaceHit[];
+  };
+}
+
 export async function listRecentDocuments(): Promise<LibraryDocument[]> {
   const response = await apiFetch("/api/documents/recent");
   if (!response.ok) {

@@ -35,16 +35,16 @@ export function ContextMenu({
       return;
     }
     const rect = anchorRef.current.getBoundingClientRect();
-    const width = 168;
-    const left = Math.min(
-      rect.right - width,
-      window.innerWidth - width - 8,
-    );
-    setPos({
-      top: rect.bottom + 4,
-      left: Math.max(8, left),
-    });
-  }, [open, anchorRef]);
+    const width = 176;
+    const estimatedHeight = Math.min(items.length * 32 + 8, 280);
+    let left = Math.min(rect.right - width, window.innerWidth - width - 8);
+    left = Math.max(8, left);
+    let top = rect.bottom + 4;
+    if (top + estimatedHeight > window.innerHeight - 8) {
+      top = Math.max(8, rect.top - estimatedHeight - 4);
+    }
+    setPos({ top, left });
+  }, [open, anchorRef, items.length]);
 
   React.useEffect(() => {
     if (!open) return;
@@ -71,7 +71,7 @@ export function ContextMenu({
     <div
       ref={menuRef}
       role="menu"
-      className="fixed z-50 min-w-[168px] overflow-hidden rounded-[10px] border border-line bg-surface py-1 shadow-[0_8px_28px_rgba(15,18,24,0.12)]"
+      className="fixed z-50 min-w-[176px] overflow-hidden rounded-[10px] border border-line bg-surface py-1 shadow-[0_8px_28px_rgba(15,18,24,0.12)]"
       style={{ top: pos.top, left: pos.left }}
     >
       {items.map((item) => (

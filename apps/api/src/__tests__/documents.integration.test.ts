@@ -1081,3 +1081,216 @@ test(
     }
   },
 );
+
+test(
+  "metadata search is owner-scoped, ranked, and excludes deleted resources",
+  { skip: !runDbIntegrationTests || databaseUrl === undefined },
+  async () => {
+    const config = testConfig();
+    const dbClient = createDbClient({ databaseUrl: config.databaseUrl });
+    const emailSender = createStubEmailSender();
+    const auth = createAuth(config, dbClient.db, emailSender);
+    const app = await buildApp(config, {
+      auth,
+      db: dbClient.db,
+      storage: createMemoryObjectStorage(),
+    });
+    await app.ready();
+
+    try {
+      const alice = await signUpVerifyAndSignIn(
+        app,
+        config,
+        emailSender,
+        "SearchAlice",
+      );
+      const bob = await signUpVerifyAndSignIn(
+        app,
+        config,
+        emailSender,
+        "SearchBob",
+      );
+
+      const empty = await app.inject({
+        method: "GET",
+        url: "/api/search?q=",
+        headers: { cookie: alice.cookie, origin: config.webOrigin },
+      });
+      assert.equal(empty.statusCode, 400, empty.body);
+      assert.equal(
+        (empty.json() as { error: { code: string } }).error.code,
+        "INVALID_SEARCH_QUERY",
+      );
+
+      const unauth = await app.inject({
+        method: "GET",
+        url: "/api/search?q=report",
+        headers: { origin: config.webOrigin },
+      });
+      assert.equal(unauth.statusCode, 401, unauth.body);
+
+      const wsAlpha = await createWorkspace(
+        app,
+        config,
+        alice.cookie,
+        "Alpha Research",
+      );
+      const wsBeta = await createWorkspace(
+        app,
+        config,
+        alice.cookie,
+        "Beta Ops",
+      );
+      const bobWs = await createWorkspace(
+        app,
+        config,
+        bob.cookie,
+        "Alpha Research",
+      );
+
+      async function upload(
+        workspaceId: string,
+        cookie: string,
+        filename: string,
+      ): Promise<string> {
+        const file = multipartFilePayload(filename, "PK");
+        const response = await app.inject({
+          method: "POST",
+          url: `/api/workspaces/${workspaceId}/documents`,
+          headers: {
+            ...file.headers,
+            cookie,
+            origin: config.webOrigin,
+          },
+          payload: file.payload,
+        });
+        assert.equal(response.statusCode, 201, response.body);
+        return (response.json() as { document: { id: string } }).document.id;
+      }
+
+      const exactId = await upload(wsAlpha, alice.cookie, "Quarterly Report.docx");
+      const prefixId = await upload(wsAlpha, alice.cookie, "Report Summary.docx");
+      const containsId = await upload(wsBeta, alice.cookie, "annual-report-draft.docx");
+      const formatId = await upload(wsBeta, alice.cookie, "slides-deck.pptx");
+      const bobDoc = await upload(bobWs, bob.cookie, "Quarterly Report.docx");
+
+      const byName = await app.inject({
+        method: "GET",
+        url: "/api/search?q=Quarterly%20Report.docx",
+        headers: { cookie: alice.cookie, origin: config.webOrigin },
+      });
+      assert.equal(byName.statusCode, 200, byName.body);
+      const nameHits = byName.json() as {
+        documents: Array<{ id: string; rank: number; name: string }>;
+        workspaces: Array<{ id: string }>;
+      };
+      assert.ok(nameHits.documents.some((doc) => doc.id === exactId));
+      assert.equal(
+        nameHits.documents.some((doc) => doc.id === bobDoc),
+        false,
+      );
+      const exactHit = nameHits.documents.find((doc) => doc.id === exactId);
+      assert.equal(exactHit?.rank, 0);
+
+      const byPrefix = await app.inject({
+        method: "GET",
+        url: "/api/search?q=Report",
+        headers: { cookie: alice.cookie, origin: config.webOrigin },
+      });
+      assert.equal(byPrefix.statusCode, 200, byPrefix.body);
+      const prefixHits = (
+        byPrefix.json() as {
+          documents: Array<{ id: string; rank: number }>;
+        }
+      ).documents;
+      assert.ok(prefixHits.some((doc) => doc.id === prefixId));
+      assert.ok(prefixHits.some((doc) => doc.id === containsId));
+      const ranks = prefixHits.map((doc) => doc.rank);
+      for (let i = 1; i < ranks.length; i++) {
+        assert.ok(ranks[i]! >= ranks[i - 1]!);
+      }
+
+      const byWorkspace = await app.inject({
+        method: "GET",
+        url: "/api/search?q=Alpha",
+        headers: { cookie: alice.cookie, origin: config.webOrigin },
+      });
+      assert.equal(byWorkspace.statusCode, 200, byWorkspace.body);
+      const wsHits = byWorkspace.json() as {
+        documents: Array<{ id: string; workspaceId: string }>;
+        workspaces: Array<{ id: string; name: string }>;
+      };
+      assert.ok(wsHits.workspaces.some((ws) => ws.id === wsAlpha));
+      assert.ok(
+        wsHits.documents.every((doc) => doc.workspaceId === wsAlpha) ||
+          wsHits.documents.some((doc) => doc.workspaceId === wsAlpha),
+      );
+
+      const byFormat = await app.inject({
+        method: "GET",
+        url: "/api/search?q=pptx",
+        headers: { cookie: alice.cookie, origin: config.webOrigin },
+      });
+      assert.equal(byFormat.statusCode, 200, byFormat.body);
+      const formatHits = (
+        byFormat.json() as { documents: Array<{ id: string; format: string }> }
+      ).documents;
+      assert.ok(formatHits.some((doc) => doc.id === formatId));
+      assert.ok(formatHits.every((doc) => doc.format === "pptx"));
+
+      await app.inject({
+        method: "DELETE",
+        url: `/api/documents/${exactId}`,
+        headers: { cookie: alice.cookie, origin: config.webOrigin },
+      });
+      const afterDelete = await app.inject({
+        method: "GET",
+        url: "/api/search?q=Quarterly",
+        headers: { cookie: alice.cookie, origin: config.webOrigin },
+      });
+      assert.equal(afterDelete.statusCode, 200, afterDelete.body);
+      assert.equal(
+        (
+          afterDelete.json() as { documents: Array<{ id: string }> }
+        ).documents.some((doc) => doc.id === exactId),
+        false,
+      );
+
+      await app.inject({
+        method: "DELETE",
+        url: `/api/workspaces/${wsBeta}`,
+        headers: { cookie: alice.cookie, origin: config.webOrigin },
+      });
+      const afterWsDelete = await app.inject({
+        method: "GET",
+        url: "/api/search?q=annual",
+        headers: { cookie: alice.cookie, origin: config.webOrigin },
+      });
+      assert.equal(
+        (
+          afterWsDelete.json() as { documents: Array<{ id: string }> }
+        ).documents.some((doc) => doc.id === containsId),
+        false,
+      );
+      assert.equal(
+        (
+          afterWsDelete.json() as { workspaces: Array<{ id: string }> }
+        ).workspaces.some((ws) => ws.id === wsBeta),
+        false,
+      );
+
+      const limited = await app.inject({
+        method: "GET",
+        url: "/api/search?q=report&limit=1",
+        headers: { cookie: alice.cookie, origin: config.webOrigin },
+      });
+      assert.equal(limited.statusCode, 200, limited.body);
+      assert.ok(
+        (limited.json() as { documents: unknown[] }).documents.length <= 1,
+      );
+    } finally {
+      await app.close();
+      await dbClient.close();
+    }
+  },
+);

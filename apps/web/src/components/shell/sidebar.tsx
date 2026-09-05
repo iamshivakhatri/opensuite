@@ -15,6 +15,9 @@ import {
   type Workspace,
 } from "@/lib/api";
 import { workspacePath } from "@/lib/paths";
+import { useCommandPalette } from "@/components/shell/command-palette";
+import { useToast } from "@/lib/toast";
+import { PageLoading } from "@/components/ui/page-state";
 
 const mainNav = [
   { href: "/app", label: "Workspaces", icon: "▦", match: "exact" as const },
@@ -72,6 +75,8 @@ function isActive(
 export function Sidebar() {
   const pathname = usePathname();
   const router = useRouter();
+  const { setOpen: openPalette } = useCommandPalette();
+  const { toast } = useToast();
   const [workspaces, setWorkspaces] = React.useState<Workspace[] | null>(null);
   const [loadError, setLoadError] = React.useState<string | null>(null);
   const [creating, setCreating] = React.useState(false);
@@ -131,6 +136,7 @@ export function Sidebar() {
       setCreateOpen(false);
       setCreateName("");
       await refresh();
+      toast({ tone: "success", title: "Workspace created" });
       router.push(workspacePath(workspace.id));
     } catch (error) {
       setCreateError(userFacingError(error, "Could not create workspace."));
@@ -148,6 +154,7 @@ export function Sidebar() {
       await renameWorkspace(renameId, renameValue);
       setRenameId(null);
       await refresh();
+      toast({ tone: "success", title: "Workspace renamed" });
     } catch (error) {
       setActionError(userFacingError(error, "Could not rename workspace."));
     } finally {
@@ -163,6 +170,7 @@ export function Sidebar() {
       await deleteWorkspace(deleteTarget.id);
       setDeleteTarget(null);
       await refresh();
+      toast({ tone: "success", title: "Moved to Trash" });
       if (pathname.startsWith(`/app/workspaces/${deleteTarget.id}`)) {
         router.push("/app");
       }
@@ -176,6 +184,17 @@ export function Sidebar() {
   return (
     <aside className="flex w-[236px] shrink-0 flex-col gap-4 border-r border-line bg-[var(--sidebar)] px-2.5 py-4">
       <div>
+        <button
+          type="button"
+          onClick={() => openPalette(true)}
+          className="mb-3 flex w-full items-center gap-2 rounded-[9px] border border-line bg-surface px-2.5 py-2 text-left text-[12px] text-ink-faint shadow-[0_1px_2px_rgba(16,24,40,0.025)] hover:border-[#D5D9E0] hover:text-ink"
+        >
+          <span className="text-[13px]">⌕</span>
+          <span className="min-w-0 flex-1">Search</span>
+          <kbd className="rounded border border-line bg-[var(--paper)] px-1.5 py-0.5 font-mono text-[9px] text-ink-faint">
+            ⌘K
+          </kbd>
+        </button>
         <div className="mb-1.5 px-2.5 text-[9px] font-semibold uppercase tracking-[0.09em] text-ink-faint">
           Navigate
         </div>
@@ -231,7 +250,9 @@ export function Sidebar() {
           <p className="px-2.5 text-[10.5px] text-danger">{loadError}</p>
         ) : null}
         {workspaces === null && !loadError ? (
-          <p className="px-2.5 text-[10.5px] text-ink-faint">Loading…</p>
+          <div className="px-2.5">
+            <PageLoading label="Loading…" />
+          </div>
         ) : null}
 
         <div className="flex max-h-[240px] flex-col gap-0.5 overflow-y-auto">

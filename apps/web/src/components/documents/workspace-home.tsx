@@ -4,6 +4,7 @@ import * as React from "react";
 import Link from "next/link";
 
 import { Button } from "@/components/ui/button";
+import { PageLoading } from "@/components/ui/page-state";
 import { userFacingError } from "@/components/files/format";
 import { ApiError, listWorkspaces } from "@/lib/api";
 import { WorkspaceIde } from "@/components/documents/workspace-ide";
@@ -49,8 +50,8 @@ export function WorkspaceHome({ workspaceId }: { workspaceId: string }) {
 
   if (state.status === "loading") {
     return (
-      <div className="grid h-full place-items-center text-[13px] text-ink-soft">
-        Opening workspace…
+      <div className="grid h-full place-items-center">
+        <PageLoading label="Opening workspace…" />
       </div>
     );
   }

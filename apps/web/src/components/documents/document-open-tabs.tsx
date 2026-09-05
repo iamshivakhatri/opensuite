@@ -54,6 +54,36 @@ export function removeStoredTab(workspaceId: string, documentId: string): void {
 }
 
 /**
+ * Close a tab and return the next navigation target (neighbor, or workspace root).
+ */
+export function closeTabAndPickNext(
+  workspaceId: string,
+  documentId: string,
+  activeDocumentId: string | null,
+): { href: string | null; remaining: OpenTabMeta[] } {
+  const tabs = readStoredTabs(workspaceId);
+  const index = tabs.findIndex((tab) => tab.id === documentId);
+  const remaining = tabs.filter((tab) => tab.id !== documentId);
+  writeStoredTabs(workspaceId, remaining);
+
+  if (activeDocumentId !== documentId) {
+    return { href: null, remaining };
+  }
+
+  const neighbor =
+    remaining[Math.min(index, remaining.length - 1)] ??
+    remaining[remaining.length - 1] ??
+    null;
+
+  return {
+    href: neighbor
+      ? documentPath(workspaceId, neighbor.id)
+      : workspacePath(workspaceId),
+    remaining,
+  };
+}
+
+/**
  * Open-document tab strip. ＋ opens a file picker (does not leave the workspace).
  */
 export function DocumentOpenTabs({
@@ -87,34 +117,33 @@ export function DocumentOpenTabs({
   function closeTab(event: React.MouseEvent, id: string) {
     event.preventDefault();
     event.stopPropagation();
-    const remaining = tabs.filter((tab) => tab.id !== id);
+    const { href, remaining } = closeTabAndPickNext(
+      workspaceId,
+      id,
+      activeDocument?.id ?? null,
+    );
     setTabs(remaining);
-    writeStoredTabs(workspaceId, remaining);
-    if (activeDocument && id !== activeDocument.id) return;
-    const fallback = remaining[remaining.length - 1];
-    if (fallback) {
-      router.push(documentPath(workspaceId, fallback.id));
-    } else {
-      router.push(workspacePath(workspaceId));
-    }
+    if (href) router.push(href);
   }
 
   return (
     <>
-      <div className="flex h-[42px] shrink-0 items-center gap-1 overflow-x-auto border-b border-line bg-[var(--sidebar)] px-2">
+      <div className="flex h-[38px] shrink-0 items-stretch gap-0.5 overflow-x-auto border-b border-line bg-[var(--sidebar)] px-1.5 [scrollbar-width:thin]">
         {tabs.map((tab) => {
           const active = activeDocument?.id === tab.id;
           return (
             <Link
               key={tab.id}
               href={documentPath(workspaceId, tab.id)}
-              className={`flex h-8 max-w-[210px] min-w-[120px] items-center gap-1.5 rounded-[7px_7px_0_0] border px-2 text-[11px] ${
-                active
-                  ? "border-line border-b-transparent bg-surface font-medium text-ink"
-                  : "border-transparent text-ink-soft hover:bg-sunken hover:text-ink"
-              }`}
+              title={tab.name}
+              className={
+                "group relative flex h-full max-w-[200px] min-w-[112px] items-center gap-1.5 border-x border-t px-2 text-[11px] " +
+                (active
+                  ? "rounded-[8px_8px_0_0] border-line border-b-surface bg-surface font-medium text-ink"
+                  : "rounded-[8px_8px_0_0] border-transparent text-ink-soft hover:bg-sunken/70 hover:text-ink")
+              }
             >
-              <span className="shrink-0 font-mono text-[7.5px] uppercase text-[#A2A7B1]">
+              <span className="shrink-0 font-mono text-[7.5px] uppercase text-ink-faint">
                 {formatLabel(tab.format)}
               </span>
               <span className="min-w-0 flex-1 truncate">{tab.name}</span>
@@ -122,7 +151,10 @@ export function DocumentOpenTabs({
                 type="button"
                 title="Close"
                 onClick={(event) => closeTab(event, tab.id)}
-                className="grid h-4 w-4 shrink-0 place-items-center rounded text-[12px] text-ink-faint hover:bg-sunken hover:text-ink"
+                className={
+                  "grid h-4 w-4 shrink-0 place-items-center rounded text-[11px] text-ink-faint hover:bg-sunken hover:text-ink " +
+                  (active ? "opacity-100" : "opacity-0 group-hover:opacity-100")
+                }
               >
                 ×
               </button>
@@ -133,7 +165,7 @@ export function DocumentOpenTabs({
           type="button"
           title="Open file"
           onClick={() => setPickerOpen(true)}
-          className="mb-0.5 grid h-7 w-7 shrink-0 place-items-center rounded-[6px] text-[12px] text-ink-faint hover:bg-sunken hover:text-ink"
+          className="mb-0.5 ml-0.5 grid h-7 w-7 shrink-0 place-items-center self-center rounded-[6px] text-[12px] text-ink-faint hover:bg-sunken hover:text-ink"
         >
           ＋
         </button>
@@ -203,10 +235,10 @@ function QuickOpenPicker({
       onClick={onClose}
     >
       <div
-        className="w-[min(520px,calc(100vw-28px))] overflow-hidden rounded-[18px] border border-white/70 bg-white shadow-[0_28px_100px_rgba(15,18,24,0.22)]"
+        className="w-[min(520px,calc(100vw-28px))] overflow-hidden rounded-[16px] border border-line bg-surface shadow-[0_28px_100px_rgba(15,18,24,0.22)]"
         onClick={(event) => event.stopPropagation()}
       >
-        <div className="border-b border-[#E8EAEE] px-4 py-3.5">
+        <div className="border-b border-line px-4 py-3.5">
           <input
             ref={inputRef}
             value={query}
@@ -227,9 +259,9 @@ function QuickOpenPicker({
               key={file.id}
               type="button"
               onClick={() => onPick(file)}
-              className="flex w-full items-center gap-2.5 rounded-[10px] px-2.5 py-2 text-left hover:bg-[#F2F3F6]"
+              className="flex w-full items-center gap-2.5 rounded-[10px] px-2.5 py-2 text-left hover:bg-sunken"
             >
-              <span className="grid h-7 w-7 shrink-0 place-items-center rounded-[8px] border border-[#E5E8ED] bg-[#F8F9FB] font-mono text-[7.5px] text-[#6D7380]">
+              <span className="grid h-7 w-7 shrink-0 place-items-center rounded-[8px] border border-line bg-[var(--paper)] font-mono text-[7.5px] text-ink-soft">
                 {formatLabel(file.format)}
               </span>
               <span className="min-w-0 flex-1 truncate text-[11.5px] font-medium text-ink">

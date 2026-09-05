@@ -4,6 +4,7 @@ import * as React from "react";
 import { useRouter } from "next/navigation";
 
 import { useSession } from "@/lib/auth-client";
+import { CommandPaletteProvider } from "@/components/shell/command-palette";
 
 /**
  * Auth gate shared by every `/app/*` route. Restores the session on load via
@@ -41,5 +42,9 @@ export default function AppLayout({
     );
   }
 
-  return <div className="h-screen">{children}</div>;
+  return (
+    <CommandPaletteProvider>
+      <div className="h-screen">{children}</div>
+    </CommandPaletteProvider>
+  );
 }

@@ -4,6 +4,7 @@ import * as React from "react";
 import Link from "next/link";
 
 import { Button } from "@/components/ui/button";
+import { PageEmpty, PageError, PageLoading } from "@/components/ui/page-state";
 import {
   formatLabel,
   formatUpdatedAt,
@@ -21,6 +22,7 @@ import {
   type Workspace,
 } from "@/lib/api";
 import { documentPath } from "@/lib/paths";
+import { useToast } from "@/lib/toast";
 
 type LibraryKind = "recent" | "starred" | "format";
 
@@ -38,6 +40,7 @@ export function DocumentLibraryView({
   title: string;
   description: string;
 }) {
+  const { toast } = useToast();
   const [documents, setDocuments] = React.useState<LibraryDocument[] | null>(
     null,
   );
@@ -86,8 +89,13 @@ export function DocumentLibraryView({
     try {
       await setDocumentStarred(doc.id, !doc.starred);
       await load();
+      toast({
+        tone: "success",
+        title: doc.starred ? "Unstarred" : "Starred",
+      });
     } catch (err) {
       setError(userFacingError(err, "Could not update star."));
+      toast({ tone: "error", title: "Could not update star" });
     } finally {
       setStarBusyId(null);
     }
@@ -100,8 +108,11 @@ export function DocumentLibraryView({
     try {
       await uploadDocument(uploadWorkspaceId, file);
       await load();
+      toast({ tone: "success", title: "File uploaded" });
     } catch (err) {
-      setUploadError(userFacingError(err, "Upload failed."));
+      const message = userFacingError(err, "Upload failed.");
+      setUploadError(message);
+      toast({ tone: "error", title: "Upload failed", description: message });
     } finally {
       setUploading(false);
       if (fileRef.current) fileRef.current.value = "";
@@ -170,33 +181,26 @@ export function DocumentLibraryView({
       ) : null}
 
       {error ? (
-        <div className="mb-4 rounded-[12px] bg-danger-soft px-3 py-2 text-[12px] text-danger">
-          {error}
-          <button
-            type="button"
-            className="ml-2 underline"
-            onClick={() => void load()}
-          >
-            Retry
-          </button>
+        <div className="mb-4">
+          <PageError message={error} onRetry={() => void load()} />
         </div>
       ) : null}
 
       {documents === null && !error ? (
-        <p className="text-[12px] text-ink-faint">Loading…</p>
+        <PageLoading label="Loading…" />
       ) : null}
 
       {documents !== null && documents.length === 0 ? (
-        <div className="rounded-[16px] border border-dashed border-line px-6 py-14 text-center">
-          <p className="text-[13px] font-medium text-ink">Nothing here yet</p>
-          <p className="mt-1 text-[12px] text-ink-soft">
-            {kind === "recent"
+        <PageEmpty
+          title="Nothing here yet"
+          description={
+            kind === "recent"
               ? "Open a document and it will appear here."
               : kind === "starred"
                 ? "Star files from a workspace explorer or this list."
-                : "Upload a matching Office file into a workspace."}
-          </p>
-        </div>
+                : "Upload a matching Office file into a workspace."
+          }
+        />
       ) : null}
 
       <div className="flex flex-col gap-1.5">

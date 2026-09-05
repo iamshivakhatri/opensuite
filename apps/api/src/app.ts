@@ -33,12 +33,14 @@ import type { SessionAuth } from "./auth/session.js";
 import type { AppConfig } from "./config/index.js";
 import { createDocumentService } from "./documents/service.js";
 import { createDocumentPreferenceService } from "./documents/preferences.js";
+import { createSearchService } from "./documents/search.js";
 import type { AuthHandler } from "./routes/auth.js";
 import { registerAgentRoutes } from "./routes/agent.js";
 import { registerAuthRoutes } from "./routes/auth.js";
 import { registerDocumentRoutes } from "./routes/documents.js";
 import { registerHealthRoutes } from "./routes/health.js";
 import { registerMeRoutes } from "./routes/me.js";
+import { registerSearchRoutes } from "./routes/search.js";
 import { registerTrashRoutes } from "./routes/trash.js";
 import { registerWorkspaceRoutes } from "./routes/workspaces.js";
 import type { ObjectStorage } from "./storage/types.js";
@@ -137,6 +139,7 @@ export async function buildApp(
     },
   });
   const preferences = createDocumentPreferenceService(deps.db);
+  const search = createSearchService(deps.db);
 
   const agentPersistence =
     deps.agent?.persistence ?? createAgentPersistenceService(deps.db);
@@ -175,6 +178,7 @@ export async function buildApp(
   registerWorkspaceRoutes(app, deps.auth, workspaces);
   registerDocumentRoutes(app, deps.auth, workspaces, documents, preferences);
   registerTrashRoutes(app, deps.auth, workspaces, documents);
+  registerSearchRoutes(app, deps.auth, search);
   registerAgentRoutes(app, {
     auth: deps.auth,
     documents,

@@ -6,6 +6,7 @@ import { useRouter } from "next/navigation";
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { PageEmpty, PageError, PageLoading } from "@/components/ui/page-state";
 import { formatLabel, formatUpdatedAt, userFacingError } from "@/components/files/format";
 import {
   createWorkspace,
@@ -15,12 +16,14 @@ import {
   type Workspace,
 } from "@/lib/api";
 import { documentPath, workspacePath } from "@/lib/paths";
+import { useToast } from "@/lib/toast";
 
 /**
  * /app home — workspace cards, not an implicit file library.
  */
 export function WorkspacesHome() {
   const router = useRouter();
+  const { toast } = useToast();
   const [workspaces, setWorkspaces] = React.useState<Workspace[] | null>(null);
   const [error, setError] = React.useState<string | null>(null);
   const [creating, setCreating] = React.useState(false);
@@ -73,6 +76,7 @@ export function WorkspacesHome() {
     try {
       const workspace = await createWorkspace(name);
       setName("");
+      toast({ tone: "success", title: "Workspace created" });
       router.push(workspacePath(workspace.id));
     } catch (err) {
       setCreateError(userFacingError(err, "Could not create workspace."));
@@ -90,6 +94,7 @@ export function WorkspacesHome() {
       await renameWorkspace(renameId, renameValue);
       setRenameId(null);
       await load();
+      toast({ tone: "success", title: "Workspace renamed" });
     } catch (err) {
       setActionError(userFacingError(err, "Could not rename workspace."));
     } finally {
@@ -105,6 +110,7 @@ export function WorkspacesHome() {
       await deleteWorkspace(deleteTarget.id);
       setDeleteTarget(null);
       await load();
+      toast({ tone: "success", title: "Moved to Trash" });
     } catch (err) {
       setActionError(userFacingError(err, "Could not delete workspace."));
     } finally {
@@ -148,31 +154,20 @@ export function WorkspacesHome() {
       </form>
 
       {error ? (
-        <div className="rounded-[12px] bg-danger-soft px-3 py-2 text-[12px] text-danger">
-          {error}
-          <button
-            type="button"
-            className="ml-2 underline"
-            onClick={() => void load()}
-          >
-            Retry
-          </button>
+        <div className="mb-4">
+          <PageError message={error} onRetry={() => void load()} />
         </div>
       ) : null}
 
       {workspaces === null && !error ? (
-        <p className="text-[12px] text-ink-faint">Loading workspaces…</p>
+        <PageLoading label="Loading workspaces…" />
       ) : null}
 
       {workspaces !== null && workspaces.length === 0 ? (
-        <div className="rounded-[16px] border border-dashed border-line px-6 py-14 text-center">
-          <h2 className="mb-1 text-[15px] font-semibold text-ink">
-            Create your first workspace
-          </h2>
-          <p className="text-[12px] text-ink-soft">
-            Workspaces hold your Word, PowerPoint, and Excel files.
-          </p>
-        </div>
+        <PageEmpty
+          title="Create your first workspace"
+          description="Workspaces hold your Word, PowerPoint, and Excel files."
+        />
       ) : null}
 
       <div className="flex flex-col gap-2">

@@ -4,6 +4,7 @@ import * as React from "react";
 import Link from "next/link";
 
 import { Button } from "@/components/ui/button";
+import { PageLoading } from "@/components/ui/page-state";
 import { userFacingError } from "@/components/files/format";
 import { ApiError, getDocument } from "@/lib/api";
 import { WorkspaceIde } from "@/components/documents/workspace-ide";
@@ -52,8 +53,8 @@ export function DocumentWorkspace({ documentId }: { documentId: string }) {
 
   if (state.status === "loading") {
     return (
-      <div className="grid h-full place-items-center text-[13px] text-ink-soft">
-        Loading document…
+      <div className="grid h-full place-items-center">
+        <PageLoading label="Loading document…" />
       </div>
     );
   }

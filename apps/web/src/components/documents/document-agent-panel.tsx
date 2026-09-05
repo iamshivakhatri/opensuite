@@ -53,11 +53,13 @@ export function DocumentAgentPanel({
   documentName,
   collapsed,
   onToggle,
+  width = 320,
 }: {
   documentId: string | null;
   documentName?: string;
   collapsed: boolean;
   onToggle: () => void;
+  width?: number;
 }) {
   const [phase, setPhase] = React.useState<PanelPhase>({ kind: "loading" });
   const [threads, setThreads] = React.useState<AgentThread[]>([]);
@@ -541,7 +543,7 @@ export function DocumentAgentPanel({
         type="button"
         onClick={onToggle}
         title="Show OpenSuite agent"
-        className="flex h-full w-10 shrink-0 flex-col items-center border-l border-line bg-[#FAFAFC] pt-3"
+        className="flex h-full w-10 shrink-0 flex-col items-center border-l border-line bg-[var(--sidebar)] pt-3"
       >
         <span className="grid h-8 w-8 place-items-center rounded-[9px] text-[11px] font-semibold text-accent hover:bg-sunken">
           AI
@@ -552,8 +554,11 @@ export function DocumentAgentPanel({
 
   if (!documentId) {
     return (
-      <aside className="flex h-full w-[320px] shrink-0 flex-col border-l border-line bg-[#FAFAFC]">
-        <div className="shrink-0 border-b border-[#E5E7EB] px-3.5 pt-[15px] pb-3">
+      <aside
+        className="flex h-full shrink-0 flex-col border-l border-line bg-[var(--sidebar)]"
+        style={{ width }}
+      >
+        <div className="shrink-0 border-b border-line px-3.5 pt-[15px] pb-3">
           <div className="flex items-center justify-between">
             <div className="text-[12px] font-semibold text-ink">OpenSuite</div>
             <button
@@ -565,7 +570,7 @@ export function DocumentAgentPanel({
               ›
             </button>
           </div>
-          <div className="mt-0.5 font-mono text-[8.5px] text-[#989DA7]">
+          <div className="mt-0.5 font-mono text-[8.5px] text-ink-faint">
             Workspace agent
           </div>
         </div>
@@ -603,8 +608,11 @@ export function DocumentAgentPanel({
     !runNotice;
 
   return (
-    <aside className="flex h-full w-[320px] shrink-0 flex-col border-l border-line bg-[#FAFAFC]">
-      <div className="relative shrink-0 border-b border-[#E5E7EB] bg-[#FAFAFC] px-3.5 pt-[15px] pb-3">
+    <aside
+      className="flex h-full shrink-0 flex-col border-l border-line bg-[var(--sidebar)]"
+      style={{ width }}
+    >
+      <div className="relative shrink-0 border-b border-line bg-[var(--sidebar)] px-3.5 pt-[15px] pb-3">
         <div className="flex items-center justify-between">
           <div className="text-[12px] font-semibold text-ink">OpenSuite</div>
           <div className="flex items-center gap-0.5">

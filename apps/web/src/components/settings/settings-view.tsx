@@ -4,6 +4,7 @@ import * as React from "react";
 import { useRouter } from "next/navigation";
 
 import { Button } from "@/components/ui/button";
+import { PageError, PageLoading } from "@/components/ui/page-state";
 import { userFacingError } from "@/components/files/format";
 import { fetchMe, type Me } from "@/lib/api";
 import { signOut } from "@/lib/auth-client";
@@ -53,9 +54,9 @@ export function SettingsView() {
         </h2>
         <div className="rounded-[14px] border border-line bg-surface px-4 py-4">
           {error ? (
-            <p className="text-[12px] text-danger">{error}</p>
+            <PageError message={error} />
           ) : me === null ? (
-            <p className="text-[12px] text-ink-faint">Loading…</p>
+            <PageLoading label="Loading account…" />
           ) : (
             <dl className="space-y-3 text-[12.5px]">
               <div>

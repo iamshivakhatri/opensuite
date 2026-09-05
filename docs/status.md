@@ -4,24 +4,23 @@ _Read this before starting any work. Keep it a concise current-state handoff, no
 
 ## What Exists
 
-* Workspace-first shell: Workspaces / Recent / Starred / Write / Slides / Sheets / Trash / Settings.
-* Workspace + document rename, soft-delete (Trash), restore.
-* Per-user star + last-opened; format libraries.
-* Workspace IDE: explorer menus, tabs, placeholder canvas, document Agent.
-* Agent persistence + SSE (document-scoped; deleted docs blocked).
+* Workspace-first shell + Trash + rename/restore lifecycle.
+* Global metadata search + `/app/search` + Cmd/Ctrl+K palette.
+* Desktop UX polish: DnD upload, tab strip, resizable/collapsible panels (local prefs), breadcrumbs, ⌘W/⌘O, toasts, shared empty/loading/error states.
 
 ## Just Completed
 
-* Document `PATCH` rename (format-preserving) + `DELETE` soft-delete.
-* `GET /api/trash`, `POST …/restore` for workspaces and documents.
-* Document restore requires active parent workspace (`409 WORKSPACE_DELETED`).
-* Removed unused FilesView / localStorage workspace-selection UI.
+* Workspace DnD + multi-file Office upload (shared `uploadOfficeFiles`).
+* Document tabs: active/close/hover, ⌘W, neighbor selection, scroll overflow.
+* Explorer + Agent: drag-resize, collapse, `localStorage` prefs.
+* Toasts for upload/rename/star/trash/restore/workspace CRUD.
+* Header breadcrumbs: Workspaces / Workspace / Document.
 
 ## Current Decisions
 
-* Soft-delete only — no permanent delete / retention jobs yet.
-* Trash lists owned deleted workspaces + individually deleted documents.
-* Mock mutations in-memory — do not modify Office binaries yet.
+* No Office content search / FTS yet.
+* Soft-delete only; mock agent mutations in-memory.
+* Panel prefs browser-local only (no DB).
 
 ## Verification Status
 
@@ -29,16 +28,15 @@ _Read this before starting any work. Keep it a concise current-state handoff, no
 |---|---|
 | `pnpm typecheck` | **Pass** |
 | `pnpm test` | **Pass** |
-| `RUN_DB_INTEGRATION_TESTS=true` (rename/trash/restore) | **Pass** |
 | `pnpm build` | **Pass** |
-| Real Office rendering / binary mutation | **Not implemented** |
+| Office content search / rendering | **Not implemented** |
 
 ## Intentionally Deferred
 
-* Permanent delete / retention
+* Content search, semantic search, permanent delete
 * Real Office mutation / Rust engine / folders / sharing
-* Workspace-scoped agent / blank-document creation
+* Workspace-scoped agent / IDE-grade tab manager
 
 ## Recommended Next Step
 
-Manual QA rename → Trash → restore (doc + workspace), then engine-backed DocumentRuntime when ready.
+Manual QA of desktop polish (DnD, panels, shortcuts), then engine-backed DocumentRuntime when ready.
