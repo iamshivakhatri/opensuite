@@ -866,6 +866,30 @@ export function createAgentPersistenceService(db: Db) {
       return rows.map(toMessage);
     },
 
+    /**
+     * Newest run on an owned thread (by createdAt). Used for refresh recovery
+     * when a run may still be active.
+     */
+    async getLatestRunForThread(
+      input: { threadId: string; ownerUserId: string },
+      tx?: AgentPersistenceExecutor,
+    ): Promise<AgentRun | null> {
+      const client = executor(tx);
+      await requireOwnedThread(client, input.threadId, input.ownerUserId);
+
+      const [row] = await client
+        .select(runSelect)
+        .from(schema.agentRun)
+        .where(eq(schema.agentRun.threadId, input.threadId))
+        .orderBy(
+          desc(schema.agentRun.createdAt),
+          desc(schema.agentRun.id),
+        )
+        .limit(1);
+
+      return row ? toRun(row) : null;
+    },
+
     async createRun(
       input: {
         threadId: string;

@@ -7,39 +7,39 @@ _Read this before starting any work. Keep it a concise current-state handoff, no
 * Auth, workspaces, documents, Files UI, document workspace shell.
 * Agent persistence + **AgentExecutionService** + **AgentRunManager** (live in-process).
 * Agent-core `AgentRunner` (deterministic fake/model loop). **No real LLM.**
-* Authenticated agent HTTP + **SSE** for live run progress.
+* Authenticated agent HTTP + **SSE** + document Agent panel (end-to-end).
 
 ## Just Completed
 
-Live agent runs:
+Document Agent panel wired end-to-end (still FakeAgentModel via DI in tests):
 
-* `POST /api/agent/threads/:threadId/runs` → **202 `{ run }`** after durable queued run; execution continues in-process
-* `GET /api/agent/runs/:runId` → durable run + steps snapshot
-* `GET /api/agent/runs/:runId/events` → SSE (`text/event-stream`) of meaningful live events
-* `AgentRunManager` hubs ordered events, multi-subscriber, grace cleanup after terminal
-* `AgentExecutionService.start()` returns after message+run persist; `execute()` still awaits full result
-* SSE is live-only; reconnect after hub eviction uses GET /runs (or a terminal SSE hint)
-* **Process restart loses in-memory execution** — no Redis/queues yet
-* Destructive tools still deny-by-default; no frontend / real LLM / engine
+* `GET /api/documents/:documentId/agent/threads` — owned document threads (newest first)
+* `POST /api/agent/runs/:runId/cancel` — abort in-process run; terminal idempotent; 404 non-owned
+* Panel: reuse latest non-archived document thread; lazy-create on first submit
+* Composer → 202 run → SSE Cursor-style progress → refresh messages/snapshot
+* Stop action; SSE disconnect recovers via `GET /runs/:id` (does not cancel)
+* `GET …/messages` also returns `latestRun` for refresh recovery of active runs
 
 ## Current Decisions
 
 * Document-first threads; sync start + async execution (no job workers).
-* Durable recovery = AgentRun/AgentStep rows, not an event log.
+* Durable recovery = AgentRun/AgentStep rows (+ `latestRun` on messages), not an event log.
 
 ## Verification Status
 
 | Check | Status |
 |---|---|
 | `@opensuite/agent-core` unit tests | **Pass** |
-| `contracts` / `db` / `engine-client` / `api` typecheck + tests | **Pass** |
-| `apps/web` typecheck + `next build` | **Pass** |
+| `contracts` / `db` / `engine-client` typecheck | **Pass** |
+| `api` typecheck + unit + DB integration tests | **Pass** |
+| `apps/web` typecheck + progress unit tests + `next build` | **Pass** |
 
 ## Intentionally Deferred
 
-* Frontend Agent panel, real providers, Office tools, Rust engine
+* Real LLM providers, Office tools, Rust engine
 * Durable event log, Redis/BullMQ/workers, confirmation resume API
+* Workspace-level agent threads
 
 ## Recommended Next Step
 
-Wire the document workspace Agent panel to thread/run/SSE (still FakeAgentModel).
+Inject a local FakeAgentModel (or first real provider) for manual panel QA, then Office inspect tools.

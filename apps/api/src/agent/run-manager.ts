@@ -268,6 +268,11 @@ export function createAgentRunManager(deps: AgentRunManagerDeps) {
     return active.has(runId);
   }
 
+  /**
+   * Abort an in-process run. Returns false when the run is not live for this
+   * owner (already finished / never tracked / wrong owner). Aborting twice is
+   * safe — signal stays aborted.
+   */
   function cancel(input: { runId: string; ownerUserId: string }): boolean {
     const entry = active.get(input.runId);
     if (!entry || entry.ownerUserId !== input.ownerUserId) {
@@ -277,6 +282,15 @@ export function createAgentRunManager(deps: AgentRunManagerDeps) {
       entry.abort.abort();
     }
     return true;
+  }
+
+  /** Await a live run's result if still tracked; otherwise resolve immediately. */
+  async function waitForRun(runId: string): Promise<void> {
+    const entry = active.get(runId);
+    if (!entry) {
+      return;
+    }
+    await entry.result.catch(() => undefined);
   }
 
   async function waitForIdle(): Promise<void> {
@@ -291,6 +305,7 @@ export function createAgentRunManager(deps: AgentRunManagerDeps) {
     subscribeEvents,
     isLive,
     cancel,
+    waitForRun,
     waitForIdle,
     /** Test helper */
     _activeCount: () => active.size,

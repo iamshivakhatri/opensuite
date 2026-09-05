@@ -418,6 +418,33 @@ test(
         404,
       );
 
+      assert.equal(
+        (
+          await app.inject({
+            method: "GET",
+            url: `/api/documents/${bobDocId}/agent/threads`,
+            headers: {
+              cookie: alice.cookie,
+              origin: config.webOrigin,
+            },
+          })
+        ).statusCode,
+        404,
+      );
+
+      const olderThread = await app.inject({
+        method: "POST",
+        url: `/api/documents/${aliceDocId}/agent/threads`,
+        headers: {
+          "content-type": "application/json",
+          cookie: alice.cookie,
+          origin: config.webOrigin,
+        },
+        payload: { title: "Older" },
+      });
+      assert.equal(olderThread.statusCode, 201, olderThread.body);
+      await delay(20);
+
       const createThread = await app.inject({
         method: "POST",
         url: `/api/documents/${aliceDocId}/agent/threads`,
@@ -432,6 +459,41 @@ test(
       const threadId = (
         createThread.json() as { thread: { id: string } }
       ).thread.id;
+
+      const listThreads = await app.inject({
+        method: "GET",
+        url: `/api/documents/${aliceDocId}/agent/threads`,
+        headers: {
+          cookie: alice.cookie,
+          origin: config.webOrigin,
+        },
+      });
+      assert.equal(listThreads.statusCode, 200, listThreads.body);
+      const listed = (
+        listThreads.json() as {
+          threads: Array<{
+            id: string;
+            documentId: string | null;
+            title: string | null;
+          }>;
+        }
+      ).threads;
+      assert.ok(listed.length >= 2);
+      assert.equal(listed[0]?.id, threadId);
+      assert.ok(listed.every((t) => t.documentId === aliceDocId));
+      assert.equal(
+        (
+          await app.inject({
+            method: "GET",
+            url: `/api/documents/${aliceDocId}/agent/threads`,
+            headers: {
+              cookie: bob.cookie,
+              origin: config.webOrigin,
+            },
+          })
+        ).statusCode,
+        404,
+      );
 
       const postStart = Date.now();
       const postRun = await app.inject({
@@ -474,17 +536,22 @@ test(
         url: `/api/agent/threads/${threadId}/messages`,
         headers: { cookie: alice.cookie, origin: config.webOrigin },
       });
+      const messagesBody = messages.json() as {
+        messages: Array<{ role: string; content: string }>;
+        latestRun: { id: string; status: string } | null;
+      };
       assert.deepEqual(
-        (
-          messages.json() as {
-            messages: Array<{ role: string; content: string }>;
-          }
-        ).messages.map((m) => ({ role: m.role, content: m.content })),
+        messagesBody.messages.map((m) => ({
+          role: m.role,
+          content: m.content,
+        })),
         [
           { role: "user", content: "Delayed instruction" },
           { role: "assistant", content: "Delayed answer" },
         ],
       );
+      assert.equal(messagesBody.latestRun?.id, queued.run.id);
+      assert.equal(messagesBody.latestRun?.status, "completed");
 
       const post2 = await app.inject({
         method: "POST",
@@ -658,7 +725,7 @@ test(
         ),
       );
 
-      // Cancelled terminal via manager.abort
+      // Cancelled terminal via HTTP cancel endpoint
       const cancelPost = await app.inject({
         method: "POST",
         url: `/api/agent/threads/${threadId}/runs`,
@@ -678,10 +745,35 @@ test(
         sseHeaders,
       );
       await delay(80);
+
       assert.equal(
-        runManager.cancel({ runId: cancelRunId, ownerUserId: alice.userId }),
-        true,
+        (
+          await app.inject({
+            method: "POST",
+            url: `/api/agent/runs/${cancelRunId}/cancel`,
+            headers: {
+              cookie: bob.cookie,
+              origin: config.webOrigin,
+            },
+          })
+        ).statusCode,
+        404,
       );
+
+      const cancelHttp = await app.inject({
+        method: "POST",
+        url: `/api/agent/runs/${cancelRunId}/cancel`,
+        headers: {
+          cookie: alice.cookie,
+          origin: config.webOrigin,
+        },
+      });
+      assert.equal(cancelHttp.statusCode, 200, cancelHttp.body);
+      assert.equal(
+        (cancelHttp.json() as { run: { status: string } }).run.status,
+        "cancelled",
+      );
+
       const cancelEvents = await cancelSsePromise;
       assert.ok(cancelEvents.some((e) => e.event === "agent.cancelled"));
       await waitForRunStatus(
@@ -692,8 +784,37 @@ test(
         "cancelled",
       );
 
+      // Idempotent cancel on already-terminal run
+      const cancelAgain = await app.inject({
+        method: "POST",
+        url: `/api/agent/runs/${cancelRunId}/cancel`,
+        headers: {
+          cookie: alice.cookie,
+          origin: config.webOrigin,
+        },
+      });
+      assert.equal(cancelAgain.statusCode, 200);
+      assert.equal(
+        (cancelAgain.json() as { run: { status: string } }).run.status,
+        "cancelled",
+      );
+
+      assert.equal(
+        (
+          await app.inject({
+            method: "POST",
+            url: `/api/agent/runs/${randomUUID()}/cancel`,
+            headers: {
+              cookie: alice.cookie,
+              origin: config.webOrigin,
+            },
+          })
+        ).statusCode,
+        404,
+      );
+
       // SSE disconnect unsubscribes without cancelling an active run
-      // (verified structurally: cancel is explicit via runManager.cancel only).
+      // (verified structurally: cancel is explicit via POST /cancel only).
 
       // After live grace, completed run still recoverable from DB
       await delay(1_000);

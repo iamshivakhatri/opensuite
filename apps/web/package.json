@@ -10,7 +10,7 @@
     "start": "next start -p 3001",
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "lint": "echo \"(no lint configured yet)\"",
-    "test": "echo \"(no tests yet)\""
+    "test": "node --experimental-strip-types --test src/lib/agent-progress.test.ts"
   },
   "dependencies": {
     "better-auth": "^1.7.2",

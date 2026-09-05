@@ -75,14 +75,16 @@ GET /runs/:id/events → SSE (live ordered events; heartbeat comments)
 ## HTTP API (Fastify)
 
 * `POST /api/documents/:documentId/agent/threads`
+* `GET /api/documents/:documentId/agent/threads`
 * `GET /api/agent/threads/:threadId`
-* `GET /api/agent/threads/:threadId/messages`
+* `GET /api/agent/threads/:threadId/messages` (+ `latestRun`)
 * `POST /api/agent/threads/:threadId/runs` → **202** queued run
 * `GET /api/agent/runs/:runId`
+* `POST /api/agent/runs/:runId/cancel`
 * `GET /api/agent/runs/:runId/events` → SSE
 
 Inject model/tools via `buildApp` deps. Default production model = unconfigured stub.
-No frontend Agent panel / real LLM yet.
+Document workspace Agent panel is wired (still no real LLM).
 
 ## Boundaries
 
@@ -104,4 +106,3 @@ Durable history is application-owned. `AgentExecutionService` maps selected
 * Durable confirmation resume / durable event log / Redis workers
 * Semantic conflict detection for parallel mutations
 * Engine mutate/serialize/render adapters
-* Frontend Agent panel wiring

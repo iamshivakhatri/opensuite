@@ -208,6 +208,286 @@ export async function uploadDocument(
   };
 }
 
+export type AgentRunStatus =
+  | "queued"
+  | "planning"
+  | "running"
+  | "waiting_for_confirmation"
+  | "completed"
+  | "failed"
+  | "cancelled";
+
+export interface AgentThread {
+  readonly id: string;
+  readonly workspaceId: string;
+  readonly documentId: string | null;
+  readonly title: string | null;
+  readonly createdAt: string;
+  readonly updatedAt: string;
+}
+
+export interface AgentMessage {
+  readonly id: string;
+  readonly role: "user" | "assistant";
+  readonly content: string;
+  readonly createdAt: string;
+}
+
+export interface AgentRun {
+  readonly id: string;
+  readonly threadId: string;
+  readonly status: AgentRunStatus;
+  readonly createdAt: string;
+  readonly startedAt: string | null;
+  readonly completedAt: string | null;
+}
+
+export interface AgentStep {
+  readonly id: string;
+  readonly sequence: number;
+  readonly kind: string;
+  readonly status: string;
+  readonly name: string;
+  readonly summary: string | null;
+  readonly createdAt: string;
+  readonly startedAt: string | null;
+  readonly completedAt: string | null;
+}
+
+export interface AgentLiveEvent {
+  readonly id: number;
+  readonly runId: string;
+  readonly type: string;
+  readonly at: string;
+  readonly data: Record<string, unknown>;
+}
+
+const ACTIVE_RUN_STATUSES = new Set<AgentRunStatus>([
+  "queued",
+  "planning",
+  "running",
+  "waiting_for_confirmation",
+]);
+
+export function isActiveAgentRunStatus(status: AgentRunStatus): boolean {
+  return ACTIVE_RUN_STATUSES.has(status);
+}
+
+export async function listDocumentAgentThreads(
+  documentId: string,
+): Promise<AgentThread[]> {
+  const response = await apiFetch(
+    `/api/documents/${documentId}/agent/threads`,
+  );
+  if (!response.ok) {
+    throw await parseError(response);
+  }
+  const body = (await response.json()) as { threads: AgentThread[] };
+  return body.threads;
+}
+
+export async function createDocumentAgentThread(
+  documentId: string,
+  title?: string | null,
+): Promise<AgentThread> {
+  const response = await apiFetch(
+    `/api/documents/${documentId}/agent/threads`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(
+        title === undefined || title === null || title === ""
+          ? {}
+          : { title },
+      ),
+    },
+  );
+  if (!response.ok) {
+    throw await parseError(response);
+  }
+  const body = (await response.json()) as { thread: AgentThread };
+  return body.thread;
+}
+
+export async function getAgentMessages(threadId: string): Promise<{
+  messages: AgentMessage[];
+  latestRun: AgentRun | null;
+}> {
+  const response = await apiFetch(
+    `/api/agent/threads/${threadId}/messages`,
+  );
+  if (!response.ok) {
+    throw await parseError(response);
+  }
+  const body = (await response.json()) as {
+    messages: AgentMessage[];
+    latestRun?: AgentRun | null;
+  };
+  return {
+    messages: body.messages,
+    latestRun: body.latestRun ?? null,
+  };
+}
+
+export async function startAgentRun(
+  threadId: string,
+  instruction: string,
+): Promise<AgentRun> {
+  const response = await apiFetch(`/api/agent/threads/${threadId}/runs`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ instruction }),
+  });
+  if (!response.ok) {
+    throw await parseError(response);
+  }
+  const body = (await response.json()) as { run: AgentRun };
+  return body.run;
+}
+
+export async function getAgentRun(runId: string): Promise<{
+  run: AgentRun;
+  steps: AgentStep[];
+}> {
+  const response = await apiFetch(`/api/agent/runs/${runId}`);
+  if (!response.ok) {
+    throw await parseError(response);
+  }
+  return (await response.json()) as { run: AgentRun; steps: AgentStep[] };
+}
+
+export async function cancelAgentRun(runId: string): Promise<{
+  run: AgentRun;
+  steps: AgentStep[];
+}> {
+  const response = await apiFetch(`/api/agent/runs/${runId}/cancel`, {
+    method: "POST",
+  });
+  if (!response.ok) {
+    throw await parseError(response);
+  }
+  return (await response.json()) as { run: AgentRun; steps: AgentStep[] };
+}
+
+export interface SubscribeAgentRunEventsOptions {
+  readonly onEvent: (event: AgentLiveEvent) => void;
+  /** Fired when the SSE stream ends without a handled terminal event. */
+  readonly onDisconnect?: () => void;
+  readonly onError?: (error: unknown) => void;
+}
+
+/**
+ * Subscribe to live run SSE. Caller must abort to unsubscribe.
+ * Disconnect does not cancel the run — recover via getAgentRun.
+ */
+export function subscribeAgentRunEvents(
+  runId: string,
+  options: SubscribeAgentRunEventsOptions,
+): { abort: () => void } {
+  const controller = new AbortController();
+
+  void (async () => {
+    try {
+      const response = await apiFetch(`/api/agent/runs/${runId}/events`, {
+        headers: { Accept: "text/event-stream" },
+        signal: controller.signal,
+      });
+      if (!response.ok) {
+        throw await parseError(response);
+      }
+      if (!response.body) {
+        throw new ApiError(500, "SSE_UNAVAILABLE", "SSE stream unavailable");
+      }
+
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
+      let sawTerminal = false;
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) {
+          break;
+        }
+        buffer += decoder.decode(value, { stream: true });
+        const parts = buffer.split("\n\n");
+        buffer = parts.pop() ?? "";
+        for (const block of parts) {
+          const event = parseSseBlock(block);
+          if (!event) continue;
+          options.onEvent(event);
+          if (
+            event.type === "agent.completed" ||
+            event.type === "agent.failed" ||
+            event.type === "agent.cancelled"
+          ) {
+            sawTerminal = true;
+          }
+        }
+      }
+
+      if (!sawTerminal && !controller.signal.aborted) {
+        options.onDisconnect?.();
+      }
+    } catch (error) {
+      if (controller.signal.aborted) {
+        return;
+      }
+      options.onError?.(error);
+    }
+  })();
+
+  return {
+    abort: () => {
+      controller.abort();
+    },
+  };
+}
+
+function parseSseBlock(block: string): AgentLiveEvent | null {
+  const trimmed = block.trim();
+  if (!trimmed || trimmed.startsWith(":")) {
+    return null;
+  }
+
+  let id: number | undefined;
+  let type: string | undefined;
+  let dataRaw: string | undefined;
+
+  for (const line of trimmed.split("\n")) {
+    if (line.startsWith("id:")) {
+      const parsed = Number.parseInt(line.slice(3).trim(), 10);
+      if (!Number.isNaN(parsed)) id = parsed;
+    } else if (line.startsWith("event:")) {
+      type = line.slice(6).trim();
+    } else if (line.startsWith("data:")) {
+      dataRaw = line.slice(5).trim();
+    }
+  }
+
+  if (!dataRaw) {
+    return null;
+  }
+
+  try {
+    const payload = JSON.parse(dataRaw) as {
+      runId?: string;
+      type?: string;
+      at?: string;
+      data?: Record<string, unknown>;
+    };
+    return {
+      id: id ?? 0,
+      runId: payload.runId ?? "",
+      type: type ?? payload.type ?? "message",
+      at: payload.at ?? new Date().toISOString(),
+      data: payload.data ?? {},
+    };
+  } catch {
+    return null;
+  }
+}
+
 function filenameFromContentDisposition(
   header: string | null,
 ): string | undefined {

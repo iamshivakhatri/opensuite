@@ -143,6 +143,8 @@ export function DocumentWorkspace({ documentId }: { documentId: string }) {
         />
         <DocumentCanvas format={doc.format} />
         <DocumentAgentPanel
+          documentId={doc.id}
+          documentName={doc.name}
           collapsed={agentCollapsed}
           onToggle={() => setAgentCollapsed((value) => !value)}
         />

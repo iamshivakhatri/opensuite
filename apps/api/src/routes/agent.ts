@@ -100,6 +100,12 @@ export interface AgentRouteDeps {
   readonly runManager: AgentRunManager;
 }
 
+const TERMINAL_RUN_STATUSES = new Set([
+  "completed",
+  "failed",
+  "cancelled",
+]);
+
 /**
  * Document-scoped agent thread + async run + SSE surface.
  * POST /runs returns 202 quickly; progress via SSE; recovery via GET /runs.
@@ -109,6 +115,60 @@ export function registerAgentRoutes(
   deps: AgentRouteDeps,
 ): void {
   const { auth, documents, persistence, runManager } = deps;
+
+  app.get(
+    "/api/documents/:documentId/agent/threads",
+    async (request, reply) => {
+      const user = await getRequestUser(auth, request);
+      if (!user) {
+        return reply.status(401).send(unauthenticated());
+      }
+
+      const params = DocumentIdParams.safeParse(request.params);
+      if (!params.success) {
+        return reply.status(400).send({
+          error: {
+            statusCode: 400,
+            message: params.error.issues[0]?.message ?? "Invalid document id",
+            code: "INVALID_DOCUMENT_ID",
+          },
+        });
+      }
+
+      let document;
+      try {
+        document = await documents.getOwnedDocument({
+          documentId: params.data.documentId,
+          ownerUserId: user.id,
+        });
+      } catch (error) {
+        if (error instanceof DocumentAccessError) {
+          return reply.status(error.statusCode).send({
+            error: {
+              statusCode: error.statusCode,
+              message: error.message,
+              code: error.code,
+            },
+          });
+        }
+        throw error;
+      }
+
+      try {
+        const threads = await persistence.listThreadsForWorkspace({
+          workspaceId: document.workspaceId,
+          ownerUserId: user.id,
+          documentId: document.id,
+          includeArchived: false,
+        });
+        return reply.send({
+          threads: threads.map(toAgentThreadDto),
+        });
+      } catch (error) {
+        return mapPersistenceError(reply, error);
+      }
+    },
+  );
 
   app.post(
     "/api/documents/:documentId/agent/threads",
@@ -230,8 +290,13 @@ export function registerAgentRoutes(
         threadId: params.data.threadId,
         ownerUserId: user.id,
       });
+      const latestRun = await persistence.getLatestRunForThread({
+        threadId: params.data.threadId,
+        ownerUserId: user.id,
+      });
       return reply.send({
         messages: messages.map(toAgentMessageDto),
+        latestRun: latestRun ? toAgentRunDto(latestRun) : null,
       });
     } catch (error) {
       return mapPersistenceError(reply, error);
@@ -326,6 +391,76 @@ export function registerAgentRoutes(
     }
   });
 
+  app.post("/api/agent/runs/:runId/cancel", async (request, reply) => {
+    const user = await getRequestUser(auth, request);
+    if (!user) {
+      return reply.status(401).send(unauthenticated());
+    }
+
+    const params = RunIdParams.safeParse(request.params);
+    if (!params.success) {
+      return reply.status(400).send({
+        error: {
+          statusCode: 400,
+          message: params.error.issues[0]?.message ?? "Invalid run id",
+          code: "INVALID_RUN_ID",
+        },
+      });
+    }
+
+    try {
+      const run = await persistence.getRun({
+        runId: params.data.runId,
+        ownerUserId: user.id,
+      });
+      if (!run) {
+        return reply.status(404).send({
+          error: {
+            statusCode: 404,
+            message: "Agent run not found",
+            code: "RUN_NOT_FOUND",
+          },
+        });
+      }
+
+      if (!TERMINAL_RUN_STATUSES.has(run.status)) {
+        const cancelled = runManager.cancel({
+          runId: run.id,
+          ownerUserId: user.id,
+        });
+        if (cancelled) {
+          await runManager.waitForRun(run.id);
+        }
+      }
+
+      const current = await persistence.getRun({
+        runId: run.id,
+        ownerUserId: user.id,
+      });
+      if (!current) {
+        return reply.status(404).send({
+          error: {
+            statusCode: 404,
+            message: "Agent run not found",
+            code: "RUN_NOT_FOUND",
+          },
+        });
+      }
+
+      const steps = await persistence.listStepsForRun({
+        runId: current.id,
+        ownerUserId: user.id,
+      });
+
+      return reply.send({
+        run: toAgentRunDto(current),
+        steps: steps.map(toAgentStepDto),
+      });
+    } catch (error) {
+      return mapPersistenceError(reply, error);
+    }
+  });
+
   app.get("/api/agent/runs/:runId/events", async (request, reply) => {
     const user = await getRequestUser(auth, request);
     if (!user) {
@@ -366,7 +501,7 @@ export function registerAgentRoutes(
     });
     reply.raw.write(formatSseComment("connected"));
 
-    const terminalStatuses = new Set(["completed", "failed", "cancelled"]);
+    const terminalStatuses = TERMINAL_RUN_STATUSES;
     let cleaned = false;
     let unsubscribe: (() => void) | null = null;
     let heartbeat: NodeJS.Timeout | null = null;
