@@ -97,6 +97,17 @@ export {
   unsupportedCapabilityResult,
 } from "./runtime.js";
 
+export type {
+  DocumentMutationExecutor,
+  DocumentMutationResult,
+  DocumentReplaceTextMutationRequest,
+  PersistedReplaceTextToolResult,
+} from "./document-mutation.js";
+export {
+  createInMemoryDocumentMutationExecutor,
+  isPersistedReplaceTextToolResult,
+} from "./document-mutation.js";
+
 export {
   MOCK_DOCUMENT_CAPABILITIES,
   MOCK_MUTABLE_DOCUMENT_CAPABILITIES,

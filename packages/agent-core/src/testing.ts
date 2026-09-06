@@ -68,6 +68,8 @@ export function createFakeToolExecutionContext(
     signal: overrides.signal ?? new AbortController().signal,
     events: overrides.events ?? noopEventSink,
     runtime: overrides.runtime,
+    mutations: overrides.mutations,
+    advancePrimaryDocument: overrides.advancePrimaryDocument,
   };
 }
 

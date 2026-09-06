@@ -86,6 +86,19 @@ export type AgentEvent =
       readonly at: string;
     }
   | {
+      /**
+       * Application-owned: agent mutation persisted immutable version N+1.
+       * UI should refresh document metadata / reload the editor — not patch bytes.
+       */
+      readonly type: "document.version.advanced";
+      readonly runId: string;
+      readonly documentId: string;
+      readonly versionId: string;
+      readonly versionNumber?: number;
+      readonly baseVersionId: string;
+      readonly at: string;
+    }
+  | {
       readonly type: "agent.completed";
       readonly runId: string;
       readonly at: string;

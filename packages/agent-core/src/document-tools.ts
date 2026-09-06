@@ -1,4 +1,7 @@
 import { AgentCoreError } from "./errors.js";
+import type {
+  PersistedReplaceTextToolResult,
+} from "./document-mutation.js";
 import type { AgentTool, ToolExecutionContext } from "./model.js";
 import type {
   DocumentFindQuery,
@@ -314,13 +317,13 @@ export interface DocumentReplaceTextInput {
 
 export function createDocumentReplaceTextTool(): AgentTool<
   DocumentReplaceTextInput,
-  OperationResult
+  PersistedReplaceTextToolResult
 > {
   return {
     name: DOCUMENT_TOOL_NAMES.replaceText,
     description:
-      "Replace text in the active DOCX document (headings and/or paragraphs). " +
-      "Safe write — does not delete structure. Verify with document.inspect afterward.",
+      "Replace text in the active DOCX document. Success means an immutable " +
+      "new document version was persisted. Verify with document.find/inspect afterward.",
     risk: "safe",
     effect: "write",
     executionMode: "sequential",
@@ -332,7 +335,7 @@ export function createDocumentReplaceTextTool(): AgentTool<
         scope: {
           type: "string",
           enum: ["all", "headings", "paragraphs"],
-          description: "Where to search (default all)",
+          description: "Where to search (default all; ignored by engine runtime)",
         },
       },
       required: ["find", "replace"],
@@ -373,11 +376,55 @@ export function createDocumentReplaceTextTool(): AgentTool<
       };
     },
     async execute(input, ctx) {
-      return executeMutation(ctx, "document.replace_text", {
+      const { document, runtime } = requireDocumentRuntime(ctx);
+      if (!ctx.mutations) {
+        throw new AgentCoreError(
+          "RUNTIME_FAILURE",
+          "DocumentMutationExecutor is not configured; cannot persist replace_text",
+          {
+            diagnostic: {
+              code: "DOCUMENT_MUTATIONS_MISSING",
+              severity: "error",
+              message:
+                "DocumentMutationExecutor is not configured; cannot persist replace_text",
+            },
+          },
+        );
+      }
+      const caps = await runtime.capabilities(document);
+      if (!hasCapability(caps, Capabilities.DocumentMutate)) {
+        throw diagnosticError({
+          code: "UNSUPPORTED_CAPABILITY",
+          severity: "error",
+          message: `Runtime does not support capability: ${Capabilities.DocumentMutate}`,
+          details: { capability: Capabilities.DocumentMutate },
+        });
+      }
+
+      const result = await ctx.mutations.replaceText({
+        document,
         find: input.find,
         replace: input.replace,
-        ...(input.scope !== undefined ? { scope: input.scope } : {}),
+        signal: ctx.signal,
+        runId: ctx.runId,
       });
+
+      if (result.status === "error") {
+        throw diagnosticError(result.diagnostics[0]!);
+      }
+
+      ctx.advancePrimaryDocument?.(result.document);
+
+      return {
+        status: "success",
+        diagnostics: result.diagnostics,
+        ...(result.change !== undefined ? { change: result.change } : {}),
+        document: result.document,
+        ...(result.versionNumber !== undefined
+          ? { versionNumber: result.versionNumber }
+          : {}),
+        baseVersionId: result.baseVersionId,
+      };
     },
   };
 }

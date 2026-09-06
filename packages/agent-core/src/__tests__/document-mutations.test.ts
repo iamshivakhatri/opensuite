@@ -7,6 +7,7 @@ import {
   DOCUMENT_TOOL_NAMES,
   createCapabilities,
   createDocumentToolRegistry,
+  createInMemoryDocumentMutationExecutor,
   createMockDocumentRuntime,
   createScriptedAgentModel,
   mockBaseHeadingText,
@@ -310,6 +311,7 @@ test("AgentRunner can mutate then inspect then finish", async () => {
     model,
     tools,
     runtime,
+    mutations: createInMemoryDocumentMutationExecutor(runtime),
     capabilities: mutableDocumentCapabilities(),
   });
 

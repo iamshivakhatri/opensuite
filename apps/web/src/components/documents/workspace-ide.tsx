@@ -441,6 +441,10 @@ export function WorkspaceIde({
           collapsed={agentCollapsed}
           width={agentWidth}
           onToggle={() => setAgentCollapsed((value) => !value)}
+          onDocumentUpdated={(updated) => {
+            setActiveDocument(updated);
+            setRefreshKey((value) => value + 1);
+          }}
         />
       </div>
 

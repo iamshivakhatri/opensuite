@@ -10,6 +10,8 @@ import {
   type AgentEvent,
   type AgentEventSink,
 } from "./events.js";
+import type { DocumentMutationExecutor } from "./document-mutation.js";
+import { isPersistedReplaceTextToolResult } from "./document-mutation.js";
 import {
   requiresConfirmation,
   toolExecutionMode,
@@ -30,16 +32,27 @@ import type { ToolRegistry } from "./tools.js";
 import {
   createCapabilities,
   type Diagnostic,
+  type DocumentRef,
   type RuntimeCapabilities,
 } from "./types.js";
 
 const DEFAULT_MAX_TURNS = 20;
+
+/** Run-scoped mutable pointer to the active primary document version. */
+interface RunDocumentState {
+  primary: DocumentRef | null;
+}
 
 export interface AgentRunnerOptions {
   readonly model: AgentModel;
   readonly tools: ToolRegistry;
   readonly events?: AgentEventSink;
   readonly runtime?: DocumentRuntime;
+  /**
+   * Application-injected DOCX mutation persistence (engine + append version).
+   * Required for document.replace_text to succeed in production.
+   */
+  readonly mutations?: DocumentMutationExecutor;
   readonly confirmation?: ConfirmationGate;
   readonly steering?: SteeringSource;
   /** Advertised to context; tools decide how to use DocumentRuntime. */
@@ -67,6 +80,7 @@ export class AgentRunner {
   private readonly tools: ToolRegistry;
   private readonly events: AgentEventSink;
   private readonly runtime: DocumentRuntime | undefined;
+  private readonly mutations: DocumentMutationExecutor | undefined;
   private readonly confirmation: ConfirmationGate;
   private readonly steering: SteeringSource | undefined;
   private readonly capabilities: RuntimeCapabilities;
@@ -79,6 +93,7 @@ export class AgentRunner {
     this.tools = options.tools;
     this.events = options.events ?? noopEventSink;
     this.runtime = options.runtime;
+    this.mutations = options.mutations;
     this.confirmation = options.confirmation ?? denyAllConfirmationGate;
     this.steering = options.steering;
     this.capabilities = options.capabilities ?? createCapabilities();
@@ -101,6 +116,12 @@ export class AgentRunner {
       })),
       { role: "user", content: request.instruction },
     ];
+
+    // Run-local active document: advances N → N+1 after persisted mutations.
+    // Does not mutate durable historical DocumentRef records.
+    const documentState: RunDocumentState = {
+      primary: request.primaryDocument ?? null,
+    };
 
     await this.emit({
       type: "agent.started",
@@ -217,6 +238,7 @@ export class AgentRunner {
           toolCalls,
           request,
           signal,
+          documentState,
         );
         toolOutcomes.push(...turnOutcomes);
 
@@ -293,6 +315,7 @@ export class AgentRunner {
     toolCalls: readonly ModelToolCall[],
     request: AgentRequest,
     signal: AbortSignal,
+    documentState: RunDocumentState,
   ): Promise<ToolOutcome[]> {
     const outcomes: ToolOutcome[] = new Array(toolCalls.length);
     let index = 0;
@@ -311,7 +334,9 @@ export class AgentRunner {
         }
         const batch = toolCalls.slice(index, end);
         const settled = await Promise.all(
-          batch.map((item) => this.executeOneToolCall(item, request, signal)),
+          batch.map((item) =>
+            this.executeOneToolCall(item, request, signal, documentState),
+          ),
         );
         for (let offset = 0; offset < settled.length; offset += 1) {
           outcomes[index + offset] = settled[offset]!;
@@ -320,7 +345,12 @@ export class AgentRunner {
         continue;
       }
 
-      outcomes[index] = await this.executeOneToolCall(call, request, signal);
+      outcomes[index] = await this.executeOneToolCall(
+        call,
+        request,
+        signal,
+        documentState,
+      );
       index += 1;
     }
 
@@ -342,6 +372,7 @@ export class AgentRunner {
     call: ModelToolCall,
     request: AgentRequest,
     signal: AbortSignal,
+    documentState: RunDocumentState,
   ): Promise<ToolOutcome> {
     this.throwIfAborted(signal);
 
@@ -484,15 +515,33 @@ export class AgentRunner {
 
     const ctx: ToolExecutionContext = {
       runId: request.runId,
-      primaryDocument: request.primaryDocument ?? null,
+      primaryDocument: documentState.primary,
       signal,
       events: this.events,
       runtime: this.runtime,
+      mutations: this.mutations,
+      advancePrimaryDocument: (document) => {
+        documentState.primary = document;
+      },
     };
 
     try {
       this.throwIfAborted(signal);
       const output = await tool.execute(input, ctx);
+      if (isPersistedReplaceTextToolResult(output)) {
+        documentState.primary = output.document;
+        await this.emit({
+          type: "document.version.advanced",
+          runId: request.runId,
+          documentId: output.document.documentId,
+          versionId: output.document.versionId,
+          ...(output.versionNumber !== undefined
+            ? { versionNumber: output.versionNumber }
+            : {}),
+          baseVersionId: output.baseVersionId,
+          at: this.timestamp(),
+        });
+      }
       const summary = summarizeOutput(output);
       await this.emit({
         type: "tool.completed",

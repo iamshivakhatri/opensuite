@@ -7,6 +7,7 @@ import {
   type AgentRequest,
   type AgentResult,
   type ConfirmationGate,
+  type DocumentMutationExecutor,
   type DocumentRef,
   type DocumentRuntime,
   type RuntimeCapabilities,
@@ -19,6 +20,7 @@ import {
   type DocumentService,
 } from "../documents/service.js";
 import type { DocumentRuntimeResolver } from "../documents/runtime.js";
+import { createAgentDocumentMutationExecutor } from "./document-mutation-executor.js";
 import {
   AgentPersistenceError,
   type AgentMessage,
@@ -78,8 +80,14 @@ export interface AgentExecutionHandle {
 
 export interface AgentExecutionServiceDeps {
   readonly persistence: AgentPersistenceService;
-  /** Used to resolve latest DocumentRef for document-scoped threads. */
-  readonly documents: Pick<DocumentService, "getOwnedDocument">;
+  /**
+   * Resolve latest DocumentRef + persist agent mutations
+   * (getOwnedDocument + appendDocumentVersion).
+   */
+  readonly documents: Pick<
+    DocumentService,
+    "getOwnedDocument" | "appendDocumentVersion"
+  >;
   readonly model: AgentModel;
   /**
    * Optional fixed tool registry (tests). When omitted, a format-filtered
@@ -96,6 +104,11 @@ export interface AgentExecutionServiceDeps {
    * real engine adapter with an owner-scoped artifact loader.
    */
   readonly resolveRuntime?: DocumentRuntimeResolver;
+  /**
+   * Optional fixed mutation executor (tests). When omitted, DOCX runs get
+   * createAgentDocumentMutationExecutor → applyReplaceText.
+   */
+  readonly mutations?: DocumentMutationExecutor;
   /**
    * Confirmation gate for destructive tools. Omit → agent-core denies.
    * Tests may inject AutoApproveConfirmationGate / denyAllConfirmationGate.
@@ -284,6 +297,16 @@ async function continueExecution(input: {
       ownerUserId,
     }) ?? deps.runtime;
 
+  const mutations =
+    deps.mutations ??
+    (runtime && primaryDocument?.format === "docx"
+      ? createAgentDocumentMutationExecutor({
+          documents: deps.documents,
+          ownerUserId,
+          runtime,
+        })
+      : undefined);
+
   const runner = new AgentRunner({
     model: deps.model,
     tools:
@@ -293,6 +316,7 @@ async function continueExecution(input: {
       }),
     events,
     runtime,
+    mutations,
     confirmation: deps.confirmation,
     steering: deps.steering,
     capabilities: deps.capabilities,
@@ -771,6 +795,10 @@ function createRunEventBridge(input: {
         });
         return;
       }
+      case "document.version.advanced":
+        // Version advance is also captured on tool.completed output
+        // (baseVersionId / resulting document). No separate step row.
+        return;
       case "agent.cancelled":
       case "agent.completed":
       case "agent.failed":

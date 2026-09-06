@@ -150,6 +150,20 @@ function toLiveAgentEvent(
           reason: event.reason,
         },
       };
+    case "document.version.advanced":
+      return {
+        runId: event.runId,
+        type: event.type,
+        at: event.at,
+        data: {
+          documentId: event.documentId,
+          versionId: event.versionId,
+          baseVersionId: event.baseVersionId,
+          ...(event.versionNumber !== undefined
+            ? { versionNumber: event.versionNumber }
+            : {}),
+        },
+      };
     case "turn.started":
     case "turn.completed":
       return null;

@@ -35,15 +35,20 @@ AgentRequest
 * `document.inspect` — targeted focus (`overview` / `headings` / `slides` / `sheets` / `range` / …)
 * `document.find` — text or semantic matches
 
-**Safe writes (mock)**
+**Safe writes**
 
-* `document.replace_text` — DOCX find/replace in headings/paragraphs
-* `slides.update_text` — PPTX slide title or existing→new text
-* `workbook.set_cells` — XLSX small cell writes
+* `document.replace_text` — DOCX find/replace; **tool success = persisted immutable version**
+* `slides.update_text` — PPTX slide title or existing→new text (mock runtime path)
+* `workbook.set_cells` — XLSX small cell writes (mock runtime path)
 
 `DocumentRef` always comes from `ToolExecutionContext.primaryDocument` — never from model input.
-Tools pass `runId` into `DocumentRuntimeOptions` so the runtime can keep a **run-scoped working copy**.
-Immutable base fixtures / DocumentRef are never mutated in place.
+DOCX `replace_text` uses injected `DocumentMutationExecutor` (not bare `runtime.execute`).
+Agent-core does **not** own DB/storage; apps/api injects `applyReplaceText`.
+
+After a persisted mutation, the run advances its active `DocumentRef` N → N+1
+(run-local only). Subsequent find/inspect/mutate in the **same run** read N+1.
+Emits `document.version.advanced` for SSE/UI refresh. Raw `artifactBytes` alone
+is **not** tool success.
 
 Write tools use `effect: "write"` and `executionMode: "sequential"`.
 Format-filtered registration: DOCX runs do not receive workbook/slide tools (and vice versa).
@@ -51,8 +56,8 @@ Format-filtered registration: DOCX runs do not receive workbook/slide tools (and
 Default product stack: `createMockDocumentRuntime({ capabilities: mutableDocumentCapabilities() })`.
 Real DOCX path: `createOpenSuiteEngineAdapter` — capabilities/find(text)/inspect(context)/replace_text via N-API
 (see `docs/engine_integration.md`). No mock fallback for unsupported real-DOCX focuses.
-Mutation success may include `artifactBytes`; persistence stays in the application layer.
-Mutation results include a small `change` summary (`operation`, `area`, `before`, `after`) — not a durable diff/version system.
+Persisted mutation results include `document` (new DocumentRef), `baseVersionId`, optional `change`
+summary — never storage keys or engine source identities.
 
 System instruction: `buildDocumentAgentSystemPrompt` — capability-driven:
 mutate advertised → may edit with tools + must verify; otherwise say edits unavailable.

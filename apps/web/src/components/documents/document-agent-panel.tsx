@@ -17,6 +17,7 @@ import {
   createDocumentAgentThread,
   getAgentMessages,
   getAgentRun,
+  getDocument,
   isActiveAgentRunStatus,
   listDocumentAgentThreads,
   startAgentRun,
@@ -26,6 +27,7 @@ import {
   type AgentRun,
   type AgentRunStatus,
   type AgentThread,
+  type ListedDocument,
 } from "@/lib/api";
 
 type PanelPhase =
@@ -54,12 +56,15 @@ export function DocumentAgentPanel({
   collapsed,
   onToggle,
   width = 320,
+  onDocumentUpdated,
 }: {
   documentId: string | null;
   documentName?: string;
   collapsed: boolean;
   onToggle: () => void;
   width?: number;
+  /** Fired when an agent run persists a newer document version. */
+  onDocumentUpdated?: (document: ListedDocument) => void;
 }) {
   const [phase, setPhase] = React.useState<PanelPhase>({ kind: "loading" });
   const [threads, setThreads] = React.useState<AgentThread[]>([]);
@@ -205,6 +210,22 @@ export function DocumentAgentPanel({
             if (messageId) {
               setLiveDraft({ messageId, content });
             }
+          } else if (event.type === "document.version.advanced") {
+            const advancedDocumentId = String(event.data.documentId ?? "");
+            if (
+              advancedDocumentId &&
+              documentId &&
+              advancedDocumentId === documentId
+            ) {
+              void getDocument(advancedDocumentId)
+                .then((fresh) => {
+                  if (!isCurrent()) return;
+                  onDocumentUpdated?.(fresh);
+                })
+                .catch(() => {
+                  // Editor can still pick up the version on focus refresh.
+                });
+            }
           }
 
           if (
@@ -273,7 +294,7 @@ export function DocumentAgentPanel({
       });
       sseAbortRef.current = sub.abort;
     },
-    [finalizeFromSnapshot, refreshMessages, stopSse],
+    [documentId, finalizeFromSnapshot, onDocumentUpdated, refreshMessages, stopSse],
   );
 
   attachRunRef.current = attachRun;

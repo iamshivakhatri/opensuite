@@ -5,6 +5,7 @@ import {
   Capabilities,
   createDocumentReplaceTextTool,
   createFakeToolExecutionContext,
+  createInMemoryDocumentMutationExecutor,
   hasCapability,
   listCapabilities,
   type DocumentRef,
@@ -489,6 +490,7 @@ test("AgentTool depends only on DocumentRuntime, not N-API package", async () =>
   const ctx = createFakeToolExecutionContext({
     primaryDocument: docRef,
     runtime,
+    mutations: createInMemoryDocumentMutationExecutor(runtime),
   });
 
   const result = await tool.execute(
@@ -496,6 +498,10 @@ test("AgentTool depends only on DocumentRuntime, not N-API package", async () =>
     ctx,
   );
   assert.equal(result.status, "success");
+  if (result.status === "success") {
+    assert.equal(result.document.versionId, "ver-1+1");
+    assert.equal(result.baseVersionId, "ver-1");
+  }
   assert.equal(
     Object.hasOwn(
       await import("@opensuite/agent-core"),

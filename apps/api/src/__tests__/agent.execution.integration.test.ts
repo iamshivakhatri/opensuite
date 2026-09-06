@@ -109,7 +109,7 @@ async function seedDocument(
 
 function createOwnedDocumentResolver(db: Db): Pick<
   DocumentService,
-  "getOwnedDocument"
+  "getOwnedDocument" | "appendDocumentVersion"
 > {
   return {
     async getOwnedDocument(input: {
@@ -174,12 +174,17 @@ function createOwnedDocumentResolver(db: Db): Pick<
         },
       };
     },
+    async appendDocumentVersion() {
+      throw new Error(
+        "appendDocumentVersion not implemented in agent execution test resolver",
+      );
+    },
   };
 }
 
 function createService(
   persistence: AgentPersistenceService,
-  documents: Pick<DocumentService, "getOwnedDocument">,
+  documents: Pick<DocumentService, "getOwnedDocument" | "appendDocumentVersion">,
   overrides: Partial<AgentExecutionServiceDeps> & { model: AgentModel },
 ) {
   return createAgentExecutionService({
@@ -189,6 +194,7 @@ function createService(
     confirmation: overrides.confirmation,
     steering: overrides.steering,
     runtime: overrides.runtime,
+    mutations: overrides.mutations,
     maxTurns: overrides.maxTurns,
     model: overrides.model,
   });

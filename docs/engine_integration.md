@@ -12,15 +12,36 @@ Application code must never manipulate Office internals as a shortcut around the
 
 ```text
 AgentRunner
-  → AgentTool
-  → DocumentRuntime
+  → AgentTool (document.replace_text)
+  → DocumentMutationExecutor (injected by apps/api)
+  → applyReplaceText
+  → DocumentRuntime.execute (once)
   → OpenSuiteEngineAdapter (@opensuite/engine-client)
   → Node N-API (@opensuite/engine)
   → Rust opensuite-engine
-  → verified artifact bytes / structured read results
+  → verified artifact bytes → appendDocumentVersion
 ```
 
-### Real DOCX read+write flow
+### Real DOCX agent write lifecycle
+
+```text
+Agent run starts at Version N
+  → real find/inspect N
+  → document.replace_text
+       → DocumentMutationExecutor (apps/api)
+       → applyReplaceText (engine once + appendDocumentVersion)
+       → immutable Version N+1
+  → run advances active DocumentRef to N+1
+  → subsequent tools read N+1
+  → SSE document.version.advanced → UI reloads persisted version
+```
+
+* Raw engine `artifactBytes` success is **not** tool success — persistence must complete.
+* agent-core never imports apps/api; persistence is injected.
+* No engine source identities cross the tool boundary.
+* VERSION_CONFLICT / TARGET_NOT_FOUND / persistence failure → tool failed; DocumentRef unchanged.
+
+### Real DOCX read+write flow (service layer)
 
 ```text
 exact immutable version N

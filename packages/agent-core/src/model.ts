@@ -1,3 +1,4 @@
+import type { DocumentMutationExecutor } from "./document-mutation.js";
 import type { AgentEventSink } from "./events.js";
 import type { DocumentRuntime } from "./runtime.js";
 import type { Diagnostic, DocumentRef, RuntimeCapabilities } from "./types.js";
@@ -93,6 +94,16 @@ export interface ToolExecutionContext {
   readonly events: AgentEventSink;
   /** Present when the tool needs document inspect/mutate capabilities. */
   readonly runtime?: DocumentRuntime;
+  /**
+   * Application-injected persistence for DOCX replace_text.
+   * When present, document.replace_text must use this — not runtime.execute alone.
+   */
+  readonly mutations?: DocumentMutationExecutor;
+  /**
+   * Run-local: advance the active primary DocumentRef after a persisted mutation
+   * so subsequent tools in the same run read version N+1.
+   */
+  readonly advancePrimaryDocument?: (document: DocumentRef) => void;
 }
 
 /**

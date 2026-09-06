@@ -11,13 +11,15 @@ _Read this before starting any work. Keep it a concise current-state handoff, no
 * Immutable document version foundation + Casual Docs DOCX surface v1.
 * Theme architecture (`themePreference` / `resolvedTheme` / Casual isolation).
 * **Production DOCX agent runtime is engine-backed (no mock DOCX content).**
+* **Agent `document.replace_text` persists immutable N+1 and advances run DocumentRef.**
 * Agent chat: durable tool progress (✓ + Thinking), GFM table rendering, compact API request logs.
 
 ## Just Completed
 
-* Progress no longer flickers back to bare Thinking after every fast tool
-* AgentMarkdown renders pipe tables; API request logs are one-line summaries
-* System prompt prefers 1–2 DOCX find calls (cuts multi-round latency)
+* Injected `DocumentMutationExecutor` → `applyReplaceText` (one engine execute + append)
+* Tool success = persistence success; run advances primaryDocument N → N+1
+* SSE `document.version.advanced` → editor reloads via existing version bump path
+* Same-run read-after-write + failure/conflict unit tests
 
 ## Current Decisions
 
@@ -30,15 +32,17 @@ _Read this before starting any work. Keep it a concise current-state handoff, no
 
 | Check | Status |
 |---|---|
-| `pnpm --filter @opensuite/web test` | **Pass** |
-| `pnpm --filter @opensuite/api typecheck` | **Pass** |
-| `pnpm --filter @opensuite/agent-core test` | **Pass** (52) |
+| `pnpm typecheck` | **Pass** |
+| `pnpm test` | **Pass** (agent-core 59, engine-client 20, api 85+17 skip, web 11) |
+| `pnpm build` | **Pass** |
+| `git diff --check` | **Pass** |
+| DB integration: agent replace → N+1 read-after-write | **Pass** |
 
 ## Intentionally Deferred
 
 * Broad DOCX inspect (overview/headings/tables) in Rust — biggest latency win
-* PPTX/XLSX engine runtimes; agent auto-persist of mutation artifactBytes
-* More engine mutations; HTTP mutation endpoint
+* PPTX/XLSX engine runtimes; HTTP mutation endpoint
+* More engine mutations; review/revert UI; automatic rebase
 
 ## Recommended Next Step
 
