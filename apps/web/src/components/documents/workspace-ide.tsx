@@ -9,7 +9,8 @@ import {
   closeTabAndPickNext,
   DocumentOpenTabs,
 } from "@/components/documents/document-open-tabs";
-import { DocumentCanvas } from "@/components/documents/document-canvas";
+import { DocumentSurface } from "@/components/documents/surfaces/document-surface";
+import type { DocxSurfaceStatus } from "@/components/documents/surfaces/docx-surface";
 import { DocumentAgentPanel } from "@/components/documents/document-agent-panel";
 import {
   deleteDocument,
@@ -27,6 +28,7 @@ import {
 import { uploadOfficeFiles } from "@/lib/office-upload";
 import { useToast } from "@/lib/toast";
 import { useCommandPalette } from "@/components/shell/command-palette";
+import { documentPath } from "@/lib/paths";
 
 /**
  * Cursor-like workspace IDE: explorer + tabs + canvas + agent.
@@ -60,18 +62,37 @@ export function WorkspaceIde({
     React.useState<ListedDocument | null>(document);
   const [starred, setStarred] = React.useState(Boolean(document?.starred));
   const [trashOpen, setTrashOpen] = React.useState(false);
+  const [discardOpen, setDiscardOpen] = React.useState(false);
+  const [pendingHref, setPendingHref] = React.useState<string | null>(null);
   const [busy, setBusy] = React.useState(false);
   const [actionError, setActionError] = React.useState<string | null>(null);
   const [tabsRevision, setTabsRevision] = React.useState(0);
   const [refreshKey, setRefreshKey] = React.useState(0);
   const [draggingOver, setDraggingOver] = React.useState(false);
   const [uploadingDrop, setUploadingDrop] = React.useState(false);
+  const [editorStatus, setEditorStatus] = React.useState<DocxSurfaceStatus>({
+    dirty: false,
+    saving: false,
+    conflict: false,
+    loadedVersionId: null,
+    latestVersionId: null,
+  });
+  const [saveRequestId, setSaveRequestId] = React.useState(0);
   const dragDepth = React.useRef(0);
   const fileInputRef = React.useRef<HTMLInputElement>(null);
 
   React.useEffect(() => {
     setActiveDocument(document);
     setStarred(Boolean(document?.starred));
+    if (!document || document.format !== "docx") {
+      setEditorStatus({
+        dirty: false,
+        saving: false,
+        conflict: false,
+        loadedVersionId: null,
+        latestVersionId: null,
+      });
+    }
   }, [document]);
 
   React.useEffect(() => {
@@ -82,6 +103,8 @@ export function WorkspaceIde({
       agentCollapsed,
     });
   }, [explorerWidth, agentWidth, navCollapsed, agentCollapsed]);
+
+  const isDirty = editorStatus.dirty || editorStatus.saving;
 
   function isTypingTarget(target: EventTarget | null): boolean {
     if (!(target instanceof HTMLElement)) return false;
@@ -103,6 +126,33 @@ export function WorkspaceIde({
     if (href) router.push(href);
   }, [activeDocument, router, workspaceId]);
 
+  const requestCloseTab = React.useCallback(
+    (documentId: string): boolean => {
+      const closingActive = activeDocument?.id === documentId;
+      if (!closingActive || !isDirty) return true;
+      setPendingHref(`__close__:${documentId}`);
+      setDiscardOpen(true);
+      return false;
+    },
+    [activeDocument?.id, isDirty],
+  );
+
+  const requestNavigate = React.useCallback(
+    (href: string): boolean => {
+      if (!isDirty) return true;
+      if (
+        activeDocument &&
+        href === documentPath(workspaceId, activeDocument.id)
+      ) {
+        return true;
+      }
+      setPendingHref(href);
+      setDiscardOpen(true);
+      return false;
+    },
+    [activeDocument, isDirty, workspaceId],
+  );
+
   React.useEffect(() => {
     function onKey(event: KeyboardEvent) {
       if (!(event.metaKey || event.ctrlKey)) return;
@@ -111,7 +161,9 @@ export function WorkspaceIde({
       if (key === "w") {
         if (!activeDocument) return;
         event.preventDefault();
-        closeActiveTab();
+        if (requestCloseTab(activeDocument.id)) {
+          closeActiveTab();
+        }
       } else if (key === "o") {
         event.preventDefault();
         fileInputRef.current?.click();
@@ -134,7 +186,7 @@ export function WorkspaceIde({
         onUploadRequest as EventListener,
       );
     };
-  }, [activeDocument, closeActiveTab, workspaceId]);
+  }, [activeDocument, closeActiveTab, requestCloseTab, workspaceId]);
 
   async function runUploads(files: File[]) {
     if (files.length === 0 || uploadingDrop) return;
@@ -202,6 +254,12 @@ export function WorkspaceIde({
 
   async function handleTrash() {
     if (!activeDocument || busy) return;
+    if (isDirty) {
+      setTrashOpen(false);
+      setPendingHref(`__trash__:${activeDocument.id}`);
+      setDiscardOpen(true);
+      return;
+    }
     setBusy(true);
     setActionError(null);
     try {
@@ -284,6 +342,20 @@ export function WorkspaceIde({
               }
             : undefined
         }
+        dirty={editorStatus.dirty}
+        saving={editorStatus.saving}
+        conflict={editorStatus.conflict}
+        canSave={
+          Boolean(activeDocument?.format === "docx") &&
+          !editorStatus.saving &&
+          !editorStatus.conflict &&
+          Boolean(editorStatus.loadedVersionId)
+        }
+        onSave={
+          activeDocument?.format === "docx"
+            ? () => setSaveRequestId((value) => value + 1)
+            : undefined
+        }
       />
 
       <div className="flex min-h-0 flex-1">
@@ -294,6 +366,7 @@ export function WorkspaceIde({
           width={explorerWidth}
           refreshKey={refreshKey}
           onToggle={() => setNavCollapsed((value) => !value)}
+          onRequestNavigate={requestNavigate}
           onDocumentRenamed={(updated) => {
             if (activeDocument?.id === updated.id) {
               setActiveDocument({ ...activeDocument, ...updated });
@@ -324,9 +397,19 @@ export function WorkspaceIde({
             workspaceId={workspaceId}
             activeDocument={activeDocument}
             revision={tabsRevision}
+            onRequestCloseTab={requestCloseTab}
+            onRequestNavigate={requestNavigate}
           />
           {activeDocument ? (
-            <DocumentCanvas format={activeDocument.format} />
+            <DocumentSurface
+              document={activeDocument}
+              saveRequestId={saveRequestId}
+              onStatusChange={setEditorStatus}
+              onDocumentUpdated={(updated) => {
+                setActiveDocument(updated);
+                setRefreshKey((value) => value + 1);
+              }}
+            />
           ) : documentPending ? (
             <div className="flex h-full min-h-0 flex-1 items-center justify-center bg-sunken">
               <p className="text-[12px] text-ink-faint">Opening file…</p>
@@ -389,6 +472,64 @@ export function WorkspaceIde({
           error={actionError}
           onCancel={() => setTrashOpen(false)}
           onConfirm={() => void handleTrash()}
+        />
+      ) : null}
+
+      {discardOpen ? (
+        <ConfirmDialog
+          title="Discard unsaved changes?"
+          body="You have unsaved edits in this document. Leave without saving?"
+          confirmLabel="Discard"
+          onCancel={() => {
+            setDiscardOpen(false);
+            setPendingHref(null);
+          }}
+          onConfirm={() => {
+            void (async () => {
+              const target = pendingHref;
+              setDiscardOpen(false);
+              setPendingHref(null);
+              setEditorStatus((status) => ({ ...status, dirty: false }));
+
+              if (!target) return;
+
+              if (target.startsWith("__trash__:")) {
+                const id = target.slice("__trash__:".length);
+                setBusy(true);
+                try {
+                  await deleteDocument(id);
+                  toast({ tone: "success", title: "Moved to Trash" });
+                  const { href } = closeTabAndPickNext(workspaceId, id, id);
+                  setTabsRevision((value) => value + 1);
+                  setRefreshKey((value) => value + 1);
+                  if (href) router.push(href);
+                } catch (error) {
+                  toast({
+                    tone: "error",
+                    title: "Could not move file to Trash",
+                    description: userFacingError(error, "Try again."),
+                  });
+                } finally {
+                  setBusy(false);
+                }
+                return;
+              }
+
+              if (target.startsWith("__close__:")) {
+                const documentId = target.slice("__close__:".length);
+                const { href } = closeTabAndPickNext(
+                  workspaceId,
+                  documentId,
+                  activeDocument?.id ?? null,
+                );
+                setTabsRevision((value) => value + 1);
+                if (href) router.push(href);
+                return;
+              }
+
+              router.push(target);
+            })();
+          }}
         />
       ) : null}
     </div>

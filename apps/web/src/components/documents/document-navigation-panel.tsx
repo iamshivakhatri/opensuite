@@ -39,6 +39,7 @@ export function DocumentNavigationPanel({
   refreshKey = 0,
   onDocumentRenamed,
   onDocumentTrashed,
+  onRequestNavigate,
 }: {
   workspaceId: string;
   activeDocumentId: string | null;
@@ -48,6 +49,8 @@ export function DocumentNavigationPanel({
   refreshKey?: number;
   onDocumentRenamed?: (document: ListedDocument) => void;
   onDocumentTrashed?: (documentId: string) => void;
+  /** Return false to cancel navigation (dirty guard). */
+  onRequestNavigate?: (href: string) => boolean | void;
 }) {
   const router = useRouter();
   const { toast } = useToast();
@@ -243,6 +246,14 @@ export function DocumentNavigationPanel({
                 href={documentPath(workspaceId, file.id)}
                 title={file.name}
                 prefetch
+                onClick={(event) => {
+                  const href = documentPath(workspaceId, file.id);
+                  if (onRequestNavigate) {
+                    event.preventDefault();
+                    if (onRequestNavigate(href) === false) return;
+                    router.push(href);
+                  }
+                }}
                 className={`flex w-full items-center gap-2 rounded-[8px] py-1.5 pl-2 pr-7 text-left text-[11px] transition-colors ${
                   active
                     ? "bg-accent-soft font-medium text-accent-hover"
@@ -302,8 +313,11 @@ export function DocumentNavigationPanel({
             {
               id: "open",
               label: "Open",
-              onSelect: () =>
-                router.push(documentPath(workspaceId, menuDoc.id)),
+              onSelect: () => {
+                const href = documentPath(workspaceId, menuDoc.id);
+                if (onRequestNavigate?.(href) === false) return;
+                router.push(href);
+              },
             },
             {
               id: "rename",

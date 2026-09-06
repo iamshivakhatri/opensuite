@@ -90,10 +90,16 @@ export function DocumentOpenTabs({
   workspaceId,
   activeDocument,
   revision = 0,
+  onRequestCloseTab,
+  onRequestNavigate,
 }: {
   workspaceId: string;
   activeDocument: ListedDocument | null;
   revision?: number;
+  /** Return false to cancel closing. */
+  onRequestCloseTab?: (documentId: string) => boolean | void;
+  /** Intercept tab navigation (e.g. dirty guard). Return false to cancel. */
+  onRequestNavigate?: (href: string) => boolean | void;
 }) {
   const router = useRouter();
   const [tabs, setTabs] = React.useState<OpenTabMeta[]>([]);
@@ -119,13 +125,26 @@ export function DocumentOpenTabs({
   function closeTab(event: React.MouseEvent, id: string) {
     event.preventDefault();
     event.stopPropagation();
+    if (onRequestCloseTab?.(id) === false) return;
+
     const { href, remaining } = closeTabAndPickNext(
       workspaceId,
       id,
       activeDocument?.id ?? null,
     );
     setTabs(remaining);
-    if (href) router.push(href);
+    if (href) {
+      if (onRequestNavigate?.(href) === false) return;
+      router.push(href);
+    }
+  }
+
+  function navigateToTab(event: React.MouseEvent, href: string) {
+    if (onRequestNavigate) {
+      event.preventDefault();
+      if (onRequestNavigate(href) === false) return;
+      router.push(href);
+    }
   }
 
   return (
@@ -133,13 +152,15 @@ export function DocumentOpenTabs({
       <div className="flex h-[38px] shrink-0 items-stretch gap-0.5 overflow-x-auto border-b border-line bg-[var(--sidebar)] px-1.5 [scrollbar-width:thin]">
         {tabs.map((tab) => {
           const active = activeDocument?.id === tab.id;
+          const href = documentPath(workspaceId, tab.id);
           return (
-              <Link
-                key={tab.id}
-                href={documentPath(workspaceId, tab.id)}
-                title={tab.name}
-                prefetch
-                className={
+            <Link
+              key={tab.id}
+              href={href}
+              title={tab.name}
+              prefetch
+              onClick={(event) => navigateToTab(event, href)}
+              className={
                 "group relative flex h-full max-w-[200px] min-w-[112px] items-center gap-1.5 border-x border-t px-2 text-[11px] " +
                 (active
                   ? "rounded-[8px_8px_0_0] border-line border-b-surface bg-surface font-medium text-ink"
@@ -180,7 +201,9 @@ export function DocumentOpenTabs({
           onClose={() => setPickerOpen(false)}
           onPick={(doc) => {
             setPickerOpen(false);
-            router.push(documentPath(workspaceId, doc.id));
+            const href = documentPath(workspaceId, doc.id);
+            if (onRequestNavigate?.(href) === false) return;
+            router.push(href);
           }}
         />
       ) : null}

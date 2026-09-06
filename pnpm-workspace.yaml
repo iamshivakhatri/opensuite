@@ -1,9 +1,13 @@
 packages:
   - "apps/*"
   - "packages/*"
+confirmModulesPurge: false
 allowBuilds:
   esbuild: true
+  # Transitive from Casual Docs / Next — not needed for OpenSuite builds.
+  onnxruntime-node: false
+  protobufjs: false
+  sharp: false
 # thread-stream@4.2.0 ships a .claude/settings.local.json that Cursor sandbox blocks.
 overrides:
   thread-stream: 4.1.0
-

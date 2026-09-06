@@ -1,9 +1,8 @@
 "use client";
 
-import Link from "next/link";
-
-import { Button } from "@/components/ui/button";
 import type { ListedDocument } from "@/lib/api";
+import { Button } from "@/components/ui/button";
+import Link from "next/link";
 import { workspacePath } from "@/lib/paths";
 
 function TrashIcon({ className }: { className?: string }) {
@@ -25,7 +24,7 @@ function TrashIcon({ className }: { className?: string }) {
 }
 
 /**
- * IDE chrome — back + workspace name. Open files live in the tab strip.
+ * IDE chrome — back + workspace name + document actions.
  */
 export function DocumentHeader({
   workspaceId,
@@ -36,6 +35,11 @@ export function DocumentHeader({
   starred,
   onToggleStar,
   onTrash,
+  dirty,
+  saving,
+  conflict,
+  canSave,
+  onSave,
 }: {
   workspaceId: string;
   workspaceName?: string | null;
@@ -45,8 +49,18 @@ export function DocumentHeader({
   starred?: boolean;
   onToggleStar?: () => void;
   onTrash?: () => void;
+  dirty?: boolean;
+  saving?: boolean;
+  conflict?: boolean;
+  canSave?: boolean;
+  onSave?: () => void;
 }) {
   const wsLabel = workspaceName?.trim() || "Workspace";
+
+  let saveLabel = "Saved";
+  if (saving) saveLabel = "Saving…";
+  else if (conflict) saveLabel = "Conflict";
+  else if (dirty) saveLabel = "Unsaved changes";
 
   return (
     <header
@@ -64,7 +78,7 @@ export function DocumentHeader({
         ←
       </Link>
 
-      <div className="flex min-w-0 flex-1 items-center">
+      <div className="flex min-w-0 flex-1 items-center gap-2">
         <Link
           href={workspacePath(workspaceId)}
           title={`${wsLabel} — workspace home`}
@@ -72,10 +86,38 @@ export function DocumentHeader({
         >
           {wsLabel}
         </Link>
+        {document && document.format === "docx" ? (
+          <span
+            className={
+              "hidden truncate font-mono text-[10px] sm:inline " +
+              (conflict
+                ? "text-danger"
+                : dirty
+                  ? "text-ink-soft"
+                  : "text-ink-faint")
+            }
+            title={saveLabel}
+          >
+            {saveLabel}
+          </span>
+        ) : null}
       </div>
 
       {document ? (
         <div className="flex shrink-0 items-center gap-0.5">
+          {document.format === "docx" && onSave ? (
+            <Button
+              type="button"
+              variant={dirty || conflict ? "primary" : "outline"}
+              size="sm"
+              className="mr-1 h-7 shrink-0 rounded-[var(--radius-sm)] px-2.5 text-[11px]"
+              disabled={!canSave || saving}
+              onClick={onSave}
+              title="Save (⌘S)"
+            >
+              {saving ? "Saving…" : "Save"}
+            </Button>
+          ) : null}
           {onToggleStar ? (
             <button
               type="button"

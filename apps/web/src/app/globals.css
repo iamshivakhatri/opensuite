@@ -85,3 +85,26 @@ body {
 * {
   box-sizing: border-box;
 }
+
+/* Casual Docs host theming — keep the surface native to OpenSuite tokens. */
+.opensuite-docx-host {
+  --ce-bg: #eceef2;
+  --ce-page-paper: #ffffff;
+  --ce-chrome: var(--surface);
+  --ce-surface: var(--surface);
+  --ce-text: var(--ink);
+  --ce-text-muted: var(--ink-soft);
+  --ce-primary: var(--accent);
+  --ce-accent: var(--accent);
+  --ce-border: var(--line);
+  --ce-link: var(--accent);
+  height: 100%;
+  min-height: 0;
+}
+
+.opensuite-docx-host .ce-editor,
+.opensuite-docx-host [data-casual-editor] {
+  height: 100%;
+  min-height: 0;
+}
+
