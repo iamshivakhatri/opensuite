@@ -1,14 +1,30 @@
+# dependencies
 node_modules/
+.pnpm-store/
+.pnpm-store
+
+# builds / caches
 dist/
+build/
 .turbo/
 .next/
+out/
 *.tsbuildinfo
-.env
-.env.local
-.DS_Store
-*.docx
-.env
-.turbo
-packages/db/migrations
+coverage/
+.vercel/
+*.log
 
-.pnpm-store
+# env / secrets
+.env
+.env.*
+!.env.example
+
+# OS / editor
+.DS_Store
+*.pem
+
+# local office samples
+*.docx
+
+# drizzle migrations (generated locally)
+packages/db/migrations
