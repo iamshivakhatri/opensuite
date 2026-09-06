@@ -17,33 +17,27 @@ AgentRunner
   → OpenSuiteEngineAdapter (@opensuite/engine-client)
   → Node N-API (@opensuite/engine)
   → Rust opensuite-engine
-  → verified artifact bytes
+  → verified artifact bytes / structured read results
 ```
 
-* Application owns version/storage lifecycle (`DocumentRef`, `baseVersionId`, artifact loader).
-* Engine owns semantic mutation, preservation, OPC verification, postconditions.
-* `MockDocumentRuntime` remains the default for agent-core / API until inspect is bound.
-* Native transport is hidden behind `DocxEngineBinding` — AgentRunner/tools never import N-API.
-* Only `document.replace_text` → `executeDocxReplaceText` is wired initially.
-* Successful mutations may return in-memory `artifactBytes`; persistence is not done inside the adapter.
-
-### Application persistence lifecycle (ReplaceText)
+### Real DOCX read+write flow
 
 ```text
-immutable version N
-  → createOwnedDocumentArtifactLoader (exact bytes)
-  → DocumentRuntime / OpenSuiteEngineAdapter
+exact immutable version N
+  → getDocxCapabilities (Rust RuntimeCapabilities)
+  → findDocxText (mode=text)
+  → inspectDocx (focus.kind=context only)
+  → executeDocxReplaceText
   → verified artifactBytes
-  → createDocumentMutationService.applyReplaceText
-  → appendDocumentVersion (new storage key + row)
-  → version N+1 (only if N still latest)
+  → appendDocumentVersion → N+1
+  → find/inspect N+1 independently
 ```
 
-* Engine never writes DB/storage.
-* Application owns version history; `baseVersionId` concurrency is atomic in `appendDocumentVersion` (`FOR UPDATE` + latest id check).
-* Runtime/engine failure → no upload / no version.
-* Stale engine output after a concurrent append → `VERSION_CONFLICT` + best-effort delete of the unused object.
-* Production agent runtime switch remains deferred until engine inspect/find exist.
+* Rust is capability source of truth (`find_text`, `inspect_context`, `replace_text`, …).
+* Broad inspect focuses (overview/headings/…) return `UNSUPPORTED_OPERATION` — no mock fallback.
+* Find `mode: "semantic"` is unsupported on the real adapter (use `text`).
+* `MockDocumentRuntime` remains for isolated tests; API default not switched yet (PPTX/XLSX).
+* Application owns version history; engine never writes DB/storage.
 
 ### Local Node binding setup
 
@@ -112,9 +106,9 @@ These types are plain, JSON-shaped TypeScript (no classes, enums-as-objects, or 
 
 `packages/engine-client` is the concrete implementation of the boundary described above. It is built around:
 
-* **`EngineTransport` / `EngineClient` / `MockEngineTransport`** — existing inspect-oriented transport seam (still mock-backed).
-* **`OpenSuiteEngineAdapter`** — `DocumentRuntime` implementation for real DOCX `ReplaceText` via N-API.
+* **`EngineTransport` / `EngineClient` / `MockEngineTransport`** — existing contracts inspect seam (still mock-backed).
+* **`DocxEngineBinding`** — hides N-API (`getDocxCapabilities`, `findDocxText`, `inspectDocx`, `executeDocxReplaceText`).
+* **`OpenSuiteEngineAdapter`** — real DOCX `DocumentRuntime` (caps/find/context-inspect/replace).
 * **`DocumentArtifactLoader`** — injected exact-version byte loader (application storage owns resolution).
-* **`DocxEngineBinding` / `createNapiDocxEngineBinding`** — hides Node Buffer / N-API details.
 
-Swapping N-API for a future remote engine service only requires a new `DocxEngineBinding` (or transport) — AgentRunner and AgentTools do not change.
+Swapping N-API for a future remote engine service only requires a new `DocxEngineBinding` — AgentRunner and AgentTools do not change.

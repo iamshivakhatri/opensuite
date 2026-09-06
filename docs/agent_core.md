@@ -49,8 +49,9 @@ Write tools use `effect: "write"` and `executionMode: "sequential"`.
 Format-filtered registration: DOCX runs do not receive workbook/slide tools (and vice versa).
 
 Default product stack: `createMockDocumentRuntime({ capabilities: mutableDocumentCapabilities() })`.
-Real DOCX ReplaceText (optional): `createOpenSuiteEngineAdapter` in `@opensuite/engine-client`
-(see `docs/engine_integration.md`). Mutation success may include `artifactBytes`; persistence stays in the application layer.
+Real DOCX path: `createOpenSuiteEngineAdapter` — capabilities/find(text)/inspect(context)/replace_text via N-API
+(see `docs/engine_integration.md`). No mock fallback for unsupported real-DOCX focuses.
+Mutation success may include `artifactBytes`; persistence stays in the application layer.
 Mutation results include a small `change` summary (`operation`, `area`, `before`, `after`) — not a durable diff/version system.
 
 System instruction: `buildDocumentAgentSystemPrompt` — capability-driven:
@@ -135,7 +136,7 @@ Durable history is application-owned. `AgentExecutionService` maps selected
 
 ## Intentionally deferred
 
-* Wire `OpenSuiteEngineAdapter` / `applyReplaceText` as product default (API still uses MockDocumentRuntime)
-* Engine-backed inspect/find; checkpoints/revert / rendering / destructive deletes
+* Format-aware API default (DOCX→OpenSuiteEngineAdapter; PPTX/XLSX still mock)
+* Broad engine inspect (overview/headings/tables); more mutations; agent auto-persist
 * Model routing-fallback / durable confirmation resume / Redis workers
 * Semantic conflict detection for parallel mutations

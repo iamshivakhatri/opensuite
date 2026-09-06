@@ -1,6 +1,5 @@
 /**
  * Local TypeScript surface for the sibling opensuite-engine Node binding.
- * The published/native package currently ships an empty index.d.ts.
  */
 declare module "@opensuite/engine" {
   export interface TextTargetInput {
@@ -39,6 +38,56 @@ declare module "@opensuite/engine" {
     output?: Buffer;
   }
 
+  export interface RuntimeCapabilitiesOutput {
+    ok: boolean;
+    protocolVersion: number;
+    engineVersion: string;
+    formats: Array<{ format: string; capabilities: string[] }>;
+  }
+
+  export interface FindTextOutput {
+    ok: boolean;
+    query: string;
+    matchCount: number;
+    matches: Array<{
+      occurrence: number;
+      text: string;
+      before: string;
+      after: string;
+      container: string;
+    }>;
+    diagnostics: DiagnosticOutput[];
+  }
+
+  export interface InspectDocxOutput {
+    ok: boolean;
+    target: TextTargetInput;
+    container?: {
+      relativePosition: number;
+      text: string;
+      container: string;
+    };
+    nearby: Array<{
+      relativePosition: number;
+      text: string;
+      container: string;
+    }>;
+    diagnostics: DiagnosticOutput[];
+  }
+
+  export function getDocxCapabilities(): RuntimeCapabilitiesOutput;
+  export function findDocxText(
+    input: Buffer,
+    request: { text: string },
+  ): Promise<FindTextOutput>;
+  export function inspectDocx(
+    input: Buffer,
+    request: {
+      target: TextTargetInput;
+      before?: number;
+      after?: number;
+    },
+  ): Promise<InspectDocxOutput>;
   export function executeDocxReplaceText(
     input: Buffer,
     operation: ReplaceTextInput,

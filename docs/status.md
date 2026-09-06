@@ -8,47 +8,46 @@ _Read this before starting any work. Keep it a concise current-state handoff, no
 * Global metadata search + Cmd/Ctrl+K palette.
 * Desktop UX polish: DnD upload, tabs, resizable panels, toasts, shortcuts.
 * Persistent workspace IDE layout (no full remount on file/tab switch).
-* Immutable document version foundation (exact content GET, append, human save, `baseVersionId` concurrency, agent run provenance).
-* **Casual Docs DOCX surface v1** (host-owned load/save; see `docs/docx_roundtrip.md`).
+* Immutable document version foundation + Casual Docs DOCX surface v1.
 * Theme architecture (`themePreference` / `resolvedTheme` / Casual isolation).
-* **Engine adapter + mutation persistence (ReplaceText only):**
-  * `OpenSuiteEngineAdapter` → verified `artifactBytes` (no DB/storage writes)
-  * `createOwnedDocumentArtifactLoader` loads exact version bytes via DocumentService
-  * `createDocumentMutationService.applyReplaceText` persists N→N+1 via `appendDocumentVersion`
-  * Atomic concurrency: document row `FOR UPDATE` + `latest.id === baseVersionId`
-  * Failed engine runs never create versions; stale outputs return `VERSION_CONFLICT` + best-effort object cleanup
-  * `MockDocumentRuntime` remains API/agent default (real inspect/find not wired)
+* **Real DOCX DocumentRuntime (engine-backed reads + ReplaceText):**
+  * `DocxEngineBinding`: `getDocxCapabilities` / `findDocxText` / `inspectDocx` / `executeDocxReplaceText`
+  * Caps from Rust `RuntimeCapabilities` (mapped to `document.find|inspect|mutate`)
+  * Exact-version find (`mode: text`); `semantic` → honest `UNSUPPORTED_OPERATION`
+  * Inspect `focus.kind=context` only; broad focuses → `UNSUPPORTED_OPERATION` (no mock fallback)
+  * Mutation persistence: N → verified bytes → N+1 via `appendDocumentVersion`
+  * `MockDocumentRuntime` remains API/agent **default** (PPTX/XLSX still mock-only)
 
 ## Just Completed
 
-* Storage-backed artifact loader + document mutation persistence service
-* Unit + (optional DB) integration tests for loader/mutation/concurrency
+* Wired real DOCX capabilities/find/inspect-context into `OpenSuiteEngineAdapter`
+* Lifecycle smoke: caps → find → inspect → replace → read output version
 
 ## Current Decisions
 
-* Soft-delete only; panel prefs browser-local.
-* Latest = max `version_number`; versions immutable (no `current_version_id` column).
-* Optimistic concurrency: `baseVersionId` + row lock + unique version number.
-* OpenSuite owns persistence + theme; engine owns semantic mutation/validity.
-* Engine N-API is a hidden transport, not the permanent universal contract.
-* Do not switch production agent runtime to engine until inspect/find are real.
+* Soft-delete only; latest = max `version_number`.
+* Optimistic concurrency: `baseVersionId` + row lock.
+* Rust is capability / semantic-mutation source of truth; app owns versions/storage.
+* No mock semantic fallback inside real DOCX adapter.
+* Do not flip global API agent runtime until PPTX/XLSX routing is deliberate.
 
 ## Verification Status
 
 | Check | Status |
 |---|---|
 | `pnpm typecheck` | **Pass** |
-| `pnpm test` | **Pass** |
+| `pnpm test` | **Pass** (engine-client 20; agent-core 52; api 84+16 skip without DB / 100 with DB) |
 | `pnpm build` | **Pass** |
+| `git diff --check` | Clean |
+| N-API smoke (caps→find→inspect→replace→read) | **Pass** |
 | Mutation DB integration (`RUN_DB_INTEGRATION_TESTS=true`) | **Pass** |
 
 ## Intentionally Deferred
 
-* Wire `OpenSuiteEngineAdapter` as API agent default
-* Engine-backed inspect/find; PPTX/XLSX engine ops
-* Agent-run auto-call of `applyReplaceText` / HTTP mutation endpoint
-* Casual Sheets/Slides, autosave, diff/review/revert UI
+* API default runtime switch to OpenSuiteEngineAdapter (format routing needed)
+* Broad DOCX inspect (overview/headings/tables) until Rust typed contracts exist
+* More engine mutations; agent auto-persist wiring / HTTP mutation endpoint
 
 ## Recommended Next Step
 
-Engine-backed inspect/find, then compose a real DocumentRuntime for agent execution.
+Format-aware runtime selection in `apps/api` (DOCX→engine, PPTX/XLSX→mock), then production agent default.

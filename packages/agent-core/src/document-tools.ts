@@ -85,9 +85,9 @@ export function createDocumentInspectTool(): AgentTool<
   return {
     name: DOCUMENT_TOOL_NAMES.inspect,
     description:
-      "Inspect the active Office document. Prefer a targeted focus " +
-      "(overview, headings, paragraphs, tables, slides, slide+index, sheets, range) " +
-      "instead of assuming a full dump.",
+      "Inspect the active Office document. Prefer a targeted focus. " +
+      "DOCX engine runtime supports kind=context (bounded text around a target). " +
+      "Broad focuses (overview, headings, paragraphs, tables, …) depend on the runtime.",
     risk: "safe",
     executionMode: "parallel-safe",
     inputSchema: {
@@ -109,6 +109,7 @@ export function createDocumentInspectTool(): AgentTool<
                 "slide",
                 "sheets",
                 "range",
+                "context",
               ],
             },
             index: { type: "number", description: "0-based slide index when kind=slide" },
@@ -116,6 +117,22 @@ export function createDocumentInspectTool(): AgentTool<
             address: {
               type: "string",
               description: "Cell address like A1 when kind=range",
+            },
+            text: {
+              type: "string",
+              description: "Target text when kind=context",
+            },
+            occurrence: {
+              type: "number",
+              description: "1-based occurrence when kind=context",
+            },
+            before: {
+              type: "number",
+              description: "Nearby containers before target when kind=context",
+            },
+            after: {
+              type: "number",
+              description: "Nearby containers after target when kind=context",
             },
           },
           required: ["kind"],
@@ -724,6 +741,63 @@ function parseFocus(raw: unknown): DocumentInspectFocus {
         kind: "range",
         ...(sheet !== undefined ? { sheet } : {}),
         ...(address !== undefined ? { address } : {}),
+      };
+    }
+    case "context": {
+      if (typeof focus.text !== "string" || !focus.text) {
+        throw new AgentCoreError(
+          "INVALID_TOOL_INPUT",
+          "document.inspect focus.kind=context requires non-empty text",
+        );
+      }
+      let occurrence: number | undefined;
+      if (focus.occurrence !== undefined) {
+        if (
+          typeof focus.occurrence !== "number" ||
+          !Number.isInteger(focus.occurrence) ||
+          focus.occurrence < 1
+        ) {
+          throw new AgentCoreError(
+            "INVALID_TOOL_INPUT",
+            "document.inspect focus.occurrence must be a positive integer",
+          );
+        }
+        occurrence = focus.occurrence;
+      }
+      let before: number | undefined;
+      if (focus.before !== undefined) {
+        if (
+          typeof focus.before !== "number" ||
+          !Number.isInteger(focus.before) ||
+          focus.before < 0
+        ) {
+          throw new AgentCoreError(
+            "INVALID_TOOL_INPUT",
+            "document.inspect focus.before must be a non-negative integer",
+          );
+        }
+        before = focus.before;
+      }
+      let after: number | undefined;
+      if (focus.after !== undefined) {
+        if (
+          typeof focus.after !== "number" ||
+          !Number.isInteger(focus.after) ||
+          focus.after < 0
+        ) {
+          throw new AgentCoreError(
+            "INVALID_TOOL_INPUT",
+            "document.inspect focus.after must be a non-negative integer",
+          );
+        }
+        after = focus.after;
+      }
+      return {
+        kind: "context",
+        text: focus.text,
+        ...(occurrence !== undefined ? { occurrence } : {}),
+        ...(before !== undefined ? { before } : {}),
+        ...(after !== undefined ? { after } : {}),
       };
     }
     default:

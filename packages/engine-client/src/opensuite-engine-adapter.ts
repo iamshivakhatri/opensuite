@@ -5,8 +5,10 @@ import {
   unsupportedCapabilityFind,
   unsupportedCapabilityOperation,
   unsupportedCapabilityResult,
+  type DocumentInspectFocus,
   type DocumentOperation,
   type DocumentRuntime,
+  type FindMatch,
   type FindResult,
   type InspectionResult,
   type OperationFailureCode,
@@ -15,6 +17,7 @@ import {
   type Diagnostic,
   type DiagnosticSeverity,
   type NonEmptyDiagnostics,
+  type DocumentRef,
 } from "@opensuite/agent-core";
 
 import type { DocumentArtifactLoader } from "./document-artifact-loader.js";
@@ -22,57 +25,203 @@ import type {
   DocxEngineBinding,
   DocxEngineDiagnostic,
   DocxReplaceTextOperation,
+  DocxRuntimeCapabilities,
 } from "./docx-engine-binding.js";
 
 /**
  * Real DocumentRuntime backed by opensuite-engine's Node DOCX binding.
  *
- * Proven path (this milestone):
- *   DocumentRuntime.execute(document.replace_text)
- *     → load exact version bytes
- *     → N-API executeDocxReplaceText
- *     → verified artifactBytes | structured failure
+ * Proven path:
+ *   exact DocumentRef.versionId bytes
+ *     → capabilities (Rust RuntimeCapabilities)
+ *     → findDocxText / inspectDocx(context) / executeDocxReplaceText
  *
- * Read-side inspect/find remain mock/runtime concerns until engine inspect
- * is bound — this adapter advertises mutate only by default.
+ * No mock semantic fallback for real DOCX execution. Unsupported inspect
+ * focuses return structured UNSUPPORTED_OPERATION.
  */
 export interface OpenSuiteEngineAdapterOptions {
   readonly artifactLoader: DocumentArtifactLoader;
   readonly binding: DocxEngineBinding;
-  /** Override advertised capabilities (default: document.mutate only). */
+  /**
+   * Optional override. When omitted, capabilities are derived from
+   * `binding.getDocxCapabilities()` (Rust is source of truth).
+   */
   readonly capabilities?: RuntimeCapabilities;
 }
-
-const DEFAULT_CAPABILITIES = createCapabilities(Capabilities.DocumentMutate);
 
 export function createOpenSuiteEngineAdapter(
   options: OpenSuiteEngineAdapterOptions,
 ): DocumentRuntime {
-  const capabilities = options.capabilities ?? DEFAULT_CAPABILITIES;
   const { artifactLoader, binding } = options;
+  const cachedCapabilities =
+    options.capabilities ??
+    mapRustCapabilitiesToRuntime(binding.getDocxCapabilities());
 
   return {
     capabilities() {
-      return capabilities;
+      return cachedCapabilities;
     },
 
     async inspect(document, inspectOptions): Promise<InspectionResult> {
       throwIfAborted(inspectOptions?.signal);
-      if (!hasCapability(capabilities, Capabilities.DocumentInspect)) {
+      if (!hasCapability(cachedCapabilities, Capabilities.DocumentInspect)) {
         return unsupportedCapabilityResult(Capabilities.DocumentInspect);
       }
-      void document;
-      return unsupportedCapabilityResult(Capabilities.DocumentInspect);
+
+      if (document.format !== "docx") {
+        return inspectionError(
+          "VALIDATION_FAILED",
+          `OpenSuiteEngineAdapter only supports DOCX inspect (got ${document.format})`,
+          { format: document.format },
+        );
+      }
+
+      const focus = inspectOptions?.focus ?? { kind: "overview" };
+      if (focus.kind !== "context") {
+        return inspectionError(
+          "UNSUPPORTED_OPERATION",
+          `OpenSuiteEngineAdapter does not support inspect focus "${focus.kind}". Use focus.kind="context" for bounded DOCX text context.`,
+          { focus },
+        );
+      }
+
+      if (!focus.text) {
+        return inspectionError(
+          "VALIDATION_FAILED",
+          "inspect focus.kind=context requires non-empty text",
+        );
+      }
+
+      const inputBytes = await artifactLoader.loadExactVersionBytes(document);
+      const response = await binding.inspectDocx(inputBytes, {
+        target: {
+          text: focus.text,
+          ...(focus.occurrence !== undefined
+            ? { occurrence: focus.occurrence }
+            : {}),
+        },
+        ...(focus.before !== undefined ? { before: focus.before } : {}),
+        ...(focus.after !== undefined ? { after: focus.after } : {}),
+      });
+
+      const diagnostics = response.diagnostics.map(mapDiagnostic);
+      if (!response.ok) {
+        return {
+          status: "error",
+          diagnostics: ensureNonEmpty(
+            diagnostics.map(normalizeDiagnosticCode),
+            "VALIDATION_FAILED",
+            "Engine inspect failed",
+          ),
+        };
+      }
+
+      const unitCount =
+        (response.container ? 1 : 0) + response.nearby.length;
+      return {
+        status: "success",
+        format: "docx",
+        capabilities: cachedCapabilities,
+        diagnostics,
+        focus,
+        payload: {
+          format: "docx",
+          summary: {
+            title: null,
+            unitKind: "page",
+            unitCount,
+          },
+          context: {
+            target: {
+              text: response.target.text,
+              ...(response.target.occurrence !== undefined
+                ? { occurrence: response.target.occurrence }
+                : {}),
+            },
+            ...(response.container
+              ? {
+                  container: {
+                    text: response.container.text,
+                    container: response.container.container,
+                    relativePosition: response.container.relativePosition,
+                  },
+                }
+              : {}),
+            nearby: response.nearby.map((item) => ({
+              text: item.text,
+              container: item.container,
+              relativePosition: item.relativePosition,
+            })),
+          },
+        },
+      };
     },
 
     async find(document, query, findOptions): Promise<FindResult> {
       throwIfAborted(findOptions?.signal);
-      if (!hasCapability(capabilities, Capabilities.DocumentFind)) {
+      if (!hasCapability(cachedCapabilities, Capabilities.DocumentFind)) {
         return unsupportedCapabilityFind(Capabilities.DocumentFind);
       }
-      void document;
-      void query;
-      return unsupportedCapabilityFind(Capabilities.DocumentFind);
+
+      if (document.format !== "docx") {
+        return findError(
+          "VALIDATION_FAILED",
+          `OpenSuiteEngineAdapter only supports DOCX find (got ${document.format})`,
+          { format: document.format },
+        );
+      }
+
+      const mode = query.mode ?? "text";
+      if (mode === "semantic") {
+        return findError(
+          "UNSUPPORTED_OPERATION",
+          'OpenSuiteEngineAdapter find mode "semantic" is not supported by the engine binding; use mode "text"',
+          { mode },
+        );
+      }
+
+      const trimmed = query.query.trim();
+      if (!trimmed) {
+        return findError(
+          "INVALID_FIND_QUERY",
+          "Find query must be a non-empty string",
+        );
+      }
+
+      const inputBytes = await artifactLoader.loadExactVersionBytes(document);
+      const response = await binding.findDocxText(inputBytes, {
+        text: trimmed,
+      });
+
+      const diagnostics = response.diagnostics.map(mapDiagnostic);
+      if (!response.ok) {
+        return {
+          status: "error",
+          diagnostics: ensureNonEmpty(
+            diagnostics.map(normalizeDiagnosticCode),
+            "VALIDATION_FAILED",
+            "Engine find failed",
+          ),
+        };
+      }
+
+      const maxResults = clampMaxResults(query.maxResults);
+      const matches: FindMatch[] = response.matches
+        .slice(0, maxResults)
+        .map((match) => ({
+          handle: `docx:find:${match.occurrence}`,
+          excerpt: buildExcerpt(match.before, match.text, match.after),
+          location: `${match.container} #${match.occurrence}`,
+          score: 1,
+        }));
+
+      return {
+        status: "success",
+        query: trimmed,
+        mode: "text",
+        matches,
+        diagnostics,
+      };
     },
 
     async execute(
@@ -81,7 +230,7 @@ export function createOpenSuiteEngineAdapter(
       executeOptions,
     ): Promise<OperationResult> {
       throwIfAborted(executeOptions?.signal);
-      if (!hasCapability(capabilities, Capabilities.DocumentMutate)) {
+      if (!hasCapability(cachedCapabilities, Capabilities.DocumentMutate)) {
         return unsupportedCapabilityOperation(Capabilities.DocumentMutate);
       }
 
@@ -106,7 +255,7 @@ export function createOpenSuiteEngineAdapter(
 
       if (operation.type !== "document.replace_text") {
         return operationError(
-          "UNSUPPORTED_CAPABILITY",
+          "UNSUPPORTED_OPERATION",
           `Unsupported mutation type for OpenSuiteEngineAdapter: ${operation.type}`,
           { type: operation.type },
         );
@@ -126,6 +275,33 @@ export function createOpenSuiteEngineAdapter(
       return mapEngineReplaceTextResult(engineResponse, operation.type);
     },
   };
+}
+
+/**
+ * Map Rust RuntimeCapabilities into agent-core RuntimeCapabilities.
+ * Rust remains the source of truth — we only bridge well-known tool gates.
+ */
+export function mapRustCapabilitiesToRuntime(
+  engine: DocxRuntimeCapabilities,
+): RuntimeCapabilities {
+  const docx = engine.formats.find((format) => format.format === "docx");
+  const rustIds = docx?.capabilities ?? [];
+  const ids: string[] = [...rustIds];
+
+  if (rustIds.includes("find_text")) {
+    ids.push(Capabilities.DocumentFind);
+  }
+  if (
+    rustIds.includes("inspect_context") ||
+    rustIds.includes("inspect")
+  ) {
+    ids.push(Capabilities.DocumentInspect);
+  }
+  if (rustIds.includes("replace_text")) {
+    ids.push(Capabilities.DocumentMutate);
+  }
+
+  return createCapabilities(...ids);
 }
 
 /** Exported for unit tests — application DTO → binding DTO only. */
@@ -218,7 +394,6 @@ function mapEngineReplaceTextResult(
   const firstError = diagnostics.find((d) => d.severity === "error");
 
   if (!response.result.ok) {
-    // Failure must never surface artifact bytes.
     const rawCode = firstError?.code ?? "VALIDATION_FAILED";
     const code = normalizeFailureCode(rawCode);
     return {
@@ -263,10 +438,17 @@ function mapEngineReplaceTextResult(
 }
 
 function normalizeFailureCode(code: string): OperationFailureCode {
-  if (code === "INVALID_ZIP" || code === "UNSUPPORTED_OPERATION") {
-    return code === "INVALID_ZIP" ? "DOCUMENT_INVALID" : "UNSUPPORTED_CAPABILITY";
+  if (code === "INVALID_ZIP") {
+    return "DOCUMENT_INVALID";
   }
   return code as OperationFailureCode;
+}
+
+function normalizeDiagnosticCode(diagnostic: Diagnostic): Diagnostic {
+  if (diagnostic.code === "INVALID_ZIP") {
+    return { ...diagnostic, code: "DOCUMENT_INVALID" };
+  }
+  return diagnostic;
 }
 
 function mapDiagnostic(diagnostic: DocxEngineDiagnostic): Diagnostic {
@@ -314,6 +496,42 @@ function operationError(
   };
 }
 
+function inspectionError(
+  code: string,
+  message: string,
+  details?: Record<string, unknown>,
+): InspectionResult {
+  return {
+    status: "error",
+    diagnostics: [
+      {
+        code,
+        severity: "error",
+        message,
+        ...(details ? { details } : {}),
+      },
+    ],
+  };
+}
+
+function findError(
+  code: string,
+  message: string,
+  details?: Record<string, unknown>,
+): FindResult {
+  return {
+    status: "error",
+    diagnostics: [
+      {
+        code,
+        severity: "error",
+        message,
+        ...(details ? { details } : {}),
+      },
+    ],
+  };
+}
+
 function throwIfAborted(signal: AbortSignal | undefined): void {
   if (signal?.aborted) {
     const error = new Error("DocumentRuntime operation aborted");
@@ -336,6 +554,18 @@ function readNonEmptyString(value: unknown): string | null {
   return text;
 }
 
+function clampMaxResults(value: number | undefined): number {
+  if (value === undefined || !Number.isFinite(value)) {
+    return 20;
+  }
+  return Math.max(1, Math.min(50, Math.floor(value)));
+}
+
+function buildExcerpt(before: string, text: string, after: string): string {
+  const combined = `${before}${text}${after}`.trim();
+  return combined.length > 160 ? `${combined.slice(0, 157)}...` : combined;
+}
+
 /** Test helper: assert no engine/source identity keys on a result. */
 export function assertNoEngineSourceIdentities(value: unknown): void {
   const forbidden = [
@@ -355,3 +585,6 @@ export function assertNoEngineSourceIdentities(value: unknown): void {
     }
   }
 }
+
+/** Exported for tests that need to assert focus typing stays narrow. */
+export type { DocumentInspectFocus, DocumentRef };

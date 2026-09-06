@@ -98,6 +98,55 @@ test(
     const engineBinding: DocxEngineBinding =
       binding ??
       ({
+        getDocxCapabilities: () => ({
+          ok: true,
+          protocolVersion: 1,
+          engineVersion: "test",
+          formats: [
+            {
+              format: "docx",
+              capabilities: [
+                "find_text",
+                "inspect_context",
+                "replace_text",
+              ],
+            },
+          ],
+        }),
+        async findDocxText(input, request) {
+          const haystack = Buffer.from(input).toString("utf8");
+          const found = haystack.includes(request.text);
+          return {
+            ok: true,
+            query: request.text,
+            matchCount: found ? 1 : 0,
+            matches: found
+              ? [
+                  {
+                    occurrence: 1,
+                    text: request.text,
+                    before: "",
+                    after: "",
+                    container: "paragraph",
+                  },
+                ]
+              : [],
+            diagnostics: [],
+          };
+        },
+        async inspectDocx(_input, request) {
+          return {
+            ok: true,
+            target: request.target,
+            container: {
+              relativePosition: 0,
+              text: request.target.text,
+              container: "paragraph",
+            },
+            nearby: [],
+            diagnostics: [],
+          };
+        },
         async executeDocxReplaceText(input, operation) {
           if (operation.target.text === "not present") {
             return {
@@ -141,6 +190,24 @@ test(
       }),
       binding: engineBinding,
     });
+
+    // Read Version N before mutating.
+    const nRef = {
+      documentId: uploaded.document.id,
+      versionId: baseVersionId,
+      format: "docx" as const,
+    };
+    const caps = await runtime.capabilities(nRef);
+    assert.ok([...caps.ids].includes("find_text") || [...caps.ids].includes("document.find"));
+    const foundN = await runtime.find!(nRef, {
+      query: "old text",
+      mode: "text",
+    });
+    assert.equal(foundN.status, "success");
+    const inspectN = await runtime.inspect(nRef, {
+      focus: { kind: "context", text: "old text" },
+    });
+    assert.equal(inspectN.status, "success");
 
     const mutations = createDocumentMutationService(documents);
     const applied = await mutations.applyReplaceText({
@@ -200,6 +267,41 @@ test(
     });
     assert.deepEqual(newer, v2Bytes);
 
+    // Read Version N+1 independently; Version N still has original text.
+    const nPlusOneRuntime = createOpenSuiteEngineAdapter({
+      artifactLoader: createOwnedDocumentArtifactLoader({
+        documents,
+        ownerUserId,
+      }),
+      binding: engineBinding,
+    });
+    const nPlusOneRef = {
+      documentId: uploaded.document.id,
+      versionId: applied.version.id,
+      format: "docx" as const,
+    };
+    const foundN1 = await nPlusOneRuntime.find!(nPlusOneRef, {
+      query: "OpenSuite persisted replacement",
+      mode: "text",
+    });
+    assert.equal(foundN1.status, "success");
+    const inspectN1 = await nPlusOneRuntime.inspect(nPlusOneRef, {
+      focus: {
+        kind: "context",
+        text: "OpenSuite persisted replacement",
+      },
+    });
+    assert.equal(inspectN1.status, "success");
+
+    const stillN = await runtime.find!(nRef, {
+      query: "old text",
+      mode: "text",
+    });
+    assert.equal(stillN.status, "success");
+    if (stillN.status === "success") {
+      assert.ok(stillN.matches.length >= 1);
+    }
+
     // Runtime failure: TARGET_NOT_FOUND → no new version.
     const missing = await mutations.applyReplaceText({
       documentId: uploaded.document.id,
@@ -233,6 +335,9 @@ test(
         ownerUserId,
       }),
       binding: {
+        getDocxCapabilities: engineBinding.getDocxCapabilities.bind(engineBinding),
+        findDocxText: engineBinding.findDocxText.bind(engineBinding),
+        inspectDocx: engineBinding.inspectDocx.bind(engineBinding),
         async executeDocxReplaceText() {
           return {
             result: {
@@ -408,6 +513,34 @@ test("unit-adjacent: real adapter + owned loader + mutation service without DB",
       ownerUserId: "user-1",
     }),
     binding: {
+      getDocxCapabilities: () => ({
+        ok: true,
+        protocolVersion: 1,
+        engineVersion: "test",
+        formats: [
+          {
+            format: "docx",
+            capabilities: ["find_text", "inspect_context", "replace_text"],
+          },
+        ],
+      }),
+      async findDocxText() {
+        return {
+          ok: true,
+          query: "",
+          matchCount: 0,
+          matches: [],
+          diagnostics: [],
+        };
+      },
+      async inspectDocx(_input, request) {
+        return {
+          ok: true,
+          target: request.target,
+          nearby: [],
+          diagnostics: [],
+        };
+      },
       async executeDocxReplaceText(input, operation) {
         assert.deepEqual(Buffer.from(input), inputBytes);
         assert.equal(operation.target.text, "old text");

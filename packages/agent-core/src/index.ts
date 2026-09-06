@@ -83,6 +83,8 @@ export type {
   InspectedSheet,
   InspectedSlide,
   InspectedTable,
+  InspectedTextContext,
+  InspectedTextContextUnit,
   InspectionPayload,
   InspectionResult,
   OperationFailureCode,

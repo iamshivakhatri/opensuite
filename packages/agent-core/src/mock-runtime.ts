@@ -461,6 +461,7 @@ function buildDocxPayload(
     case "slide":
     case "sheets":
     case "range":
+    case "context":
       return null;
     default: {
       const _exhaustive: never = focus;
@@ -515,6 +516,7 @@ function buildPptxPayload(
     case "tables":
     case "sheets":
     case "range":
+    case "context":
       return null;
     default: {
       const _exhaustive: never = focus;
@@ -583,6 +585,7 @@ function buildXlsxPayload(
     case "tables":
     case "slides":
     case "slide":
+    case "context":
       return null;
     default: {
       const _exhaustive: never = focus;

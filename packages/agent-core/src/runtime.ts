@@ -65,6 +65,23 @@ export interface InspectedCell {
  * Optional collections are populated based on inspect focus — not always a
  * full document dump.
  */
+/** One semantic container from a bounded DOCX context inspect. */
+export interface InspectedTextContextUnit {
+  readonly text: string;
+  /** Engine semantic container label (e.g. paragraph, table_cell). */
+  readonly container: string;
+  readonly relativePosition: number;
+}
+
+export interface InspectedTextContext {
+  readonly target: {
+    readonly text: string;
+    readonly occurrence?: number;
+  };
+  readonly container?: InspectedTextContextUnit;
+  readonly nearby: readonly InspectedTextContextUnit[];
+}
+
 export type InspectionPayload =
   | {
       readonly format: "docx";
@@ -72,6 +89,11 @@ export type InspectionPayload =
       readonly headings?: readonly InspectedHeading[];
       readonly paragraphs?: readonly InspectedBlock[];
       readonly tables?: readonly InspectedTable[];
+      /**
+       * Bounded text context from engine `inspect_context` (focus.kind=context).
+       * Not a full document dump — target container + nearby semantic units.
+       */
+      readonly context?: InspectedTextContext;
     }
   | {
       readonly format: "pptx";
@@ -102,6 +124,9 @@ export type InspectionResult =
 
 /**
  * Targeted inspect request. Prefer a narrow focus over dumping the whole file.
+ *
+ * `context` is the engine-backed DOCX bounded text inspect. Broad focuses
+ * (overview/headings/…) remain mock-only until Rust exposes typed contracts.
  */
 export type DocumentInspectFocus =
   | { readonly kind: "overview" }
@@ -112,7 +137,14 @@ export type DocumentInspectFocus =
   | { readonly kind: "slides" }
   | { readonly kind: "slide"; readonly index: number }
   | { readonly kind: "sheets" }
-  | { readonly kind: "range"; readonly sheet?: string; readonly address?: string };
+  | { readonly kind: "range"; readonly sheet?: string; readonly address?: string }
+  | {
+      readonly kind: "context";
+      readonly text: string;
+      readonly occurrence?: number;
+      readonly before?: number;
+      readonly after?: number;
+    };
 
 export interface DocumentFindQuery {
   readonly query: string;
