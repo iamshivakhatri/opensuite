@@ -3,6 +3,7 @@ import { test } from "node:test";
 
 import {
   Capabilities,
+  createDocumentInspectTool,
   createDocumentReplaceTextTool,
   createFakeToolExecutionContext,
   createInMemoryDocumentMutationExecutor,
@@ -15,8 +16,11 @@ import { createMemoryArtifactLoader } from "../document-artifact-loader.js";
 import {
   assertNoEngineSourceIdentities,
   createOpenSuiteEngineAdapter,
+  mapInsertTableColumnOperation,
+  mapInsertTableRowsOperation,
   mapReplaceTextOperation,
   mapRustCapabilitiesToRuntime,
+  mapSetTableCellsTextOperation,
 } from "../opensuite-engine-adapter.js";
 import { buildMinimalDocx } from "../__fixtures__/minimal-docx.js";
 import { createFakeDocxEngineBinding } from "./fake-docx-binding.js";
@@ -239,38 +243,164 @@ test("find invalid document maps diagnostics without artifact fallback", async (
   }
 });
 
-test("inspect context works; broad focuses are unsupported without mock fallback", async () => {
+test("inspect maps overview/headings/paragraphs/tables/context without mock fallback", async () => {
   const inputBytes = buildMinimalDocx(["target text", "nearby"]);
+  const v2 = buildMinimalDocx(["other version"]);
   const binding = createFakeDocxEngineBinding({
     inspectDocx: (input, request) => {
       assert.deepEqual(Buffer.from(input), inputBytes);
-      assert.equal(request.target.text, "target text");
-      assert.equal(request.before, 1);
-      assert.equal(request.after, 0);
-      return {
-        ok: true,
-        target: { text: "target text" },
-        container: {
-          relativePosition: 0,
-          text: "target text",
-          container: "paragraph",
-        },
-        nearby: [
-          {
-            relativePosition: -1,
-            text: "nearby",
-            container: "paragraph",
+      if (request.focus.kind === "overview") {
+        return {
+          ok: true,
+          focus: "overview",
+          overview: {
+            bodyBlockCount: 5,
+            paragraphCount: 4,
+            tableCount: 1,
+            sectionCount: 1,
           },
-        ],
-        diagnostics: [],
-      };
+          diagnostics: [],
+        };
+      }
+      if (request.focus.kind === "headings") {
+        assert.equal(request.focus.offset, 0);
+        assert.equal(request.focus.limit, 20);
+        return {
+          ok: true,
+          focus: "headings",
+          headings: {
+            page: { total: 1, offset: 0, returned: 1, hasMore: false },
+            items: [
+              {
+                occurrence: 0,
+                text: "Report",
+                styleName: "Heading 1",
+                level: 1,
+              },
+            ],
+          },
+          diagnostics: [],
+        };
+      }
+      if (request.focus.kind === "paragraphs") {
+        assert.equal(request.focus.offset, 1);
+        assert.equal(request.focus.limit, 2);
+        return {
+          ok: true,
+          focus: "paragraphs",
+          paragraphs: {
+            page: { total: 4, offset: 1, returned: 2, hasMore: true },
+            items: [
+              { occurrence: 1, text: "old text", styleName: "Body Text" },
+              { occurrence: 2, text: "more", styleName: "Body Text" },
+            ],
+          },
+          diagnostics: [],
+        };
+      }
+      if (request.focus.kind === "tables") {
+        assert.equal(request.focus.offset, 0);
+        assert.equal(request.focus.limit, 10);
+        return {
+          ok: true,
+          focus: "tables",
+          tables: {
+            page: { total: 1, offset: 0, returned: 1, hasMore: false },
+            items: [
+              {
+                occurrence: 0,
+                rowCount: 3,
+                isRectangular: false,
+                rows: [
+                  { cells: ["Name", "Role"] },
+                  { cells: ["Alice", "CEO"] },
+                  { cells: ["Bob", "CTO", "extra"] },
+                ],
+              },
+            ],
+          },
+          diagnostics: [],
+        };
+      }
+      if (request.focus.kind === "context") {
+        assert.equal(request.focus.text, "target text");
+        assert.equal(request.focus.before, 1);
+        assert.equal(request.focus.after, 0);
+        return {
+          ok: true,
+          focus: "context",
+          context: {
+            target: { text: "target text" },
+            container: {
+              relativePosition: 0,
+              text: "target text",
+              container: "paragraph",
+            },
+            nearby: [
+              {
+                relativePosition: -1,
+                text: "nearby",
+                container: "paragraph",
+              },
+            ],
+          },
+          diagnostics: [],
+        };
+      }
+      throw new Error(`unexpected focus ${JSON.stringify(request.focus)}`);
     },
   });
 
   const runtime = createOpenSuiteEngineAdapter({
-    artifactLoader: createMemoryArtifactLoader({ "ver-1": inputBytes }),
+    artifactLoader: createMemoryArtifactLoader({
+      "ver-1": inputBytes,
+      "ver-2": v2,
+    }),
     binding,
   });
+
+  const overview = await runtime.inspect(docRef, { focus: { kind: "overview" } });
+  assert.equal(overview.status, "success");
+  if (overview.status === "success" && overview.payload.format === "docx") {
+    assert.equal(overview.payload.overview?.tableCount, 1);
+    assert.equal(overview.payload.overview?.paragraphCount, 4);
+  }
+
+  const headings = await runtime.inspect(docRef, { focus: { kind: "headings" } });
+  assert.equal(headings.status, "success");
+  if (headings.status === "success" && headings.payload.format === "docx") {
+    assert.equal(headings.payload.headings?.[0]?.text, "Report");
+    assert.equal(headings.payload.headings?.[0]?.styleName, "Heading 1");
+    assert.equal(headings.payload.page?.total, 1);
+  }
+
+  const paragraphs = await runtime.inspect(docRef, {
+    focus: { kind: "paragraphs", offset: 1, limit: 2 },
+  });
+  assert.equal(paragraphs.status, "success");
+  if (paragraphs.status === "success" && paragraphs.payload.format === "docx") {
+    assert.equal(paragraphs.payload.paragraphs?.[0]?.text, "old text");
+    assert.equal(paragraphs.payload.page?.hasMore, true);
+  }
+
+  const tables = await runtime.inspect(docRef, {
+    focus: { kind: "tables", offset: 0, limit: 10 },
+  });
+  assert.equal(tables.status, "success");
+  if (tables.status === "success" && tables.payload.format === "docx") {
+    const table = tables.payload.tables?.[0];
+    assert.ok(table);
+    assert.equal(table.isRectangular, false);
+    assert.deepEqual(table.cells, [
+      ["Name", "Role"],
+      ["Alice", "CEO"],
+      ["Bob", "CTO", "extra"],
+    ]);
+    assert.equal(table.rows, 3);
+    assert.equal(table.cols, 3);
+    assert.equal(tables.payload.page?.returned, 1);
+    assertNoEngineSourceIdentities(tables);
+  }
 
   const context = await runtime.inspect(docRef, {
     focus: { kind: "context", text: "target text", before: 1, after: 0 },
@@ -278,19 +408,214 @@ test("inspect context works; broad focuses are unsupported without mock fallback
   assert.equal(context.status, "success");
   if (context.status === "success" && context.payload.format === "docx") {
     assert.equal(context.payload.context?.container?.text, "target text");
-    assert.equal(context.payload.context?.nearby[0]?.text, "nearby");
-    assert.equal(context.payload.headings, undefined);
-    assertNoEngineSourceIdentities(context);
   }
 
-  const headings = await runtime.inspect(docRef, {
-    focus: { kind: "headings" },
-  });
-  assert.equal(headings.status, "error");
-  if (headings.status === "error") {
-    assert.equal(headings.diagnostics[0]!.code, "UNSUPPORTED_OPERATION");
+  // Exact version: still ver-1 even when ver-2 exists.
+  assert.equal(binding.inspectCalls.length, 5);
+  for (const call of binding.inspectCalls) {
+    assert.deepEqual(Buffer.from(call.input), inputBytes);
   }
+
+  const slides = await runtime.inspect(docRef, { focus: { kind: "slides" } });
+  assert.equal(slides.status, "error");
+  if (slides.status === "error") {
+    assert.equal(slides.diagnostics[0]!.code, "UNSUPPORTED_OPERATION");
+  }
+  assert.equal(binding.inspectCalls.length, 5);
+});
+
+test("inspect invalid bounds and invalid DOCX stay structured", async () => {
+  const binding = createFakeDocxEngineBinding({
+    inspectDocx: () => ({
+      ok: false,
+      focus: "overview",
+      diagnostics: [
+        { code: "INVALID_ZIP", severity: "error", message: "bad package" },
+      ],
+    }),
+  });
+
+  const runtime = createOpenSuiteEngineAdapter({
+    artifactLoader: createMemoryArtifactLoader({
+      "ver-1": Buffer.from("not a docx"),
+    }),
+    binding,
+  });
+
+  const invalidDoc = await runtime.inspect(docRef, {
+    focus: { kind: "overview" },
+  });
+  assert.equal(invalidDoc.status, "error");
+  if (invalidDoc.status === "error") {
+    assert.equal(invalidDoc.diagnostics[0]!.code, "DOCUMENT_INVALID");
+  }
+
+  const appBounds = await runtime.inspect(docRef, {
+    focus: { kind: "tables", offset: -1, limit: 5 },
+  });
+  assert.equal(appBounds.status, "error");
+  if (appBounds.status === "error") {
+    assert.equal(appBounds.diagnostics[0]!.code, "INVALID_INSPECTION_BOUNDS");
+  }
+  // Invalid app bounds never reach the binding.
   assert.equal(binding.inspectCalls.length, 1);
+
+  const engineBoundsBinding = createFakeDocxEngineBinding({
+    inspectDocx: () => ({
+      ok: false,
+      focus: "tables",
+      diagnostics: [
+        {
+          code: "INVALID_INSPECTION_BOUNDS",
+          severity: "error",
+          message: "limit too large",
+        },
+      ],
+    }),
+  });
+  const engineBoundsRuntime = createOpenSuiteEngineAdapter({
+    artifactLoader: createMemoryArtifactLoader({
+      "ver-1": buildMinimalDocx(["x"]),
+    }),
+    binding: engineBoundsBinding,
+  });
+  const engineBounds = await engineBoundsRuntime.inspect(docRef, {
+    focus: { kind: "tables", offset: 0, limit: 50 },
+  });
+  assert.equal(engineBounds.status, "error");
+  if (engineBounds.status === "error") {
+    assert.equal(
+      engineBounds.diagnostics[0]!.code,
+      "INVALID_INSPECTION_BOUNDS",
+    );
+  }
+});
+
+test("inspect after mutation uses advanced DocumentRef version bytes", async () => {
+  const v1 = buildMinimalDocx(["Alice", "CEO"]);
+  const v2 = buildMinimalDocx(["Alice", "CFO"]);
+  const versions = new Map<string, Uint8Array>([
+    ["ver-1", v1],
+    ["ver-2", v2],
+  ]);
+
+  const binding = createFakeDocxEngineBinding({
+    inspectDocx: (input, request) => {
+      assert.equal(request.focus.kind, "tables");
+      const isV2 = Buffer.from(input).equals(Buffer.from(v2));
+      return {
+        ok: true,
+        focus: "tables",
+        tables: {
+          page: { total: 1, offset: 0, returned: 1, hasMore: false },
+          items: [
+            {
+              occurrence: 0,
+              rowCount: 1,
+              isRectangular: true,
+              rows: [{ cells: [isV2 ? "CFO" : "CEO"] }],
+            },
+          ],
+        },
+        diagnostics: [],
+      };
+    },
+    executeDocxReplaceText: () => ({
+      result: {
+        ok: true,
+        status: "applied",
+        diagnostics: [],
+        changes: [{ kind: "text_replaced", before: "CEO", after: "CFO" }],
+      },
+      output: v2,
+    }),
+  });
+
+  const runtime = createOpenSuiteEngineAdapter({
+    artifactLoader: {
+      async loadExactVersionBytes(document) {
+        const bytes = versions.get(document.versionId);
+        if (!bytes) throw new Error(`missing ${document.versionId}`);
+        return bytes;
+      },
+    },
+    binding,
+  });
+
+  const before = await runtime.inspect(docRef, {
+    focus: { kind: "tables", offset: 0, limit: 5 },
+  });
+  assert.equal(before.status, "success");
+  if (before.status === "success" && before.payload.format === "docx") {
+    assert.equal(before.payload.tables?.[0]?.cells?.[0]?.[0], "CEO");
+  }
+
+  const mutated = await runtime.execute!(docRef, {
+    type: "document.replace_text",
+    baseVersionId: "ver-1",
+    payload: { find: "CEO", replace: "CFO" },
+  });
+  assert.equal(mutated.status, "success");
+
+  const after = await runtime.inspect(
+    { ...docRef, versionId: "ver-2" },
+    { focus: { kind: "tables", offset: 0, limit: 5 } },
+  );
+  assert.equal(after.status, "success");
+  if (after.status === "success" && after.payload.format === "docx") {
+    assert.equal(after.payload.tables?.[0]?.cells?.[0]?.[0], "CFO");
+  }
+});
+
+test("document.inspect AgentTool returns structured tables from DocumentRuntime", async () => {
+  const runtime = createOpenSuiteEngineAdapter({
+    artifactLoader: createMemoryArtifactLoader({
+      "ver-1": buildMinimalDocx(["table"]),
+    }),
+    binding: createFakeDocxEngineBinding({
+      inspectDocx: (_input, request) => {
+        assert.equal(request.focus.kind, "tables");
+        return {
+          ok: true,
+          focus: "tables",
+          tables: {
+            page: { total: 1, offset: 0, returned: 1, hasMore: false },
+            items: [
+              {
+                occurrence: 0,
+                rowCount: 3,
+                isRectangular: true,
+                rows: [
+                  { cells: ["Name", "Role"] },
+                  { cells: ["Alice", "CEO"] },
+                  { cells: ["Bob", "CTO"] },
+                ],
+              },
+            ],
+          },
+          diagnostics: [],
+        };
+      },
+    }),
+  });
+
+  const tool = createDocumentInspectTool();
+  const ctx = createFakeToolExecutionContext({
+    primaryDocument: docRef,
+    runtime,
+  });
+  const result = await tool.execute(
+    { focus: { kind: "tables", offset: 0, limit: 10 } },
+    ctx,
+  );
+  assert.equal(result.status, "success");
+  if (result.status === "success" && result.payload.format === "docx") {
+    assert.deepEqual(result.payload.tables?.[0]?.cells, [
+      ["Name", "Role"],
+      ["Alice", "CEO"],
+      ["Bob", "CTO"],
+    ]);
+  }
 });
 
 test("TARGET_NOT_FOUND maps to runtime error with no artifact bytes", async () => {
@@ -509,4 +834,155 @@ test("AgentTool depends only on DocumentRuntime, not N-API package", async () =>
     ),
     false,
   );
+});
+
+test("maps table mutation payloads to binding DTOs", () => {
+  const cells = mapSetTableCellsTextOperation({
+    type: "document.set_table_cells_text",
+    baseVersionId: "ver-1",
+    payload: {
+      table: { headerCells: ["Name", "Role"] },
+      updates: [
+        {
+          rowLabel: "Alice",
+          columnHeader: "Role",
+          expectedCurrentText: "CEO",
+          replacement: "Founder & CEO",
+        },
+      ],
+    },
+  });
+  assert.equal(cells.ok, true);
+  if (!cells.ok) return;
+  assert.deepEqual(cells.operation.updates[0]?.target, {
+    rowLabel: "Alice",
+    columnHeader: "Role",
+  });
+
+  const rows = mapInsertTableRowsOperation({
+    type: "document.insert_table_rows",
+    baseVersionId: "ver-1",
+    payload: {
+      table: { headerCells: ["Name", "Role"] },
+      after: { firstCellText: "Bob" },
+      rows: [
+        ["Charlie", "CFO"],
+        ["David", "COO"],
+      ],
+    },
+  });
+  assert.equal(rows.ok, true);
+  if (!rows.ok) return;
+  assert.equal(rows.operation.rows.length, 2);
+
+  const column = mapInsertTableColumnOperation({
+    type: "document.insert_table_column",
+    baseVersionId: "ver-1",
+    payload: {
+      table: { headerCells: ["Name", "Role"] },
+      afterColumnHeader: "Role",
+      header: "Location",
+      cells: ["New York", "Seattle"],
+    },
+  });
+  assert.equal(column.ok, true);
+  if (!column.ok) return;
+  assert.equal(column.operation.header, "Location");
+});
+
+test("execute set_table_cells_text returns verified artifact once", async () => {
+  const outputBytes = buildMinimalDocx(["mutated"]);
+  const binding = createFakeDocxEngineBinding({
+    executeDocxSetTableCellsText: () => ({
+      result: {
+        ok: true,
+        status: "applied",
+        diagnostics: [],
+        changes: [{ kind: "table_cells", before: "CEO", after: "Founder & CEO" }],
+      },
+      output: outputBytes,
+    }),
+  });
+  const runtime = createOpenSuiteEngineAdapter({
+    artifactLoader: createMemoryArtifactLoader({
+      "ver-1": buildMinimalDocx(["x"]),
+    }),
+    binding,
+  });
+  const result = await runtime.execute!(docRef, {
+    type: "document.set_table_cells_text",
+    baseVersionId: "ver-1",
+    payload: {
+      table: { headerCells: ["Name", "Role"] },
+      updates: [
+        {
+          rowLabel: "Alice",
+          columnHeader: "Role",
+          expectedCurrentText: "CEO",
+          replacement: "Founder & CEO",
+        },
+      ],
+    },
+  });
+  assert.equal(result.status, "success");
+  if (result.status === "success") {
+    assert.ok(result.artifactBytes);
+    assert.equal(binding.setCellsCalls.length, 1);
+  }
+  assertNoEngineSourceIdentities(result);
+});
+
+test("execute insert_table_rows and insert_table_column map to binding", async () => {
+  const outputBytes = buildMinimalDocx(["rows"]);
+  const binding = createFakeDocxEngineBinding({
+    executeDocxInsertTableRows: () => ({
+      result: {
+        ok: true,
+        status: "applied",
+        diagnostics: [],
+        changes: [{ kind: "table_rows", before: "", after: "Charlie" }],
+      },
+      output: outputBytes,
+    }),
+    executeDocxInsertTableColumn: () => ({
+      result: {
+        ok: true,
+        status: "applied",
+        diagnostics: [],
+        changes: [{ kind: "table_column", before: "", after: "Location" }],
+      },
+      output: outputBytes,
+    }),
+  });
+  const runtime = createOpenSuiteEngineAdapter({
+    artifactLoader: createMemoryArtifactLoader({
+      "ver-1": buildMinimalDocx(["x"]),
+    }),
+    binding,
+  });
+
+  const rows = await runtime.execute!(docRef, {
+    type: "document.insert_table_rows",
+    baseVersionId: "ver-1",
+    payload: {
+      table: { headerCells: ["Name", "Role"] },
+      after: { firstCellText: "Bob" },
+      rows: [["Charlie", "CFO"]],
+    },
+  });
+  assert.equal(rows.status, "success");
+  assert.equal(binding.insertRowsCalls.length, 1);
+
+  const column = await runtime.execute!(docRef, {
+    type: "document.insert_table_column",
+    baseVersionId: "ver-1",
+    payload: {
+      table: { headerCells: ["Name", "Role"] },
+      afterColumnHeader: "Role",
+      header: "Location",
+      cells: ["NY", "SEA"],
+    },
+  });
+  assert.equal(column.status, "success");
+  assert.equal(binding.insertColumnCalls.length, 1);
 });

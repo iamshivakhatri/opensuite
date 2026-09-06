@@ -27,7 +27,7 @@ export type DocumentMutationFailureCode =
   | "MISSING_BASE_VERSION"
   | "RUNTIME_MISSING_ARTIFACT";
 
-export type ApplyReplaceTextResult =
+export type ApplyDocumentMutationResult =
   | {
       readonly status: "success";
       readonly document: ListedDocumentDto;
@@ -43,6 +43,9 @@ export type ApplyReplaceTextResult =
       readonly statusCode?: number;
     };
 
+/** @deprecated Prefer ApplyDocumentMutationResult */
+export type ApplyReplaceTextResult = ApplyDocumentMutationResult;
+
 export interface ApplyReplaceTextInput {
   readonly documentId: string;
   readonly ownerUserId: string;
@@ -55,6 +58,54 @@ export interface ApplyReplaceTextInput {
    * DocumentRuntime that already resolves artifacts for this owner
    * (typically OpenSuiteEngineAdapter + createOwnedDocumentArtifactLoader).
    */
+  readonly runtime: DocumentRuntime;
+}
+
+export interface DocumentTableTargetInput {
+  readonly headerCells: readonly string[];
+  readonly occurrence?: number;
+}
+
+export interface DocumentTableRowAnchorInput {
+  readonly firstCellText: string;
+  readonly occurrence?: number;
+}
+
+export interface DocumentTableCellUpdateInput {
+  readonly rowLabel: string;
+  readonly columnHeader: string;
+  readonly expectedCurrentText: string;
+  readonly replacement: string;
+  readonly occurrence?: number;
+}
+
+export interface ApplySetTableCellsTextInput {
+  readonly documentId: string;
+  readonly ownerUserId: string;
+  readonly baseVersionId: string;
+  readonly table: DocumentTableTargetInput;
+  readonly updates: readonly DocumentTableCellUpdateInput[];
+  readonly runtime: DocumentRuntime;
+}
+
+export interface ApplyInsertTableRowsInput {
+  readonly documentId: string;
+  readonly ownerUserId: string;
+  readonly baseVersionId: string;
+  readonly table: DocumentTableTargetInput;
+  readonly after: DocumentTableRowAnchorInput;
+  readonly rows: readonly (readonly string[])[];
+  readonly runtime: DocumentRuntime;
+}
+
+export interface ApplyInsertTableColumnInput {
+  readonly documentId: string;
+  readonly ownerUserId: string;
+  readonly baseVersionId: string;
+  readonly table: DocumentTableTargetInput;
+  readonly afterColumnHeader: string;
+  readonly header: string;
+  readonly cells: readonly string[];
   readonly runtime: DocumentRuntime;
 }
 
@@ -84,76 +135,164 @@ export function createDocumentMutationService(
   >,
   options: DocumentMutationServiceOptions = {},
 ) {
+  async function authorizeAndPersist(input: {
+    readonly documentId: string;
+    readonly ownerUserId: string;
+    readonly baseVersionId: string;
+    readonly runtime: DocumentRuntime;
+    readonly operationType: string;
+    readonly payload: Record<string, unknown>;
+    readonly formatErrorLabel: string;
+  }): Promise<ApplyDocumentMutationResult> {
+    let owned: ListedDocumentDto;
+    try {
+      owned = await documents.getOwnedDocument({
+        documentId: input.documentId,
+        ownerUserId: input.ownerUserId,
+      });
+    } catch (error) {
+      return mapAccessError(error);
+    }
+
+    if (owned.format !== "docx") {
+      return {
+        status: "error",
+        code: "UNSUPPORTED_FORMAT",
+        statusCode: 400,
+        diagnostics: [
+          {
+            code: "UNSUPPORTED_FORMAT",
+            severity: "error",
+            message: `${input.formatErrorLabel} only supports DOCX (got ${owned.format})`,
+            details: { format: owned.format },
+          },
+        ],
+      };
+    }
+
+    if (owned.latestVersion.id !== input.baseVersionId) {
+      return {
+        status: "error",
+        code: "VERSION_CONFLICT",
+        statusCode: 409,
+        diagnostics: [
+          {
+            code: "VERSION_CONFLICT",
+            severity: "error",
+            message:
+              "Document was updated; reload the latest version before mutating",
+            details: {
+              baseVersionId: input.baseVersionId,
+              latestVersionId: owned.latestVersion.id,
+            },
+          },
+        ],
+      };
+    }
+
+    if (!input.runtime.execute) {
+      return {
+        status: "error",
+        code: "UNSUPPORTED_CAPABILITY",
+        diagnostics: [
+          {
+            code: "UNSUPPORTED_CAPABILITY",
+            severity: "error",
+            message: "DocumentRuntime does not support execute/mutate",
+          },
+        ],
+      };
+    }
+
+    const documentRef = {
+      documentId: input.documentId,
+      versionId: input.baseVersionId,
+      format: "docx" as const,
+    };
+
+    let runtimeResult: OperationResult;
+    try {
+      runtimeResult = await input.runtime.execute(documentRef, {
+        type: input.operationType,
+        baseVersionId: input.baseVersionId,
+        payload: input.payload,
+      });
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : "DocumentRuntime execute failed";
+      return {
+        status: "error",
+        code: "VALIDATION_FAILED",
+        diagnostics: [
+          {
+            code: "VALIDATION_FAILED",
+            severity: "error",
+            message,
+          },
+        ],
+      };
+    }
+
+    if (runtimeResult.status === "error") {
+      return {
+        status: "error",
+        code: runtimeResult.code,
+        diagnostics: runtimeResult.diagnostics,
+      };
+    }
+
+    if (
+      !runtimeResult.artifactBytes ||
+      runtimeResult.artifactBytes.byteLength === 0
+    ) {
+      return {
+        status: "error",
+        code: "RUNTIME_MISSING_ARTIFACT",
+        diagnostics: [
+          {
+            code: "RUNTIME_MISSING_ARTIFACT",
+            severity: "error",
+            message:
+              "Runtime reported success without verified artifact bytes; nothing was persisted",
+          },
+        ],
+      };
+    }
+
+    if (options.beforePersist) {
+      await options.beforePersist({
+        documentId: input.documentId,
+        baseVersionId: input.baseVersionId,
+        artifactBytes: runtimeResult.artifactBytes,
+      });
+    }
+
+    let appended: AppendedDocumentDto;
+    try {
+      appended = await documents.appendDocumentVersion({
+        documentId: input.documentId,
+        ownerUserId: input.ownerUserId,
+        baseVersionId: input.baseVersionId,
+        source: "agent",
+        bytes: Buffer.from(runtimeResult.artifactBytes),
+      });
+    } catch (error) {
+      return mapAccessError(error);
+    }
+
+    return {
+      status: "success",
+      document: appended.document,
+      version: appended.version,
+      change: runtimeResult.change,
+      diagnostics: runtimeResult.diagnostics,
+    };
+  }
+
   return {
     async applyReplaceText(
       input: ApplyReplaceTextInput,
-    ): Promise<ApplyReplaceTextResult> {
-      let owned: ListedDocumentDto;
-      try {
-        owned = await documents.getOwnedDocument({
-          documentId: input.documentId,
-          ownerUserId: input.ownerUserId,
-        });
-      } catch (error) {
-        return mapAccessError(error);
-      }
-
-      if (owned.format !== "docx") {
-        return {
-          status: "error",
-          code: "UNSUPPORTED_FORMAT",
-          statusCode: 400,
-          diagnostics: [
-            {
-              code: "UNSUPPORTED_FORMAT",
-              severity: "error",
-              message: `applyReplaceText only supports DOCX (got ${owned.format})`,
-              details: { format: owned.format },
-            },
-          ],
-        };
-      }
-
-      if (owned.latestVersion.id !== input.baseVersionId) {
-        return {
-          status: "error",
-          code: "VERSION_CONFLICT",
-          statusCode: 409,
-          diagnostics: [
-            {
-              code: "VERSION_CONFLICT",
-              severity: "error",
-              message:
-                "Document was updated; reload the latest version before mutating",
-              details: {
-                baseVersionId: input.baseVersionId,
-                latestVersionId: owned.latestVersion.id,
-              },
-            },
-          ],
-        };
-      }
-
-      if (!input.runtime.execute) {
-        return {
-          status: "error",
-          code: "UNSUPPORTED_CAPABILITY",
-          diagnostics: [
-            {
-              code: "UNSUPPORTED_CAPABILITY",
-              severity: "error",
-              message: "DocumentRuntime does not support execute/mutate",
-            },
-          ],
-        };
-      }
-
-      const documentRef = {
-        documentId: input.documentId,
-        versionId: input.baseVersionId,
-        format: "docx" as const,
-      };
-
+    ): Promise<ApplyDocumentMutationResult> {
       const payload: Record<string, unknown> = {
         find: input.find,
         replace: input.replace,
@@ -165,83 +304,69 @@ export function createDocumentMutationService(
         payload.occurrence = input.occurrence;
       }
 
-      let runtimeResult: OperationResult;
-      try {
-        runtimeResult = await input.runtime.execute(documentRef, {
-          type: "document.replace_text",
-          baseVersionId: input.baseVersionId,
-          payload,
-        });
-      } catch (error) {
-        const message =
-          error instanceof Error ? error.message : "DocumentRuntime execute failed";
-        return {
-          status: "error",
-          code: "VALIDATION_FAILED",
-          diagnostics: [
-            {
-              code: "VALIDATION_FAILED",
-              severity: "error",
-              message,
-            },
-          ],
-        };
-      }
+      return authorizeAndPersist({
+        documentId: input.documentId,
+        ownerUserId: input.ownerUserId,
+        baseVersionId: input.baseVersionId,
+        runtime: input.runtime,
+        operationType: "document.replace_text",
+        payload,
+        formatErrorLabel: "applyReplaceText",
+      });
+    },
 
-      if (runtimeResult.status === "error") {
-        return {
-          status: "error",
-          code: runtimeResult.code,
-          diagnostics: runtimeResult.diagnostics,
-        };
-      }
+    async applySetTableCellsText(
+      input: ApplySetTableCellsTextInput,
+    ): Promise<ApplyDocumentMutationResult> {
+      return authorizeAndPersist({
+        documentId: input.documentId,
+        ownerUserId: input.ownerUserId,
+        baseVersionId: input.baseVersionId,
+        runtime: input.runtime,
+        operationType: "document.set_table_cells_text",
+        payload: {
+          table: input.table,
+          updates: input.updates,
+        },
+        formatErrorLabel: "applySetTableCellsText",
+      });
+    },
 
-      if (
-        !runtimeResult.artifactBytes ||
-        runtimeResult.artifactBytes.byteLength === 0
-      ) {
-        return {
-          status: "error",
-          code: "RUNTIME_MISSING_ARTIFACT",
-          diagnostics: [
-            {
-              code: "RUNTIME_MISSING_ARTIFACT",
-              severity: "error",
-              message:
-                "Runtime reported success without verified artifact bytes; nothing was persisted",
-            },
-          ],
-        };
-      }
+    async applyInsertTableRows(
+      input: ApplyInsertTableRowsInput,
+    ): Promise<ApplyDocumentMutationResult> {
+      return authorizeAndPersist({
+        documentId: input.documentId,
+        ownerUserId: input.ownerUserId,
+        baseVersionId: input.baseVersionId,
+        runtime: input.runtime,
+        operationType: "document.insert_table_rows",
+        payload: {
+          table: input.table,
+          after: input.after,
+          rows: input.rows,
+        },
+        formatErrorLabel: "applyInsertTableRows",
+      });
+    },
 
-      if (options.beforePersist) {
-        await options.beforePersist({
-          documentId: input.documentId,
-          baseVersionId: input.baseVersionId,
-          artifactBytes: runtimeResult.artifactBytes,
-        });
-      }
-
-      let appended: AppendedDocumentDto;
-      try {
-        appended = await documents.appendDocumentVersion({
-          documentId: input.documentId,
-          ownerUserId: input.ownerUserId,
-          baseVersionId: input.baseVersionId,
-          source: "agent",
-          bytes: Buffer.from(runtimeResult.artifactBytes),
-        });
-      } catch (error) {
-        return mapAccessError(error);
-      }
-
-      return {
-        status: "success",
-        document: appended.document,
-        version: appended.version,
-        change: runtimeResult.change,
-        diagnostics: runtimeResult.diagnostics,
-      };
+    async applyInsertTableColumn(
+      input: ApplyInsertTableColumnInput,
+    ): Promise<ApplyDocumentMutationResult> {
+      return authorizeAndPersist({
+        documentId: input.documentId,
+        ownerUserId: input.ownerUserId,
+        baseVersionId: input.baseVersionId,
+        runtime: input.runtime,
+        operationType: "document.insert_table_column",
+        payload: {
+          table: input.table,
+          afterColumnHeader: input.afterColumnHeader,
+          header: input.header,
+          cells: input.cells,
+        },
+        formatErrorLabel: "applyInsertTableColumn",
+      });
     },
   };
 }
@@ -250,7 +375,7 @@ export type DocumentMutationService = ReturnType<
   typeof createDocumentMutationService
 >;
 
-function mapAccessError(error: unknown): ApplyReplaceTextResult {
+function mapAccessError(error: unknown): ApplyDocumentMutationResult {
   if (error instanceof DocumentAccessError) {
     return {
       status: "error",

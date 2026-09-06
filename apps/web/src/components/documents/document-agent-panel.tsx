@@ -4,10 +4,15 @@ import * as React from "react";
 
 import { userFacingError } from "@/components/files/format";
 import {
-  progressMarker,
+  agentRunDurationMs,
+  formatProgressElapsed,
+  latestProgressHeadline,
+  progressElapsedLabel,
   reduceAgentProgress,
+  thoughtForLabel,
   visibleAgentProgress,
   type AgentProgressLine,
+  type AgentTurnProgress,
 } from "@/lib/agent-progress";
 import { AgentMarkdown } from "@/lib/agent-markdown";
 import { shouldAcceptSubmit } from "@/lib/agent-submit";
@@ -88,6 +93,16 @@ export function DocumentAgentPanel({
   /** Bumps on every subscribe so stale onDisconnect/onError cannot finalize the wrong run. */
   const sseGenerationRef = React.useRef(0);
   const reconnectAttemptsRef = React.useRef(0);
+  const versionRefreshTimerRef = React.useRef<number | null>(null);
+  const pendingVersionDocIdRef = React.useRef<string | null>(null);
+  const runStartedAtRef = React.useRef<number | null>(null);
+  const stickToBottomRef = React.useRef(true);
+  const [nowTick, setNowTick] = React.useState(() => Date.now());
+  const [runTotalMs, setRunTotalMs] = React.useState<number | null>(null);
+  /** Last finished turn (timeline + total) — replaced each new run. */
+  const [lastTurn, setLastTurn] = React.useState<AgentTurnProgress | null>(null);
+  const [timelineOpen, setTimelineOpen] = React.useState(false);
+  const progressRef = React.useRef<AgentProgressLine[]>([]);
   const [liveDraft, setLiveDraft] = React.useState<{
     messageId: string;
     content: string;
@@ -105,6 +120,59 @@ export function DocumentAgentPanel({
     sseAbortRef.current = null;
   }, []);
 
+  const flushDocumentVersionRefresh = React.useCallback(() => {
+    if (versionRefreshTimerRef.current !== null) {
+      window.clearTimeout(versionRefreshTimerRef.current);
+      versionRefreshTimerRef.current = null;
+    }
+    const id = pendingVersionDocIdRef.current;
+    pendingVersionDocIdRef.current = null;
+    if (!id) return;
+    void getDocument(id)
+      .then((fresh) => {
+        onDocumentUpdated?.(fresh);
+      })
+      .catch(() => {
+        // Editor can still pick up the version on focus refresh.
+      });
+  }, [onDocumentUpdated]);
+
+  const scheduleDocumentVersionRefresh = React.useCallback(
+    (advancedDocumentId: string) => {
+      pendingVersionDocIdRef.current = advancedDocumentId;
+      if (versionRefreshTimerRef.current !== null) {
+        window.clearTimeout(versionRefreshTimerRef.current);
+      }
+      // Coalesce multi-mutation advances into one editor reload.
+      versionRefreshTimerRef.current = window.setTimeout(() => {
+        versionRefreshTimerRef.current = null;
+        flushDocumentVersionRefresh();
+      }, 800);
+    },
+    [flushDocumentVersionRefresh],
+  );
+
+  React.useEffect(() => {
+    return () => {
+      if (versionRefreshTimerRef.current !== null) {
+        window.clearTimeout(versionRefreshTimerRef.current);
+      }
+    };
+  }, []);
+
+  progressRef.current = progress;
+
+  // Tick while a run is live so headline + wall-clock total stay accurate.
+  React.useEffect(() => {
+    const live =
+      busy ||
+      progress.some((line) => line.status === "active") ||
+      runStartedAtRef.current !== null;
+    if (!live) return;
+    const id = window.setInterval(() => setNowTick(Date.now()), 250);
+    return () => window.clearInterval(id);
+  }, [busy, progress]);
+
   const refreshMessages = React.useCallback(async (id: string) => {
     const result = await getAgentMessages(id);
     setMessages(result.messages);
@@ -112,20 +180,49 @@ export function DocumentAgentPanel({
   }, []);
 
   const applyTerminalRunStatus = React.useCallback((run: AgentRun) => {
+    const fromServer = agentRunDurationMs(run.startedAt, run.completedAt);
+    const fromClient =
+      runStartedAtRef.current !== null
+        ? Math.max(0, Date.now() - runStartedAtRef.current)
+        : null;
+    const ms = fromServer ?? fromClient;
+
     if (run.status === "failed") {
       setRunError("The agent run failed. You can try again.");
       setRunNotice(null);
     } else if (run.status === "cancelled") {
       setRunError(null);
-      setRunNotice("Stopped");
+      setRunNotice(null);
+    } else if (run.status === "completed") {
+      setRunError(null);
+      setRunNotice(null);
     } else {
       setRunError(null);
       setRunNotice(null);
     }
+
     if (!isActiveAgentRunStatus(run.status)) {
+      if (ms !== null) {
+        setRunTotalMs(ms);
+        const outcome =
+          run.status === "cancelled"
+            ? "cancelled"
+            : run.status === "failed"
+              ? "failed"
+              : "completed";
+        setLastTurn({
+          runId: run.id,
+          durationMs: ms,
+          lines: progressRef.current,
+          outcome,
+        });
+      }
       runIdRef.current = null;
-      setProgress([]);
       reconnectAttemptsRef.current = 0;
+      runStartedAtRef.current = null;
+      // Keep lastTurn for expandable timeline; clear live progress.
+      setProgress([]);
+      setTimelineOpen(false);
     }
   }, []);
 
@@ -172,7 +269,19 @@ export function DocumentAgentPanel({
       if (!options?.preserveDraft) {
         setLiveDraft(null);
         reconnectAttemptsRef.current = 0;
-        setProgress([{ id: "thinking", label: "Thinking…", status: "active" }]);
+        const startedAt = Date.now();
+        runStartedAtRef.current = startedAt;
+        setRunTotalMs(null);
+        setLastTurn(null);
+        setTimelineOpen(false);
+        setProgress([
+          {
+            id: "thinking",
+            label: "Thinking…",
+            status: "active",
+            startedAt,
+          },
+        ]);
       }
 
       if (!isActiveAgentRunStatus(run.status)) {
@@ -197,6 +306,8 @@ export function DocumentAgentPanel({
             const messageId = String(event.data.messageId ?? "");
             const delta = String(event.data.delta ?? "");
             if (messageId && delta) {
+              // Collapse steps once the answer starts — Cursor-style focus on text.
+              setTimelineOpen(false);
               setLiveDraft((prev) => {
                 if (prev && prev.messageId === messageId) {
                   return { messageId, content: prev.content + delta };
@@ -217,14 +328,7 @@ export function DocumentAgentPanel({
               documentId &&
               advancedDocumentId === documentId
             ) {
-              void getDocument(advancedDocumentId)
-                .then((fresh) => {
-                  if (!isCurrent()) return;
-                  onDocumentUpdated?.(fresh);
-                })
-                .catch(() => {
-                  // Editor can still pick up the version on focus refresh.
-                });
+              scheduleDocumentVersionRefresh(advancedDocumentId);
             }
           }
 
@@ -233,6 +337,7 @@ export function DocumentAgentPanel({
             event.type === "agent.failed" ||
             event.type === "agent.cancelled"
           ) {
+            flushDocumentVersionRefresh();
             stopSse();
             void finalizeFromSnapshot(run.id, thread, false);
           }
@@ -294,7 +399,15 @@ export function DocumentAgentPanel({
       });
       sseAbortRef.current = sub.abort;
     },
-    [documentId, finalizeFromSnapshot, onDocumentUpdated, refreshMessages, stopSse],
+    [
+      documentId,
+      finalizeFromSnapshot,
+      flushDocumentVersionRefresh,
+      onDocumentUpdated,
+      refreshMessages,
+      scheduleDocumentVersionRefresh,
+      stopSse,
+    ],
   );
 
   attachRunRef.current = attachRun;
@@ -307,11 +420,15 @@ export function DocumentAgentPanel({
       setMessages([]);
       setActiveRun(null);
       setProgress([]);
+      setRunTotalMs(null);
+      setLastTurn(null);
+      setTimelineOpen(false);
       setRunError(null);
       setRunNotice(null);
       setLiveDraft(null);
       setHistoryOpen(false);
       runIdRef.current = null;
+      runStartedAtRef.current = null;
       setPhase({ kind: "ready" });
       return;
     }
@@ -320,9 +437,13 @@ export function DocumentAgentPanel({
     stopSse();
     setActiveRun(null);
     setProgress([]);
+    setRunTotalMs(null);
+    setLastTurn(null);
+    setTimelineOpen(false);
     setRunError(null);
     setRunNotice(null);
     runIdRef.current = null;
+    runStartedAtRef.current = null;
     setLiveDraft(null);
     setHistoryOpen(false);
     reconnectAttemptsRef.current = 0;
@@ -345,6 +466,28 @@ export function DocumentAgentPanel({
 
       if (latestRun && isActiveAgentRunStatus(latestRun.status)) {
         attachRunRef.current(latestRun, latest.id);
+      } else if (latestRun && !isActiveAgentRunStatus(latestRun.status)) {
+        const ms = agentRunDurationMs(latestRun.startedAt, latestRun.completedAt);
+        if (ms !== null) {
+          setRunTotalMs(ms);
+          const outcome =
+            latestRun.status === "cancelled"
+              ? "cancelled"
+              : latestRun.status === "failed"
+                ? "failed"
+                : "completed";
+          setLastTurn({
+            runId: latestRun.id,
+            durationMs: ms,
+            lines: [],
+            outcome,
+          });
+          if (latestRun.status === "completed") {
+            setRunNotice(null);
+          } else if (latestRun.status === "cancelled") {
+            setRunNotice(null);
+          }
+        }
       }
     } catch (error) {
       setPhase({
@@ -364,8 +507,23 @@ export function DocumentAgentPanel({
   React.useEffect(() => {
     const el = scrollRef.current;
     if (!el) return;
-    el.scrollTop = el.scrollHeight;
-  }, [messages, progress, runError, runNotice, busy, liveDraft]);
+
+    function onScroll() {
+      if (!el) return;
+      const remaining = el.scrollHeight - el.scrollTop - el.clientHeight;
+      stickToBottomRef.current = remaining < 72;
+    }
+
+    el.addEventListener("scroll", onScroll, { passive: true });
+    return () => el.removeEventListener("scroll", onScroll);
+  }, []);
+
+  React.useEffect(() => {
+    const el = scrollRef.current;
+    if (!el || !stickToBottomRef.current) return;
+    // Smooth scroll for structural changes — not every streamed token.
+    el.scrollTo({ top: el.scrollHeight, behavior: "smooth" });
+  }, [messages.length, progress.length, liveDraft?.content.length, runError, runNotice, busy, runTotalMs, timelineOpen]);
 
   React.useEffect(() => {
     const el = composerRef.current;
@@ -444,22 +602,17 @@ export function DocumentAgentPanel({
       if (threadId) {
         await refreshMessages(threadId);
       }
-      setProgress((prev) =>
-        reduceAgentProgress(prev, {
-          id: 0,
-          runId,
-          type: "agent.cancelled",
-          at: new Date().toISOString(),
-          data: {},
-        }),
-      );
-      setRunNotice("Stopped");
-      setRunError(null);
+      const nextProgress = reduceAgentProgress(progressRef.current, {
+        id: 0,
+        runId,
+        type: "agent.cancelled",
+        at: new Date().toISOString(),
+        data: {},
+      });
+      progressRef.current = nextProgress;
+      setProgress(nextProgress);
       setLiveDraft(null);
-      runIdRef.current = null;
-      if (!isActiveAgentRunStatus(snapshot.run.status)) {
-        setProgress([]);
-      }
+      applyTerminalRunStatus(snapshot.run);
     } catch (error) {
       if (error instanceof ApiError && error.statusCode === 404) {
         setRunError("Run not found.");
@@ -482,6 +635,9 @@ export function DocumentAgentPanel({
     stopSse();
     setActiveRun(null);
     setProgress([]);
+    setLastTurn(null);
+    setTimelineOpen(false);
+    setRunTotalMs(null);
     setRunError(null);
     setRunNotice(null);
     setLiveDraft(null);
@@ -496,6 +652,22 @@ export function DocumentAgentPanel({
       setPhase({ kind: "ready" });
       if (latestRun && isActiveAgentRunStatus(latestRun.status)) {
         attachRun(latestRun, nextId);
+      } else if (latestRun && !isActiveAgentRunStatus(latestRun.status)) {
+        const ms = agentRunDurationMs(latestRun.startedAt, latestRun.completedAt);
+        if (ms !== null) {
+          setRunTotalMs(ms);
+          setLastTurn({
+            runId: latestRun.id,
+            durationMs: ms,
+            lines: [],
+            outcome:
+              latestRun.status === "cancelled"
+                ? "cancelled"
+                : latestRun.status === "failed"
+                  ? "failed"
+                  : "completed",
+          });
+        }
       }
     } catch (error) {
       setPhase({
@@ -613,18 +785,34 @@ export function DocumentAgentPanel({
       liveDraft.content.length > 0 &&
       lastMessage?.role !== "assistant",
   );
-  // Status belongs *before* the answer — hide once text is on screen.
-  // Keep completed tools (✓) + active Thinking so fast tools do not flicker.
   const visibleProgress = visibleAgentProgress(progress);
-  const showProgress =
-    visibleProgress.length > 0 &&
-    !showLiveDraft &&
-    !(lastMessage?.role === "assistant" && !busy);
+  const liveHeadline = latestProgressHeadline(visibleProgress);
+  const isLiveTurn = showLiveDraft || liveHeadline !== null;
+  const isGenerating =
+    showLiveDraft || liveHeadline?.id === "writing" || liveHeadline?.label === "Generating…";
+  const timelineLines = isLiveTurn
+    ? visibleProgress
+    : lastTurn
+      ? visibleAgentProgress(lastTurn.lines)
+      : [];
+  const wallClockMs =
+    runStartedAtRef.current !== null
+      ? Math.max(0, nowTick - runStartedAtRef.current)
+      : runTotalMs;
+  // Stop whenever a run is in flight (state-driven so the composer re-renders).
+  const canStop =
+    !creatingChat &&
+    (cancelling ||
+      submitting ||
+      (activeRun !== null && isActiveAgentRunStatus(activeRun.status)));
+  const showThoughtOnLastAssistant =
+    !isLiveTurn &&
+    lastTurn !== null &&
+    lastMessage?.role === "assistant";
   const showEmpty =
     phase.kind === "ready" &&
     messages.length === 0 &&
-    !showProgress &&
-    !showLiveDraft &&
+    !isLiveTurn &&
     !runError &&
     !runNotice;
 
@@ -655,17 +843,6 @@ export function DocumentAgentPanel({
             >
               +
             </button>
-            {busy && !creatingChat && activeRun && isActiveAgentRunStatus(activeRun.status) ? (
-              <button
-                type="button"
-                onClick={() => void handleCancel()}
-                disabled={cancelling}
-                title="Stop agent run"
-                className="rounded-[8px] px-2 py-1 text-[10px] font-medium text-ink-soft hover:bg-sunken hover:text-ink disabled:opacity-50"
-              >
-                {cancelling ? "Stopping…" : "Stop"}
-              </button>
-            ) : null}
             <button
               type="button"
               onClick={onToggle}
@@ -742,60 +919,90 @@ export function DocumentAgentPanel({
               </div>
             ) : null}
 
-            <div className="flex flex-col gap-3">
-              {messages.map((message) =>
-                message.role === "user" ? (
-                  <div
-                    key={message.id}
-                    className="ml-6 rounded-[13px_13px_4px_13px] bg-ink px-3 py-2.5 text-[10.5px] leading-[1.6] text-on-ink shadow-[0_5px_18px_rgba(16,24,40,0.09)]"
-                  >
-                    {message.content}
-                  </div>
-                ) : (
-                  <div key={message.id}>
+            <div className="flex flex-col gap-3.5">
+              {messages.map((message, index) => {
+                const isLast = index === messages.length - 1;
+                if (message.role === "user") {
+                  return (
+                    <div
+                      key={message.id}
+                      className="ml-6 rounded-[13px_13px_4px_13px] bg-ink px-3 py-2.5 text-[10.5px] leading-[1.6] text-on-ink shadow-[0_5px_18px_rgba(16,24,40,0.09)]"
+                    >
+                      {message.content}
+                    </div>
+                  );
+                }
+                return (
+                  <div key={message.id} className="flex flex-col gap-1.5">
+                    {isLast && showThoughtOnLastAssistant && lastTurn ? (
+                      <AgentThoughtToggle
+                        label={thoughtForLabel(
+                          lastTurn.durationMs,
+                          lastTurn.outcome,
+                        )}
+                        status={
+                          lastTurn.outcome === "failed" ? "error" : "done"
+                        }
+                        expanded={timelineOpen}
+                        onToggle={() => setTimelineOpen((open) => !open)}
+                        timeline={timelineLines}
+                        nowTick={nowTick}
+                      />
+                    ) : null}
                     <AgentMarkdown text={message.content} />
                   </div>
-                ),
-              )}
+                );
+              })}
 
-              {showProgress ? (
-                <div className="rounded-[13px] border border-line bg-surface py-1 shadow-[0_1px_2px_rgba(16,24,40,0.025)]">
-                  {visibleProgress.map((line) => (
-                    <div
-                      key={line.id}
-                      className={`flex gap-2 px-3 py-1.5 font-mono text-[9.5px] leading-[1.45] ${
-                        line.status === "done"
-                          ? "text-ink-faint"
-                          : "text-ink-soft"
-                      }`}
-                    >
+              {/* Live turn: work header above streaming answer (Cursor order). */}
+              {isLiveTurn ? (
+                <div className="flex flex-col gap-2">
+                  <AgentThoughtToggle
+                    label={
+                      isGenerating
+                        ? "Generating…"
+                        : (liveHeadline?.label ?? "Working…")
+                    }
+                    status="active"
+                    totalElapsed={
+                      wallClockMs !== null
+                        ? formatProgressElapsed(wallClockMs)
+                        : null
+                    }
+                    expanded={timelineOpen}
+                    onToggle={() => setTimelineOpen((open) => !open)}
+                    timeline={timelineLines}
+                    nowTick={nowTick}
+                    live
+                  />
+                  {showLiveDraft && liveDraft ? (
+                    <div className="relative">
+                      <AgentMarkdown text={liveDraft.content} />
                       <span
-                        className={
-                          line.status === "active"
-                            ? "text-accent"
-                            : line.status === "error"
-                              ? "text-danger"
-                              : line.status === "done"
-                                ? "text-ink-faint"
-                                : "text-accent"
-                        }
-                      >
-                        {progressMarker(line.status)}
-                      </span>
-                      <span>{line.label}</span>
+                        aria-hidden
+                        className="ml-0.5 inline-block h-[0.85em] w-[2px] translate-y-[2px] animate-pulse bg-accent align-baseline"
+                      />
                     </div>
-                  ))}
+                  ) : null}
                 </div>
               ) : null}
 
-              {showLiveDraft && liveDraft ? (
-                <div>
-                  <AgentMarkdown text={liveDraft.content} />
-                </div>
+              {/* Finished turn with no assistant text yet (cancel / fail). */}
+              {!isLiveTurn &&
+              lastTurn &&
+              lastMessage?.role !== "assistant" ? (
+                <AgentThoughtToggle
+                  label={thoughtForLabel(lastTurn.durationMs, lastTurn.outcome)}
+                  status={lastTurn.outcome === "failed" ? "error" : "done"}
+                  expanded={timelineOpen}
+                  onToggle={() => setTimelineOpen((open) => !open)}
+                  timeline={timelineLines}
+                  nowTick={nowTick}
+                />
               ) : null}
 
               {runNotice ? (
-                <p className="text-[10.5px] text-ink-faint">{runNotice}</p>
+                <p className="px-0.5 text-[10px] text-ink-faint">{runNotice}</p>
               ) : null}
 
               {runError ? (
@@ -814,36 +1021,172 @@ export function DocumentAgentPanel({
 
       <div className="shrink-0 border-t border-line bg-sidebar p-3">
         <div
-          className={`rounded-[13px] border border-line bg-surface p-2.5 shadow-[0_1px_2px_rgba(16,24,40,0.03)] focus-within:border-accent-line focus-within:shadow-[0_0_0_3px_var(--accent-soft)] ${
-            busy ? "opacity-80" : ""
-          }`}
+          className={`rounded-[13px] border border-line bg-surface p-2.5 shadow-[0_1px_2px_rgba(16,24,40,0.03)] focus-within:border-accent-line focus-within:shadow-[0_0_0_3px_var(--accent-soft)]`}
         >
           <textarea
             ref={composerRef}
             rows={1}
             value={draft}
-            disabled={busy || phase.kind !== "ready"}
+            disabled={canStop || phase.kind !== "ready"}
             onChange={(event) => setDraft(event.target.value)}
             onKeyDown={onComposerKeyDown}
-            placeholder="Ask OpenSuite about this document…"
+            placeholder={
+              canStop
+                ? "Agent is working… press Stop to cancel"
+                : "Ask OpenSuite about this document…"
+            }
             className="max-h-40 min-h-[40px] w-full resize-none overflow-y-auto border-none bg-transparent text-[11px] leading-[1.45] text-ink outline-none placeholder:text-ink-faint disabled:cursor-not-allowed disabled:text-ink-faint"
           />
-          <div className="mt-1 flex items-center justify-end">
-            <button
-              type="button"
-              disabled={
-                busy || phase.kind !== "ready" || draft.trim().length === 0
-              }
-              onClick={() => void handleSubmit()}
-              title="Send"
-              className="grid h-7 w-7 place-items-center rounded-[8px] bg-accent text-[11px] text-on-ink hover:bg-accent-hover disabled:bg-accent-soft disabled:text-ink-faint"
-            >
-              ➤
-            </button>
+          <div className="mt-1.5 flex items-center justify-between gap-2">
+            <div className="min-w-0 truncate text-[10px] tabular-nums text-ink-faint">
+              {canStop && wallClockMs !== null
+                ? `${isGenerating ? "Generating" : "Working"} · ${formatProgressElapsed(wallClockMs)}`
+                : null}
+            </div>
+            {canStop ? (
+              <button
+                type="button"
+                onClick={() => void handleCancel()}
+                disabled={cancelling}
+                title="Stop"
+                className="grid h-7 w-7 shrink-0 place-items-center rounded-[8px] bg-ink text-on-ink hover:opacity-90 disabled:opacity-50"
+              >
+                {cancelling ? (
+                  <span className="text-[10px]">…</span>
+                ) : (
+                  <span className="block h-[10px] w-[10px] rounded-[1.5px] bg-on-ink" />
+                )}
+              </button>
+            ) : (
+              <button
+                type="button"
+                disabled={
+                  busy || phase.kind !== "ready" || draft.trim().length === 0
+                }
+                onClick={() => void handleSubmit()}
+                title="Send"
+                className="grid h-7 w-7 shrink-0 place-items-center rounded-[8px] bg-accent text-[11px] text-on-ink hover:bg-accent-hover disabled:bg-accent-soft disabled:text-ink-faint"
+              >
+                ➤
+              </button>
+            )}
           </div>
         </div>
       </div>
     </aside>
+  );
+}
+
+/**
+ * Cursor-style thought/work toggle: one label + one elapsed time.
+ * Expand reveals the step timeline. No dual timers on the headline.
+ */
+function AgentThoughtToggle({
+  label,
+  status,
+  totalElapsed,
+  expanded,
+  onToggle,
+  timeline,
+  nowTick,
+  live = false,
+}: {
+  label: string;
+  status: AgentProgressLine["status"];
+  totalElapsed?: string | null;
+  expanded: boolean;
+  onToggle: () => void;
+  timeline: readonly AgentProgressLine[];
+  nowTick: number;
+  live?: boolean;
+}) {
+  const hasTimeline = timeline.length > 0;
+  const isActive = status === "active" || live;
+
+  return (
+    <div className="min-w-0">
+      <button
+        type="button"
+        onClick={hasTimeline ? onToggle : undefined}
+        disabled={!hasTimeline}
+        className={`group flex max-w-full items-center gap-1.5 rounded-[8px] py-0.5 text-left text-[11px] leading-[1.4] transition-colors ${
+          hasTimeline ? "cursor-pointer hover:bg-sunken/60" : "cursor-default"
+        } ${
+          status === "error"
+            ? "text-danger"
+            : isActive
+              ? "text-ink-soft"
+              : "text-ink-faint"
+        }`}
+        title={
+          hasTimeline
+            ? expanded
+              ? "Hide steps"
+              : "Show steps"
+            : undefined
+        }
+      >
+        <span
+          className={`shrink-0 text-[9px] text-ink-faint transition-transform ${
+            expanded ? "rotate-90" : ""
+          } ${hasTimeline ? "opacity-70" : "opacity-0"}`}
+        >
+          ▸
+        </span>
+        {isActive ? (
+          <span className="relative flex h-2 w-2 shrink-0">
+            <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-accent opacity-40" />
+            <span className="relative inline-flex h-2 w-2 rounded-full bg-accent" />
+          </span>
+        ) : status === "error" ? (
+          <span className="shrink-0 text-[10px]">!</span>
+        ) : (
+          <span className="shrink-0 text-[10px] opacity-60">✓</span>
+        )}
+        <span className="min-w-0 truncate font-medium">{label}</span>
+        {totalElapsed ? (
+          <span className="shrink-0 tabular-nums text-[10px] text-ink-faint">
+            {totalElapsed}
+          </span>
+        ) : null}
+      </button>
+
+      {expanded && hasTimeline ? (
+        <div className="relative ml-[7px] mt-1.5 space-y-0 border-l border-line pl-3.5">
+          {timeline.map((line) => {
+            const elapsed = progressElapsedLabel(line, nowTick);
+            return (
+              <div
+                key={line.id}
+                className={`relative flex items-baseline gap-2 py-[3px] text-[10.5px] leading-[1.4] ${
+                  line.status === "error"
+                    ? "text-danger"
+                    : line.status === "active"
+                      ? "text-ink-soft"
+                      : "text-ink-faint"
+                }`}
+              >
+                <span
+                  className={`absolute -left-[15px] top-[8px] h-[6px] w-[6px] rounded-full ${
+                    line.status === "active"
+                      ? "bg-accent"
+                      : line.status === "error"
+                        ? "bg-danger"
+                        : "bg-[var(--line)]"
+                  }`}
+                />
+                <span className="min-w-0 flex-1">{line.label}</span>
+                {elapsed ? (
+                  <span className="shrink-0 tabular-nums text-[10px] opacity-70">
+                    {elapsed}
+                  </span>
+                ) : null}
+              </div>
+            );
+          })}
+        </div>
+      ) : null}
+    </div>
   );
 }
 

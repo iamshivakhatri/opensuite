@@ -11,6 +11,7 @@ import {
   saveDocumentVersion,
   type ListedDocument,
 } from "@/lib/api";
+import { clearCasualLocalAutosave } from "@/lib/casual-autosave";
 import { userFacingError } from "@/components/files/format";
 import { ConfirmDialog } from "@/components/ui/context-menu";
 import { useTheme } from "@/lib/theme";
@@ -109,6 +110,9 @@ export function DocxSurface({
       setDirty(false);
       setBuffer(null);
       try {
+        // Drop Casual's local recovery draft so remount does not show
+        // "Unsaved changes from … restore them?" after agent/server loads.
+        await clearCasualLocalAutosave();
         const bytes = await fetchDocumentVersionContent(
           document.id,
           versionId,
@@ -168,12 +172,17 @@ export function DocxSurface({
   }, [document.id, onDocumentUpdated]);
 
   // Auto-reload when a newer version appears and the editor is clean.
+  // Debounce so multi-step agent mutations coalesce into one remount.
   React.useEffect(() => {
     if (!newerAvailable || dirty || conflict || saving || phase !== "ready") {
       return;
     }
     if (!latestVersionId) return;
-    void loadVersion(latestVersionId);
+    const target = latestVersionId;
+    const timer = window.setTimeout(() => {
+      void loadVersion(target);
+    }, 700);
+    return () => window.clearTimeout(timer);
   }, [
     conflict,
     dirty,
@@ -259,6 +268,14 @@ export function DocxSurface({
 
   const save = React.useCallback(async () => {
     if (savingRef.current || phase !== "ready" || conflict) return;
+    if (!dirty) {
+      toast({
+        tone: "success",
+        title: "Already saved",
+        description: "No local edits to persist.",
+      });
+      return;
+    }
     const api = editorRef.current;
     if (!api) {
       toast({
@@ -280,6 +297,7 @@ export function DocxSurface({
         return;
       }
       await persistBytes(bytes);
+      await clearCasualLocalAutosave();
     } catch (error) {
       toast({
         tone: "error",
@@ -287,7 +305,7 @@ export function DocxSurface({
         description: userFacingError(error, "Could not export this document."),
       });
     }
-  }, [conflict, persistBytes, phase, toast]);
+  }, [conflict, dirty, persistBytes, phase, toast]);
 
   // Parent-driven save (header button / Cmd+S).
   React.useEffect(() => {

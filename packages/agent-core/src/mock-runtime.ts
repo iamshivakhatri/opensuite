@@ -37,6 +37,10 @@ export const MOCK_MUTABLE_DOCUMENT_CAPABILITIES: RuntimeCapabilities =
     Capabilities.DocumentInspect,
     Capabilities.DocumentFind,
     Capabilities.DocumentMutate,
+    "replace_text",
+    "set_table_cells_text",
+    "insert_table_rows",
+    "insert_table_column",
   );
 
 interface DocxFixture {
@@ -420,6 +424,12 @@ function buildDocxPayload(
       return {
         format: "docx",
         summary,
+        overview: {
+          bodyBlockCount: docx.paragraphs.length + docx.tables.length,
+          paragraphCount: docx.paragraphs.length,
+          tableCount: docx.tables.length,
+          sectionCount: 1,
+        },
         headings: docx.headings.map((h) => ({
           level: h.level,
           text: h.text,
@@ -427,36 +437,54 @@ function buildDocxPayload(
         })),
       };
     case "headings":
-    case "structure":
+    case "structure": {
+      const all = docx.headings.map((h) => ({
+        level: h.level,
+        text: h.text,
+        handle: h.handle,
+      }));
+      const paged = pageItems(
+        all,
+        focus.kind === "headings" ? focus.offset : undefined,
+        focus.kind === "headings" ? focus.limit : undefined,
+      );
       return {
         format: "docx",
         summary,
-        headings: docx.headings.map((h) => ({
-          level: h.level,
-          text: h.text,
-          handle: h.handle,
-        })),
+        page: paged.page,
+        headings: paged.items,
       };
-    case "paragraphs":
+    }
+    case "paragraphs": {
+      const all = docx.paragraphs.map((p) => ({
+        text: p.text,
+        handle: p.handle,
+      }));
+      const paged = pageItems(all, focus.offset, focus.limit);
       return {
         format: "docx",
         summary,
-        paragraphs: docx.paragraphs.map((p) => ({
-          text: p.text,
-          handle: p.handle,
-        })),
+        page: paged.page,
+        paragraphs: paged.items,
       };
-    case "tables":
+    }
+    case "tables": {
+      const all = docx.tables.map((t) => ({
+        handle: t.handle,
+        rows: t.rows,
+        cols: t.cols,
+        preview: t.preview,
+        cells: t.preview,
+        isRectangular: true,
+      }));
+      const paged = pageItems(all, focus.offset, focus.limit);
       return {
         format: "docx",
         summary,
-        tables: docx.tables.map((t) => ({
-          handle: t.handle,
-          rows: t.rows,
-          cols: t.cols,
-          preview: t.preview,
-        })),
+        page: paged.page,
+        tables: paged.items,
       };
+    }
     case "slides":
     case "slide":
     case "sheets":
@@ -469,6 +497,33 @@ function buildDocxPayload(
       return null;
     }
   }
+}
+
+function pageItems<T>(
+  items: readonly T[],
+  offset: number | undefined,
+  limit: number | undefined,
+): {
+  readonly page: {
+    readonly total: number;
+    readonly offset: number;
+    readonly returned: number;
+    readonly hasMore: boolean;
+  };
+  readonly items: T[];
+} {
+  const resolvedOffset = offset ?? 0;
+  const resolvedLimit = limit ?? 20;
+  const sliced = items.slice(resolvedOffset, resolvedOffset + resolvedLimit);
+  return {
+    page: {
+      total: items.length,
+      offset: resolvedOffset,
+      returned: sliced.length,
+      hasMore: resolvedOffset + sliced.length < items.length,
+    },
+    items: sliced,
+  };
 }
 
 function buildPptxPayload(

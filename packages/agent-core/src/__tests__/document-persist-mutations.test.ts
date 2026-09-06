@@ -147,6 +147,7 @@ test("multi-mutation run advances N → N+1 → N+2", async () => {
   });
   const mutations = createInMemoryDocumentMutationExecutor(runtime);
   const trackingMutations: DocumentMutationExecutor = {
+    ...mutations,
     async replaceText(input) {
       baseVersions.push(input.document.versionId);
       return mutations.replaceText(input);
@@ -259,6 +260,7 @@ test("VERSION_CONFLICT does not advance active DocumentRef", async () => {
   });
   const events = createRecordingEventSink();
   const conflictMutations: DocumentMutationExecutor = {
+    ...createInMemoryDocumentMutationExecutor(runtime),
     async replaceText() {
       const diagnostics: NonEmptyDiagnostics = [
         {
@@ -320,6 +322,7 @@ test("persistence failure fails the tool without advancing", async () => {
   });
   const events = createRecordingEventSink();
   const failing: DocumentMutationExecutor = {
+    ...createInMemoryDocumentMutationExecutor(runtime),
     async replaceText() {
       const diagnostics: NonEmptyDiagnostics = [
         {

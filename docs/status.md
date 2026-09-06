@@ -11,39 +11,42 @@ _Read this before starting any work. Keep it a concise current-state handoff, no
 * Immutable document version foundation + Casual Docs DOCX surface v1.
 * Theme architecture (`themePreference` / `resolvedTheme` / Casual isolation).
 * **Production DOCX agent runtime is engine-backed (no mock DOCX content).**
-* **Agent `document.replace_text` persists immutable N+1 and advances run DocumentRef.**
-* Agent chat: durable tool progress (✓ + Thinking), GFM table rendering, compact API request logs.
+* **Real DOCX inspect: overview / headings / paragraphs / tables / context** (paged, Rust-authoritative).
+* **Agent DOCX mutations persist immutable N+1 and advance run DocumentRef:**
+  `replace_text`, `set_table_cells_text`, `insert_table_rows`, `insert_table_column`.
+* Agent chat: Cursor-style work toggle (“Thought for Xs”), single wall-clock timer, Stop square in composer.
 
 ## Just Completed
 
-* Injected `DocumentMutationExecutor` → `applyReplaceText` (one engine execute + append)
-* Tool success = persistence success; run advances primaryDocument N → N+1
-* SSE `document.version.advanced` → editor reloads via existing version bump path
-* Same-run read-after-write + failure/conflict unit tests
+* Wired semantic table mutations end-to-end (binding → adapter → shared mutation service → AgentTools → DocumentRef + SSE).
 
 ## Current Decisions
 
 * Soft-delete only; latest = max `version_number`.
 * Optimistic concurrency: `baseVersionId` + row lock.
 * Rust is capability / semantic-mutation source of truth; app owns versions/storage.
-* DOCX overview/tables inspect still unsupported until Rust typed contracts exist — latency today is mostly LLM round-trips for find/inspect probes.
+* Inspect occurrence/order is version-local — never durable semantic identity.
+* Real DOCX never falls back to mock inspect semantics.
+* Capability advertised ≠ every table structure is safe (merged/complex → `UNSUPPORTED_OPERATION`).
+* Separate tool calls = separate immutable versions; within one engine op, updates are atomic.
 
 ## Verification Status
 
 | Check | Status |
 |---|---|
 | `pnpm typecheck` | **Pass** |
-| `pnpm test` | **Pass** (agent-core 59, engine-client 20, api 85+17 skip, web 11) |
+| `pnpm test` | **Pass** (agent-core 66, engine-client 27, api 88+17 skip, web 14, db 14+1 skip) |
 | `pnpm build` | **Pass** |
 | `git diff --check` | **Pass** |
-| DB integration: agent replace → N+1 read-after-write | **Pass** |
+| Native smoke table mutations | **Pass** (inspect → rows → cells → column) |
 
 ## Intentionally Deferred
 
-* Broad DOCX inspect (overview/headings/tables) in Rust — biggest latency win
+* Delete rows/columns / create_table / multi-column insert
+* Persist full per-turn timeline in DB
 * PPTX/XLSX engine runtimes; HTTP mutation endpoint
-* More engine mutations; review/revert UI; automatic rebase
+* Review/revert UI; automatic rebase; app-level multi-tool transactions
 
 ## Recommended Next Step
 
-Broad typed DOCX inspect (tables/overview) in opensuite-engine.
+Real browser smoke on an uploaded Name/Role DOCX: inspect → insert rows → set cells → insert column; confirm editor reload.

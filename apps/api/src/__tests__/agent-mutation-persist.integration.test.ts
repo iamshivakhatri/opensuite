@@ -128,15 +128,36 @@ test(
           };
         },
         async inspectDocx(_input, request) {
+          if (request.focus.kind !== "context") {
+            return {
+              ok: false,
+              focus: request.focus.kind,
+              diagnostics: [
+                {
+                  code: "UNSUPPORTED_OPERATION",
+                  severity: "error",
+                  message: `stub does not implement ${request.focus.kind}`,
+                },
+              ],
+            };
+          }
           return {
             ok: true,
-            target: request.target,
-            container: {
-              relativePosition: 0,
-              text: request.target.text,
-              container: "paragraph",
+            focus: "context",
+            context: {
+              target: {
+                text: request.focus.text,
+                ...(request.focus.occurrence !== undefined
+                  ? { occurrence: request.focus.occurrence }
+                  : {}),
+              },
+              container: {
+                relativePosition: 0,
+                text: request.focus.text,
+                container: "paragraph",
+              },
+              nearby: [],
             },
-            nearby: [],
             diagnostics: [],
           };
         },
@@ -158,6 +179,55 @@ test(
             output: buildMinimalDocx([operation.replacement, "Keep going"]),
           };
         },
+
+        async executeDocxSetTableCellsText() {
+          return {
+            result: {
+              ok: false,
+              status: "failed",
+              diagnostics: [
+                {
+                  code: "UNSUPPORTED_OPERATION",
+                  severity: "error",
+                  message: "unused",
+                },
+              ],
+              changes: [],
+            },
+          };
+        },
+        async executeDocxInsertTableRows() {
+          return {
+            result: {
+              ok: false,
+              status: "failed",
+              diagnostics: [
+                {
+                  code: "UNSUPPORTED_OPERATION",
+                  severity: "error",
+                  message: "unused",
+                },
+              ],
+              changes: [],
+            },
+          };
+        },
+        async executeDocxInsertTableColumn() {
+          return {
+            result: {
+              ok: false,
+              status: "failed",
+              diagnostics: [
+                {
+                  code: "UNSUPPORTED_OPERATION",
+                  severity: "error",
+                  message: "unused",
+                },
+              ],
+              changes: [],
+            },
+          };
+        },
       } satisfies DocxEngineBinding);
 
     let executeCalls = 0;
@@ -170,6 +240,55 @@ test(
         executeCalls += 1;
         return engineBinding.executeDocxReplaceText(input, operation);
       },
+
+        async executeDocxSetTableCellsText() {
+          return {
+            result: {
+              ok: false,
+              status: "failed",
+              diagnostics: [
+                {
+                  code: "UNSUPPORTED_OPERATION",
+                  severity: "error",
+                  message: "unused",
+                },
+              ],
+              changes: [],
+            },
+          };
+        },
+        async executeDocxInsertTableRows() {
+          return {
+            result: {
+              ok: false,
+              status: "failed",
+              diagnostics: [
+                {
+                  code: "UNSUPPORTED_OPERATION",
+                  severity: "error",
+                  message: "unused",
+                },
+              ],
+              changes: [],
+            },
+          };
+        },
+        async executeDocxInsertTableColumn() {
+          return {
+            result: {
+              ok: false,
+              status: "failed",
+              diagnostics: [
+                {
+                  code: "UNSUPPORTED_OPERATION",
+                  severity: "error",
+                  message: "unused",
+                },
+              ],
+              changes: [],
+            },
+          };
+        },
     };
 
     const runtime = createOpenSuiteEngineAdapter({

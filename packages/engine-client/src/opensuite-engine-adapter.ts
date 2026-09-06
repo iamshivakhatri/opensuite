@@ -1,5 +1,7 @@
 import {
   Capabilities,
+  DEFAULT_INSPECT_PAGE_LIMIT,
+  MAX_INSPECT_PAGE_LIMIT,
   createCapabilities,
   hasCapability,
   unsupportedCapabilityFind,
@@ -10,6 +12,8 @@ import {
   type DocumentRuntime,
   type FindMatch,
   type FindResult,
+  type InspectionPageInfo,
+  type InspectionPayload,
   type InspectionResult,
   type OperationFailureCode,
   type OperationResult,
@@ -24,8 +28,15 @@ import type { DocumentArtifactLoader } from "./document-artifact-loader.js";
 import type {
   DocxEngineBinding,
   DocxEngineDiagnostic,
+  DocxInsertTableColumnOperation,
+  DocxInsertTableRowsOperation,
+  DocxInspectFocus,
+  DocxInspectResult,
+  DocxMutationBindingResult,
   DocxReplaceTextOperation,
   DocxRuntimeCapabilities,
+  DocxSetTableCellsTextOperation,
+  DocxTableTarget,
 } from "./docx-engine-binding.js";
 
 /**
@@ -34,11 +45,18 @@ import type {
  * Proven path:
  *   exact DocumentRef.versionId bytes
  *     → capabilities (Rust RuntimeCapabilities)
- *     → findDocxText / inspectDocx(context) / executeDocxReplaceText
+ *     → findDocxText / inspectDocx / mutate (replace_text | table ops)
  *
  * No mock semantic fallback for real DOCX execution. Unsupported inspect
- * focuses return structured UNSUPPORTED_OPERATION.
+ * focuses (slides/sheets/…) return structured UNSUPPORTED_OPERATION.
  */
+
+const DOCX_MUTATION_TYPES = new Set([
+  "document.replace_text",
+  "document.set_table_cells_text",
+  "document.insert_table_rows",
+  "document.insert_table_column",
+]);
 export interface OpenSuiteEngineAdapterOptions {
   readonly artifactLoader: DocumentArtifactLoader;
   readonly binding: DocxEngineBinding;
@@ -77,84 +95,21 @@ export function createOpenSuiteEngineAdapter(
       }
 
       const focus = inspectOptions?.focus ?? { kind: "overview" };
-      if (focus.kind !== "context") {
-        return inspectionError(
-          "UNSUPPORTED_OPERATION",
-          `OpenSuiteEngineAdapter does not support inspect focus "${focus.kind}". Use document.find (mode text) to locate content, then inspect with focus.kind="context".`,
-          { focus },
-        );
-      }
-
-      if (!focus.text) {
-        return inspectionError(
-          "VALIDATION_FAILED",
-          "inspect focus.kind=context requires non-empty text",
-        );
+      const mappedFocus = mapApplicationInspectFocus(focus);
+      if (!mappedFocus.ok) {
+        return mappedFocus.error;
       }
 
       const inputBytes = await artifactLoader.loadExactVersionBytes(document);
       const response = await binding.inspectDocx(inputBytes, {
-        target: {
-          text: focus.text,
-          ...(focus.occurrence !== undefined
-            ? { occurrence: focus.occurrence }
-            : {}),
-        },
-        ...(focus.before !== undefined ? { before: focus.before } : {}),
-        ...(focus.after !== undefined ? { after: focus.after } : {}),
+        focus: mappedFocus.focus,
       });
 
-      const diagnostics = response.diagnostics.map(mapDiagnostic);
-      if (!response.ok) {
-        return {
-          status: "error",
-          diagnostics: ensureNonEmpty(
-            diagnostics.map(normalizeDiagnosticCode),
-            "VALIDATION_FAILED",
-            "Engine inspect failed",
-          ),
-        };
-      }
-
-      const unitCount =
-        (response.container ? 1 : 0) + response.nearby.length;
-      return {
-        status: "success",
-        format: "docx",
-        capabilities: cachedCapabilities,
-        diagnostics,
-        focus,
-        payload: {
-          format: "docx",
-          summary: {
-            title: null,
-            unitKind: "page",
-            unitCount,
-          },
-          context: {
-            target: {
-              text: response.target.text,
-              ...(response.target.occurrence !== undefined
-                ? { occurrence: response.target.occurrence }
-                : {}),
-            },
-            ...(response.container
-              ? {
-                  container: {
-                    text: response.container.text,
-                    container: response.container.container,
-                    relativePosition: response.container.relativePosition,
-                  },
-                }
-              : {}),
-            nearby: response.nearby.map((item) => ({
-              text: item.text,
-              container: item.container,
-              relativePosition: item.relativePosition,
-            })),
-          },
-        },
-      };
+      return mapInspectBindingResult(
+        response,
+        mappedFocus.focus,
+        cachedCapabilities,
+      );
     },
 
     async find(document, query, findOptions): Promise<FindResult> {
@@ -253,7 +208,7 @@ export function createOpenSuiteEngineAdapter(
         );
       }
 
-      if (operation.type !== "document.replace_text") {
+      if (!DOCX_MUTATION_TYPES.has(operation.type)) {
         return operationError(
           "UNSUPPORTED_OPERATION",
           `Unsupported mutation type for OpenSuiteEngineAdapter: ${operation.type}`,
@@ -261,18 +216,53 @@ export function createOpenSuiteEngineAdapter(
         );
       }
 
-      const mapped = mapReplaceTextOperation(operation);
+      const inputBytes = await artifactLoader.loadExactVersionBytes(document);
+
+      if (operation.type === "document.replace_text") {
+        const mapped = mapReplaceTextOperation(operation);
+        if (!mapped.ok) {
+          return mapped.error;
+        }
+        const engineResponse = await binding.executeDocxReplaceText(
+          inputBytes,
+          mapped.operation,
+        );
+        return mapEngineMutationResult(engineResponse, operation.type);
+      }
+
+      if (operation.type === "document.set_table_cells_text") {
+        const mapped = mapSetTableCellsTextOperation(operation);
+        if (!mapped.ok) {
+          return mapped.error;
+        }
+        const engineResponse = await binding.executeDocxSetTableCellsText(
+          inputBytes,
+          mapped.operation,
+        );
+        return mapEngineMutationResult(engineResponse, operation.type);
+      }
+
+      if (operation.type === "document.insert_table_rows") {
+        const mapped = mapInsertTableRowsOperation(operation);
+        if (!mapped.ok) {
+          return mapped.error;
+        }
+        const engineResponse = await binding.executeDocxInsertTableRows(
+          inputBytes,
+          mapped.operation,
+        );
+        return mapEngineMutationResult(engineResponse, operation.type);
+      }
+
+      const mapped = mapInsertTableColumnOperation(operation);
       if (!mapped.ok) {
         return mapped.error;
       }
-
-      const inputBytes = await artifactLoader.loadExactVersionBytes(document);
-      const engineResponse = await binding.executeDocxReplaceText(
+      const engineResponse = await binding.executeDocxInsertTableColumn(
         inputBytes,
         mapped.operation,
       );
-
-      return mapEngineReplaceTextResult(engineResponse, operation.type);
+      return mapEngineMutationResult(engineResponse, operation.type);
     },
   };
 }
@@ -297,11 +287,360 @@ export function mapRustCapabilitiesToRuntime(
   ) {
     ids.push(Capabilities.DocumentInspect);
   }
-  if (rustIds.includes("replace_text")) {
+  if (
+    rustIds.includes("replace_text") ||
+    rustIds.includes("set_table_cells_text") ||
+    rustIds.includes("insert_table_rows") ||
+    rustIds.includes("insert_table_column") ||
+    rustIds.includes("set_table_cell_text") ||
+    rustIds.includes("insert_table_row")
+  ) {
     ids.push(Capabilities.DocumentMutate);
   }
 
   return createCapabilities(...ids);
+}
+
+/** Exported for unit tests — application focus → binding focus. */
+export function mapApplicationInspectFocus(
+  focus: DocumentInspectFocus,
+):
+  | { readonly ok: true; readonly focus: DocxInspectFocus }
+  | { readonly ok: false; readonly error: InspectionResult } {
+  switch (focus.kind) {
+    case "overview":
+      return { ok: true, focus: { kind: "overview" } };
+    case "structure":
+    case "headings": {
+      const bounds = normalizeInspectBounds(
+        focus.kind === "headings" ? focus.offset : undefined,
+        focus.kind === "headings" ? focus.limit : undefined,
+      );
+      if (!bounds.ok) return { ok: false, error: bounds.error };
+      return {
+        ok: true,
+        focus: {
+          kind: "headings",
+          offset: bounds.offset,
+          limit: bounds.limit,
+        },
+      };
+    }
+    case "paragraphs": {
+      const bounds = normalizeInspectBounds(focus.offset, focus.limit);
+      if (!bounds.ok) return { ok: false, error: bounds.error };
+      return {
+        ok: true,
+        focus: {
+          kind: "paragraphs",
+          offset: bounds.offset,
+          limit: bounds.limit,
+        },
+      };
+    }
+    case "tables": {
+      const bounds = normalizeInspectBounds(focus.offset, focus.limit);
+      if (!bounds.ok) return { ok: false, error: bounds.error };
+      return {
+        ok: true,
+        focus: {
+          kind: "tables",
+          offset: bounds.offset,
+          limit: bounds.limit,
+        },
+      };
+    }
+    case "context": {
+      if (!focus.text) {
+        return {
+          ok: false,
+          error: inspectionError(
+            "VALIDATION_FAILED",
+            "inspect focus.kind=context requires non-empty text",
+          ),
+        };
+      }
+      return {
+        ok: true,
+        focus: {
+          kind: "context",
+          text: focus.text,
+          ...(focus.occurrence !== undefined
+            ? { occurrence: focus.occurrence }
+            : {}),
+          ...(focus.before !== undefined ? { before: focus.before } : {}),
+          ...(focus.after !== undefined ? { after: focus.after } : {}),
+        },
+      };
+    }
+    case "slides":
+    case "slide":
+    case "sheets":
+    case "range":
+      return {
+        ok: false,
+        error: inspectionError(
+          "UNSUPPORTED_OPERATION",
+          `OpenSuiteEngineAdapter does not support inspect focus "${focus.kind}" on DOCX`,
+          { focus },
+        ),
+      };
+    default: {
+      const _exhaustive: never = focus;
+      void _exhaustive;
+      return {
+        ok: false,
+        error: inspectionError(
+          "UNSUPPORTED_OPERATION",
+          "OpenSuiteEngineAdapter received an unsupported inspect focus",
+        ),
+      };
+    }
+  }
+}
+
+function normalizeInspectBounds(
+  offset: number | undefined,
+  limit: number | undefined,
+):
+  | { readonly ok: true; readonly offset: number; readonly limit: number }
+  | { readonly ok: false; readonly error: InspectionResult } {
+  const resolvedOffset = offset ?? 0;
+  const resolvedLimit = limit ?? DEFAULT_INSPECT_PAGE_LIMIT;
+  if (
+    !Number.isInteger(resolvedOffset) ||
+    resolvedOffset < 0 ||
+    !Number.isInteger(resolvedLimit) ||
+    resolvedLimit < 1
+  ) {
+    return {
+      ok: false,
+      error: inspectionError(
+        "INVALID_INSPECTION_BOUNDS",
+        "inspect offset must be >= 0 and limit must be a positive integer",
+        { offset: resolvedOffset, limit: resolvedLimit },
+      ),
+    };
+  }
+  return {
+    ok: true,
+    offset: resolvedOffset,
+    limit: Math.min(resolvedLimit, MAX_INSPECT_PAGE_LIMIT),
+  };
+}
+
+/** Exported for unit tests — binding inspect result → DocumentRuntime result. */
+export function mapInspectBindingResult(
+  response: DocxInspectResult,
+  focus: DocxInspectFocus,
+  capabilities: RuntimeCapabilities,
+): InspectionResult {
+  const diagnostics = response.diagnostics.map(mapDiagnostic);
+  if (!response.ok) {
+    return {
+      status: "error",
+      diagnostics: ensureNonEmpty(
+        diagnostics.map(normalizeDiagnosticCode),
+        "VALIDATION_FAILED",
+        "Engine inspect failed",
+      ),
+    };
+  }
+
+  const applicationFocus = toApplicationFocus(focus);
+  const payload = mapInspectPayload(response, focus);
+  if (!payload) {
+    return inspectionError(
+      "VALIDATION_FAILED",
+      `Engine inspect succeeded but returned no payload for focus "${focus.kind}"`,
+      { focus: focus.kind },
+    );
+  }
+
+  return {
+    status: "success",
+    format: "docx",
+    capabilities,
+    diagnostics,
+    focus: applicationFocus,
+    payload,
+  };
+}
+
+function toApplicationFocus(focus: DocxInspectFocus): DocumentInspectFocus {
+  switch (focus.kind) {
+    case "overview":
+      return { kind: "overview" };
+    case "headings":
+      return {
+        kind: "headings",
+        offset: focus.offset,
+        limit: focus.limit,
+      };
+    case "paragraphs":
+      return {
+        kind: "paragraphs",
+        offset: focus.offset,
+        limit: focus.limit,
+      };
+    case "tables":
+      return {
+        kind: "tables",
+        offset: focus.offset,
+        limit: focus.limit,
+      };
+    case "context":
+      return {
+        kind: "context",
+        text: focus.text,
+        ...(focus.occurrence !== undefined
+          ? { occurrence: focus.occurrence }
+          : {}),
+        ...(focus.before !== undefined ? { before: focus.before } : {}),
+        ...(focus.after !== undefined ? { after: focus.after } : {}),
+      };
+  }
+}
+
+function mapInspectPayload(
+  response: DocxInspectResult,
+  focus: DocxInspectFocus,
+): InspectionPayload | null {
+  switch (focus.kind) {
+    case "overview": {
+      if (!response.overview) return null;
+      return {
+        format: "docx",
+        summary: {
+          title: null,
+          unitKind: "page",
+          unitCount: response.overview.sectionCount,
+        },
+        overview: {
+          bodyBlockCount: response.overview.bodyBlockCount,
+          paragraphCount: response.overview.paragraphCount,
+          tableCount: response.overview.tableCount,
+          sectionCount: response.overview.sectionCount,
+        },
+      };
+    }
+    case "headings": {
+      if (!response.headings) return null;
+      return {
+        format: "docx",
+        summary: {
+          title: null,
+          unitKind: "page",
+          unitCount: response.headings.page.total,
+        },
+        page: mapPage(response.headings.page),
+        headings: response.headings.items.map((item) => ({
+          handle: `docx:heading:${item.occurrence}`,
+          text: item.text,
+          occurrence: item.occurrence,
+          styleName: item.styleName,
+          ...(item.level !== undefined ? { level: item.level } : {}),
+        })),
+      };
+    }
+    case "paragraphs": {
+      if (!response.paragraphs) return null;
+      return {
+        format: "docx",
+        summary: {
+          title: null,
+          unitKind: "page",
+          unitCount: response.paragraphs.page.total,
+        },
+        page: mapPage(response.paragraphs.page),
+        paragraphs: response.paragraphs.items.map((item) => ({
+          handle: `docx:paragraph:${item.occurrence}`,
+          text: item.text,
+          occurrence: item.occurrence,
+          ...(item.styleName !== undefined
+            ? { styleName: item.styleName }
+            : {}),
+        })),
+      };
+    }
+    case "tables": {
+      if (!response.tables) return null;
+      return {
+        format: "docx",
+        summary: {
+          title: null,
+          unitKind: "page",
+          unitCount: response.tables.page.total,
+        },
+        page: mapPage(response.tables.page),
+        tables: response.tables.items.map((item) => {
+          const cells = item.rows.map((row) => row.cells);
+          const cols = cells.reduce(
+            (max, row) => Math.max(max, row.length),
+            0,
+          );
+          return {
+            handle: `docx:table:${item.occurrence}`,
+            occurrence: item.occurrence,
+            rows: item.rowCount,
+            cols,
+            isRectangular: item.isRectangular,
+            cells,
+          };
+        }),
+      };
+    }
+    case "context": {
+      if (!response.context) return null;
+      const unitCount =
+        (response.context.container ? 1 : 0) + response.context.nearby.length;
+      return {
+        format: "docx",
+        summary: {
+          title: null,
+          unitKind: "page",
+          unitCount,
+        },
+        context: {
+          target: {
+            text: response.context.target.text,
+            ...(response.context.target.occurrence !== undefined
+              ? { occurrence: response.context.target.occurrence }
+              : {}),
+          },
+          ...(response.context.container
+            ? {
+                container: {
+                  text: response.context.container.text,
+                  container: response.context.container.container,
+                  relativePosition:
+                    response.context.container.relativePosition,
+                },
+              }
+            : {}),
+          nearby: response.context.nearby.map((item) => ({
+            text: item.text,
+            container: item.container,
+            relativePosition: item.relativePosition,
+          })),
+        },
+      };
+    }
+  }
+}
+
+function mapPage(page: {
+  readonly total: number;
+  readonly offset: number;
+  readonly returned: number;
+  readonly hasMore: boolean;
+}): InspectionPageInfo {
+  return {
+    total: page.total,
+    offset: page.offset,
+    returned: page.returned,
+    hasMore: page.hasMore,
+  };
 }
 
 /** Exported for unit tests — application DTO → binding DTO only. */
@@ -340,23 +679,18 @@ export function mapReplaceTextOperation(
   const expectedCurrentText =
     readString(payload.expectedCurrentText) ?? targetText;
 
-  const occurrenceRaw = payload.occurrence;
-  let occurrence: number | undefined;
-  if (occurrenceRaw !== undefined) {
-    if (
-      typeof occurrenceRaw !== "number" ||
-      !Number.isInteger(occurrenceRaw) ||
-      occurrenceRaw < 1
-    ) {
-      return {
-        ok: false,
-        error: operationError(
-          "VALIDATION_FAILED",
-          "document.replace_text payload.occurrence must be a positive integer when provided",
-        ),
-      };
-    }
-    occurrence = occurrenceRaw;
+  const occurrence = readOptionalPositiveInt(
+    payload.occurrence,
+    "document.replace_text payload.occurrence",
+  );
+  if (occurrence === "invalid") {
+    return {
+      ok: false,
+      error: operationError(
+        "VALIDATION_FAILED",
+        "document.replace_text payload.occurrence must be a positive integer when provided",
+      ),
+    };
   }
 
   return {
@@ -374,20 +708,327 @@ export function mapReplaceTextOperation(
   };
 }
 
-function mapEngineReplaceTextResult(
-  response: {
-    readonly result: {
-      readonly ok: boolean;
-      readonly status: string;
-      readonly diagnostics: readonly DocxEngineDiagnostic[];
-      readonly changes: readonly {
-        readonly kind: string;
-        readonly before: string;
-        readonly after: string;
-      }[];
+/** Exported for unit tests. */
+export function mapSetTableCellsTextOperation(
+  operation: DocumentOperation,
+):
+  | { readonly ok: true; readonly operation: DocxSetTableCellsTextOperation }
+  | { readonly ok: false; readonly error: OperationResult } {
+  const table = mapTableTarget(
+    operation.payload.table,
+    "document.set_table_cells_text",
+  );
+  if (!table.ok) return table;
+
+  const updatesRaw = operation.payload.updates;
+  if (!Array.isArray(updatesRaw) || updatesRaw.length === 0) {
+    return {
+      ok: false,
+      error: operationError(
+        "VALIDATION_FAILED",
+        "document.set_table_cells_text requires a non-empty updates array",
+      ),
     };
-    readonly output?: Uint8Array;
-  },
+  }
+
+  const updates: Array<DocxSetTableCellsTextOperation["updates"][number]> = [];
+  for (const item of updatesRaw) {
+    if (!isRecord(item)) {
+      return {
+        ok: false,
+        error: operationError(
+          "VALIDATION_FAILED",
+          "document.set_table_cells_text updates entries must be objects",
+        ),
+      };
+    }
+    const targetSource = isRecord(item.target) ? item.target : item;
+    const rowLabel = readNonEmptyString(targetSource.rowLabel);
+    const columnHeader = readNonEmptyString(targetSource.columnHeader);
+    const expectedCurrentText = readString(item.expectedCurrentText);
+    const replacement = readString(item.replacement);
+    if (
+      rowLabel === null ||
+      columnHeader === null ||
+      expectedCurrentText === null ||
+      replacement === null
+    ) {
+      return {
+        ok: false,
+        error: operationError(
+          "VALIDATION_FAILED",
+          "document.set_table_cells_text updates require rowLabel, columnHeader, expectedCurrentText, and replacement",
+        ),
+      };
+    }
+    const occurrence = readOptionalPositiveInt(
+      targetSource.occurrence,
+      "document.set_table_cells_text update occurrence",
+    );
+    if (occurrence === "invalid") {
+      return {
+        ok: false,
+        error: operationError(
+          "VALIDATION_FAILED",
+          "document.set_table_cells_text update occurrence must be a positive integer when provided",
+        ),
+      };
+    }
+    updates.push({
+      target: {
+        rowLabel,
+        columnHeader,
+        ...(occurrence !== undefined ? { occurrence } : {}),
+      },
+      expectedCurrentText,
+      replacement,
+    });
+  }
+
+  return {
+    ok: true,
+    operation: {
+      table: table.value,
+      updates,
+      baseRevision: operation.baseVersionId,
+    },
+  };
+}
+
+/** Exported for unit tests. */
+export function mapInsertTableRowsOperation(
+  operation: DocumentOperation,
+):
+  | { readonly ok: true; readonly operation: DocxInsertTableRowsOperation }
+  | { readonly ok: false; readonly error: OperationResult } {
+  const table = mapTableTarget(
+    operation.payload.table,
+    "document.insert_table_rows",
+  );
+  if (!table.ok) return table;
+
+  if (!isRecord(operation.payload.after)) {
+    return {
+      ok: false,
+      error: operationError(
+        "VALIDATION_FAILED",
+        "document.insert_table_rows requires after row anchor",
+      ),
+    };
+  }
+  const firstCellText = readNonEmptyString(
+    operation.payload.after.firstCellText,
+  );
+  if (firstCellText === null) {
+    return {
+      ok: false,
+      error: operationError(
+        "VALIDATION_FAILED",
+        "document.insert_table_rows after.firstCellText must be a non-empty string",
+      ),
+    };
+  }
+  const afterOccurrence = readOptionalPositiveInt(
+    operation.payload.after.occurrence,
+    "document.insert_table_rows after.occurrence",
+  );
+  if (afterOccurrence === "invalid") {
+    return {
+      ok: false,
+      error: operationError(
+        "VALIDATION_FAILED",
+        "document.insert_table_rows after.occurrence must be a positive integer when provided",
+      ),
+    };
+  }
+
+  const rowsRaw = operation.payload.rows;
+  if (!Array.isArray(rowsRaw) || rowsRaw.length === 0) {
+    return {
+      ok: false,
+      error: operationError(
+        "VALIDATION_FAILED",
+        "document.insert_table_rows requires a non-empty rows array",
+      ),
+    };
+  }
+  const rows: string[][] = [];
+  for (const row of rowsRaw) {
+    if (!Array.isArray(row) || row.length === 0) {
+      return {
+        ok: false,
+        error: operationError(
+          "VALIDATION_FAILED",
+          "document.insert_table_rows each row must be a non-empty string array",
+        ),
+      };
+    }
+    const cells: string[] = [];
+    for (const cell of row) {
+      if (typeof cell !== "string") {
+        return {
+          ok: false,
+          error: operationError(
+            "VALIDATION_FAILED",
+            "document.insert_table_rows row cells must be strings",
+          ),
+        };
+      }
+      cells.push(cell);
+    }
+    rows.push(cells);
+  }
+
+  return {
+    ok: true,
+    operation: {
+      table: table.value,
+      after: {
+        firstCellText,
+        ...(afterOccurrence !== undefined
+          ? { occurrence: afterOccurrence }
+          : {}),
+      },
+      rows,
+      baseRevision: operation.baseVersionId,
+    },
+  };
+}
+
+/** Exported for unit tests. */
+export function mapInsertTableColumnOperation(
+  operation: DocumentOperation,
+):
+  | { readonly ok: true; readonly operation: DocxInsertTableColumnOperation }
+  | { readonly ok: false; readonly error: OperationResult } {
+  const table = mapTableTarget(
+    operation.payload.table,
+    "document.insert_table_column",
+  );
+  if (!table.ok) return table;
+
+  const afterColumnHeader = readNonEmptyString(
+    operation.payload.afterColumnHeader,
+  );
+  const header = readNonEmptyString(operation.payload.header);
+  if (afterColumnHeader === null || header === null) {
+    return {
+      ok: false,
+      error: operationError(
+        "VALIDATION_FAILED",
+        "document.insert_table_column requires afterColumnHeader and header strings",
+      ),
+    };
+  }
+
+  const cellsRaw = operation.payload.cells;
+  if (!Array.isArray(cellsRaw)) {
+    return {
+      ok: false,
+      error: operationError(
+        "VALIDATION_FAILED",
+        "document.insert_table_column requires a cells array (one value per data row)",
+      ),
+    };
+  }
+  const cells: string[] = [];
+  for (const cell of cellsRaw) {
+    if (typeof cell !== "string") {
+      return {
+        ok: false,
+        error: operationError(
+          "VALIDATION_FAILED",
+          "document.insert_table_column cells must be strings",
+        ),
+      };
+    }
+    cells.push(cell);
+  }
+
+  return {
+    ok: true,
+    operation: {
+      table: table.value,
+      afterColumnHeader,
+      header,
+      cells,
+      baseRevision: operation.baseVersionId,
+    },
+  };
+}
+
+function mapTableTarget(
+  raw: unknown,
+  operationLabel: string,
+):
+  | { readonly ok: true; readonly value: DocxTableTarget }
+  | { readonly ok: false; readonly error: OperationResult } {
+  if (!isRecord(raw)) {
+    return {
+      ok: false,
+      error: operationError(
+        "VALIDATION_FAILED",
+        `${operationLabel} requires a table target object`,
+      ),
+    };
+  }
+  if (!Array.isArray(raw.headerCells) || raw.headerCells.length === 0) {
+    return {
+      ok: false,
+      error: operationError(
+        "VALIDATION_FAILED",
+        `${operationLabel} table.headerCells must be a non-empty string array`,
+      ),
+    };
+  }
+  const headerCells: string[] = [];
+  for (const cell of raw.headerCells) {
+    if (typeof cell !== "string") {
+      return {
+        ok: false,
+        error: operationError(
+          "VALIDATION_FAILED",
+          `${operationLabel} table.headerCells must be strings`,
+        ),
+      };
+    }
+    headerCells.push(cell);
+  }
+  const occurrence = readOptionalPositiveInt(
+    raw.occurrence,
+    `${operationLabel} table.occurrence`,
+  );
+  if (occurrence === "invalid") {
+    return {
+      ok: false,
+      error: operationError(
+        "VALIDATION_FAILED",
+        `${operationLabel} table.occurrence must be a positive integer when provided`,
+      ),
+    };
+  }
+  return {
+    ok: true,
+    value: {
+      headerCells,
+      ...(occurrence !== undefined ? { occurrence } : {}),
+    },
+  };
+}
+
+function readOptionalPositiveInt(
+  value: unknown,
+  _label: string,
+): number | undefined | "invalid" {
+  if (value === undefined) return undefined;
+  if (typeof value !== "number" || !Number.isInteger(value) || value < 1) {
+    return "invalid";
+  }
+  return value;
+}
+
+function mapEngineMutationResult(
+  response: DocxMutationBindingResult,
   operationType: string,
 ): OperationResult {
   const diagnostics = response.result.diagnostics.map(mapDiagnostic);
@@ -417,19 +1058,21 @@ function mapEngineReplaceTextResult(
   }
 
   const change = response.result.changes[0];
+  const areaDefault =
+    operationType === "document.replace_text" ? "text" : "table";
   return {
     status: "success",
     diagnostics,
     change: change
       ? {
           operation: operationType,
-          area: change.kind || "text",
+          area: change.kind || areaDefault,
           before: change.before,
           after: change.after,
         }
       : {
           operation: operationType,
-          area: "text",
+          area: areaDefault,
           before: "",
           after: "",
         },

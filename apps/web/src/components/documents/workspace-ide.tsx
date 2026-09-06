@@ -443,7 +443,6 @@ export function WorkspaceIde({
           onToggle={() => setAgentCollapsed((value) => !value)}
           onDocumentUpdated={(updated) => {
             setActiveDocument(updated);
-            setRefreshKey((value) => value + 1);
           }}
         />
       </div>

@@ -345,3 +345,199 @@ test("upload failure from append surfaces without inventing a version", async ()
     }),
   );
 });
+
+test("applySetTableCellsText reuses persist lifecycle once", async () => {
+  const documentId = randomUUID();
+  const baseVersionId = randomUUID();
+  const nextVersionId = randomUUID();
+  const outputBytes = buildMinimalDocx(["cells"]);
+  let executeCount = 0;
+  const appendCalls: string[] = [];
+
+  const documents = {
+    async getOwnedDocument() {
+      return listedDoc({ id: documentId, latestVersionId: baseVersionId });
+    },
+    async appendDocumentVersion(input: {
+      baseVersionId: string;
+      source: "user" | "agent" | "system";
+      bytes: Buffer;
+    }): Promise<AppendedDocumentDto> {
+      appendCalls.push(input.baseVersionId);
+      return {
+        document: listedDoc({
+          id: documentId,
+          latestVersionId: nextVersionId,
+        }),
+        version: {
+          id: nextVersionId,
+          documentId,
+          versionNumber: 2,
+          parentVersionId: baseVersionId,
+          sizeBytes: input.bytes.byteLength,
+          sha256: "abc",
+          source: input.source,
+          createdByUserId: "user-1",
+          createdAt: new Date().toISOString(),
+        },
+      };
+    },
+  } as Pick<DocumentService, "getOwnedDocument" | "appendDocumentVersion">;
+
+  const runtime = createFakeRuntime(async (_doc, operation) => {
+    executeCount += 1;
+    assert.equal(operation.type, "document.set_table_cells_text");
+    return {
+      status: "success",
+      diagnostics: [],
+      change: {
+        operation: "document.set_table_cells_text",
+        area: "table",
+        before: "CEO",
+        after: "Founder & CEO",
+      },
+      artifactBytes: outputBytes,
+    };
+  });
+
+  const mutations = createDocumentMutationService(documents);
+  const result = await mutations.applySetTableCellsText({
+    documentId,
+    ownerUserId: "user-1",
+    baseVersionId,
+    table: { headerCells: ["Name", "Role"] },
+    updates: [
+      {
+        rowLabel: "Alice",
+        columnHeader: "Role",
+        expectedCurrentText: "CEO",
+        replacement: "Founder & CEO",
+      },
+    ],
+    runtime,
+  });
+
+  assert.equal(result.status, "success");
+  assert.equal(executeCount, 1);
+  assert.deepEqual(appendCalls, [baseVersionId]);
+});
+
+test("applyInsertTableRows and applyInsertTableColumn persist once each", async () => {
+  const documentId = randomUUID();
+  let latest = randomUUID();
+  let versionNumber = 1;
+  const executeTypes: string[] = [];
+
+  const documents = {
+    async getOwnedDocument() {
+      return listedDoc({ id: documentId, latestVersionId: latest });
+    },
+    async appendDocumentVersion(input: {
+      baseVersionId: string;
+      source: "user" | "agent" | "system";
+      bytes: Buffer;
+    }): Promise<AppendedDocumentDto> {
+      assert.equal(input.baseVersionId, latest);
+      const parent = latest;
+      latest = randomUUID();
+      versionNumber += 1;
+      return {
+        document: listedDoc({ id: documentId, latestVersionId: latest }),
+        version: {
+          id: latest,
+          documentId,
+          versionNumber,
+          parentVersionId: parent,
+          sizeBytes: input.bytes.byteLength,
+          sha256: "abc",
+          source: input.source,
+          createdByUserId: "user-1",
+          createdAt: new Date().toISOString(),
+        },
+      };
+    },
+  } as Pick<DocumentService, "getOwnedDocument" | "appendDocumentVersion">;
+
+  const runtime = createFakeRuntime(async (_doc, operation) => {
+    executeTypes.push(operation.type);
+    return {
+      status: "success",
+      diagnostics: [],
+      artifactBytes: buildMinimalDocx([operation.type]),
+    };
+  });
+
+  const mutations = createDocumentMutationService(documents);
+  const baseA = latest;
+  const rows = await mutations.applyInsertTableRows({
+    documentId,
+    ownerUserId: "user-1",
+    baseVersionId: baseA,
+    table: { headerCells: ["Name", "Role"] },
+    after: { firstCellText: "Bob" },
+    rows: [["Charlie", "CFO"]],
+    runtime,
+  });
+  assert.equal(rows.status, "success");
+
+  const baseB = latest;
+  const column = await mutations.applyInsertTableColumn({
+    documentId,
+    ownerUserId: "user-1",
+    baseVersionId: baseB,
+    table: { headerCells: ["Name", "Role"] },
+    afterColumnHeader: "Role",
+    header: "Location",
+    cells: ["NY"],
+    runtime,
+  });
+  assert.equal(column.status, "success");
+  assert.deepEqual(executeTypes, [
+    "document.insert_table_rows",
+    "document.insert_table_column",
+  ]);
+});
+
+test("table mutation engine failure does not append a version", async () => {
+  const documentId = randomUUID();
+  const baseVersionId = randomUUID();
+  let appendCount = 0;
+  const documents = {
+    async getOwnedDocument() {
+      return listedDoc({ id: documentId, latestVersionId: baseVersionId });
+    },
+    async appendDocumentVersion(): Promise<AppendedDocumentDto> {
+      appendCount += 1;
+      throw new Error("should not append");
+    },
+  } as Pick<DocumentService, "getOwnedDocument" | "appendDocumentVersion">;
+
+  const runtime = createFakeRuntime(async () => ({
+    status: "error",
+    code: "UNSUPPORTED_OPERATION",
+    diagnostics: [
+      {
+        code: "UNSUPPORTED_OPERATION",
+        severity: "error",
+        message: "merged table",
+      },
+    ],
+  }));
+
+  const mutations = createDocumentMutationService(documents);
+  const result = await mutations.applyInsertTableColumn({
+    documentId,
+    ownerUserId: "user-1",
+    baseVersionId,
+    table: { headerCells: ["Name", "Role"] },
+    afterColumnHeader: "Role",
+    header: "Location",
+    cells: ["A", "B"],
+    runtime,
+  });
+  assert.equal(result.status, "error");
+  if (result.status === "error") {
+    assert.equal(result.code, "UNSUPPORTED_OPERATION");
+  }
+  assert.equal(appendCount, 0);
+});

@@ -1,6 +1,9 @@
 import { AgentCoreError } from "./errors.js";
 import type {
-  PersistedReplaceTextToolResult,
+  DocumentTableCellUpdate,
+  DocumentTableRowAnchor,
+  DocumentTableTarget,
+  PersistedDocumentMutationToolResult,
 } from "./document-mutation.js";
 import type { AgentTool, ToolExecutionContext } from "./model.js";
 import type {
@@ -29,11 +32,22 @@ import { MOCK_DOCUMENT_CAPABILITIES } from "./mock-runtime.js";
  * Always derive DocumentRef from ToolExecutionContext — never from model input.
  */
 
+/** Rust-advertised DOCX mutation capability ids (also mirrored in RuntimeCapabilities). */
+export const DOCX_ENGINE_CAPS = {
+  replaceText: "replace_text",
+  setTableCellsText: "set_table_cells_text",
+  insertTableRows: "insert_table_rows",
+  insertTableColumn: "insert_table_column",
+} as const;
+
 export const DOCUMENT_TOOL_NAMES = {
   capabilities: "document.capabilities",
   inspect: "document.inspect",
   find: "document.find",
   replaceText: "document.replace_text",
+  setTableCellsText: "document.set_table_cells_text",
+  insertTableRows: "document.insert_table_rows",
+  insertTableColumn: "document.insert_table_column",
   updateSlideText: "slides.update_text",
   setCells: "workbook.set_cells",
 } as const;
@@ -88,9 +102,13 @@ export function createDocumentInspectTool(): AgentTool<
   return {
     name: DOCUMENT_TOOL_NAMES.inspect,
     description:
-      "Inspect the active Office document. Prefer a targeted focus. " +
-      "DOCX engine runtime supports kind=context (bounded text around a target). " +
-      "Broad focuses (overview, headings, paragraphs, tables, …) depend on the runtime.",
+      "Inspect the active Office document with a targeted focus. " +
+      "DOCX: overview (compact structure/counts), headings (outline), paragraphs (body prose page), " +
+      "tables (rows/cells), context (nearby content around exact text). " +
+      "Prefer overview first when structure is unknown; headings to navigate sections; " +
+      "tables for tabular work; paragraphs for body prose; context after locating exact text. " +
+      "Use offset/limit paging (default limit 20, max 100) — do not request huge dumps. " +
+      "PPTX/XLSX mock runtimes also support slides/sheets/range.",
     risk: "safe",
     executionMode: "parallel-safe",
     inputSchema: {
@@ -98,7 +116,9 @@ export function createDocumentInspectTool(): AgentTool<
       properties: {
         focus: {
           type: "object",
-          description: "Targeted inspect focus. Omit for overview.",
+          description:
+            "Targeted inspect focus. Omit for overview. " +
+            "overview=counts; headings/paragraphs/tables=paged collections; context=text neighborhood.",
           properties: {
             kind: {
               type: "string",
@@ -114,6 +134,19 @@ export function createDocumentInspectTool(): AgentTool<
                 "range",
                 "context",
               ],
+              description:
+                "overview=structure counts; headings=outline; paragraphs=body prose; " +
+                "tables=table rows/cells; context=near exact text; slides/sheets/range=PPTX/XLSX",
+            },
+            offset: {
+              type: "number",
+              description:
+                "0-based page offset for headings/paragraphs/tables (default 0)",
+            },
+            limit: {
+              type: "number",
+              description:
+                "Page size for headings/paragraphs/tables (default 20, max 100)",
             },
             index: { type: "number", description: "0-based slide index when kind=slide" },
             sheet: { type: "string", description: "Sheet name when kind=range" },
@@ -281,7 +314,21 @@ export function createDocumentToolRegistry(
   if (hasCapability(capabilities, Capabilities.DocumentMutate)) {
     const format = options.format;
     if (!format || format === "docx") {
-      tools.push(createDocumentReplaceTextTool());
+      if (
+        hasCapability(capabilities, DOCX_ENGINE_CAPS.replaceText) ||
+        !hasAnyDocxEngineMutationCap(capabilities)
+      ) {
+        tools.push(createDocumentReplaceTextTool());
+      }
+      if (hasCapability(capabilities, DOCX_ENGINE_CAPS.setTableCellsText)) {
+        tools.push(createDocumentSetTableCellsTextTool());
+      }
+      if (hasCapability(capabilities, DOCX_ENGINE_CAPS.insertTableRows)) {
+        tools.push(createDocumentInsertTableRowsTool());
+      }
+      if (hasCapability(capabilities, DOCX_ENGINE_CAPS.insertTableColumn)) {
+        tools.push(createDocumentInsertTableColumnTool());
+      }
     }
     if (!format || format === "pptx") {
       tools.push(createSlidesUpdateTextTool());
@@ -293,6 +340,17 @@ export function createDocumentToolRegistry(
   return ToolRegistry.create(tools);
 }
 
+function hasAnyDocxEngineMutationCap(
+  capabilities: RuntimeCapabilities,
+): boolean {
+  return (
+    hasCapability(capabilities, DOCX_ENGINE_CAPS.replaceText) ||
+    hasCapability(capabilities, DOCX_ENGINE_CAPS.setTableCellsText) ||
+    hasCapability(capabilities, DOCX_ENGINE_CAPS.insertTableRows) ||
+    hasCapability(capabilities, DOCX_ENGINE_CAPS.insertTableColumn)
+  );
+}
+
 export function readOnlyDocumentCapabilities(): RuntimeCapabilities {
   return createCapabilities(
     Capabilities.DocumentInspect,
@@ -300,12 +358,16 @@ export function readOnlyDocumentCapabilities(): RuntimeCapabilities {
   );
 }
 
-/** Inspect + find + safe mock mutations. */
+/** Inspect + find + safe mock mutations (includes Rust DOCX mutation ids). */
 export function mutableDocumentCapabilities(): RuntimeCapabilities {
   return createCapabilities(
     Capabilities.DocumentInspect,
     Capabilities.DocumentFind,
     Capabilities.DocumentMutate,
+    DOCX_ENGINE_CAPS.replaceText,
+    DOCX_ENGINE_CAPS.setTableCellsText,
+    DOCX_ENGINE_CAPS.insertTableRows,
+    DOCX_ENGINE_CAPS.insertTableColumn,
   );
 }
 
@@ -317,13 +379,14 @@ export interface DocumentReplaceTextInput {
 
 export function createDocumentReplaceTextTool(): AgentTool<
   DocumentReplaceTextInput,
-  PersistedReplaceTextToolResult
+  PersistedDocumentMutationToolResult
 > {
   return {
     name: DOCUMENT_TOOL_NAMES.replaceText,
     description:
-      "Replace text in the active DOCX document. Success means an immutable " +
-      "new document version was persisted. Verify with document.find/inspect afterward.",
+      "Replace prose/heading text in the active DOCX document (not for semantic table cells). " +
+      "Success means an immutable new document version was persisted. " +
+      "For table cell updates prefer document.set_table_cells_text after inspect(tables).",
     risk: "safe",
     effect: "write",
     executionMode: "sequential",
@@ -376,32 +439,11 @@ export function createDocumentReplaceTextTool(): AgentTool<
       };
     },
     async execute(input, ctx) {
-      const { document, runtime } = requireDocumentRuntime(ctx);
-      if (!ctx.mutations) {
-        throw new AgentCoreError(
-          "RUNTIME_FAILURE",
-          "DocumentMutationExecutor is not configured; cannot persist replace_text",
-          {
-            diagnostic: {
-              code: "DOCUMENT_MUTATIONS_MISSING",
-              severity: "error",
-              message:
-                "DocumentMutationExecutor is not configured; cannot persist replace_text",
-            },
-          },
-        );
-      }
-      const caps = await runtime.capabilities(document);
-      if (!hasCapability(caps, Capabilities.DocumentMutate)) {
-        throw diagnosticError({
-          code: "UNSUPPORTED_CAPABILITY",
-          severity: "error",
-          message: `Runtime does not support capability: ${Capabilities.DocumentMutate}`,
-          details: { capability: Capabilities.DocumentMutate },
-        });
-      }
+      requireMutations(ctx, DOCUMENT_TOOL_NAMES.replaceText);
+      const { document } = requireDocumentRuntime(ctx);
+      await requireMutateCapability(ctx);
 
-      const result = await ctx.mutations.replaceText({
+      const result = await ctx.mutations!.replaceText({
         document,
         find: input.find,
         replace: input.replace,
@@ -409,23 +451,492 @@ export function createDocumentReplaceTextTool(): AgentTool<
         runId: ctx.runId,
       });
 
-      if (result.status === "error") {
-        throw diagnosticError(result.diagnostics[0]!);
+      return toPersistedMutationToolResult(result, ctx);
+    },
+  };
+}
+
+export interface DocumentSetTableCellsTextInput {
+  readonly table: DocumentTableTarget;
+  readonly updates: readonly DocumentTableCellUpdate[];
+}
+
+export function createDocumentSetTableCellsTextTool(): AgentTool<
+  DocumentSetTableCellsTextInput,
+  PersistedDocumentMutationToolResult
+> {
+  return {
+    name: DOCUMENT_TOOL_NAMES.setTableCellsText,
+    description:
+      "Atomically update multiple existing cells in one supported DOCX table. " +
+      "Inspect tables first; supply expectedCurrentText from actual cell values. " +
+      "Prefer one multi-cell call over several replace_text calls for table cells. " +
+      "All updates validate before mutation — one invalid target fails the whole operation. " +
+      "Success = immutable version persisted. Capability does not guarantee every table shape is mutable.",
+    risk: "safe",
+    effect: "write",
+    executionMode: "sequential",
+    inputSchema: {
+      type: "object",
+      properties: {
+        table: {
+          type: "object",
+          description:
+            "Semantic table target from inspect(tables): headerCells (+ optional occurrence)",
+          properties: {
+            headerCells: {
+              type: "array",
+              items: { type: "string" },
+              description: "Exact header cell texts in order",
+            },
+            occurrence: {
+              type: "number",
+              description: "Version-local occurrence when headers collide (1-based)",
+            },
+          },
+          required: ["headerCells"],
+          additionalProperties: false,
+        },
+        updates: {
+          type: "array",
+          description: "Cell updates in one atomic engine operation",
+          items: {
+            type: "object",
+            properties: {
+              rowLabel: {
+                type: "string",
+                description: "First-column / row-label text from inspection",
+              },
+              columnHeader: {
+                type: "string",
+                description: "Column header text from inspection",
+              },
+              expectedCurrentText: {
+                type: "string",
+                description: "Current cell text (precondition from inspection)",
+              },
+              replacement: { type: "string", description: "New cell text" },
+              occurrence: {
+                type: "number",
+                description: "Version-local occurrence when row/column collide",
+              },
+            },
+            required: [
+              "rowLabel",
+              "columnHeader",
+              "expectedCurrentText",
+              "replacement",
+            ],
+            additionalProperties: false,
+          },
+        },
+      },
+      required: ["table", "updates"],
+      additionalProperties: false,
+    },
+    parseInput(raw) {
+      const obj = assertObject(raw, DOCUMENT_TOOL_NAMES.setTableCellsText);
+      const table = parseTableTarget(
+        obj.table,
+        DOCUMENT_TOOL_NAMES.setTableCellsText,
+      );
+      if (!Array.isArray(obj.updates) || obj.updates.length === 0) {
+        throw new AgentCoreError(
+          "INVALID_TOOL_INPUT",
+          "document.set_table_cells_text requires a non-empty updates array",
+        );
       }
+      const updates: DocumentTableCellUpdate[] = [];
+      for (const item of obj.updates) {
+        if (!item || typeof item !== "object" || Array.isArray(item)) {
+          throw new AgentCoreError(
+            "INVALID_TOOL_INPUT",
+            "document.set_table_cells_text updates entries must be objects",
+          );
+        }
+        const entry = item as Record<string, unknown>;
+        if (
+          typeof entry.rowLabel !== "string" ||
+          !entry.rowLabel ||
+          typeof entry.columnHeader !== "string" ||
+          !entry.columnHeader ||
+          typeof entry.expectedCurrentText !== "string" ||
+          typeof entry.replacement !== "string"
+        ) {
+          throw new AgentCoreError(
+            "INVALID_TOOL_INPUT",
+            "document.set_table_cells_text updates require rowLabel, columnHeader, expectedCurrentText, replacement",
+          );
+        }
+        const occurrence = parseOptionalPositiveInt(
+          entry.occurrence,
+          "document.set_table_cells_text update occurrence",
+        );
+        updates.push({
+          rowLabel: entry.rowLabel,
+          columnHeader: entry.columnHeader,
+          expectedCurrentText: entry.expectedCurrentText,
+          replacement: entry.replacement,
+          ...(occurrence !== undefined ? { occurrence } : {}),
+        });
+      }
+      return { table, updates };
+    },
+    async execute(input, ctx) {
+      requireMutations(ctx, DOCUMENT_TOOL_NAMES.setTableCellsText);
+      const { document } = requireDocumentRuntime(ctx);
+      await requireMutateCapability(ctx);
 
-      ctx.advancePrimaryDocument?.(result.document);
+      const result = await ctx.mutations!.setTableCellsText({
+        document,
+        table: input.table,
+        updates: input.updates,
+        signal: ctx.signal,
+        runId: ctx.runId,
+      });
 
+      return toPersistedMutationToolResult(result, ctx);
+    },
+  };
+}
+
+export interface DocumentInsertTableRowsInput {
+  readonly table: DocumentTableTarget;
+  readonly after: DocumentTableRowAnchor;
+  readonly rows: readonly (readonly string[])[];
+}
+
+export function createDocumentInsertTableRowsTool(): AgentTool<
+  DocumentInsertTableRowsInput,
+  PersistedDocumentMutationToolResult
+> {
+  return {
+    name: DOCUMENT_TOOL_NAMES.insertTableRows,
+    description:
+      "Insert one contiguous block of rows into a supported DOCX table after a semantic row anchor. " +
+      "Inspect tables first; preserve column order; every row must supply exactly one string per column. " +
+      "Use for adding records/guests/items. Do not invent column counts. " +
+      "Capability does not guarantee complex/merged tables are writable. Success = immutable version persisted.",
+    risk: "safe",
+    effect: "write",
+    executionMode: "sequential",
+    inputSchema: {
+      type: "object",
+      properties: {
+        table: {
+          type: "object",
+          properties: {
+            headerCells: {
+              type: "array",
+              items: { type: "string" },
+            },
+            occurrence: { type: "number" },
+          },
+          required: ["headerCells"],
+          additionalProperties: false,
+        },
+        after: {
+          type: "object",
+          description: "Insert after this row (firstCellText from inspection)",
+          properties: {
+            firstCellText: { type: "string" },
+            occurrence: { type: "number" },
+          },
+          required: ["firstCellText"],
+          additionalProperties: false,
+        },
+        rows: {
+          type: "array",
+          description: "New rows; each row length must match table width",
+          items: {
+            type: "array",
+            items: { type: "string" },
+          },
+        },
+      },
+      required: ["table", "after", "rows"],
+      additionalProperties: false,
+    },
+    parseInput(raw) {
+      const obj = assertObject(raw, DOCUMENT_TOOL_NAMES.insertTableRows);
+      const table = parseTableTarget(
+        obj.table,
+        DOCUMENT_TOOL_NAMES.insertTableRows,
+      );
+      if (!obj.after || typeof obj.after !== "object" || Array.isArray(obj.after)) {
+        throw new AgentCoreError(
+          "INVALID_TOOL_INPUT",
+          "document.insert_table_rows requires after row anchor",
+        );
+      }
+      const afterObj = obj.after as Record<string, unknown>;
+      if (
+        typeof afterObj.firstCellText !== "string" ||
+        !afterObj.firstCellText
+      ) {
+        throw new AgentCoreError(
+          "INVALID_TOOL_INPUT",
+          "document.insert_table_rows after.firstCellText must be a non-empty string",
+        );
+      }
+      const afterOccurrence = parseOptionalPositiveInt(
+        afterObj.occurrence,
+        "document.insert_table_rows after.occurrence",
+      );
+      if (!Array.isArray(obj.rows) || obj.rows.length === 0) {
+        throw new AgentCoreError(
+          "INVALID_TOOL_INPUT",
+          "document.insert_table_rows requires a non-empty rows array",
+        );
+      }
+      const rows: string[][] = [];
+      for (const row of obj.rows) {
+        if (!Array.isArray(row) || row.length === 0) {
+          throw new AgentCoreError(
+            "INVALID_TOOL_INPUT",
+            "document.insert_table_rows each row must be a non-empty string array",
+          );
+        }
+        const cells: string[] = [];
+        for (const cell of row) {
+          if (typeof cell !== "string") {
+            throw new AgentCoreError(
+              "INVALID_TOOL_INPUT",
+              "document.insert_table_rows row cells must be strings",
+            );
+          }
+          cells.push(cell);
+        }
+        rows.push(cells);
+      }
       return {
-        status: "success",
-        diagnostics: result.diagnostics,
-        ...(result.change !== undefined ? { change: result.change } : {}),
-        document: result.document,
-        ...(result.versionNumber !== undefined
-          ? { versionNumber: result.versionNumber }
-          : {}),
-        baseVersionId: result.baseVersionId,
+        table,
+        after: {
+          firstCellText: afterObj.firstCellText,
+          ...(afterOccurrence !== undefined
+            ? { occurrence: afterOccurrence }
+            : {}),
+        },
+        rows,
       };
     },
+    async execute(input, ctx) {
+      requireMutations(ctx, DOCUMENT_TOOL_NAMES.insertTableRows);
+      const { document } = requireDocumentRuntime(ctx);
+      await requireMutateCapability(ctx);
+
+      const result = await ctx.mutations!.insertTableRows({
+        document,
+        table: input.table,
+        after: input.after,
+        rows: input.rows,
+        signal: ctx.signal,
+        runId: ctx.runId,
+      });
+
+      return toPersistedMutationToolResult(result, ctx);
+    },
+  };
+}
+
+export interface DocumentInsertTableColumnInput {
+  readonly table: DocumentTableTarget;
+  readonly afterColumnHeader: string;
+  readonly header: string;
+  readonly cells: readonly string[];
+}
+
+export function createDocumentInsertTableColumnTool(): AgentTool<
+  DocumentInsertTableColumnInput,
+  PersistedDocumentMutationToolResult
+> {
+  return {
+    name: DOCUMENT_TOOL_NAMES.insertTableColumn,
+    description:
+      "Insert exactly one column into a simple rectangular DOCX table after an existing header. " +
+      "Inspect tables first; cells[] must supply one value per existing data row (inspection order). " +
+      "Not a general layout editor — merged/nested/complex tables may return UNSUPPORTED_OPERATION. " +
+      "Success = immutable version persisted.",
+    risk: "safe",
+    effect: "write",
+    executionMode: "sequential",
+    inputSchema: {
+      type: "object",
+      properties: {
+        table: {
+          type: "object",
+          properties: {
+            headerCells: {
+              type: "array",
+              items: { type: "string" },
+            },
+            occurrence: { type: "number" },
+          },
+          required: ["headerCells"],
+          additionalProperties: false,
+        },
+        afterColumnHeader: {
+          type: "string",
+          description: "Existing column header to insert after",
+        },
+        header: {
+          type: "string",
+          description: "New column header text",
+        },
+        cells: {
+          type: "array",
+          items: { type: "string" },
+          description: "One value per existing data row, in inspection order",
+        },
+      },
+      required: ["table", "afterColumnHeader", "header", "cells"],
+      additionalProperties: false,
+    },
+    parseInput(raw) {
+      const obj = assertObject(raw, DOCUMENT_TOOL_NAMES.insertTableColumn);
+      const table = parseTableTarget(
+        obj.table,
+        DOCUMENT_TOOL_NAMES.insertTableColumn,
+      );
+      if (
+        typeof obj.afterColumnHeader !== "string" ||
+        !obj.afterColumnHeader ||
+        typeof obj.header !== "string" ||
+        !obj.header
+      ) {
+        throw new AgentCoreError(
+          "INVALID_TOOL_INPUT",
+          "document.insert_table_column requires afterColumnHeader and header strings",
+        );
+      }
+      if (!Array.isArray(obj.cells)) {
+        throw new AgentCoreError(
+          "INVALID_TOOL_INPUT",
+          "document.insert_table_column requires a cells array",
+        );
+      }
+      const cells: string[] = [];
+      for (const cell of obj.cells) {
+        if (typeof cell !== "string") {
+          throw new AgentCoreError(
+            "INVALID_TOOL_INPUT",
+            "document.insert_table_column cells must be strings",
+          );
+        }
+        cells.push(cell);
+      }
+      return {
+        table,
+        afterColumnHeader: obj.afterColumnHeader,
+        header: obj.header,
+        cells,
+      };
+    },
+    async execute(input, ctx) {
+      requireMutations(ctx, DOCUMENT_TOOL_NAMES.insertTableColumn);
+      const { document } = requireDocumentRuntime(ctx);
+      await requireMutateCapability(ctx);
+
+      const result = await ctx.mutations!.insertTableColumn({
+        document,
+        table: input.table,
+        afterColumnHeader: input.afterColumnHeader,
+        header: input.header,
+        cells: input.cells,
+        signal: ctx.signal,
+        runId: ctx.runId,
+      });
+
+      return toPersistedMutationToolResult(result, ctx);
+    },
+  };
+}
+
+function parseTableTarget(
+  raw: unknown,
+  toolName: string,
+): DocumentTableTarget {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+    throw new AgentCoreError(
+      "INVALID_TOOL_INPUT",
+      `${toolName} requires a table target object`,
+    );
+  }
+  const table = raw as Record<string, unknown>;
+  if (!Array.isArray(table.headerCells) || table.headerCells.length === 0) {
+    throw new AgentCoreError(
+      "INVALID_TOOL_INPUT",
+      `${toolName} table.headerCells must be a non-empty string array`,
+    );
+  }
+  const headerCells: string[] = [];
+  for (const cell of table.headerCells) {
+    if (typeof cell !== "string") {
+      throw new AgentCoreError(
+        "INVALID_TOOL_INPUT",
+        `${toolName} table.headerCells must be strings`,
+      );
+    }
+    headerCells.push(cell);
+  }
+  const occurrence = parseOptionalPositiveInt(
+    table.occurrence,
+    `${toolName} table.occurrence`,
+  );
+  return {
+    headerCells,
+    ...(occurrence !== undefined ? { occurrence } : {}),
+  };
+}
+
+function requireMutations(ctx: ToolExecutionContext, toolName: string): void {
+  if (!ctx.mutations) {
+    throw new AgentCoreError(
+      "RUNTIME_FAILURE",
+      `DocumentMutationExecutor is not configured; cannot persist ${toolName}`,
+      {
+        diagnostic: {
+          code: "DOCUMENT_MUTATIONS_MISSING",
+          severity: "error",
+          message: `DocumentMutationExecutor is not configured; cannot persist ${toolName}`,
+        },
+      },
+    );
+  }
+}
+
+async function requireMutateCapability(ctx: ToolExecutionContext): Promise<void> {
+  const { document, runtime } = requireDocumentRuntime(ctx);
+  const caps = await runtime.capabilities(document);
+  if (!hasCapability(caps, Capabilities.DocumentMutate)) {
+    throw diagnosticError({
+      code: "UNSUPPORTED_CAPABILITY",
+      severity: "error",
+      message: `Runtime does not support capability: ${Capabilities.DocumentMutate}`,
+      details: { capability: Capabilities.DocumentMutate },
+    });
+  }
+}
+
+function toPersistedMutationToolResult(
+  result: Awaited<
+    ReturnType<NonNullable<ToolExecutionContext["mutations"]>["replaceText"]>
+  >,
+  ctx: ToolExecutionContext,
+): PersistedDocumentMutationToolResult {
+  if (result.status === "error") {
+    throw diagnosticError(result.diagnostics[0]!);
+  }
+  ctx.advancePrimaryDocument?.(result.document);
+  return {
+    status: "success",
+    diagnostics: result.diagnostics,
+    ...(result.change !== undefined ? { change: result.change } : {}),
+    document: result.document,
+    ...(result.versionNumber !== undefined
+      ? { versionNumber: result.versionNumber }
+      : {}),
+    baseVersionId: result.baseVersionId,
   };
 }
 
@@ -753,12 +1264,26 @@ function parseFocus(raw: unknown): DocumentInspectFocus {
   switch (kind) {
     case "overview":
     case "structure":
-    case "headings":
-    case "paragraphs":
-    case "tables":
     case "slides":
     case "sheets":
       return { kind };
+    case "headings":
+    case "paragraphs":
+    case "tables": {
+      const offset = parseOptionalNonNegativeInt(
+        focus.offset,
+        "document.inspect focus.offset",
+      );
+      const limit = parseOptionalPositiveInt(
+        focus.limit,
+        "document.inspect focus.limit",
+      );
+      return {
+        kind,
+        ...(offset !== undefined ? { offset } : {}),
+        ...(limit !== undefined ? { limit } : {}),
+      };
+    }
     case "slide": {
       if (typeof focus.index !== "number" || !Number.isFinite(focus.index)) {
         throw new AgentCoreError(
@@ -853,4 +1378,32 @@ function parseFocus(raw: unknown): DocumentInspectFocus {
         `Unsupported document.inspect focus.kind: ${kind}`,
       );
   }
+}
+
+function parseOptionalNonNegativeInt(
+  value: unknown,
+  label: string,
+): number | undefined {
+  if (value === undefined) return undefined;
+  if (typeof value !== "number" || !Number.isInteger(value) || value < 0) {
+    throw new AgentCoreError(
+      "INVALID_TOOL_INPUT",
+      `${label} must be a non-negative integer`,
+    );
+  }
+  return value;
+}
+
+function parseOptionalPositiveInt(
+  value: unknown,
+  label: string,
+): number | undefined {
+  if (value === undefined) return undefined;
+  if (typeof value !== "number" || !Number.isInteger(value) || value < 1) {
+    throw new AgentCoreError(
+      "INVALID_TOOL_INPUT",
+      `${label} must be a positive integer`,
+    );
+  }
+  return value;
 }

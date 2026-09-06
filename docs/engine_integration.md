@@ -12,9 +12,9 @@ Application code must never manipulate Office internals as a shortcut around the
 
 ```text
 AgentRunner
-  → AgentTool (document.replace_text)
+  → AgentTool (replace_text | set_table_cells_text | insert_table_rows | insert_table_column)
   → DocumentMutationExecutor (injected by apps/api)
-  → applyReplaceText
+  → apply* (shared authorize → execute → appendDocumentVersion)
   → DocumentRuntime.execute (once)
   → OpenSuiteEngineAdapter (@opensuite/engine-client)
   → Node N-API (@opensuite/engine)
@@ -27,9 +27,9 @@ AgentRunner
 ```text
 Agent run starts at Version N
   → real find/inspect N
-  → document.replace_text
+  → typed mutation tool
        → DocumentMutationExecutor (apps/api)
-       → applyReplaceText (engine once + appendDocumentVersion)
+       → apply* (engine once + appendDocumentVersion)
        → immutable Version N+1
   → run advances active DocumentRef to N+1
   → subsequent tools read N+1
@@ -39,7 +39,8 @@ Agent run starts at Version N
 * Raw engine `artifactBytes` success is **not** tool success — persistence must complete.
 * agent-core never imports apps/api; persistence is injected.
 * No engine source identities cross the tool boundary.
-* VERSION_CONFLICT / TARGET_NOT_FOUND / persistence failure → tool failed; DocumentRef unchanged.
+* VERSION_CONFLICT / TARGET_NOT_FOUND / PRECONDITION_FAILED / UNSUPPORTED_OPERATION / persistence failure → tool failed; DocumentRef unchanged.
+* Multi-cell / multi-row updates are atomic **inside one engine operation**; separate tool calls remain separate versions.
 
 ### Real DOCX read+write flow (service layer)
 
@@ -47,17 +48,24 @@ Agent run starts at Version N
 exact immutable version N
   → getDocxCapabilities (Rust RuntimeCapabilities)
   → findDocxText (mode=text)
-  → inspectDocx (focus.kind=context only)
+  → inspectDocx (overview | headings | paragraphs | tables | context)
   → executeDocxReplaceText
+    | executeDocxSetTableCellsText
+    | executeDocxInsertTableRows
+    | executeDocxInsertTableColumn
   → verified artifactBytes
   → appendDocumentVersion → N+1
   → find/inspect N+1 independently
 ```
 
-* Rust is capability source of truth (`find_text`, `inspect_context`, `replace_text`, …).
-* Broad inspect focuses (overview/headings/…) return `UNSUPPORTED_OPERATION` — no mock fallback.
+* Rust is capability / semantic source of truth.
+* Inspect focuses: overview, headings, paragraphs, tables, context — paged collections use offset/limit (default 20, max 100).
+* Occurrence/order from inspect is VERSION-LOCAL — never persist as durable identity.
+* Table workflow: inspect(tables) → set cells / insert rows / insert one column → re-inspect.
+* Limits: simple top-level rectangular tables; column insert needs explicit `w:tblGrid`; merged/nested/complex → `UNSUPPORTED_OPERATION`.
 * Find `mode: "semantic"` is unsupported on the real adapter (use `text`).
 * `MockDocumentRuntime` remains for isolated tests; API DOCX default is OpenSuiteEngineAdapter; PPTX/XLSX remain mock.
+* Real DOCX never falls back to mock inspect semantics.
 * Application owns version history; engine never writes DB/storage.
 
 ### Local Node binding setup
@@ -128,8 +136,8 @@ These types are plain, JSON-shaped TypeScript (no classes, enums-as-objects, or 
 `packages/engine-client` is the concrete implementation of the boundary described above. It is built around:
 
 * **`EngineTransport` / `EngineClient` / `MockEngineTransport`** — existing contracts inspect seam (still mock-backed).
-* **`DocxEngineBinding`** — hides N-API (`getDocxCapabilities`, `findDocxText`, `inspectDocx`, `executeDocxReplaceText`).
-* **`OpenSuiteEngineAdapter`** — real DOCX `DocumentRuntime` (caps/find/context-inspect/replace).
+* **`DocxEngineBinding`** — hides N-API (`getDocxCapabilities`, `findDocxText`, `inspectDocx`, `executeDocxReplaceText`, `executeDocxSetTableCellsText`, `executeDocxInsertTableRows`, `executeDocxInsertTableColumn`).
+* **`OpenSuiteEngineAdapter`** — real DOCX `DocumentRuntime` (caps/find/inspect/replace + table mutations).
 * **`DocumentArtifactLoader`** — injected exact-version byte loader (application storage owns resolution).
 
 Swapping N-API for a future remote engine service only requires a new `DocxEngineBinding` — AgentRunner and AgentTools do not change.

@@ -23,17 +23,45 @@ export interface DocumentInspectionSummary {
 export interface InspectedBlock {
   readonly handle: string;
   readonly text: string;
+  /** Version-local occurrence when provided by the engine (not durable identity). */
+  readonly occurrence?: number;
+  readonly styleName?: string;
 }
 
 export interface InspectedHeading extends InspectedBlock {
-  readonly level: number;
+  /** Present for standard Heading N styles when the engine assigns a level. */
+  readonly level?: number;
+}
+
+/** Compact DOCX structure counts from engine overview inspect. */
+export interface DocxInspectionOverview {
+  readonly bodyBlockCount: number;
+  readonly paragraphCount: number;
+  readonly tableCount: number;
+  readonly sectionCount: number;
+}
+
+/** Paging metadata for collection inspect focuses (engine-authoritative). */
+export interface InspectionPageInfo {
+  readonly total: number;
+  readonly offset: number;
+  readonly returned: number;
+  readonly hasMore: boolean;
 }
 
 export interface InspectedTable {
   readonly handle: string;
+  /** Version-local occurrence when provided by the engine (not durable identity). */
+  readonly occurrence?: number;
   readonly rows: number;
   readonly cols: number;
-  /** Small preview grid when available. */
+  readonly isRectangular?: boolean;
+  /**
+   * Structured cell text by row when provided by the engine.
+   * Uneven rows are preserved as-is — do not invent rectangular padding.
+   */
+  readonly cells?: readonly (readonly string[])[];
+  /** Small preview grid when available (mock / compact views). */
   readonly preview?: readonly (readonly string[])[];
 }
 
@@ -86,6 +114,10 @@ export type InspectionPayload =
   | {
       readonly format: "docx";
       readonly summary: DocumentInspectionSummary;
+      /** Present for focus.kind=overview when the runtime provides counts. */
+      readonly overview?: DocxInspectionOverview;
+      /** Present for paged collection focuses (headings/paragraphs/tables). */
+      readonly page?: InspectionPageInfo;
       readonly headings?: readonly InspectedHeading[];
       readonly paragraphs?: readonly InspectedBlock[];
       readonly tables?: readonly InspectedTable[];
@@ -125,15 +157,28 @@ export type InspectionResult =
 /**
  * Targeted inspect request. Prefer a narrow focus over dumping the whole file.
  *
- * `context` is the engine-backed DOCX bounded text inspect. Broad focuses
- * (overview/headings/…) remain mock-only until Rust exposes typed contracts.
+ * Real DOCX (OpenSuiteEngineAdapter) supports overview / headings / paragraphs /
+ * tables / context. PPTX/XLSX mock runtimes support slides/sheets/range.
+ * Collection focuses may include version-local offset/limit paging (max 100).
  */
 export type DocumentInspectFocus =
   | { readonly kind: "overview" }
   | { readonly kind: "structure" }
-  | { readonly kind: "headings" }
-  | { readonly kind: "paragraphs" }
-  | { readonly kind: "tables" }
+  | {
+      readonly kind: "headings";
+      readonly offset?: number;
+      readonly limit?: number;
+    }
+  | {
+      readonly kind: "paragraphs";
+      readonly offset?: number;
+      readonly limit?: number;
+    }
+  | {
+      readonly kind: "tables";
+      readonly offset?: number;
+      readonly limit?: number;
+    }
   | { readonly kind: "slides" }
   | { readonly kind: "slide"; readonly index: number }
   | { readonly kind: "sheets" }
@@ -145,6 +190,11 @@ export type DocumentInspectFocus =
       readonly before?: number;
       readonly after?: number;
     };
+
+/** Default page size for collection inspect focuses when the caller omits limit. */
+export const DEFAULT_INSPECT_PAGE_LIMIT = 20;
+/** Engine maximum inspect page size — never request more. */
+export const MAX_INSPECT_PAGE_LIMIT = 100;
 
 export interface DocumentFindQuery {
   readonly query: string;

@@ -6,6 +6,33 @@ import type { DocxEngineBinding } from "@opensuite/engine-client";
 
 import { createDocumentRuntimeResolver } from "../documents/runtime.js";
 
+function unusedTableMutations(): Pick<
+  DocxEngineBinding,
+  | "executeDocxSetTableCellsText"
+  | "executeDocxInsertTableRows"
+  | "executeDocxInsertTableColumn"
+> {
+  const fail = async () => ({
+    result: {
+      ok: false as const,
+      status: "failed",
+      diagnostics: [
+        {
+          code: "UNSUPPORTED_OPERATION",
+          severity: "error",
+          message: "unused",
+        },
+      ],
+      changes: [],
+    },
+  });
+  return {
+    executeDocxSetTableCellsText: fail,
+    executeDocxInsertTableRows: fail,
+    executeDocxInsertTableColumn: fail,
+  };
+}
+
 function fakeBinding(): DocxEngineBinding {
   return {
     getDocxCapabilities() {
@@ -31,10 +58,26 @@ function fakeBinding(): DocxEngineBinding {
       };
     },
     async inspectDocx(_input, request) {
+      if (request.focus.kind !== "context") {
+        return {
+          ok: false,
+          focus: request.focus.kind,
+          diagnostics: [
+            {
+              code: "UNSUPPORTED_OPERATION",
+              severity: "error",
+              message: `stub does not implement ${request.focus.kind}`,
+            },
+          ],
+        };
+      }
       return {
         ok: true,
-        target: request.target,
-        nearby: [],
+        focus: "context",
+        context: {
+          target: { text: request.focus.text },
+          nearby: [],
+        },
         diagnostics: [],
       };
     },
@@ -54,6 +97,7 @@ function fakeBinding(): DocxEngineBinding {
         },
       };
     },
+    ...unusedTableMutations(),
   };
 }
 

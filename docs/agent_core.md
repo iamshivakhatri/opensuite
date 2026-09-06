@@ -32,18 +32,21 @@ AgentRequest
 **Read**
 
 * `document.capabilities` — list runtime caps for the primary document
-* `document.inspect` — targeted focus (`overview` / `headings` / `slides` / `sheets` / `range` / …)
+* `document.inspect` — DOCX: `overview` / `headings` / `paragraphs` / `tables` / `context` (paged); PPTX/XLSX mock: slides/sheets/range
 * `document.find` — text or semantic matches
 
 **Safe writes**
 
-* `document.replace_text` — DOCX find/replace; **tool success = persisted immutable version**
+* `document.replace_text` — DOCX prose/heading find/replace; **tool success = persisted immutable version**
+* `document.set_table_cells_text` — atomic multi-cell update in one supported table (expected-current preconditions)
+* `document.insert_table_rows` — contiguous multi-row insert after a semantic row anchor
+* `document.insert_table_column` — single column insert (simple rectangular tables with explicit grid)
 * `slides.update_text` — PPTX slide title or existing→new text (mock runtime path)
 * `workbook.set_cells` — XLSX small cell writes (mock runtime path)
 
 `DocumentRef` always comes from `ToolExecutionContext.primaryDocument` — never from model input.
-DOCX `replace_text` uses injected `DocumentMutationExecutor` (not bare `runtime.execute`).
-Agent-core does **not** own DB/storage; apps/api injects `applyReplaceText`.
+DOCX writes use injected `DocumentMutationExecutor` (not bare `runtime.execute`).
+Agent-core does **not** own DB/storage; apps/api injects `applyReplaceText` / `applySetTableCellsText` / `applyInsertTableRows` / `applyInsertTableColumn`.
 
 After a persisted mutation, the run advances its active `DocumentRef` N → N+1
 (run-local only). Subsequent find/inspect/mutate in the **same run** read N+1.
@@ -52,15 +55,22 @@ is **not** tool success.
 
 Write tools use `effect: "write"` and `executionMode: "sequential"`.
 Format-filtered registration: DOCX runs do not receive workbook/slide tools (and vice versa).
+Table tools are gated on Rust capability ids (`set_table_cells_text`, `insert_table_rows`, `insert_table_column`).
 
 Default product stack: `createMockDocumentRuntime({ capabilities: mutableDocumentCapabilities() })`.
-Real DOCX path: `createOpenSuiteEngineAdapter` — capabilities/find(text)/inspect(context)/replace_text via N-API
-(see `docs/engine_integration.md`). No mock fallback for unsupported real-DOCX focuses.
+Real DOCX path: `createOpenSuiteEngineAdapter` — caps/find/inspect/replace + table mutations via N-API
+(see `docs/engine_integration.md`). No mock fallback for unsupported real-DOCX focuses (e.g. slides).
+Inspect paging uses `offset`/`limit` (default 20, max 100). Occurrence/order is version-local only.
+
+Table workflow: inspect(tables) → typed table mutation → immutable version → re-inspect.
+Capability does not guarantee every structure is writable (merged/complex may return `UNSUPPORTED_OPERATION`).
+Not exposed: delete row/column, create table, multi-column insert, generic `document.mutate`.
+
 Persisted mutation results include `document` (new DocumentRef), `baseVersionId`, optional `change`
 summary — never storage keys or engine source identities.
 
 System instruction: `buildDocumentAgentSystemPrompt` — capability-driven:
-mutate advertised → may edit with tools + must verify; otherwise say edits unavailable.
+mutate advertised → may edit with listed tools + must verify; otherwise say edits unavailable.
 Never claim an edit succeeded without a successful mutation tool result.
 
 * Safe tools execute immediately; write tools default sequential
@@ -141,7 +151,6 @@ Durable history is application-owned. `AgentExecutionService` maps selected
 
 ## Intentionally deferred
 
-* Broad engine inspect (overview/headings/tables); PPTX/XLSX engine runtimes
-* Broad engine inspect (overview/headings/tables); more mutations; agent auto-persist
+* Delete row/column, create table, multi-column insert; PPTX/XLSX engine runtimes
 * Model routing-fallback / durable confirmation resume / Redis workers
 * Semantic conflict detection for parallel mutations

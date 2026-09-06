@@ -75,6 +75,7 @@ export type {
   DocumentOperation,
   DocumentRuntime,
   DocumentRuntimeOptions,
+  DocxInspectionOverview,
   FindMatch,
   FindResult,
   InspectedBlock,
@@ -85,12 +86,15 @@ export type {
   InspectedTable,
   InspectedTextContext,
   InspectedTextContextUnit,
+  InspectionPageInfo,
   InspectionPayload,
   InspectionResult,
   OperationFailureCode,
   OperationResult,
 } from "./runtime.js";
 export {
+  DEFAULT_INSPECT_PAGE_LIMIT,
+  MAX_INSPECT_PAGE_LIMIT,
   runtimeSupports,
   unsupportedCapabilityFind,
   unsupportedCapabilityOperation,
@@ -98,13 +102,21 @@ export {
 } from "./runtime.js";
 
 export type {
+  DocumentInsertTableColumnMutationRequest,
+  DocumentInsertTableRowsMutationRequest,
   DocumentMutationExecutor,
   DocumentMutationResult,
   DocumentReplaceTextMutationRequest,
+  DocumentSetTableCellsTextMutationRequest,
+  DocumentTableCellUpdate,
+  DocumentTableRowAnchor,
+  DocumentTableTarget,
+  PersistedDocumentMutationToolResult,
   PersistedReplaceTextToolResult,
 } from "./document-mutation.js";
 export {
   createInMemoryDocumentMutationExecutor,
+  isPersistedDocumentMutationToolResult,
   isPersistedReplaceTextToolResult,
 } from "./document-mutation.js";
 
@@ -118,11 +130,15 @@ export {
 export type { MockDocumentRuntimeOptions } from "./mock-runtime.js";
 
 export {
+  DOCX_ENGINE_CAPS,
   DOCUMENT_TOOL_NAMES,
   createDocumentCapabilitiesTool,
   createDocumentFindTool,
   createDocumentInspectTool,
+  createDocumentInsertTableColumnTool,
+  createDocumentInsertTableRowsTool,
   createDocumentReplaceTextTool,
+  createDocumentSetTableCellsTextTool,
   createDocumentToolRegistry,
   createSlidesUpdateTextTool,
   createWorkbookSetCellsTool,
@@ -131,8 +147,11 @@ export {
 } from "./document-tools.js";
 export type {
   DocumentFindToolInput,
+  DocumentInsertTableColumnInput,
+  DocumentInsertTableRowsInput,
   DocumentInspectToolInput,
   DocumentReplaceTextInput,
+  DocumentSetTableCellsTextInput,
   SlidesUpdateTextInput,
   WorkbookSetCellsInput,
 } from "./document-tools.js";

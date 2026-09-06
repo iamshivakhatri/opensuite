@@ -100,6 +100,10 @@ export async function buildApp(
     request.log.info(
       `${request.method} ${request.url} ${reply.statusCode} ${Math.round(reply.elapsedTime)}ms`,
     );
+    // Blank line between request logs — much easier to scan in a local terminal.
+    if (process.stdout.isTTY) {
+      process.stdout.write("\n");
+    }
     done();
   });
 

@@ -11,7 +11,7 @@ import {
   type AgentEventSink,
 } from "./events.js";
 import type { DocumentMutationExecutor } from "./document-mutation.js";
-import { isPersistedReplaceTextToolResult } from "./document-mutation.js";
+import { isPersistedDocumentMutationToolResult } from "./document-mutation.js";
 import {
   requiresConfirmation,
   toolExecutionMode,
@@ -528,7 +528,7 @@ export class AgentRunner {
     try {
       this.throwIfAborted(signal);
       const output = await tool.execute(input, ctx);
-      if (isPersistedReplaceTextToolResult(output)) {
+      if (isPersistedDocumentMutationToolResult(output)) {
         documentState.primary = output.document;
         await this.emit({
           type: "document.version.advanced",

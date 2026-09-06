@@ -106,7 +106,7 @@ export interface AgentExecutionServiceDeps {
   readonly resolveRuntime?: DocumentRuntimeResolver;
   /**
    * Optional fixed mutation executor (tests). When omitted, DOCX runs get
-   * createAgentDocumentMutationExecutor → applyReplaceText.
+   * createAgentDocumentMutationExecutor → apply* (replace/table mutations).
    */
   readonly mutations?: DocumentMutationExecutor;
   /**

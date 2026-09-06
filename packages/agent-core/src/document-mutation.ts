@@ -9,15 +9,61 @@ import type {
  * Application-injected mutation boundary.
  *
  * Agent-core never persists versions itself. apps/api implements this by
- * calling createDocumentMutationService().applyReplaceText (engine once +
+ * calling createDocumentMutationService apply* methods (engine once +
  * appendDocumentVersion). Success means an immutable version was written.
  */
+
+export interface DocumentTableTarget {
+  readonly headerCells: readonly string[];
+  readonly occurrence?: number;
+}
+
+export interface DocumentTableRowAnchor {
+  readonly firstCellText: string;
+  readonly occurrence?: number;
+}
+
+export interface DocumentTableCellUpdate {
+  readonly rowLabel: string;
+  readonly columnHeader: string;
+  readonly expectedCurrentText: string;
+  readonly replacement: string;
+  readonly occurrence?: number;
+}
+
 export interface DocumentReplaceTextMutationRequest {
   readonly document: DocumentRef;
   readonly find: string;
   readonly replace: string;
   readonly expectedCurrentText?: string;
   readonly occurrence?: number;
+  readonly signal?: AbortSignal;
+  readonly runId?: string;
+}
+
+export interface DocumentSetTableCellsTextMutationRequest {
+  readonly document: DocumentRef;
+  readonly table: DocumentTableTarget;
+  readonly updates: readonly DocumentTableCellUpdate[];
+  readonly signal?: AbortSignal;
+  readonly runId?: string;
+}
+
+export interface DocumentInsertTableRowsMutationRequest {
+  readonly document: DocumentRef;
+  readonly table: DocumentTableTarget;
+  readonly after: DocumentTableRowAnchor;
+  readonly rows: readonly (readonly string[])[];
+  readonly signal?: AbortSignal;
+  readonly runId?: string;
+}
+
+export interface DocumentInsertTableColumnMutationRequest {
+  readonly document: DocumentRef;
+  readonly table: DocumentTableTarget;
+  readonly afterColumnHeader: string;
+  readonly header: string;
+  readonly cells: readonly string[];
   readonly signal?: AbortSignal;
   readonly runId?: string;
 }
@@ -42,13 +88,22 @@ export interface DocumentMutationExecutor {
   replaceText(
     input: DocumentReplaceTextMutationRequest,
   ): Promise<DocumentMutationResult>;
+  setTableCellsText(
+    input: DocumentSetTableCellsTextMutationRequest,
+  ): Promise<DocumentMutationResult>;
+  insertTableRows(
+    input: DocumentInsertTableRowsMutationRequest,
+  ): Promise<DocumentMutationResult>;
+  insertTableColumn(
+    input: DocumentInsertTableColumnMutationRequest,
+  ): Promise<DocumentMutationResult>;
 }
 
 /**
- * Tool output for a successfully persisted replace_text.
+ * Tool output for a successfully persisted document mutation.
  * Does not include artifactBytes — those belong to storage after persist.
  */
-export interface PersistedReplaceTextToolResult {
+export interface PersistedDocumentMutationToolResult {
   readonly status: "success";
   readonly diagnostics: readonly Diagnostic[];
   readonly change?: DocumentChangeSummary;
@@ -57,9 +112,12 @@ export interface PersistedReplaceTextToolResult {
   readonly baseVersionId: string;
 }
 
-export function isPersistedReplaceTextToolResult(
+/** @deprecated Prefer PersistedDocumentMutationToolResult */
+export type PersistedReplaceTextToolResult = PersistedDocumentMutationToolResult;
+
+export function isPersistedDocumentMutationToolResult(
   value: unknown,
-): value is PersistedReplaceTextToolResult {
+): value is PersistedDocumentMutationToolResult {
   if (!value || typeof value !== "object") return false;
   const record = value as Record<string, unknown>;
   if (record.status !== "success") return false;
@@ -73,6 +131,24 @@ export function isPersistedReplaceTextToolResult(
   );
 }
 
+/** @deprecated Prefer isPersistedDocumentMutationToolResult */
+export const isPersistedReplaceTextToolResult =
+  isPersistedDocumentMutationToolResult;
+
+function unsupportedExecute(): DocumentMutationResult {
+  return {
+    status: "error",
+    code: "UNSUPPORTED_CAPABILITY",
+    diagnostics: [
+      {
+        code: "UNSUPPORTED_CAPABILITY",
+        severity: "error",
+        message: "DocumentRuntime does not support execute/mutate",
+      },
+    ],
+  };
+}
+
 /**
  * Test helper: run DocumentRuntime.execute once and synthesize a new version id.
  * Does not touch DB/storage — for agent-core unit tests only.
@@ -81,60 +157,109 @@ export function createInMemoryDocumentMutationExecutor(
   runtime: DocumentRuntime,
 ): DocumentMutationExecutor {
   let sequence = 0;
-  return {
-    async replaceText(input) {
-      if (!runtime.execute) {
-        return {
-          status: "error",
-          code: "UNSUPPORTED_CAPABILITY",
-          diagnostics: [
-            {
-              code: "UNSUPPORTED_CAPABILITY",
-              severity: "error",
-              message: "DocumentRuntime does not support execute/mutate",
-            },
-          ],
-        };
-      }
-      const result = await runtime.execute(
-        input.document,
-        {
-          type: "document.replace_text",
-          baseVersionId: input.document.versionId,
-          payload: {
-            find: input.find,
-            replace: input.replace,
-            ...(input.expectedCurrentText !== undefined
-              ? { expectedCurrentText: input.expectedCurrentText }
-              : {}),
-            ...(input.occurrence !== undefined
-              ? { occurrence: input.occurrence }
-              : {}),
-          },
-        },
-        { signal: input.signal, runId: input.runId },
-      );
-      if (result.status === "error") {
-        return {
-          status: "error",
-          code: result.code,
-          diagnostics: result.diagnostics,
-        };
-      }
-      sequence += 1;
-      const next: DocumentRef = {
-        documentId: input.document.documentId,
-        versionId: `${input.document.versionId}+${sequence}`,
-        format: input.document.format,
-      };
+
+  async function executeOnce(
+    document: DocumentRef,
+    type: string,
+    payload: Record<string, unknown>,
+    signal?: AbortSignal,
+    runId?: string,
+  ): Promise<DocumentMutationResult> {
+    if (!runtime.execute) {
+      return unsupportedExecute();
+    }
+    const result = await runtime.execute(
+      document,
+      {
+        type,
+        baseVersionId: document.versionId,
+        payload,
+      },
+      { signal, runId },
+    );
+    if (result.status === "error") {
       return {
-        status: "success",
-        document: next,
-        versionNumber: sequence + 1,
-        baseVersionId: input.document.versionId,
-        ...(result.change !== undefined ? { change: result.change } : {}),
+        status: "error",
+        code: result.code,
         diagnostics: result.diagnostics,
       };
+    }
+    sequence += 1;
+    const next: DocumentRef = {
+      documentId: document.documentId,
+      versionId: `${document.versionId}+${sequence}`,
+      format: document.format,
+    };
+    return {
+      status: "success",
+      document: next,
+      versionNumber: sequence + 1,
+      baseVersionId: document.versionId,
+      ...(result.change !== undefined ? { change: result.change } : {}),
+      diagnostics: result.diagnostics,
+    };
+  }
+
+  return {
+    async replaceText(input) {
+      return executeOnce(
+        input.document,
+        "document.replace_text",
+        {
+          find: input.find,
+          replace: input.replace,
+          ...(input.expectedCurrentText !== undefined
+            ? { expectedCurrentText: input.expectedCurrentText }
+            : {}),
+          ...(input.occurrence !== undefined
+            ? { occurrence: input.occurrence }
+            : {}),
+        },
+        input.signal,
+        input.runId,
+      );
+    },
+
+    async setTableCellsText(input) {
+      return executeOnce(
+        input.document,
+        "document.set_table_cells_text",
+        {
+          table: input.table,
+          updates: input.updates,
+        },
+        input.signal,
+        input.runId,
+      );
+    },
+
+    async insertTableRows(input) {
+      return executeOnce(
+        input.document,
+        "document.insert_table_rows",
+        {
+          table: input.table,
+          after: input.after,
+          rows: input.rows,
+        },
+        input.signal,
+        input.runId,
+      );
+    },
+
+    async insertTableColumn(input) {
+      return executeOnce(
+        input.document,
+        "document.insert_table_column",
+        {
+          table: input.table,
+          afterColumnHeader: input.afterColumnHeader,
+          header: input.header,
+          cells: input.cells,
+        },
+        input.signal,
+        input.runId,
+      );
     },
   };
 }

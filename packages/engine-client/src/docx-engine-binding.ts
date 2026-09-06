@@ -42,6 +42,51 @@ export interface DocxReplaceTextBindingResult {
   readonly output?: Uint8Array;
 }
 
+/** Alias — all mutate bindings share the same verified-artifact result shape. */
+export type DocxMutationBindingResult = DocxReplaceTextBindingResult;
+
+/** Semantic table target (header cells + optional version-local occurrence). */
+export interface DocxTableTarget {
+  readonly headerCells: readonly string[];
+  readonly occurrence?: number;
+}
+
+export interface DocxTableRowAnchor {
+  readonly firstCellText: string;
+  readonly occurrence?: number;
+}
+
+export interface DocxTableCellUpdate {
+  readonly target: {
+    readonly rowLabel: string;
+    readonly columnHeader: string;
+    readonly occurrence?: number;
+  };
+  readonly expectedCurrentText: string;
+  readonly replacement: string;
+}
+
+export interface DocxSetTableCellsTextOperation {
+  readonly table: DocxTableTarget;
+  readonly updates: readonly DocxTableCellUpdate[];
+  readonly baseRevision?: string;
+}
+
+export interface DocxInsertTableRowsOperation {
+  readonly table: DocxTableTarget;
+  readonly after: DocxTableRowAnchor;
+  readonly rows: readonly (readonly string[])[];
+  readonly baseRevision?: string;
+}
+
+export interface DocxInsertTableColumnOperation {
+  readonly table: DocxTableTarget;
+  readonly afterColumnHeader: string;
+  readonly header: string;
+  readonly cells: readonly string[];
+  readonly baseRevision?: string;
+}
+
 export interface DocxRuntimeCapabilities {
   readonly ok: boolean;
   readonly protocolVersion: number;
@@ -72,10 +117,68 @@ export interface DocxFindTextResult {
   readonly diagnostics: readonly DocxEngineDiagnostic[];
 }
 
+/** Focus shapes accepted by the DOCX N-API inspectDocx binding. */
+export type DocxInspectFocus =
+  | { readonly kind: "overview" }
+  | {
+      readonly kind: "headings";
+      readonly offset?: number;
+      readonly limit?: number;
+    }
+  | {
+      readonly kind: "paragraphs";
+      readonly offset?: number;
+      readonly limit?: number;
+    }
+  | {
+      readonly kind: "tables";
+      readonly offset?: number;
+      readonly limit?: number;
+    }
+  | {
+      readonly kind: "context";
+      readonly text: string;
+      readonly occurrence?: number;
+      readonly before?: number;
+      readonly after?: number;
+    };
+
 export interface DocxInspectRequest {
-  readonly target: DocxReplaceTextTarget;
-  readonly before?: number;
-  readonly after?: number;
+  readonly focus: DocxInspectFocus;
+}
+
+export interface DocxInspectionPageMeta {
+  readonly total: number;
+  readonly offset: number;
+  readonly returned: number;
+  readonly hasMore: boolean;
+}
+
+export interface DocxInspectOverview {
+  readonly bodyBlockCount: number;
+  readonly paragraphCount: number;
+  readonly tableCount: number;
+  readonly sectionCount: number;
+}
+
+export interface DocxInspectHeadingItem {
+  readonly occurrence: number;
+  readonly text: string;
+  readonly styleName: string;
+  readonly level?: number;
+}
+
+export interface DocxInspectParagraphItem {
+  readonly occurrence: number;
+  readonly text: string;
+  readonly styleName?: string;
+}
+
+export interface DocxInspectTableItem {
+  readonly occurrence: number;
+  readonly rowCount: number;
+  readonly isRectangular: boolean;
+  readonly rows: readonly { readonly cells: readonly string[] }[];
 }
 
 export interface DocxInspectContextUnit {
@@ -86,9 +189,25 @@ export interface DocxInspectContextUnit {
 
 export interface DocxInspectResult {
   readonly ok: boolean;
-  readonly target: DocxReplaceTextTarget;
-  readonly container?: DocxInspectContextUnit;
-  readonly nearby: readonly DocxInspectContextUnit[];
+  readonly focus: string;
+  readonly overview?: DocxInspectOverview;
+  readonly headings?: {
+    readonly page: DocxInspectionPageMeta;
+    readonly items: readonly DocxInspectHeadingItem[];
+  };
+  readonly paragraphs?: {
+    readonly page: DocxInspectionPageMeta;
+    readonly items: readonly DocxInspectParagraphItem[];
+  };
+  readonly tables?: {
+    readonly page: DocxInspectionPageMeta;
+    readonly items: readonly DocxInspectTableItem[];
+  };
+  readonly context?: {
+    readonly target: DocxReplaceTextTarget;
+    readonly container?: DocxInspectContextUnit;
+    readonly nearby: readonly DocxInspectContextUnit[];
+  };
   readonly diagnostics: readonly DocxEngineDiagnostic[];
 }
 
@@ -105,7 +224,19 @@ export interface DocxEngineBinding {
   executeDocxReplaceText(
     input: Uint8Array,
     operation: DocxReplaceTextOperation,
-  ): Promise<DocxReplaceTextBindingResult>;
+  ): Promise<DocxMutationBindingResult>;
+  executeDocxSetTableCellsText(
+    input: Uint8Array,
+    operation: DocxSetTableCellsTextOperation,
+  ): Promise<DocxMutationBindingResult>;
+  executeDocxInsertTableRows(
+    input: Uint8Array,
+    operation: DocxInsertTableRowsOperation,
+  ): Promise<DocxMutationBindingResult>;
+  executeDocxInsertTableColumn(
+    input: Uint8Array,
+    operation: DocxInsertTableColumnOperation,
+  ): Promise<DocxMutationBindingResult>;
 }
 
 type NativeEngineModule = {
@@ -133,24 +264,55 @@ type NativeEngineModule = {
   }>;
   inspectDocx: (
     input: Buffer,
-    request: {
-      target: { text: string; occurrence?: number };
-      before?: number;
-      after?: number;
-    },
+    request: { focus: Record<string, unknown> },
   ) => Promise<{
     ok: boolean;
-    target: { text: string; occurrence?: number };
-    container?: {
-      relativePosition: number;
-      text: string;
-      container: string;
+    focus: string;
+    overview?: {
+      bodyBlockCount: number;
+      paragraphCount: number;
+      tableCount: number;
+      sectionCount: number;
     };
-    nearby: Array<{
-      relativePosition: number;
-      text: string;
-      container: string;
-    }>;
+    headings?: {
+      page: DocxInspectionPageMeta;
+      items: Array<{
+        occurrence: number;
+        text: string;
+        styleName: string;
+        level?: number;
+      }>;
+    };
+    paragraphs?: {
+      page: DocxInspectionPageMeta;
+      items: Array<{
+        occurrence: number;
+        text: string;
+        styleName?: string;
+      }>;
+    };
+    tables?: {
+      page: DocxInspectionPageMeta;
+      items: Array<{
+        occurrence: number;
+        rowCount: number;
+        isRectangular: boolean;
+        rows: Array<{ cells: string[] }>;
+      }>;
+    };
+    context?: {
+      target: { text: string; occurrence?: number };
+      container?: {
+        relativePosition: number;
+        text: string;
+        container: string;
+      };
+      nearby: Array<{
+        relativePosition: number;
+        text: string;
+        container: string;
+      }>;
+    };
     diagnostics: DocxEngineDiagnostic[];
   }>;
   executeDocxReplaceText: (
@@ -165,7 +327,53 @@ type NativeEngineModule = {
     result: DocxEngineOperationResult;
     output?: Buffer;
   }>;
+  executeDocxSetTableCellsText: (
+    input: Buffer,
+    operation: Record<string, unknown>,
+  ) => Promise<{
+    result: DocxEngineOperationResult;
+    output?: Buffer;
+  }>;
+  executeDocxInsertTableRows: (
+    input: Buffer,
+    operation: Record<string, unknown>,
+  ) => Promise<{
+    result: DocxEngineOperationResult;
+    output?: Buffer;
+  }>;
+  executeDocxInsertTableColumn: (
+    input: Buffer,
+    operation: Record<string, unknown>,
+  ) => Promise<{
+    result: DocxEngineOperationResult;
+    output?: Buffer;
+  }>;
 };
+
+function toNativeInspectFocus(focus: DocxInspectFocus): Record<string, unknown> {
+  switch (focus.kind) {
+    case "overview":
+      return { kind: "overview" };
+    case "headings":
+    case "paragraphs":
+    case "tables":
+      return {
+        kind: focus.kind,
+        ...(focus.offset !== undefined ? { offset: focus.offset } : {}),
+        ...(focus.limit !== undefined ? { limit: focus.limit } : {}),
+      };
+    case "context":
+      return {
+        kind: "context",
+        text: focus.text,
+        ...(focus.occurrence !== undefined
+          ? { occurrence: focus.occurrence }
+          : {}),
+        ...(focus.before !== undefined ? { before: focus.before } : {}),
+        ...(focus.after !== undefined ? { after: focus.after } : {}),
+      };
+  }
+}
 
 /**
  * Loads the local `@opensuite/engine` N-API package and adapts it to
@@ -197,14 +405,7 @@ export async function createNapiDocxEngineBinding(): Promise<DocxEngineBinding> 
 
     async inspectDocx(input, request) {
       return native.inspectDocx(Buffer.from(input), {
-        target: {
-          text: request.target.text,
-          ...(request.target.occurrence !== undefined
-            ? { occurrence: request.target.occurrence }
-            : {}),
-        },
-        ...(request.before !== undefined ? { before: request.before } : {}),
-        ...(request.after !== undefined ? { after: request.after } : {}),
+        focus: toNativeInspectFocus(request.focus),
       });
     },
 
@@ -223,12 +424,94 @@ export async function createNapiDocxEngineBinding(): Promise<DocxEngineBinding> 
           : {}),
       });
 
-      return {
-        result: response.result,
-        ...(response.output !== undefined && response.output !== null
-          ? { output: Uint8Array.from(response.output) }
-          : {}),
-      };
+      return mapMutationBindingResponse(response);
     },
+
+    async executeDocxSetTableCellsText(input, operation) {
+      const response = await native.executeDocxSetTableCellsText(
+        Buffer.from(input),
+        {
+          table: {
+            headerCells: [...operation.table.headerCells],
+            ...(operation.table.occurrence !== undefined
+              ? { occurrence: operation.table.occurrence }
+              : {}),
+          },
+          updates: operation.updates.map((update) => ({
+            target: {
+              rowLabel: update.target.rowLabel,
+              columnHeader: update.target.columnHeader,
+              ...(update.target.occurrence !== undefined
+                ? { occurrence: update.target.occurrence }
+                : {}),
+            },
+            expectedCurrentText: update.expectedCurrentText,
+            replacement: update.replacement,
+          })),
+          ...(operation.baseRevision !== undefined
+            ? { baseRevision: operation.baseRevision }
+            : {}),
+        },
+      );
+      return mapMutationBindingResponse(response);
+    },
+
+    async executeDocxInsertTableRows(input, operation) {
+      const response = await native.executeDocxInsertTableRows(
+        Buffer.from(input),
+        {
+          table: {
+            headerCells: [...operation.table.headerCells],
+            ...(operation.table.occurrence !== undefined
+              ? { occurrence: operation.table.occurrence }
+              : {}),
+          },
+          after: {
+            firstCellText: operation.after.firstCellText,
+            ...(operation.after.occurrence !== undefined
+              ? { occurrence: operation.after.occurrence }
+              : {}),
+          },
+          rows: operation.rows.map((row) => [...row]),
+          ...(operation.baseRevision !== undefined
+            ? { baseRevision: operation.baseRevision }
+            : {}),
+        },
+      );
+      return mapMutationBindingResponse(response);
+    },
+
+    async executeDocxInsertTableColumn(input, operation) {
+      const response = await native.executeDocxInsertTableColumn(
+        Buffer.from(input),
+        {
+          table: {
+            headerCells: [...operation.table.headerCells],
+            ...(operation.table.occurrence !== undefined
+              ? { occurrence: operation.table.occurrence }
+              : {}),
+          },
+          afterColumnHeader: operation.afterColumnHeader,
+          header: operation.header,
+          cells: [...operation.cells],
+          ...(operation.baseRevision !== undefined
+            ? { baseRevision: operation.baseRevision }
+            : {}),
+        },
+      );
+      return mapMutationBindingResponse(response);
+    },
+  };
+}
+
+function mapMutationBindingResponse(response: {
+  readonly result: DocxEngineOperationResult;
+  readonly output?: Buffer | null;
+}): DocxMutationBindingResult {
+  return {
+    result: response.result,
+    ...(response.output !== undefined && response.output !== null
+      ? { output: Uint8Array.from(response.output) }
+      : {}),
   };
 }

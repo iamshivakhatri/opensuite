@@ -19,29 +19,7 @@ function crc32(bytes: Uint8Array): number {
   return (value ^ 0xffffffff) >>> 0;
 }
 
-/** Build a tiny valid DOCX Buffer containing the given body paragraph texts. */
-export function buildMinimalDocx(paragraphTexts: readonly string[]): Buffer {
-  const body = paragraphTexts
-    .map(
-      (text) =>
-        `<w:p><w:r><w:t>${escapeXml(text)}</w:t></w:r></w:p>`,
-    )
-    .join("");
-  const files: Array<[string, string]> = [
-    [
-      "[Content_Types].xml",
-      '<Types><Default Extension="xml" ContentType="application/xml"/></Types>',
-    ],
-    [
-      "_rels/.rels",
-      `<Relationships><Relationship Id="rId1" Type="${OFFICE_REL}" Target="word/document.xml"/></Relationships>`,
-    ],
-    [
-      "word/document.xml",
-      `<w:document xmlns:w="${WORD_NS}"><w:body>${body}</w:body></w:document>`,
-    ],
-  ];
-
+function zipDocxFiles(files: Array<[string, string]>): Buffer {
   let offset = 0;
   const local: Buffer[] = [];
   const central: Buffer[] = [];
@@ -80,6 +58,74 @@ export function buildMinimalDocx(paragraphTexts: readonly string[]): Buffer {
   end.writeUInt32LE(directory.length, 12);
   end.writeUInt32LE(offset, 16);
   return Buffer.concat([...local, directory, end]);
+}
+
+function packDocumentXml(bodyInner: string): Buffer {
+  return zipDocxFiles([
+    [
+      "[Content_Types].xml",
+      '<Types><Default Extension="xml" ContentType="application/xml"/></Types>',
+    ],
+    [
+      "_rels/.rels",
+      `<Relationships><Relationship Id="rId1" Type="${OFFICE_REL}" Target="word/document.xml"/></Relationships>`,
+    ],
+    [
+      "word/document.xml",
+      `<w:document xmlns:w="${WORD_NS}"><w:body>${bodyInner}</w:body></w:document>`,
+    ],
+  ]);
+}
+
+function cellXml(text: string, widthDxa?: number): string {
+  const tcPr =
+    widthDxa !== undefined
+      ? `<w:tcPr><w:tcW w:w="${widthDxa}" w:type="dxa"/></w:tcPr>`
+      : "";
+  return `<w:tc>${tcPr}<w:p><w:r><w:t>${escapeXml(text)}</w:t></w:r></w:p></w:tc>`;
+}
+
+function rowXml(cells: readonly string[]): string {
+  return `<w:tr>${cells.map((cell) => cellXml(cell)).join("")}</w:tr>`;
+}
+
+/** Build a tiny valid DOCX Buffer containing the given body paragraph texts. */
+export function buildMinimalDocx(paragraphTexts: readonly string[]): Buffer {
+  const body = paragraphTexts
+    .map(
+      (text) =>
+        `<w:p><w:r><w:t>${escapeXml(text)}</w:t></w:r></w:p>`,
+    )
+    .join("");
+  return packDocumentXml(body);
+}
+
+/**
+ * Simple rectangular Name/Role table used by table mutation lifecycle tests.
+ * When `withGrid` is true, includes explicit w:tblGrid (required for column insert).
+ */
+export function buildNameRoleTableDocx(
+  options: { readonly withGrid?: boolean } = {},
+): Buffer {
+  const rows: readonly (readonly string[])[] = [
+    ["Name", "Role"],
+    ["Alice", "CEO"],
+    ["Bob", "CTO"],
+  ];
+  if (options.withGrid) {
+    const grid =
+      '<w:tblGrid><w:gridCol w:w="2400"/><w:gridCol w:w="3600"/></w:tblGrid>';
+    const table = `<w:tbl>${grid}${rows
+      .map(
+        (row) =>
+          `<w:tr>${row
+            .map((cell, index) => cellXml(cell, index === 0 ? 2400 : 3600))
+            .join("")}</w:tr>`,
+      )
+      .join("")}</w:tbl>`;
+    return packDocumentXml(table);
+  }
+  return packDocumentXml(`<w:tbl>${rows.map((row) => rowXml(row)).join("")}</w:tbl>`);
 }
 
 function escapeXml(value: string): string {
