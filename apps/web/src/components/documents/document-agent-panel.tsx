@@ -593,7 +593,7 @@ export function DocumentAgentPanel({
       lastMessage?.role !== "assistant",
   );
   // Status belongs *before* the answer — hide once text is on screen.
-  // Only show active/error rows (no stale ✓ Thinking / Working pile).
+  // Keep completed tools (✓) + active Thinking so fast tools do not flicker.
   const visibleProgress = visibleAgentProgress(progress);
   const showProgress =
     visibleProgress.length > 0 &&
@@ -742,7 +742,11 @@ export function DocumentAgentPanel({
                   {visibleProgress.map((line) => (
                     <div
                       key={line.id}
-                      className="flex gap-2 px-3 py-1.5 font-mono text-[9.5px] leading-[1.45] text-ink-soft"
+                      className={`flex gap-2 px-3 py-1.5 font-mono text-[9.5px] leading-[1.45] ${
+                        line.status === "done"
+                          ? "text-ink-faint"
+                          : "text-ink-soft"
+                      }`}
                     >
                       <span
                         className={
@@ -750,7 +754,9 @@ export function DocumentAgentPanel({
                             ? "text-accent"
                             : line.status === "error"
                               ? "text-danger"
-                              : "text-accent"
+                              : line.status === "done"
+                                ? "text-ink-faint"
+                                : "text-accent"
                         }
                       >
                         {progressMarker(line.status)}

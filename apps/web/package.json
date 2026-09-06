@@ -13,7 +13,7 @@
     "start": "next start -p 3001",
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "lint": "echo \"(no lint configured yet)\"",
-    "test": "node --experimental-strip-types --test src/lib/agent-progress.test.ts src/lib/theme-model.test.ts"
+    "test": "node --experimental-strip-types --test src/lib/agent-progress.test.ts src/lib/agent-markdown.test.ts src/lib/theme-model.test.ts"
   },
   "dependencies": {
     "@casualoffice/docs": "^1.4.2",

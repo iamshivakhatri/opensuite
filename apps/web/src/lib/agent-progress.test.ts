@@ -23,7 +23,7 @@ function event(
   };
 }
 
-test("reduceAgentProgress builds concise Cursor-style lines", () => {
+test("reduceAgentProgress keeps completed tools with Thinking", () => {
   let lines: AgentProgressLine[] = [];
   lines = reduceAgentProgress(lines, event("agent.started"));
   assert.equal(lines[0]?.label, "Thinking…");
@@ -49,25 +49,44 @@ test("reduceAgentProgress builds concise Cursor-style lines", () => {
   );
   assert.deepEqual(
     lines.map((line) => ({ status: line.status, label: line.label })),
-    [{ status: "active", label: "Thinking…" }],
+    [
+      { status: "done", label: "Inspected document" },
+      { status: "active", label: "Thinking…" },
+    ],
   );
 
   lines = reduceAgentProgress(
     lines,
-    event("tool.started", { toolCallId: "t2", toolName: "other.tool" }),
+    event("tool.started", { toolCallId: "t2", toolName: "document.find" }),
   );
-  assert.ok(
-    lines.some((line) => line.label === "Running tool…" && line.status === "active"),
+  assert.deepEqual(
+    lines.map((line) => ({ status: line.status, label: line.label })),
+    [
+      { status: "done", label: "Inspected document" },
+      { status: "active", label: "Searching document…" },
+    ],
   );
 
   lines = reduceAgentProgress(
     lines,
-    event("tool.completed", { toolCallId: "t2", toolName: "other.tool" }),
+    event("tool.completed", {
+      toolCallId: "t2",
+      toolName: "document.find",
+    }),
   );
+  assert.ok(lines.some((line) => line.label === "Search complete" && line.status === "done"));
   assert.ok(lines.some((line) => line.label === "Thinking…" && line.status === "active"));
 
   lines = reduceAgentProgress(lines, event("message.started"));
-  assert.deepEqual(lines, []);
+  assert.ok(lines.some((line) => line.label === "Thinking…" && line.status === "active"));
+});
+
+test("reduceAgentProgress keeps Thinking on empty delta / message.started", () => {
+  let lines = reduceAgentProgress([], event("agent.started"));
+  lines = reduceAgentProgress(lines, event("message.started"));
+  assert.equal(lines[0]?.label, "Thinking…");
+  lines = reduceAgentProgress(lines, event("message.delta", { delta: "" }));
+  assert.equal(lines[0]?.label, "Thinking…");
 });
 
 test("reduceAgentProgress clears status once text streams", () => {
@@ -77,16 +96,17 @@ test("reduceAgentProgress clears status once text streams", () => {
   assert.deepEqual(lines, []);
 });
 
-test("visibleAgentProgress hides done rows", () => {
+test("visibleAgentProgress includes done rows", () => {
   const lines: AgentProgressLine[] = [
-    { id: "a", label: "Working…", status: "done" },
-    { id: "b", label: "Inspecting…", status: "active" },
+    { id: "a", label: "Inspected document", status: "done" },
+    { id: "b", label: "Thinking…", status: "active" },
     { id: "c", label: "failed", status: "error" },
   ];
   assert.deepEqual(
     visibleAgentProgress(lines).map((line) => line.id),
-    ["b", "c"],
+    ["a", "b", "c"],
   );
+  assert.equal(progressMarker("done"), "✓");
   assert.equal(progressMarker("active"), "●");
 });
 

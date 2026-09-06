@@ -136,7 +136,7 @@ Durable history is application-owned. `AgentExecutionService` maps selected
 
 ## Intentionally deferred
 
-* Format-aware API default (DOCX→OpenSuiteEngineAdapter; PPTX/XLSX still mock)
+* Broad engine inspect (overview/headings/tables); PPTX/XLSX engine runtimes
 * Broad engine inspect (overview/headings/tables); more mutations; agent auto-persist
 * Model routing-fallback / durable confirmation resume / Redis workers
 * Semantic conflict detection for parallel mutations

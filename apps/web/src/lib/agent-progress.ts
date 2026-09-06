@@ -35,6 +35,9 @@ const TOOL_LABELS: Record<string, { active: string; done: string }> = {
   },
 };
 
+/** Keep a short trail of finished tools so the UI does not bounce back to Thinking. */
+const MAX_DONE_TOOLS = 4;
+
 function toolLabels(toolName: string): { active: string; done: string } {
   return (
     TOOL_LABELS[toolName] ?? {
@@ -44,9 +47,37 @@ function toolLabels(toolName: string): { active: string; done: string } {
   );
 }
 
+function withoutThinking(
+  lines: readonly AgentProgressLine[],
+): AgentProgressLine[] {
+  return lines.filter((line) => line.id !== "thinking");
+}
+
+function withThinking(
+  lines: readonly AgentProgressLine[],
+): AgentProgressLine[] {
+  const base = withoutThinking(lines);
+  return [
+    ...base,
+    { id: "thinking", label: "Thinking…", status: "active" },
+  ];
+}
+
+function trimDoneTools(
+  lines: readonly AgentProgressLine[],
+): AgentProgressLine[] {
+  const done = lines.filter((line) => line.status === "done");
+  if (done.length <= MAX_DONE_TOOLS) {
+    return [...lines];
+  }
+  const drop = new Set(done.slice(0, done.length - MAX_DONE_TOOLS).map((l) => l.id));
+  return lines.filter((line) => !drop.has(line.id));
+}
+
 /**
- * Fold live SSE events into concise status lines shown *before* assistant text.
- * Cleared once tokens stream. Never keeps a ✓ Working/Thinking pile under tools.
+ * Fold live SSE events into durable status lines shown *before* assistant text.
+ * Completed tools stay visible (✓) so fast tools do not flicker back to Thinking.
+ * Cleared once non-empty tokens stream.
  */
 export function reduceAgentProgress(
   lines: readonly AgentProgressLine[],
@@ -60,40 +91,67 @@ export function reduceAgentProgress(
       return [{ id: "thinking", label: "Thinking…", status: "active" }];
     }
     case "message.started":
-    case "message.delta":
+      return [...lines];
+    case "message.delta": {
+      const delta = event.data?.delta;
+      if (typeof delta === "string" && delta.length > 0) {
+        return [];
+      }
+      return [...lines];
+    }
     case "message.completed":
       return [];
     case "tool.started": {
       const toolCallId = String(event.data.toolCallId ?? "tool");
       const toolName = String(event.data.toolName ?? "tool");
       const labels = toolLabels(toolName);
-      return [
+      const kept = withoutThinking(lines).filter(
+        (line) => line.id !== `tool:${toolCallId}`,
+      );
+      return trimDoneTools([
+        ...kept,
         {
           id: `tool:${toolCallId}`,
           label: labels.active,
           status: "active",
         },
-      ];
+      ]);
     }
     case "tool.completed": {
-      // Drop completed tool chrome — resume Thinking until text streams.
-      return [{ id: "thinking", label: "Thinking…", status: "active" }];
+      const toolCallId = String(event.data.toolCallId ?? "tool");
+      const toolName = String(event.data.toolName ?? "tool");
+      const labels = toolLabels(toolName);
+      const id = `tool:${toolCallId}`;
+      const withoutActive = withoutThinking(lines).filter((line) => line.id !== id);
+      return trimDoneTools(
+        withThinking([
+          ...withoutActive,
+          { id, label: labels.done, status: "done" },
+        ]),
+      );
     }
     case "tool.failed": {
       const toolCallId = String(event.data.toolCallId ?? "tool");
       const toolName = String(event.data.toolName ?? "tool");
-      return [
-        {
-          id: `tool:${toolCallId}`,
-          label: `${toolName} failed`,
-          status: "error",
-        },
-        { id: "thinking", label: "Thinking…", status: "active" },
-      ];
+      const id = `tool:${toolCallId}`;
+      const withoutActive = withoutThinking(lines).filter((line) => line.id !== id);
+      return trimDoneTools(
+        withThinking([
+          ...withoutActive,
+          {
+            id,
+            label: `${toolName} failed`,
+            status: "error",
+          },
+        ]),
+      );
     }
     case "confirmation.required": {
       const toolCallId = String(event.data.toolCallId ?? "confirm");
       return [
+        ...withoutThinking(lines).filter(
+          (line) => line.status === "done" || line.status === "error",
+        ),
         {
           id: `confirm:${toolCallId}`,
           label: "Waiting for confirmation…",
@@ -124,12 +182,15 @@ export function reduceAgentProgress(
   }
 }
 
-/** UI helper: only active / error rows (no stale ✓ pile). */
+/** Show done + active + error (completed tools stay visible during the run). */
 export function visibleAgentProgress(
   lines: readonly AgentProgressLine[],
 ): AgentProgressLine[] {
   return lines.filter(
-    (line) => line.status === "active" || line.status === "error",
+    (line) =>
+      line.status === "active" ||
+      line.status === "error" ||
+      line.status === "done",
   );
 }
 

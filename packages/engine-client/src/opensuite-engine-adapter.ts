@@ -80,7 +80,7 @@ export function createOpenSuiteEngineAdapter(
       if (focus.kind !== "context") {
         return inspectionError(
           "UNSUPPORTED_OPERATION",
-          `OpenSuiteEngineAdapter does not support inspect focus "${focus.kind}". Use focus.kind="context" for bounded DOCX text context.`,
+          `OpenSuiteEngineAdapter does not support inspect focus "${focus.kind}". Use document.find (mode text) to locate content, then inspect with focus.kind="context".`,
           { focus },
         );
       }

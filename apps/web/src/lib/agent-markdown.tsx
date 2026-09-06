@@ -1,8 +1,10 @@
 import * as React from "react";
 
+import { parseBlocks, type MdBlock } from "./agent-markdown-parse";
+
 /**
  * Lightweight markdown for agent replies — bold, italics, headings, hr, lists,
- * paragraphs. No HTML passthrough.
+ * GFM tables, paragraphs. No HTML passthrough.
  */
 export function AgentMarkdown({ text }: { text: string }) {
   const blocks = React.useMemo(() => parseBlocks(text), [text]);
@@ -16,12 +18,7 @@ export function AgentMarkdown({ text }: { text: string }) {
   );
 }
 
-type MdBlock =
-  | { kind: "p"; text: string }
-  | { kind: "h"; level: 1 | 2 | 3; text: string }
-  | { kind: "hr" }
-  | { kind: "ul"; items: string[] }
-  | { kind: "ol"; items: string[] };
+export { parseBlocks } from "./agent-markdown-parse";
 
 function Block({ block }: { block: MdBlock }) {
   switch (block.kind) {
@@ -60,6 +57,36 @@ function Block({ block }: { block: MdBlock }) {
             </li>
           ))}
         </ol>
+      );
+    case "table":
+      return (
+        <div className="mb-2.5 overflow-x-auto rounded-[8px] border border-line">
+          <table className="w-full border-collapse text-left text-[10.5px]">
+            <thead>
+              <tr className="border-b border-line bg-sunken">
+                {block.headers.map((header, i) => (
+                  <th
+                    key={i}
+                    className="px-2.5 py-1.5 font-semibold text-ink"
+                  >
+                    <Inline text={header} />
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {block.rows.map((row, ri) => (
+                <tr key={ri} className="border-b border-line last:border-b-0">
+                  {row.map((cell, ci) => (
+                    <td key={ci} className="px-2.5 py-1.5 text-ink-soft">
+                      <Inline text={cell} />
+                    </td>
+                  ))}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
       );
     case "p":
       return (
@@ -129,85 +156,4 @@ function parseInline(input: string): InlinePart[] {
     parts.push({ kind: "text", text: input.slice(last) });
   }
   return parts.length > 0 ? parts : [{ kind: "text", text: input }];
-}
-
-function parseBlocks(text: string): MdBlock[] {
-  const normalized = text.replace(/\r\n/g, "\n").trim();
-  if (!normalized) {
-    return [];
-  }
-
-  const lines = normalized.split("\n");
-  const blocks: MdBlock[] = [];
-  let i = 0;
-
-  while (i < lines.length) {
-    const line = lines[i] ?? "";
-    const trimmed = line.trim();
-
-    if (trimmed === "") {
-      i += 1;
-      continue;
-    }
-
-    if (/^---+$/.test(trimmed) || /^\*\*\*+$/.test(trimmed)) {
-      blocks.push({ kind: "hr" });
-      i += 1;
-      continue;
-    }
-
-    const heading = /^(#{1,3})\s+(.+)$/.exec(trimmed);
-    if (heading) {
-      blocks.push({
-        kind: "h",
-        level: heading[1]!.length as 1 | 2 | 3,
-        text: heading[2]!,
-      });
-      i += 1;
-      continue;
-    }
-
-    if (/^[-*]\s+/.test(trimmed)) {
-      const items: string[] = [];
-      while (i < lines.length) {
-        const item = (lines[i] ?? "").trim();
-        const m = /^[-*]\s+(.+)$/.exec(item);
-        if (!m) break;
-        items.push(m[1]!);
-        i += 1;
-      }
-      blocks.push({ kind: "ul", items });
-      continue;
-    }
-
-    if (/^\d+\.\s+/.test(trimmed)) {
-      const items: string[] = [];
-      while (i < lines.length) {
-        const item = (lines[i] ?? "").trim();
-        const m = /^\d+\.\s+(.+)$/.exec(item);
-        if (!m) break;
-        items.push(m[1]!);
-        i += 1;
-      }
-      blocks.push({ kind: "ol", items });
-      continue;
-    }
-
-    // Paragraph: gather consecutive non-empty, non-structural lines.
-    // Single newlines inside a stanza become soft breaks (whitespace-pre-wrap).
-    const para: string[] = [];
-    while (i < lines.length) {
-      const current = lines[i] ?? "";
-      const t = current.trim();
-      if (t === "") break;
-      if (/^---+$/.test(t) || /^\*\*\*+$/.test(t)) break;
-      if (/^#{1,3}\s+/.test(t)) break;
-      if (/^[-*]\s+/.test(t) || /^\d+\.\s+/.test(t)) break;
-      para.push(current);
-      i += 1;
-    }
-    blocks.push({ kind: "p", text: para.join("\n") });
-  }
-
-  return blocks;
 }

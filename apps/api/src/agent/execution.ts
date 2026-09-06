@@ -18,6 +18,7 @@ import {
   DocumentAccessError,
   type DocumentService,
 } from "../documents/service.js";
+import type { DocumentRuntimeResolver } from "../documents/runtime.js";
 import {
   AgentPersistenceError,
   type AgentMessage,
@@ -85,7 +86,16 @@ export interface AgentExecutionServiceDeps {
    * document tool registry is built per run from capabilities + primaryDocument.
    */
   readonly tools?: ToolRegistry;
+  /**
+   * Fixed runtime (tests). When `resolveRuntime` is set, it wins for
+   * production format-aware DOCX → engine / PPTX|XLSX → mock selection.
+   */
   readonly runtime?: DocumentRuntime;
+  /**
+   * Per-run runtime selection. Prefer this in production so DOCX uses the
+   * real engine adapter with an owner-scoped artifact loader.
+   */
+  readonly resolveRuntime?: DocumentRuntimeResolver;
   /**
    * Confirmation gate for destructive tools. Omit → agent-core denies.
    * Tests may inject AutoApproveConfirmationGate / denyAllConfirmationGate.
@@ -268,6 +278,12 @@ async function continueExecution(input: {
       }
     : bridge;
 
+  const runtime =
+    deps.resolveRuntime?.({
+      format: primaryDocument?.format,
+      ownerUserId,
+    }) ?? deps.runtime;
+
   const runner = new AgentRunner({
     model: deps.model,
     tools:
@@ -276,7 +292,7 @@ async function continueExecution(input: {
         format: primaryDocument?.format,
       }),
     events,
-    runtime: deps.runtime,
+    runtime,
     confirmation: deps.confirmation,
     steering: deps.steering,
     capabilities: deps.capabilities,

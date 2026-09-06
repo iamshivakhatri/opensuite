@@ -3,7 +3,6 @@ import cors from "@fastify/cors";
 import multipart from "@fastify/multipart";
 
 import {
-  createMockDocumentRuntime,
   mutableDocumentCapabilities,
   type AgentModel,
   type ConfirmationGate,
@@ -32,6 +31,10 @@ import {
 import type { SessionAuth } from "./auth/session.js";
 import type { AppConfig } from "./config/index.js";
 import { createDocumentService } from "./documents/service.js";
+import {
+  createDocumentRuntimeResolver,
+  loadDocxEngineBinding,
+} from "./documents/runtime.js";
 import { createDocumentPreferenceService } from "./documents/preferences.js";
 import { createSearchService } from "./documents/search.js";
 import type { AuthHandler } from "./routes/auth.js";
@@ -83,6 +86,21 @@ export async function buildApp(
 ): Promise<FastifyInstance> {
   const app = Fastify({
     logger: { level: config.logLevel },
+    // Default Fastify request logs dump full req objects — unreadable in local
+    // agent/chat loops. Use a one-line completion log instead.
+    disableRequestLogging: true,
+  });
+
+  app.addHook("onResponse", (request, reply, done) => {
+    // Skip CORS preflight + health noise.
+    if (request.method === "OPTIONS" || request.url.startsWith("/health")) {
+      done();
+      return;
+    }
+    request.log.info(
+      `${request.method} ${request.url} ${reply.statusCode} ${Math.round(reply.elapsedTime)}ms`,
+    );
+    done();
   });
 
   await app.register(cors, {
@@ -145,12 +163,23 @@ export async function buildApp(
     deps.agent?.persistence ?? createAgentPersistenceService(deps.db);
   const documentCapabilities =
     deps.agent?.capabilities ?? mutableDocumentCapabilities();
-  const documentRuntime =
-    deps.agent?.runtime ??
-    createMockDocumentRuntime({ capabilities: documentCapabilities });
   // Prefer per-run format-filtered registry in AgentExecutionService when
   // tools are not explicitly injected (tests may still pass a fixed registry).
   const documentTools = deps.agent?.tools;
+
+  // Production: DOCX → real Rust engine; PPTX/XLSX stay on mock until wired.
+  // Tests may still inject a fixed `runtime` (skips engine binding load).
+  let resolveRuntime: import("./documents/runtime.js").DocumentRuntimeResolver | undefined;
+  let documentRuntime = deps.agent?.runtime;
+  if (!documentRuntime) {
+    const binding = await loadDocxEngineBinding();
+    resolveRuntime = createDocumentRuntimeResolver({
+      documents,
+      binding,
+      mockCapabilities: documentCapabilities,
+    });
+  }
+
   const agentExecution =
     deps.agent?.execution ??
     createAgentExecutionService({
@@ -159,6 +188,7 @@ export async function buildApp(
       model: deps.agent?.model ?? createConfiguredAgentModel(config),
       tools: documentTools,
       runtime: documentRuntime,
+      resolveRuntime,
       confirmation: deps.agent?.confirmation,
       steering: deps.agent?.steering,
       capabilities: documentCapabilities,

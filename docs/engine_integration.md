@@ -36,7 +36,7 @@ exact immutable version N
 * Rust is capability source of truth (`find_text`, `inspect_context`, `replace_text`, …).
 * Broad inspect focuses (overview/headings/…) return `UNSUPPORTED_OPERATION` — no mock fallback.
 * Find `mode: "semantic"` is unsupported on the real adapter (use `text`).
-* `MockDocumentRuntime` remains for isolated tests; API default not switched yet (PPTX/XLSX).
+* `MockDocumentRuntime` remains for isolated tests; API DOCX default is OpenSuiteEngineAdapter; PPTX/XLSX remain mock.
 * Application owns version history; engine never writes DB/storage.
 
 ### Local Node binding setup
