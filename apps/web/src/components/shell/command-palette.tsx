@@ -478,7 +478,7 @@ function CommandPalette({
   return (
     <>
       <div
-        className="fixed inset-0 z-[60] flex items-start justify-center bg-[rgba(15,18,24,0.32)] px-4 pt-[12vh] backdrop-blur-[6px]"
+        className="fixed inset-0 z-[60] flex items-start justify-center bg-overlay px-4 pt-[12vh] backdrop-blur-[6px]"
         onMouseDown={(event) => {
           if (event.target === event.currentTarget) onClose();
         }}
@@ -583,7 +583,7 @@ function CommandPalette({
 
       {pickWorkspaceForUpload ? (
         <div
-          className="fixed inset-0 z-[70] flex items-center justify-center bg-[rgba(15,18,24,0.32)] px-4 backdrop-blur-[6px]"
+          className="fixed inset-0 z-[70] flex items-center justify-center bg-overlay px-4 backdrop-blur-[6px]"
           onClick={() => setPickWorkspaceForUpload(false)}
         >
           <div

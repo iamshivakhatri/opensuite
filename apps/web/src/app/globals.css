@@ -1,18 +1,23 @@
 @import "tailwindcss";
 
 /*
- * Design tokens taken directly from opensuite_v4_modern_minimal.html
- * (the "modern minimal refresh" palette — the visual source of truth).
- * Do not invent new colors; extend this file if the reference introduces more.
+ * Design tokens from opensuite_v4_modern_minimal.html.
+ * Theme is applied via html[data-opensuite-theme] — not data-theme
+ * (Casual Docs owns data-theme on documentElement).
  */
 :root {
   --paper: #f5f6f8;
   --surface: #ffffff;
+  --elevated: #ffffff;
   --sunken: #eef0f3;
+  --canvas: #eceef2;
   --ink: #14161a;
   --ink-soft: #626773;
   --ink-faint: #9297a3;
   --line: #e4e7ec;
+  --hover: rgba(20, 22, 26, 0.045);
+  --selected: #f0f0ff;
+  --overlay: rgba(15, 18, 24, 0.4);
   --accent: #5b5ce2;
   --accent-hover: #4d4ed0;
   --accent-soft: #f0f0ff;
@@ -21,6 +26,7 @@
   --success-soft: #eaf7f1;
   --danger: #c45245;
   --danger-soft: #fff0ed;
+  --on-ink: #ffffff;
   --radius-sm: 6px;
   --radius-md: 8px;
   --radius-lg: 12px;
@@ -28,14 +34,19 @@
   --shell-main: #f4f5f7;
 }
 
-html[data-theme="dark"] {
+html[data-opensuite-theme="dark"] {
   --paper: #12141a;
   --surface: #1a1d24;
+  --elevated: #22262f;
   --sunken: #22262f;
+  --canvas: #0e1014;
   --ink: #f2f3f5;
   --ink-soft: #a0a6b2;
   --ink-faint: #757b88;
   --line: #2c313b;
+  --hover: rgba(255, 255, 255, 0.06);
+  --selected: #22243a;
+  --overlay: rgba(0, 0, 0, 0.55);
   --accent: #7b7cf0;
   --accent-hover: #8d8ef5;
   --accent-soft: #22243a;
@@ -44,6 +55,7 @@ html[data-theme="dark"] {
   --success-soft: #1a2c24;
   --danger: #e07166;
   --danger-soft: #33201e;
+  --on-ink: #0e1014;
   --sidebar: #161920;
   --shell-main: #101218;
 }
@@ -51,11 +63,16 @@ html[data-theme="dark"] {
 @theme inline {
   --color-paper: var(--paper);
   --color-surface: var(--surface);
+  --color-elevated: var(--elevated);
   --color-sunken: var(--sunken);
+  --color-canvas: var(--canvas);
   --color-ink: var(--ink);
   --color-ink-soft: var(--ink-soft);
   --color-ink-faint: var(--ink-faint);
   --color-line: var(--line);
+  --color-hover: var(--hover);
+  --color-selected: var(--selected);
+  --color-overlay: var(--overlay);
   --color-accent: var(--accent);
   --color-accent-hover: var(--accent-hover);
   --color-accent-soft: var(--accent-soft);
@@ -64,6 +81,9 @@ html[data-theme="dark"] {
   --color-success-soft: var(--success-soft);
   --color-danger: var(--danger);
   --color-danger-soft: var(--danger-soft);
+  --color-on-ink: var(--on-ink);
+  --color-sidebar: var(--sidebar);
+  --color-shell-main: var(--shell-main);
   --radius-sm: var(--radius-sm);
   --radius-md: var(--radius-md);
   --radius-lg: var(--radius-lg);
@@ -86,9 +106,12 @@ body {
   box-sizing: border-box;
 }
 
-/* Casual Docs host theming — keep the surface native to OpenSuite tokens. */
+/*
+ * Casual Docs host — scoped consumer of OpenSuite resolved theme.
+ * Document page stays paper-white; chrome follows --ce-* tokens.
+ */
 .opensuite-docx-host {
-  --ce-bg: #eceef2;
+  --ce-bg: var(--canvas);
   --ce-page-paper: #ffffff;
   --ce-chrome: var(--surface);
   --ce-surface: var(--surface);
@@ -100,11 +123,18 @@ body {
   --ce-link: var(--accent);
   height: 100%;
   min-height: 0;
+  background: var(--canvas);
+  color: var(--ink);
+}
+
+html[data-opensuite-theme="dark"] .opensuite-docx-host {
+  /* Keep the DOCX page readable (white paper) inside a dark shell. */
+  --ce-page-paper: #ffffff;
 }
 
 .opensuite-docx-host .ce-editor,
-.opensuite-docx-host [data-casual-editor] {
+.opensuite-docx-host [data-casual-editor],
+.opensuite-docx-host .ep-root {
   height: 100%;
   min-height: 0;
 }
-

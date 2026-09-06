@@ -1,22 +1,16 @@
 import path from "node:path";
-import { createRequire } from "node:module";
+import { fileURLToPath } from "node:url";
 import type { NextConfig } from "next";
 
-const require = createRequire(import.meta.url);
-
+const webRoot = path.dirname(fileURLToPath(import.meta.url));
+/** Absolute path — webpack only. Turbopack rejects absolute aliases. */
+const schnsrwWasmAbsolute = path.join(webRoot, "vendor", "s1engine_wasm_bg.wasm");
 /**
- * @schnsrw/core ships wasm under `wasm/` but its glue resolves
- * `s1engine_wasm_bg.wasm` relative to the JS file under `dist/`.
+ * Project-relative — required for Turbopack. The binary is synced into
+ * apps/web/vendor by scripts/sync-schnsrw-wasm.mjs (pnpm monorepo node_modules
+ * sit outside the Next project root and are not resolvable).
  */
-function resolveSchnsrwWasm(): string {
-  const entry = require.resolve("@schnsrw/core");
-  return path.join(
-    path.dirname(entry),
-    "..",
-    "wasm",
-    "s1engine_wasm_bg.wasm",
-  );
-}
+const schnsrwWasmRelative = "./vendor/s1engine_wasm_bg.wasm";
 
 const nextConfig: NextConfig = {
   reactStrictMode: true,
@@ -28,13 +22,13 @@ const nextConfig: NextConfig = {
   ],
   turbopack: {
     resolveAlias: {
-      "s1engine_wasm_bg.wasm": resolveSchnsrwWasm(),
+      "s1engine_wasm_bg.wasm": schnsrwWasmRelative,
     },
   },
   webpack: (config) => {
     config.resolve.alias = {
       ...config.resolve.alias,
-      "s1engine_wasm_bg.wasm": resolveSchnsrwWasm(),
+      "s1engine_wasm_bg.wasm": schnsrwWasmAbsolute,
     };
     config.experiments = {
       ...config.experiments,

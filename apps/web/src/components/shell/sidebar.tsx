@@ -239,12 +239,12 @@ export function Sidebar() {
   }
 
   return (
-    <aside className="flex w-[236px] shrink-0 flex-col gap-4 border-r border-line bg-[var(--sidebar)] px-2.5 py-4">
+    <aside className="flex w-[236px] shrink-0 flex-col gap-4 border-r border-line bg-sidebar px-2.5 py-4">
       <div>
         <button
           type="button"
           onClick={() => openPalette(true)}
-          className="mb-3 flex w-full items-center gap-2 rounded-[var(--radius-sm)] border border-line bg-surface px-2.5 py-2 text-left text-[12px] text-ink-faint shadow-[0_1px_2px_rgba(16,24,40,0.025)] hover:border-[#D5D9E0] hover:text-ink"
+          className="mb-3 flex w-full items-center gap-2 rounded-[var(--radius-sm)] border border-line bg-surface px-2.5 py-2 text-left text-[12px] text-ink-faint shadow-[0_1px_2px_rgba(16,24,40,0.025)] hover:border-ink-faint hover:text-ink"
         >
           <span className="text-[13px]">⌕</span>
           <span className="min-w-0 flex-1">Search</span>
@@ -398,7 +398,7 @@ export function Sidebar() {
                   "flex h-[58px] flex-col items-center justify-center gap-[5px] rounded-[var(--radius-sm)] border text-[10px] shadow-[0_1px_2px_rgba(16,24,40,0.025)] " +
                   (active
                     ? "border-accent-line bg-accent-soft text-accent-hover"
-                    : "border-line bg-surface text-ink-soft hover:border-[#D5D9E0]")
+                    : "border-line bg-surface text-ink-soft hover:border-ink-faint")
                 }
               >
                 <svg
@@ -516,7 +516,7 @@ export function Sidebar() {
             <Button
               type="button"
               size="sm"
-              className="bg-danger hover:bg-[#B0453A]"
+              className="bg-danger text-on-ink hover:opacity-90"
               disabled={busy}
               onClick={() => void handleDelete()}
             >
@@ -540,7 +540,7 @@ function Modal({
 }) {
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-[rgba(15,18,24,0.32)] px-4 backdrop-blur-[6px]"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-overlay px-4 backdrop-blur-[6px]"
       onClick={onClose}
     >
       <div

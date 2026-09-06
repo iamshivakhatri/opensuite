@@ -8,7 +8,7 @@ export function AgentMarkdown({ text }: { text: string }) {
   const blocks = React.useMemo(() => parseBlocks(text), [text]);
 
   return (
-    <div className="agent-md text-[11px] leading-[1.65] text-[#43474F]">
+    <div className="agent-md text-[11px] leading-[1.65] text-ink-soft">
       {blocks.map((block, index) => (
         <Block key={index} block={block} />
       ))}
@@ -26,7 +26,7 @@ type MdBlock =
 function Block({ block }: { block: MdBlock }) {
   switch (block.kind) {
     case "hr":
-      return <hr className="my-2.5 border-0 border-t border-[#E3E5EA]" />;
+      return <hr className="my-2.5 border-0 border-t border-line" />;
     case "h": {
       const Tag = block.level === 1 ? "h3" : block.level === 2 ? "h4" : "h5";
       const size =
@@ -36,7 +36,7 @@ function Block({ block }: { block: MdBlock }) {
             ? "text-[12px]"
             : "text-[11.5px]";
       return (
-        <Tag className={`mb-1.5 mt-2 font-semibold text-[#2F333A] first:mt-0 ${size}`}>
+        <Tag className={`mb-1.5 mt-2 font-semibold text-ink first:mt-0 ${size}`}>
           <Inline text={block.text} />
         </Tag>
       );
@@ -81,7 +81,7 @@ function Inline({ text }: { text: string }) {
     <>
       {parts.map((part, i) =>
         part.kind === "bold" ? (
-          <strong key={i} className="font-semibold text-[#2F333A]">
+          <strong key={i} className="font-semibold text-ink">
             {part.text}
           </strong>
         ) : part.kind === "em" ? (
@@ -89,7 +89,7 @@ function Inline({ text }: { text: string }) {
         ) : part.kind === "code" ? (
           <code
             key={i}
-            className="rounded-[4px] bg-[#F1F2F5] px-1 py-0.5 font-mono text-[10px] text-[#3A3E46]"
+            className="rounded-[4px] bg-sunken px-1 py-0.5 font-mono text-[10px] text-ink"
           >
             {part.text}
           </code>

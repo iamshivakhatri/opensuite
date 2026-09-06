@@ -604,7 +604,7 @@ function WorkspaceHomeCanvas({
           <button
             type="button"
             onClick={onUpload}
-            className="inline-flex h-8 items-center rounded-[var(--radius-sm)] bg-ink px-3 text-[11.5px] font-medium text-white hover:bg-[#2A2D33]"
+            className="inline-flex h-8 items-center rounded-[var(--radius-sm)] bg-ink px-3 text-[11.5px] font-medium text-on-ink hover:opacity-90"
           >
             Upload file
           </button>

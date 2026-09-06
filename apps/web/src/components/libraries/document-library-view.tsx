@@ -207,7 +207,7 @@ export function DocumentLibraryView({
         {(documents ?? []).map((doc) => (
           <div
             key={doc.id}
-            className="flex items-center gap-3 rounded-[var(--radius-md)] border border-line bg-surface px-3 py-2.5 hover:border-[#D5D9E0]"
+            className="flex items-center gap-3 rounded-[var(--radius-md)] border border-line bg-surface px-3 py-2.5 hover:border-ink-faint"
           >
             <Link
               href={documentPath(doc.workspaceId, doc.id)}

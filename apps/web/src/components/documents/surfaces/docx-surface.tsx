@@ -13,6 +13,7 @@ import {
 } from "@/lib/api";
 import { userFacingError } from "@/components/files/format";
 import { ConfirmDialog } from "@/components/ui/context-menu";
+import { useTheme } from "@/lib/theme";
 import { useToast } from "@/lib/toast";
 
 const DocxEditorHost = dynamic(
@@ -23,7 +24,7 @@ const DocxEditorHost = dynamic(
   {
     ssr: false,
     loading: () => (
-      <div className="flex h-full items-center justify-center bg-[#ECEEF2]">
+      <div className="flex h-full items-center justify-center bg-canvas">
         <p className="text-[12px] text-ink-faint">Loading editor…</p>
       </div>
     ),
@@ -57,6 +58,7 @@ export function DocxSurface({
   readonly saveRequestId?: number;
 }) {
   const { toast } = useToast();
+  const { resolvedTheme } = useTheme();
   const editorRef = React.useRef<DocxEditorRef | null>(null);
   const selectionRef = React.useRef<unknown>(null);
   const savingRef = React.useRef(false);
@@ -317,7 +319,7 @@ export function DocxSurface({
 
   if (phase === "loading") {
     return (
-      <div className="flex h-full min-h-0 flex-1 items-center justify-center bg-[#ECEEF2]">
+      <div className="flex h-full min-h-0 flex-1 items-center justify-center bg-canvas">
         <p className="text-[12px] text-ink-faint">Loading document…</p>
       </div>
     );
@@ -325,7 +327,7 @@ export function DocxSurface({
 
   if (phase === "error" || !buffer || !loadedVersionId) {
     return (
-      <div className="flex h-full min-h-0 flex-1 flex-col items-center justify-center gap-3 bg-[#ECEEF2] px-6">
+      <div className="flex h-full min-h-0 flex-1 flex-col items-center justify-center gap-3 bg-canvas px-6">
         <p className="max-w-md text-center text-[12.5px] text-danger">
           {loadError ?? "Could not load this document."}
         </p>
@@ -341,7 +343,7 @@ export function DocxSurface({
   }
 
   return (
-    <div className="relative flex h-full min-h-0 flex-1 flex-col bg-[#ECEEF2]">
+    <div className="relative flex h-full min-h-0 flex-1 flex-col bg-canvas">
       {conflict ? (
         <div className="flex shrink-0 items-center justify-between gap-3 border-b border-danger/25 bg-danger-soft px-3 py-2">
           <p className="text-[11.5px] leading-snug text-danger">
@@ -351,7 +353,7 @@ export function DocxSurface({
           </p>
           <button
             type="button"
-            className="shrink-0 rounded-[var(--radius-sm)] border border-danger/30 bg-surface px-2.5 py-1 text-[11px] font-medium text-danger hover:bg-white"
+            className="shrink-0 rounded-[var(--radius-sm)] border border-danger/30 bg-surface px-2.5 py-1 text-[11px] font-medium text-danger hover:bg-elevated"
             onClick={() => {
               if (dirty) setReloadOpen(true);
               else confirmReloadLatest();
@@ -368,7 +370,7 @@ export function DocxSurface({
           </p>
           <button
             type="button"
-            className="shrink-0 rounded-[var(--radius-sm)] border border-accent-line bg-surface px-2.5 py-1 text-[11px] font-medium text-accent hover:bg-white"
+            className="shrink-0 rounded-[var(--radius-sm)] border border-accent-line bg-surface px-2.5 py-1 text-[11px] font-medium text-accent hover:bg-elevated"
             onClick={() => setReloadOpen(true)}
           >
             Reload latest
@@ -382,6 +384,7 @@ export function DocxSurface({
           ref={editorRef}
           documentBuffer={buffer}
           documentName={document.name}
+          resolvedTheme={resolvedTheme}
           onDirtyChange={setDirty}
           onError={(error) => {
             toast({

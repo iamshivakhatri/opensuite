@@ -261,7 +261,7 @@ export function WorkspacesHome() {
         {(workspaces ?? []).map((workspace) => (
           <div
             key={workspace.id}
-            className="group relative rounded-[var(--radius-md)] border border-line bg-surface px-4 py-3.5 transition-colors hover:border-[#D5D9E0]"
+            className="group relative rounded-[var(--radius-md)] border border-line bg-surface px-4 py-3.5 transition-colors hover:border-ink-faint"
           >
             <Link
               href={workspacePath(workspace.id)}
@@ -287,7 +287,7 @@ export function WorkspacesHome() {
                     key={doc.id}
                     href={documentPath(workspace.id, doc.id)}
                     className={
-                  "inline-flex max-w-[200px] items-center gap-1.5 rounded-[var(--radius-sm)] border border-line bg-[var(--paper)] px-2 py-0.5 text-[10px] text-ink-soft transition-colors hover:border-[#D5D9E0] hover:text-ink"
+                  "inline-flex max-w-[200px] items-center gap-1.5 rounded-[var(--radius-sm)] border border-line bg-[var(--paper)] px-2 py-0.5 text-[10px] text-ink-soft transition-colors hover:border-ink-faint hover:text-ink"
                 }
                 prefetch
                   >
@@ -404,7 +404,7 @@ export function WorkspacesHome() {
             <Button
               type="button"
               size="sm"
-              className="bg-danger hover:bg-[#B0453A]"
+              className="bg-danger text-on-ink hover:opacity-90"
               disabled={busy}
               onClick={() => void handleDelete()}
             >
@@ -568,7 +568,7 @@ function Dialog({
 }) {
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-[rgba(15,18,24,0.32)] px-4 backdrop-blur-[6px]"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-overlay px-4 backdrop-blur-[6px]"
       onClick={onClose}
     >
       <div

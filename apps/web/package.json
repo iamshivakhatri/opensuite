@@ -5,12 +5,15 @@
   "description": "OpenSuite web application — Next.js frontend. Visual reference: opensuite_v4_modern_minimal.html.",
   "type": "module",
   "scripts": {
+    "postinstall": "node ./scripts/sync-schnsrw-wasm.mjs",
+    "predev": "node ./scripts/sync-schnsrw-wasm.mjs",
+    "prebuild": "node ./scripts/sync-schnsrw-wasm.mjs",
     "build": "next build",
     "dev": "next dev -p 3001",
     "start": "next start -p 3001",
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "lint": "echo \"(no lint configured yet)\"",
-    "test": "node --experimental-strip-types --test src/lib/agent-progress.test.ts"
+    "test": "node --experimental-strip-types --test src/lib/agent-progress.test.ts src/lib/theme-model.test.ts"
   },
   "dependencies": {
     "@casualoffice/docs": "^1.4.2",

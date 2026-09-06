@@ -655,13 +655,13 @@ export function DocumentAgentPanel({
             </button>
           </div>
         </div>
-        <div className="mt-0.5 truncate font-mono text-[8.5px] text-[#989DA7]">
+        <div className="mt-0.5 truncate font-mono text-[8.5px] text-ink-faint">
           {activeThread ? threadLabel(activeThread) : contextLabel}
         </div>
 
         {historyOpen ? (
-          <div className="absolute left-3 right-3 top-[calc(100%-4px)] z-20 max-h-[240px] overflow-y-auto rounded-[12px] border border-[#E3E5EA] bg-white py-1 shadow-[0_12px_40px_rgba(16,24,40,0.12)]">
-            <div className="px-3 py-1.5 font-mono text-[8px] uppercase tracking-[0.08em] text-[#9A9FAA]">
+          <div className="absolute left-3 right-3 top-[calc(100%-4px)] z-20 max-h-[240px] overflow-y-auto rounded-[12px] border border-line bg-elevated py-1 shadow-[0_12px_40px_rgba(16,24,40,0.12)]">
+            <div className="px-3 py-1.5 font-mono text-[8px] uppercase tracking-[0.08em] text-ink-faint">
               Previous chats
             </div>
             {threads.map((thread) => {
@@ -671,13 +671,13 @@ export function DocumentAgentPanel({
                   key={thread.id}
                   type="button"
                   onClick={() => void handleSelectThread(thread.id)}
-                  className={`flex w-full flex-col gap-0.5 px-3 py-2 text-left hover:bg-[#F4F5F7] ${
-                    active ? "bg-[#F0F1FF]" : ""
+                  className={`flex w-full flex-col gap-0.5 px-3 py-2 text-left hover:bg-sunken ${
+                    active ? "bg-selected" : ""
                   }`}
                 >
                   <span
                     className={`truncate text-[11px] ${
-                      active ? "font-medium text-[#5052D4]" : "text-ink"
+                      active ? "font-medium text-accent" : "text-ink"
                     }`}
                   >
                     {threadLabel(thread)}
@@ -726,7 +726,7 @@ export function DocumentAgentPanel({
                 message.role === "user" ? (
                   <div
                     key={message.id}
-                    className="ml-6 rounded-[13px_13px_4px_13px] bg-[#22252B] px-3 py-2.5 text-[10.5px] leading-[1.6] text-[#F8F9FB] shadow-[0_5px_18px_rgba(16,24,40,0.09)]"
+                    className="ml-6 rounded-[13px_13px_4px_13px] bg-ink px-3 py-2.5 text-[10.5px] leading-[1.6] text-on-ink shadow-[0_5px_18px_rgba(16,24,40,0.09)]"
                   >
                     {message.content}
                   </div>
@@ -738,11 +738,11 @@ export function DocumentAgentPanel({
               )}
 
               {showProgress ? (
-                <div className="rounded-[13px] border border-[#E3E5EA] bg-white py-1 shadow-[0_1px_2px_rgba(16,24,40,0.025)]">
+                <div className="rounded-[13px] border border-line bg-surface py-1 shadow-[0_1px_2px_rgba(16,24,40,0.025)]">
                   {visibleProgress.map((line) => (
                     <div
                       key={line.id}
-                      className="flex gap-2 px-3 py-1.5 font-mono text-[9.5px] leading-[1.45] text-[#6F7580]"
+                      className="flex gap-2 px-3 py-1.5 font-mono text-[9.5px] leading-[1.45] text-ink-soft"
                     >
                       <span
                         className={
@@ -785,9 +785,9 @@ export function DocumentAgentPanel({
         ) : null}
       </div>
 
-      <div className="shrink-0 border-t border-[#E4E6EA] bg-[#F8F9FB] p-3">
+      <div className="shrink-0 border-t border-line bg-sidebar p-3">
         <div
-          className={`rounded-[13px] border border-[#DEE1E7] bg-white p-2.5 shadow-[0_1px_2px_rgba(16,24,40,0.03)] focus-within:border-[#C7C8F8] focus-within:shadow-[0_0_0_3px_rgba(91,92,226,0.08)] ${
+          className={`rounded-[13px] border border-line bg-surface p-2.5 shadow-[0_1px_2px_rgba(16,24,40,0.03)] focus-within:border-accent-line focus-within:shadow-[0_0_0_3px_var(--accent-soft)] ${
             busy ? "opacity-80" : ""
           }`}
         >
@@ -809,7 +809,7 @@ export function DocumentAgentPanel({
               }
               onClick={() => void handleSubmit()}
               title="Send"
-              className="grid h-7 w-7 place-items-center rounded-[8px] bg-accent text-[11px] text-white hover:bg-accent-hover disabled:bg-[#C6C7F5] disabled:text-white"
+              className="grid h-7 w-7 place-items-center rounded-[8px] bg-accent text-[11px] text-on-ink hover:bg-accent-hover disabled:bg-accent-soft disabled:text-ink-faint"
             >
               ➤
             </button>

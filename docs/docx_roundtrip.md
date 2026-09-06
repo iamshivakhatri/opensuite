@@ -33,5 +33,7 @@ Manual fidelity checklist for OpenSuite ↔ Casual Docs. Do not claim more than 
 * Some OOXML constructs may be dropped or approximated on round-trip (Casual publishes a round-trip audit for their engine).
 * Embedded chrome still includes Casual formatting toolbar (intentional for editing).
 * AI, collab, and Casual persistence are disabled in OpenSuite.
+* `@schnsrw/core` WASM: Turbopack needs `apps/web/vendor/s1engine_wasm_bg.wasm` (synced by `postinstall`/`predev`/`prebuild`) plus relative `turbopack.resolveAlias` — absolute aliases fail under Turbopack.
+* Theme: OpenSuite uses `data-opensuite-theme`; Casual mutates `data-theme` — never share those. Host syncs Casual to `resolvedTheme` (not OS `auto`).
 
 Re-run this checklist after any Casual Docs major bump.

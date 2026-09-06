@@ -142,7 +142,7 @@ export function SearchPageView() {
               <Link
                 key={ws.id}
                 href={workspacePath(ws.id)}
-                className="flex items-center gap-3 rounded-[var(--radius-md)] border border-line bg-surface px-3 py-2.5 hover:border-[#D5D9E0]"
+                className="flex items-center gap-3 rounded-[var(--radius-md)] border border-line bg-surface px-3 py-2.5 hover:border-ink-faint"
               >
                 <span className="grid h-8 w-8 shrink-0 place-items-center rounded-[8px] border border-line bg-[var(--paper)] text-[10px] text-ink-soft">
                   WS
@@ -171,7 +171,7 @@ export function SearchPageView() {
               <Link
                 key={doc.id}
                 href={documentPath(doc.workspaceId, doc.id)}
-                className="flex items-center gap-3 rounded-[var(--radius-md)] border border-line bg-surface px-3 py-2.5 hover:border-[#D5D9E0]"
+                className="flex items-center gap-3 rounded-[var(--radius-md)] border border-line bg-surface px-3 py-2.5 hover:border-ink-faint"
               >
                 <span className="grid h-8 w-8 shrink-0 place-items-center rounded-[8px] border border-line bg-[var(--paper)] font-mono text-[7.5px] text-ink-soft">
                   {formatLabel(doc.format)}

@@ -18,7 +18,7 @@ const themeOptions: Array<{ value: ThemePreference; label: string }> = [
 
 export function SettingsView() {
   const router = useRouter();
-  const { preference, setPreference } = useTheme();
+  const { themePreference, setThemePreference } = useTheme();
   const [me, setMe] = React.useState<Me | null>(null);
   const [error, setError] = React.useState<string | null>(null);
   const [signingOut, setSigningOut] = React.useState(false);
@@ -90,12 +90,12 @@ export function SettingsView() {
         <div className="rounded-[var(--radius-md)] border border-line bg-surface p-2">
           <div className="grid grid-cols-3 gap-1">
             {themeOptions.map((option) => {
-              const active = preference === option.value;
+              const active = themePreference === option.value;
               return (
                 <button
                   key={option.value}
                   type="button"
-                  onClick={() => setPreference(option.value)}
+                  onClick={() => setThemePreference(option.value)}
                   className={
                     "rounded-[var(--radius-sm)] px-3 py-2.5 text-[12px] " +
                     (active

@@ -26,7 +26,7 @@ export default function ShellLayout({
       <Topbar userName={session.user.name} />
       <div className="flex min-h-0">
         <Sidebar />
-        <main className="min-w-0 flex-1 overflow-auto bg-[var(--shell-main)]">
+        <main className="min-w-0 flex-1 overflow-auto bg-shell-main">
           {children}
         </main>
       </div>

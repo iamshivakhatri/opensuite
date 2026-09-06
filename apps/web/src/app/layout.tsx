@@ -25,7 +25,7 @@ export default function RootLayout({
       <head>
         <script
           dangerouslySetInnerHTML={{
-            __html: `(function(){try{var t=localStorage.getItem("opensuite.theme")||"system";var r=t==="dark"||(t==="system"&&matchMedia("(prefers-color-scheme: dark)").matches)?"dark":"light";document.documentElement.dataset.theme=r;document.documentElement.style.colorScheme=r;}catch(e){}})();`,
+            __html: `(function(){try{var t=localStorage.getItem("opensuite.theme")||"system";var r=t==="dark"||(t==="system"&&matchMedia("(prefers-color-scheme: dark)").matches)?"dark":"light";document.documentElement.setAttribute("data-opensuite-theme",r);document.documentElement.style.colorScheme=r;try{localStorage.setItem("casual-editor:color-theme",r);}catch(e){}document.documentElement.setAttribute("data-theme",r);}catch(e){}})();`,
           }}
         />
       </head>

@@ -126,7 +126,7 @@ export function ConfirmDialog({
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-[rgba(15,18,24,0.32)] px-4 backdrop-blur-[6px]"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-overlay px-4 backdrop-blur-[6px]"
       onClick={onCancel}
     >
       <div
@@ -149,7 +149,7 @@ export function ConfirmDialog({
           <button
             type="button"
             disabled={busy}
-            className="inline-flex h-8 items-center rounded-[var(--radius-sm)] bg-danger px-3 text-xs font-medium text-white hover:bg-[#B0453A] disabled:opacity-50"
+            className="inline-flex h-8 items-center rounded-[var(--radius-sm)] bg-danger px-3 text-xs font-medium text-on-ink hover:opacity-90 disabled:opacity-50"
             onClick={onConfirm}
           >
             {busy ? "Working…" : confirmLabel}
@@ -190,7 +190,7 @@ export function PromptDialog({
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-[rgba(15,18,24,0.32)] px-4 backdrop-blur-[6px]"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-overlay px-4 backdrop-blur-[6px]"
       onClick={onCancel}
     >
       <form
@@ -227,7 +227,7 @@ export function PromptDialog({
           <button
             type="submit"
             disabled={busy || !value.trim()}
-            className="inline-flex h-8 items-center rounded-[var(--radius-sm)] bg-ink px-3 text-xs font-medium text-white disabled:opacity-50"
+            className="inline-flex h-8 items-center rounded-[var(--radius-sm)] bg-ink px-3 text-xs font-medium text-on-ink disabled:opacity-50"
           >
             {busy ? "Saving…" : "Save"}
           </button>
