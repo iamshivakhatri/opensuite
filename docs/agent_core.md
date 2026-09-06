@@ -135,8 +135,7 @@ Durable history is application-owned. `AgentExecutionService` maps selected
 
 ## Intentionally deferred
 
-* Wire `OpenSuiteEngineAdapter` as product default (API still uses MockDocumentRuntime)
-* Persist mutation `artifactBytes` → document_version / S3
+* Wire `OpenSuiteEngineAdapter` / `applyReplaceText` as product default (API still uses MockDocumentRuntime)
 * Engine-backed inspect/find; checkpoints/revert / rendering / destructive deletes
 * Model routing-fallback / durable confirmation resume / Redis workers
 * Semantic conflict detection for parallel mutations

@@ -21,6 +21,7 @@
     "@opensuite/agent-core": "workspace:*",
     "@opensuite/contracts": "workspace:*",
     "@opensuite/db": "workspace:*",
+    "@opensuite/engine-client": "workspace:*",
     "better-auth": "^1.7.2",
     "drizzle-orm": "^0.45.2",
     "fastify": "^5.12.1",

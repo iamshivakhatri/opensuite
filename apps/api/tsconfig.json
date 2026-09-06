@@ -8,6 +8,7 @@
   "references": [
     { "path": "../../packages/agent-core" },
     { "path": "../../packages/contracts" },
-    { "path": "../../packages/db" }
+    { "path": "../../packages/db" },
+    { "path": "../../packages/engine-client" }
   ]
 }

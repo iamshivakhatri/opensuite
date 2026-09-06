@@ -27,6 +27,24 @@ AgentRunner
 * Only `document.replace_text` → `executeDocxReplaceText` is wired initially.
 * Successful mutations may return in-memory `artifactBytes`; persistence is not done inside the adapter.
 
+### Application persistence lifecycle (ReplaceText)
+
+```text
+immutable version N
+  → createOwnedDocumentArtifactLoader (exact bytes)
+  → DocumentRuntime / OpenSuiteEngineAdapter
+  → verified artifactBytes
+  → createDocumentMutationService.applyReplaceText
+  → appendDocumentVersion (new storage key + row)
+  → version N+1 (only if N still latest)
+```
+
+* Engine never writes DB/storage.
+* Application owns version history; `baseVersionId` concurrency is atomic in `appendDocumentVersion` (`FOR UPDATE` + latest id check).
+* Runtime/engine failure → no upload / no version.
+* Stale engine output after a concurrent append → `VERSION_CONFLICT` + best-effort delete of the unused object.
+* Production agent runtime switch remains deferred until engine inspect/find exist.
+
 ### Local Node binding setup
 
 Sibling checkout expected:

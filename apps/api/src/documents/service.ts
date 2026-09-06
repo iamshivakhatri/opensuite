@@ -885,6 +885,23 @@ export function createDocumentService(
     },
 
     /**
+     * Loads exact immutable version bytes into memory (no Base64, no temp files).
+     * Always the requested version — never silently substitutes latest.
+     */
+    async readExactVersionBytes(input: {
+      documentId: string;
+      versionId: string;
+      ownerUserId: string;
+    }): Promise<Buffer> {
+      const download = await this.openVersionContent(input);
+      const chunks: Buffer[] = [];
+      for await (const chunk of download.body) {
+        chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+      }
+      return Buffer.concat(chunks);
+    },
+
+    /**
      * Renames an owned, non-deleted document. Preserves format; does not touch
      * storage keys or version artifacts.
      */
