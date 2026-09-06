@@ -3,12 +3,29 @@
 import Link from "next/link";
 
 import { Button } from "@/components/ui/button";
-import { formatBytes, formatLabel } from "@/components/files/format";
 import type { ListedDocument } from "@/lib/api";
 import { workspacePath } from "@/lib/paths";
 
+function TrashIcon({ className }: { className?: string }) {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={1.7}
+      className={className}
+      aria-hidden
+    >
+      <path d="M4 7h16" />
+      <path d="M9 7V5a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2" />
+      <path d="M6.5 7l.8 12a1.5 1.5 0 0 0 1.5 1.4h6.4a1.5 1.5 0 0 0 1.5-1.4l.8-12" />
+      <path d="M10 11v6M14 11v6" />
+    </svg>
+  );
+}
+
 /**
- * Compact header — Workspaces › Workspace › Document.
+ * IDE chrome — back + workspace name. Open files live in the tab strip.
  */
 export function DocumentHeader({
   workspaceId,
@@ -18,7 +35,6 @@ export function DocumentHeader({
   onDownload,
   starred,
   onToggleStar,
-  onRename,
   onTrash,
 }: {
   workspaceId: string;
@@ -28,63 +44,38 @@ export function DocumentHeader({
   onDownload?: () => void;
   starred?: boolean;
   onToggleStar?: () => void;
-  onRename?: () => void;
   onTrash?: () => void;
 }) {
   const wsLabel = workspaceName?.trim() || "Workspace";
 
   return (
     <header
-      className="flex h-[44px] shrink-0 items-center gap-2.5 border-b border-line px-3.5"
+      className="flex h-[44px] shrink-0 items-center gap-2 border-b border-line px-3"
       style={{
         background: "color-mix(in srgb, var(--surface) 88%, transparent)",
         backdropFilter: "blur(16px) saturate(1.12)",
       }}
     >
-      <nav className="flex min-w-0 flex-1 items-center gap-1.5 text-[11.5px]">
-        <Link
-          href="/app"
-          className="shrink-0 font-medium text-ink-faint hover:text-ink"
-        >
-          Workspaces
-        </Link>
-        <span className="shrink-0 text-ink-faint/70">/</span>
+      <Link
+        href="/app"
+        title="Back to workspaces"
+        className="grid h-7 w-7 shrink-0 place-items-center rounded-[8px] text-[14px] text-ink-faint hover:bg-sunken hover:text-ink"
+      >
+        ←
+      </Link>
+
+      <div className="flex min-w-0 flex-1 items-center">
         <Link
           href={workspacePath(workspaceId)}
-          className={
-            "min-w-0 truncate font-medium " +
-            (document
-              ? "text-ink-faint hover:text-ink"
-              : "font-semibold text-ink")
-          }
-          title={wsLabel}
+          title={`${wsLabel} — workspace home`}
+          className="min-w-0 truncate text-[13px] font-semibold tracking-[-0.02em] text-ink hover:underline"
         >
           {wsLabel}
         </Link>
-        {document ? (
-          <>
-            <span className="shrink-0 text-ink-faint/70">/</span>
-            <button
-              type="button"
-              title="Rename"
-              onClick={onRename}
-              className="min-w-0 truncate text-left font-semibold text-ink hover:underline"
-            >
-              {document.name}
-            </button>
-            <span className="shrink-0 rounded-full border border-line bg-surface px-[6px] py-[1px] font-mono text-[7.5px] font-medium text-ink-faint">
-              {formatLabel(document.format)}
-            </span>
-            <span className="hidden min-w-0 truncate text-[10px] text-ink-faint sm:inline">
-              v{document.latestVersion.versionNumber} ·{" "}
-              {formatBytes(document.latestVersion.sizeBytes)}
-            </span>
-          </>
-        ) : null}
-      </nav>
+      </div>
 
       {document ? (
-        <div className="flex shrink-0 items-center gap-1">
+        <div className="flex shrink-0 items-center gap-0.5">
           {onToggleStar ? (
             <button
               type="button"
@@ -100,9 +91,9 @@ export function DocumentHeader({
               type="button"
               title="Move to Trash"
               onClick={onTrash}
-              className="grid h-7 w-7 place-items-center rounded-[8px] text-[12px] text-ink-faint hover:bg-danger-soft hover:text-danger"
+              className="grid h-7 w-7 place-items-center rounded-[8px] text-ink-faint hover:bg-danger-soft hover:text-danger"
             >
-              ⌫
+              <TrashIcon className="h-[14px] w-[14px]" />
             </button>
           ) : null}
           {onDownload ? (
@@ -110,7 +101,7 @@ export function DocumentHeader({
               type="button"
               variant="outline"
               size="sm"
-              className="h-7 shrink-0 rounded-[8px] border-line px-2.5 text-[11px]"
+              className="ml-1 h-7 shrink-0 rounded-[var(--radius-sm)] border-line px-2.5 text-[11px]"
               disabled={downloading}
               onClick={onDownload}
             >
@@ -118,11 +109,7 @@ export function DocumentHeader({
             </Button>
           ) : null}
         </div>
-      ) : (
-        <p className="hidden shrink-0 text-[10.5px] text-ink-faint sm:block">
-          Open a file from the explorer
-        </p>
-      )}
+      ) : null}
     </header>
   );
 }

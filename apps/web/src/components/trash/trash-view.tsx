@@ -18,6 +18,24 @@ import {
 } from "@/lib/api";
 import { useToast } from "@/lib/toast";
 
+function TrashIcon({ className }: { className?: string }) {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={1.7}
+      className={className}
+      aria-hidden
+    >
+      <path d="M4 7h16" />
+      <path d="M9 7V5a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2" />
+      <path d="M6.5 7l.8 12a1.5 1.5 0 0 0 1.5 1.4h6.4a1.5 1.5 0 0 0 1.5-1.4l.8-12" />
+      <path d="M10 11v6M14 11v6" />
+    </svg>
+  );
+}
+
 export function TrashView() {
   const { toast } = useToast();
   const [workspaces, setWorkspaces] = React.useState<TrashedWorkspace[] | null>(
@@ -88,10 +106,12 @@ export function TrashView() {
   return (
     <div className="mx-auto max-w-[920px] px-8 py-8">
       <div className="mb-6">
-        <div className="mb-1 font-mono text-[8.5px] font-medium uppercase tracking-[0.095em] text-ink-faint">
+        <div className="mb-1 flex items-center gap-2 font-mono text-[8.5px] font-medium uppercase tracking-[0.095em] text-ink-faint">
+          <TrashIcon className="h-3 w-3" />
           Library
         </div>
-        <h1 className="text-[22px] font-semibold tracking-[-0.03em] text-ink">
+        <h1 className="flex items-center gap-2 text-[22px] font-semibold tracking-[-0.03em] text-ink">
+          <TrashIcon className="h-[18px] w-[18px] text-ink-soft" />
           Trash
         </h1>
         <p className="mt-1 text-[12px] text-ink-soft">
@@ -112,7 +132,7 @@ export function TrashView() {
       ) : null}
 
       {workspaces === null && !error ? (
-        <PageLoading label="Loading trash…" />
+        <PageLoading />
       ) : null}
 
       {empty ? (
@@ -131,10 +151,10 @@ export function TrashView() {
             {workspaces!.map((item) => (
               <div
                 key={item.id}
-                className="flex items-center gap-3 rounded-[12px] border border-line bg-surface px-3 py-2.5"
+                className="flex items-center gap-3 rounded-[var(--radius-md)] border border-line bg-surface px-3 py-2.5"
               >
-                <span className="grid h-8 w-8 shrink-0 place-items-center rounded-[8px] border border-line bg-[var(--paper)] text-[10px] text-ink-soft">
-                  WS
+                <span className="grid h-8 w-8 shrink-0 place-items-center rounded-[8px] border border-line bg-[var(--paper)] text-ink-faint">
+                  <TrashIcon className="h-3.5 w-3.5" />
                 </span>
                 <div className="min-w-0 flex-1">
                   <div className="truncate text-[12.5px] font-medium text-ink">
@@ -168,10 +188,13 @@ export function TrashView() {
             {documents!.map((item) => (
               <div
                 key={item.id}
-                className="flex items-center gap-3 rounded-[12px] border border-line bg-surface px-3 py-2.5"
+                className="flex items-center gap-3 rounded-[var(--radius-md)] border border-line bg-surface px-3 py-2.5"
               >
-                <span className="grid h-8 w-8 shrink-0 place-items-center rounded-[8px] border border-line bg-[var(--paper)] font-mono text-[7.5px] text-ink-soft">
+                <span className="relative grid h-8 w-8 shrink-0 place-items-center rounded-[8px] border border-line bg-[var(--paper)] font-mono text-[7.5px] text-ink-soft">
                   {formatLabel(item.format)}
+                  <span className="absolute -right-1 -top-1 grid h-3.5 w-3.5 place-items-center rounded-full bg-danger-soft text-danger">
+                    <TrashIcon className="h-2 w-2" />
+                  </span>
                 </span>
                 <div className="min-w-0 flex-1">
                   <div className="truncate text-[12.5px] font-medium text-ink">

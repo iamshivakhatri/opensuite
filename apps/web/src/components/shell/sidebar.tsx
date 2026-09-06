@@ -20,16 +20,73 @@ import { useToast } from "@/lib/toast";
 import { PageLoading } from "@/components/ui/page-state";
 
 const mainNav = [
-  { href: "/app", label: "Workspaces", icon: "▦", match: "exact" as const },
-  { href: "/app/recent", label: "Recent", icon: "◷", match: "prefix" as const },
+  { href: "/app", label: "Workspaces", icon: "nav-workspaces" as const, match: "exact" as const },
+  { href: "/app/recent", label: "Recent", icon: "nav-recent" as const, match: "prefix" as const },
   {
     href: "/app/starred",
     label: "Starred",
-    icon: "☆",
+    icon: "nav-starred" as const,
     match: "prefix" as const,
   },
-  { href: "/app/trash", label: "Trash", icon: "⌫", match: "prefix" as const },
+  { href: "/app/trash", label: "Trash", icon: "nav-trash" as const, match: "prefix" as const },
 ];
+
+function NavIcon({
+  name,
+  active,
+}: {
+  name: "nav-workspaces" | "nav-recent" | "nav-starred" | "nav-trash";
+  active: boolean;
+}) {
+  const stroke = active ? "currentColor" : "currentColor";
+  const className = "h-[14px] w-[14px]";
+  if (name === "nav-workspaces") {
+    return (
+      <svg viewBox="0 0 16 16" fill="none" className={className} aria-hidden>
+        <rect x="2" y="2" width="5" height="5" rx="1" stroke={stroke} strokeWidth="1.4" />
+        <rect x="9" y="2" width="5" height="5" rx="1" stroke={stroke} strokeWidth="1.4" />
+        <rect x="2" y="9" width="5" height="5" rx="1" stroke={stroke} strokeWidth="1.4" />
+        <rect x="9" y="9" width="5" height="5" rx="1" stroke={stroke} strokeWidth="1.4" />
+      </svg>
+    );
+  }
+  if (name === "nav-recent") {
+    return (
+      <svg viewBox="0 0 16 16" fill="none" className={className} aria-hidden>
+        <circle cx="8" cy="8" r="5.5" stroke={stroke} strokeWidth="1.4" />
+        <path d="M8 5v3.2L10 10" stroke={stroke} strokeWidth="1.4" strokeLinecap="round" />
+      </svg>
+    );
+  }
+  if (name === "nav-starred") {
+    return (
+      <svg viewBox="0 0 16 16" fill="none" className={className} aria-hidden>
+        <path
+          d="M8 2.4l1.5 3.2 3.5.4-2.6 2.4.7 3.4L8 10.4 4.9 11.8l.7-3.4L3 6l3.5-.4L8 2.4z"
+          stroke={stroke}
+          strokeWidth="1.3"
+          strokeLinejoin="round"
+        />
+      </svg>
+    );
+  }
+  return (
+    <svg viewBox="0 0 16 16" fill="none" className={className} aria-hidden>
+      <path d="M3 4.5h10" stroke={stroke} strokeWidth="1.4" strokeLinecap="round" />
+      <path
+        d="M5.5 4.5V3.6c0-.3.2-.6.5-.6h4c.3 0 .5.3.5.6v.9"
+        stroke={stroke}
+        strokeWidth="1.4"
+      />
+      <path
+        d="M4.2 4.5l.6 8c0 .4.4.7.8.7h5c.4 0 .7-.3.8-.7l.6-8"
+        stroke={stroke}
+        strokeWidth="1.4"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
 
 const appFilters = [
   {
@@ -187,7 +244,7 @@ export function Sidebar() {
         <button
           type="button"
           onClick={() => openPalette(true)}
-          className="mb-3 flex w-full items-center gap-2 rounded-[9px] border border-line bg-surface px-2.5 py-2 text-left text-[12px] text-ink-faint shadow-[0_1px_2px_rgba(16,24,40,0.025)] hover:border-[#D5D9E0] hover:text-ink"
+          className="mb-3 flex w-full items-center gap-2 rounded-[var(--radius-sm)] border border-line bg-surface px-2.5 py-2 text-left text-[12px] text-ink-faint shadow-[0_1px_2px_rgba(16,24,40,0.025)] hover:border-[#D5D9E0] hover:text-ink"
         >
           <span className="text-[13px]">⌕</span>
           <span className="min-w-0 flex-1">Search</span>
@@ -206,7 +263,7 @@ export function Sidebar() {
                 key={item.href}
                 href={item.href}
                 className={
-                  "flex items-center gap-2.5 rounded-[9px] px-2.5 py-2 text-[12px] transition-colors " +
+                  "flex items-center gap-2.5 rounded-[var(--radius-sm)] px-2.5 py-2 text-[12px] transition-colors " +
                   (active
                     ? "bg-accent-soft font-semibold text-accent-hover shadow-[inset_0_0_0_1px_rgba(91,92,226,0.05)]"
                     : "text-ink-soft hover:bg-sunken hover:text-ink")
@@ -214,11 +271,11 @@ export function Sidebar() {
               >
                 <span
                   className={
-                    "w-4 text-center text-[13px] " +
+                    "grid w-4 place-items-center " +
                     (active ? "text-accent" : "text-ink-faint")
                   }
                 >
-                  {item.icon}
+                  <NavIcon name={item.icon} active={active} />
                 </span>
                 {item.label}
               </Link>
@@ -250,8 +307,8 @@ export function Sidebar() {
           <p className="px-2.5 text-[10.5px] text-danger">{loadError}</p>
         ) : null}
         {workspaces === null && !loadError ? (
-          <div className="px-2.5">
-            <PageLoading label="Loading…" />
+          <div className="space-y-1 px-2.5 py-1">
+            <PageLoading variant="inline" />
           </div>
         ) : null}
 
@@ -265,7 +322,7 @@ export function Sidebar() {
                 <Link
                   href={workspacePath(workspace.id)}
                   className={
-                    "flex items-center gap-2 rounded-[9px] py-1.5 pl-2.5 pr-7 text-[12px] " +
+                    "flex items-center gap-2 rounded-[var(--radius-sm)] py-1.5 pl-2.5 pr-7 text-[12px] " +
                     (active
                       ? "bg-accent-soft font-medium text-accent-hover"
                       : "text-ink-soft hover:bg-sunken hover:text-ink")
@@ -289,7 +346,7 @@ export function Sidebar() {
                 </button>
                 {menuId === workspace.id ? (
                   <div
-                    className="absolute right-0 top-8 z-20 min-w-[140px] overflow-hidden rounded-[10px] border border-line bg-surface py-1 shadow-[0_8px_28px_rgba(15,18,24,0.12)]"
+                    className="absolute right-0 top-8 z-20 min-w-[140px] overflow-hidden rounded-[var(--radius-md)] border border-line bg-surface py-1 shadow-[0_8px_28px_rgba(15,18,24,0.12)]"
                     onClick={(event) => event.stopPropagation()}
                   >
                     <button
@@ -338,7 +395,7 @@ export function Sidebar() {
                 key={item.href}
                 href={item.href}
                 className={
-                  "flex h-[58px] flex-col items-center justify-center gap-[5px] rounded-[11px] border text-[10px] shadow-[0_1px_2px_rgba(16,24,40,0.025)] " +
+                  "flex h-[58px] flex-col items-center justify-center gap-[5px] rounded-[var(--radius-sm)] border text-[10px] shadow-[0_1px_2px_rgba(16,24,40,0.025)] " +
                   (active
                     ? "border-accent-line bg-accent-soft text-accent-hover"
                     : "border-line bg-surface text-ink-soft hover:border-[#D5D9E0]")
@@ -365,7 +422,7 @@ export function Sidebar() {
         <Link
           href="/app/settings"
           className={
-            "flex items-center gap-2.5 rounded-[9px] px-2.5 py-2 text-[12px] " +
+            "flex items-center gap-2.5 rounded-[var(--radius-sm)] px-2.5 py-2 text-[12px] " +
             (isActive(pathname, "/app/settings", "prefix")
               ? "bg-accent-soft font-semibold text-accent-hover"
               : "text-ink-soft hover:bg-sunken hover:text-ink")
@@ -487,7 +544,7 @@ function Modal({
       onClick={onClose}
     >
       <div
-        className="w-full max-w-[380px] rounded-[16px] border border-line bg-surface p-4 shadow-[0_24px_80px_rgba(15,18,24,0.2)]"
+        className="w-full max-w-[380px] rounded-[var(--radius-lg)] border border-line bg-surface p-4 shadow-[0_24px_80px_rgba(15,18,24,0.2)]"
         onClick={(event) => event.stopPropagation()}
       >
         <h2 className="mb-3 text-[14px] font-semibold tracking-[-0.02em] text-ink">

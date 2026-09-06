@@ -52,11 +52,11 @@ export function SettingsView() {
         <h2 className="mb-3 text-[12px] font-semibold uppercase tracking-[0.06em] text-ink-faint">
           Account
         </h2>
-        <div className="rounded-[14px] border border-line bg-surface px-4 py-4">
+        <div className="rounded-[var(--radius-md)] border border-line bg-surface px-4 py-4">
           {error ? (
             <PageError message={error} />
           ) : me === null ? (
-            <PageLoading label="Loading account…" />
+            <PageLoading variant="settings" />
           ) : (
             <dl className="space-y-3 text-[12.5px]">
               <div>
@@ -87,7 +87,7 @@ export function SettingsView() {
         <h2 className="mb-3 text-[12px] font-semibold uppercase tracking-[0.06em] text-ink-faint">
           Appearance
         </h2>
-        <div className="rounded-[14px] border border-line bg-surface p-2">
+        <div className="rounded-[var(--radius-md)] border border-line bg-surface p-2">
           <div className="grid grid-cols-3 gap-1">
             {themeOptions.map((option) => {
               const active = preference === option.value;
@@ -97,7 +97,7 @@ export function SettingsView() {
                   type="button"
                   onClick={() => setPreference(option.value)}
                   className={
-                    "rounded-[10px] px-3 py-2.5 text-[12px] " +
+                    "rounded-[var(--radius-sm)] px-3 py-2.5 text-[12px] " +
                     (active
                       ? "bg-accent-soft font-semibold text-accent-hover"
                       : "text-ink-soft hover:bg-sunken hover:text-ink")

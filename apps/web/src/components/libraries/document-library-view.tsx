@@ -141,7 +141,7 @@ export function DocumentLibraryView({
       </div>
 
       {kind === "format" ? (
-        <div className="mb-5 flex flex-wrap items-center gap-2 rounded-[14px] border border-line bg-surface px-3 py-3">
+        <div className="mb-5 flex flex-wrap items-center gap-2 rounded-[var(--radius-md)] border border-line bg-surface px-3 py-3">
           <select
             value={uploadWorkspaceId}
             onChange={(event) => setUploadWorkspaceId(event.target.value)}
@@ -187,7 +187,7 @@ export function DocumentLibraryView({
       ) : null}
 
       {documents === null && !error ? (
-        <PageLoading label="Loading…" />
+        <PageLoading />
       ) : null}
 
       {documents !== null && documents.length === 0 ? (
@@ -207,7 +207,7 @@ export function DocumentLibraryView({
         {(documents ?? []).map((doc) => (
           <div
             key={doc.id}
-            className="flex items-center gap-3 rounded-[12px] border border-line bg-surface px-3 py-2.5 hover:border-[#D5D9E0]"
+            className="flex items-center gap-3 rounded-[var(--radius-md)] border border-line bg-surface px-3 py-2.5 hover:border-[#D5D9E0]"
           >
             <Link
               href={documentPath(doc.workspaceId, doc.id)}

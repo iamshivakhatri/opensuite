@@ -130,7 +130,7 @@ export function ConfirmDialog({
       onClick={onCancel}
     >
       <div
-        className="w-full max-w-[380px] rounded-[16px] border border-line bg-surface p-4 shadow-[0_24px_80px_rgba(15,18,24,0.2)]"
+        className="w-full max-w-[380px] rounded-[var(--radius-lg)] border border-line bg-surface p-4 shadow-[0_24px_80px_rgba(15,18,24,0.2)]"
         onClick={(event) => event.stopPropagation()}
       >
         <h2 className="mb-3 text-[14px] font-semibold tracking-[-0.02em] text-ink">
@@ -141,7 +141,7 @@ export function ConfirmDialog({
         <div className="flex justify-end gap-2">
           <button
             type="button"
-            className="inline-flex h-8 items-center rounded-[var(--radius-md)] border border-line bg-surface px-3 text-xs font-medium text-ink-soft hover:text-ink"
+            className="inline-flex h-8 items-center rounded-[var(--radius-sm)] border border-line bg-surface px-3 text-xs font-medium text-ink-soft hover:text-ink"
             onClick={onCancel}
           >
             Cancel
@@ -149,7 +149,7 @@ export function ConfirmDialog({
           <button
             type="button"
             disabled={busy}
-            className="inline-flex h-8 items-center rounded-[var(--radius-md)] bg-danger px-3 text-xs font-medium text-white hover:bg-[#B0453A] disabled:opacity-50"
+            className="inline-flex h-8 items-center rounded-[var(--radius-sm)] bg-danger px-3 text-xs font-medium text-white hover:bg-[#B0453A] disabled:opacity-50"
             onClick={onConfirm}
           >
             {busy ? "Working…" : confirmLabel}
@@ -194,7 +194,7 @@ export function PromptDialog({
       onClick={onCancel}
     >
       <form
-        className="w-full max-w-[380px] rounded-[16px] border border-line bg-surface p-4 shadow-[0_24px_80px_rgba(15,18,24,0.2)]"
+        className="w-full max-w-[380px] rounded-[var(--radius-lg)] border border-line bg-surface p-4 shadow-[0_24px_80px_rgba(15,18,24,0.2)]"
         onClick={(event) => event.stopPropagation()}
         onSubmit={(event) => {
           event.preventDefault();
@@ -219,7 +219,7 @@ export function PromptDialog({
         <div className="flex justify-end gap-2">
           <button
             type="button"
-            className="inline-flex h-8 items-center rounded-[var(--radius-md)] border border-line bg-surface px-3 text-xs font-medium text-ink-soft hover:text-ink"
+            className="inline-flex h-8 items-center rounded-[var(--radius-sm)] border border-line bg-surface px-3 text-xs font-medium text-ink-soft hover:text-ink"
             onClick={onCancel}
           >
             Cancel
@@ -227,7 +227,7 @@ export function PromptDialog({
           <button
             type="submit"
             disabled={busy || !value.trim()}
-            className="inline-flex h-8 items-center rounded-[var(--radius-md)] bg-ink px-3 text-xs font-medium text-white disabled:opacity-50"
+            className="inline-flex h-8 items-center rounded-[var(--radius-sm)] bg-ink px-3 text-xs font-medium text-white disabled:opacity-50"
           >
             {busy ? "Saving…" : "Save"}
           </button>

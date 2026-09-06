@@ -4,7 +4,7 @@ import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import { test } from "node:test";
 
-import { and, eq, isNull } from "drizzle-orm";
+import { and, asc, eq, isNull } from "drizzle-orm";
 import { createDbClient, schema } from "@opensuite/db";
 
 import { createAuth } from "../auth/index.js";
@@ -15,7 +15,7 @@ import {
   createStubEmailSender,
   extractEmailActionUrl,
 } from "./support/stub-email-sender.js";
-import { multipartFilePayload, testS3Env } from "./support/test-env.js";
+import { multipartFilePayload, multipartVersionSavePayload, testS3Env } from "./support/test-env.js";
 
 const runDbIntegrationTests = process.env.RUN_DB_INTEGRATION_TESTS === "true";
 const databaseUrl = process.env.DATABASE_URL;
@@ -207,10 +207,12 @@ test(
           id: string;
           documentId: string;
           versionNumber: number;
-          storageKey: string;
           sizeBytes: number;
           source: string;
           createdByUserId: string;
+          parentVersionId: string | null;
+          sha256: string | null;
+          storageKey?: string;
         };
       };
 
@@ -222,11 +224,14 @@ test(
       assert.equal(body.version.source, "upload");
       assert.equal(body.version.createdByUserId, alice.userId);
       assert.equal(body.version.sizeBytes, fileBytes.byteLength);
-      assert.equal(
-        body.version.storageKey,
-        `workspaces/${aliceWorkspaceId}/documents/${body.document.id}/versions/${body.version.id}/content.docx`,
-      );
-      assert.equal(storage.objects.has(body.version.storageKey), true);
+      assert.equal(body.version.parentVersionId, null);
+      assert.equal(typeof body.version.sha256, "string");
+      assert.equal(body.version.sha256?.length, 64);
+      assert.equal("storageKey" in body.version, false);
+      assert.equal(JSON.stringify(body).includes("storageKey"), false);
+
+      const expectedStorageKey = `workspaces/${aliceWorkspaceId}/documents/${body.document.id}/versions/${body.version.id}/content.docx`;
+      assert.equal(storage.objects.has(expectedStorageKey), true);
 
       const docs = await dbClient.db
         .select({ id: schema.document.id })
@@ -247,6 +252,7 @@ test(
           createdByUserId: schema.documentVersion.createdByUserId,
           storageKey: schema.documentVersion.storageKey,
           parentVersionId: schema.documentVersion.parentVersionId,
+          sha256: schema.documentVersion.sha256,
         })
         .from(schema.documentVersion)
         .where(eq(schema.documentVersion.documentId, body.document.id));
@@ -255,7 +261,8 @@ test(
       assert.equal(versions[0]?.source, "upload");
       assert.equal(versions[0]?.createdByUserId, alice.userId);
       assert.equal(versions[0]?.parentVersionId, null);
-      assert.equal(versions[0]?.storageKey, body.version.storageKey);
+      assert.equal(versions[0]?.storageKey, expectedStorageKey);
+      assert.equal(versions[0]?.sha256, body.version.sha256);
     } finally {
       await app.close();
       await dbClient.close();
@@ -327,7 +334,7 @@ test(
       assert.equal(upload.statusCode, 201, upload.body);
       const uploaded = upload.json() as {
         document: { id: string };
-        version: { id: string; storageKey: string };
+        version: { id: string };
       };
 
       const deletedUpload = await app.inject({
@@ -1288,6 +1295,375 @@ test(
       assert.ok(
         (limited.json() as { documents: unknown[] }).documents.length <= 1,
       );
+    } finally {
+      await app.close();
+      await dbClient.close();
+    }
+  },
+);
+
+test(
+  "immutable version append, exact content, and stale-base conflict",
+  { skip: !runDbIntegrationTests || databaseUrl === undefined },
+  async () => {
+    const config = testConfig();
+    const dbClient = createDbClient({ databaseUrl: config.databaseUrl });
+    const emailSender = createStubEmailSender();
+    const auth = createAuth(config, dbClient.db, emailSender);
+    const storage = createMemoryObjectStorage();
+    const app = await buildApp(config, {
+      auth,
+      db: dbClient.db,
+      storage,
+    });
+    await app.ready();
+
+    try {
+      const alice = await signUpVerifyAndSignIn(
+        app,
+        config,
+        emailSender,
+        "VersionAlice",
+      );
+      const bob = await signUpVerifyAndSignIn(
+        app,
+        config,
+        emailSender,
+        "VersionBob",
+      );
+      const workspaceId = await createWorkspace(
+        app,
+        config,
+        alice.cookie,
+        "Version WS",
+      );
+
+      const v1Bytes = Buffer.from("PK version-one-exact");
+      const upload = await app.inject({
+        method: "POST",
+        url: `/api/workspaces/${workspaceId}/documents`,
+        headers: {
+          ...multipartFilePayload("Memo.docx", v1Bytes).headers,
+          cookie: alice.cookie,
+          origin: config.webOrigin,
+        },
+        payload: multipartFilePayload("Memo.docx", v1Bytes).payload,
+      });
+      assert.equal(upload.statusCode, 201, upload.body);
+      const uploaded = upload.json() as {
+        document: { id: string; name: string };
+        version: {
+          id: string;
+          versionNumber: number;
+          sha256: string;
+          parentVersionId: string | null;
+        };
+      };
+      assert.equal(uploaded.version.versionNumber, 1);
+      assert.equal(uploaded.version.parentVersionId, null);
+      assert.equal(JSON.stringify(uploaded).includes("storageKey"), false);
+
+      const unauthContent = await app.inject({
+        method: "GET",
+        url: `/api/documents/${uploaded.document.id}/versions/${uploaded.version.id}/content`,
+        headers: { origin: config.webOrigin },
+      });
+      assert.equal(unauthContent.statusCode, 401, unauthContent.body);
+
+      const v1Content = await app.inject({
+        method: "GET",
+        url: `/api/documents/${uploaded.document.id}/versions/${uploaded.version.id}/content`,
+        headers: { cookie: alice.cookie, origin: config.webOrigin },
+      });
+      assert.equal(v1Content.statusCode, 200, v1Content.body);
+      assert.equal(
+        v1Content.headers["content-type"],
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+      );
+      assert.deepEqual(v1Content.rawPayload, v1Bytes);
+
+      const bobContent = await app.inject({
+        method: "GET",
+        url: `/api/documents/${uploaded.document.id}/versions/${uploaded.version.id}/content`,
+        headers: { cookie: bob.cookie, origin: config.webOrigin },
+      });
+      assert.equal(bobContent.statusCode, 404, bobContent.body);
+
+      const wrongVersion = await app.inject({
+        method: "GET",
+        url: `/api/documents/${uploaded.document.id}/versions/${randomUUID()}/content`,
+        headers: { cookie: alice.cookie, origin: config.webOrigin },
+      });
+      assert.equal(wrongVersion.statusCode, 404, wrongVersion.body);
+
+      const v2Bytes = Buffer.from("PK version-two-user-save");
+      const save = await app.inject({
+        method: "POST",
+        url: `/api/documents/${uploaded.document.id}/versions`,
+        headers: {
+          ...multipartVersionSavePayload(
+            "Memo.docx",
+            v2Bytes,
+            uploaded.version.id,
+          ).headers,
+          cookie: alice.cookie,
+          origin: config.webOrigin,
+        },
+        payload: multipartVersionSavePayload(
+          "Memo.docx",
+          v2Bytes,
+          uploaded.version.id,
+        ).payload,
+      });
+      assert.equal(save.statusCode, 201, save.body);
+      const saved = save.json() as {
+        document: {
+          id: string;
+          latestVersion: { id: string; versionNumber: number; source: string };
+        };
+        version: {
+          id: string;
+          documentId: string;
+          versionNumber: number;
+          parentVersionId: string | null;
+          sizeBytes: number;
+          sha256: string | null;
+          source: string;
+          createdByUserId: string;
+          storageKey?: string;
+        };
+      };
+      assert.equal(saved.version.versionNumber, 2);
+      assert.equal(saved.version.source, "user");
+      assert.equal(saved.version.parentVersionId, uploaded.version.id);
+      assert.equal(saved.version.sizeBytes, v2Bytes.byteLength);
+      assert.equal(typeof saved.version.sha256, "string");
+      assert.equal(saved.version.sha256?.length, 64);
+      assert.equal(saved.version.createdByUserId, alice.userId);
+      assert.equal(saved.document.latestVersion.id, saved.version.id);
+      assert.equal(saved.document.latestVersion.versionNumber, 2);
+      assert.equal(saved.document.latestVersion.source, "user");
+      assert.equal("storageKey" in saved.version, false);
+      assert.equal(JSON.stringify(saved).includes("storageKey"), false);
+
+      const v2Key = `workspaces/${workspaceId}/documents/${uploaded.document.id}/versions/${saved.version.id}/content.docx`;
+      assert.equal(storage.objects.has(v2Key), true);
+
+      const dbVersions = await dbClient.db
+        .select({
+          id: schema.documentVersion.id,
+          versionNumber: schema.documentVersion.versionNumber,
+          parentVersionId: schema.documentVersion.parentVersionId,
+          source: schema.documentVersion.source,
+          sha256: schema.documentVersion.sha256,
+          storageKey: schema.documentVersion.storageKey,
+        })
+        .from(schema.documentVersion)
+        .where(eq(schema.documentVersion.documentId, uploaded.document.id))
+        .orderBy(asc(schema.documentVersion.versionNumber));
+      assert.equal(dbVersions.length, 2);
+      assert.equal(dbVersions[0]?.id, uploaded.version.id);
+      assert.equal(dbVersions[0]?.parentVersionId, null);
+      assert.equal(dbVersions[1]?.id, saved.version.id);
+      assert.equal(dbVersions[1]?.parentVersionId, uploaded.version.id);
+      assert.equal(dbVersions[1]?.source, "user");
+      assert.equal(dbVersions[1]?.sha256, saved.version.sha256);
+      assert.equal(dbVersions[1]?.storageKey, v2Key);
+
+      // v1 unchanged and still addressable
+      const v1Again = await app.inject({
+        method: "GET",
+        url: `/api/documents/${uploaded.document.id}/versions/${uploaded.version.id}/content`,
+        headers: { cookie: alice.cookie, origin: config.webOrigin },
+      });
+      assert.equal(v1Again.statusCode, 200, v1Again.body);
+      assert.deepEqual(v1Again.rawPayload, v1Bytes);
+
+      const v2Content = await app.inject({
+        method: "GET",
+        url: `/api/documents/${uploaded.document.id}/versions/${saved.version.id}/content`,
+        headers: { cookie: alice.cookie, origin: config.webOrigin },
+      });
+      assert.equal(v2Content.statusCode, 200, v2Content.body);
+      assert.deepEqual(v2Content.rawPayload, v2Bytes);
+
+      const latestDownload = await app.inject({
+        method: "GET",
+        url: `/api/documents/${uploaded.document.id}/download`,
+        headers: { cookie: alice.cookie, origin: config.webOrigin },
+      });
+      assert.equal(latestDownload.statusCode, 200, latestDownload.body);
+      assert.deepEqual(latestDownload.rawPayload, v2Bytes);
+
+      const stale = await app.inject({
+        method: "POST",
+        url: `/api/documents/${uploaded.document.id}/versions`,
+        headers: {
+          ...multipartVersionSavePayload(
+            "Memo.docx",
+            Buffer.from("PK stale-from-v1"),
+            uploaded.version.id,
+          ).headers,
+          cookie: alice.cookie,
+          origin: config.webOrigin,
+        },
+        payload: multipartVersionSavePayload(
+          "Memo.docx",
+          Buffer.from("PK stale-from-v1"),
+          uploaded.version.id,
+        ).payload,
+      });
+      assert.equal(stale.statusCode, 409, stale.body);
+      assert.equal(
+        (stale.json() as { error: { code: string } }).error.code,
+        "VERSION_CONFLICT",
+      );
+
+      const afterConflict = await dbClient.db
+        .select({ id: schema.documentVersion.id })
+        .from(schema.documentVersion)
+        .where(eq(schema.documentVersion.documentId, uploaded.document.id));
+      assert.equal(afterConflict.length, 2);
+      assert.equal(storage.objects.size, 2);
+
+      const concurrent = await Promise.all([
+        app.inject({
+          method: "POST",
+          url: `/api/documents/${uploaded.document.id}/versions`,
+          headers: {
+            ...multipartVersionSavePayload(
+              "Memo.docx",
+              Buffer.from("PK concurrent-a"),
+              saved.version.id,
+            ).headers,
+            cookie: alice.cookie,
+            origin: config.webOrigin,
+          },
+          payload: multipartVersionSavePayload(
+            "Memo.docx",
+            Buffer.from("PK concurrent-a"),
+            saved.version.id,
+          ).payload,
+        }),
+        app.inject({
+          method: "POST",
+          url: `/api/documents/${uploaded.document.id}/versions`,
+          headers: {
+            ...multipartVersionSavePayload(
+              "Memo.docx",
+              Buffer.from("PK concurrent-b"),
+              saved.version.id,
+            ).headers,
+            cookie: alice.cookie,
+            origin: config.webOrigin,
+          },
+          payload: multipartVersionSavePayload(
+            "Memo.docx",
+            Buffer.from("PK concurrent-b"),
+            saved.version.id,
+          ).payload,
+        }),
+      ]);
+      const statuses = concurrent.map((r) => r.statusCode).sort();
+      assert.deepEqual(statuses, [201, 409]);
+      assert.ok(
+        concurrent.some(
+          (r) =>
+            r.statusCode === 409 &&
+            (r.json() as { error: { code: string } }).error.code ===
+              "VERSION_CONFLICT",
+        ),
+      );
+
+      const afterConcurrent = await dbClient.db
+        .select({
+          versionNumber: schema.documentVersion.versionNumber,
+        })
+        .from(schema.documentVersion)
+        .where(eq(schema.documentVersion.documentId, uploaded.document.id));
+      assert.equal(afterConcurrent.length, 3);
+      assert.ok(
+        afterConcurrent.some((row) => row.versionNumber === 3),
+      );
+
+      const bobSave = await app.inject({
+        method: "POST",
+        url: `/api/documents/${uploaded.document.id}/versions`,
+        headers: {
+          ...multipartVersionSavePayload(
+            "Memo.docx",
+            Buffer.from("PK bob"),
+            saved.version.id,
+          ).headers,
+          cookie: bob.cookie,
+          origin: config.webOrigin,
+        },
+        payload: multipartVersionSavePayload(
+          "Memo.docx",
+          Buffer.from("PK bob"),
+          saved.version.id,
+        ).payload,
+      });
+      assert.equal(bobSave.statusCode, 404, bobSave.body);
+
+      await app.inject({
+        method: "DELETE",
+        url: `/api/documents/${uploaded.document.id}`,
+        headers: { cookie: alice.cookie, origin: config.webOrigin },
+      });
+      const deletedSave = await app.inject({
+        method: "POST",
+        url: `/api/documents/${uploaded.document.id}/versions`,
+        headers: {
+          ...multipartVersionSavePayload(
+            "Memo.docx",
+            Buffer.from("PK deleted"),
+            saved.version.id,
+          ).headers,
+          cookie: alice.cookie,
+          origin: config.webOrigin,
+        },
+        payload: multipartVersionSavePayload(
+          "Memo.docx",
+          Buffer.from("PK deleted"),
+          saved.version.id,
+        ).payload,
+      });
+      assert.equal(deletedSave.statusCode, 404, deletedSave.body);
+
+      const deletedContent = await app.inject({
+        method: "GET",
+        url: `/api/documents/${uploaded.document.id}/versions/${saved.version.id}/content`,
+        headers: { cookie: alice.cookie, origin: config.webOrigin },
+      });
+      assert.equal(deletedContent.statusCode, 404, deletedContent.body);
+
+      // Cross-document version id → 404
+      const otherUpload = await app.inject({
+        method: "POST",
+        url: `/api/workspaces/${workspaceId}/documents`,
+        headers: {
+          ...multipartFilePayload("Other.docx", "PK other").headers,
+          cookie: alice.cookie,
+          origin: config.webOrigin,
+        },
+        payload: multipartFilePayload("Other.docx", "PK other").payload,
+      });
+      assert.equal(otherUpload.statusCode, 201, otherUpload.body);
+      // restore first doc to attempt cross-doc content against other id space
+      await app.inject({
+        method: "POST",
+        url: `/api/documents/${uploaded.document.id}/restore`,
+        headers: { cookie: alice.cookie, origin: config.webOrigin },
+      });
+      const otherId = (otherUpload.json() as { document: { id: string } })
+        .document.id;
+      const crossDoc = await app.inject({
+        method: "GET",
+        url: `/api/documents/${otherId}/versions/${uploaded.version.id}/content`,
+        headers: { cookie: alice.cookie, origin: config.webOrigin },
+      });
+      assert.equal(crossDoc.statusCode, 404, crossDoc.body);
     } finally {
       await app.close();
       await dbClient.close();

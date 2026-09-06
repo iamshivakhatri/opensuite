@@ -242,7 +242,8 @@ export function DocumentNavigationPanel({
               <Link
                 href={documentPath(workspaceId, file.id)}
                 title={file.name}
-                className={`flex w-full items-center gap-2 rounded-[8px] py-1.5 pl-2 pr-7 text-left text-[11px] ${
+                prefetch
+                className={`flex w-full items-center gap-2 rounded-[8px] py-1.5 pl-2 pr-7 text-left text-[11px] transition-colors ${
                   active
                     ? "bg-accent-soft font-medium text-accent-hover"
                     : "text-ink-soft hover:bg-sunken hover:text-ink"

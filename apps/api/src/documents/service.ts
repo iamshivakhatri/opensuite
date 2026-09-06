@@ -1,7 +1,7 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import type { Readable } from "node:stream";
 
-import { and, desc, eq, isNotNull, isNull, max } from "drizzle-orm";
+import { and, desc, eq, isNotNull, isNull, max, sql } from "drizzle-orm";
 
 import type { Db } from "@opensuite/db";
 import { schema } from "@opensuite/db";
@@ -29,13 +29,25 @@ export interface DocumentDto {
   readonly updatedAt: string;
 }
 
+export type DocumentVersionSource = "upload" | "user" | "agent" | "system";
+
+/** Append sources only — upload creates document + v1, not appends. */
+export type AppendDocumentVersionSource = Exclude<
+  DocumentVersionSource,
+  "upload"
+>;
+
+/**
+ * Public version DTO. Never includes storageKey or storage URLs.
+ */
 export interface DocumentVersionDto {
   readonly id: string;
   readonly documentId: string;
   readonly versionNumber: number;
-  readonly storageKey: string;
+  readonly parentVersionId: string | null;
   readonly sizeBytes: number;
-  readonly source: "upload";
+  readonly sha256: string | null;
+  readonly source: DocumentVersionSource;
   readonly createdByUserId: string;
   readonly createdAt: string;
 }
@@ -44,8 +56,6 @@ export interface UploadedDocumentDto {
   readonly document: DocumentDto;
   readonly version: DocumentVersionDto;
 }
-
-export type DocumentVersionSource = "upload" | "user" | "agent" | "system";
 
 export interface ListedDocumentVersionDto {
   readonly id: string;
@@ -63,6 +73,11 @@ export interface ListedDocumentDto {
   readonly createdAt: string;
   readonly updatedAt: string;
   readonly latestVersion: ListedDocumentVersionDto;
+}
+
+export interface AppendedDocumentDto {
+  readonly document: ListedDocumentDto;
+  readonly version: DocumentVersionDto;
 }
 
 export interface TrashedDocumentDto {
@@ -86,7 +101,8 @@ export type DocumentUploadErrorCode =
   | "INVALID_FILENAME"
   | "UNSUPPORTED_FORMAT"
   | "EMPTY_UPLOAD"
-  | "UPLOAD_TOO_LARGE";
+  | "UPLOAD_TOO_LARGE"
+  | "MISSING_BASE_VERSION";
 
 export class DocumentUploadError extends Error {
   readonly statusCode: number;
@@ -108,7 +124,8 @@ export type DocumentAccessErrorCode =
   | "DOCUMENT_NOT_FOUND"
   | "STORAGE_OBJECT_MISSING"
   | "INVALID_DOCUMENT_NAME"
-  | "WORKSPACE_DELETED";
+  | "WORKSPACE_DELETED"
+  | "VERSION_CONFLICT";
 
 export class DocumentAccessError extends Error {
   readonly statusCode: number;
@@ -141,8 +158,84 @@ export interface DocumentServiceOptions {
   }) => void;
 }
 
+function sha256Hex(bytes: Buffer): string {
+  return createHash("sha256").update(bytes).digest("hex");
+}
+
+function isUniqueViolation(error: unknown): boolean {
+  if (!error || typeof error !== "object") {
+    return false;
+  }
+
+  const code = "code" in error ? error.code : undefined;
+  if (code === "23505") {
+    return true;
+  }
+
+  const cause =
+    "cause" in error && error.cause && typeof error.cause === "object"
+      ? error.cause
+      : null;
+  return cause !== null && "code" in cause && cause.code === "23505";
+}
+
+function toListedDocument(row: {
+  id: string;
+  workspaceId: string;
+  name: string;
+  format: OfficeFormat;
+  createdAt: Date;
+  updatedAt: Date;
+  versionId: string;
+  versionNumber: number;
+  sizeBytes: number;
+  source: DocumentVersionSource;
+  versionCreatedAt: Date;
+}): ListedDocumentDto {
+  return {
+    id: row.id,
+    workspaceId: row.workspaceId,
+    name: row.name,
+    format: row.format,
+    createdAt: row.createdAt.toISOString(),
+    updatedAt: row.updatedAt.toISOString(),
+    latestVersion: {
+      id: row.versionId,
+      versionNumber: row.versionNumber,
+      sizeBytes: row.sizeBytes,
+      source: row.source,
+      createdAt: row.versionCreatedAt.toISOString(),
+    },
+  };
+}
+
+function toVersionDto(row: {
+  id: string;
+  documentId: string;
+  versionNumber: number;
+  parentVersionId: string | null;
+  sizeBytes: number;
+  sha256: string | null;
+  source: DocumentVersionSource;
+  createdByUserId: string;
+  createdAt: Date;
+}): DocumentVersionDto {
+  return {
+    id: row.id,
+    documentId: row.documentId,
+    versionNumber: row.versionNumber,
+    parentVersionId: row.parentVersionId,
+    sizeBytes: row.sizeBytes,
+    sha256: row.sha256,
+    source: row.source,
+    createdByUserId: row.createdByUserId,
+    createdAt: row.createdAt.toISOString(),
+  };
+}
+
 /**
- * Document upload, list, and latest-version download against owned workspaces.
+ * Document upload, immutable version append, list, and versioned download
+ * against owned workspaces.
  */
 export function createDocumentService(
   db: Db,
@@ -150,6 +243,71 @@ export function createDocumentService(
   options: DocumentServiceOptions,
 ) {
   const createId = options.createId ?? randomUUID;
+
+  async function cleanupStorageKey(storageKey: string): Promise<void> {
+    try {
+      await storage.deleteObject(storageKey);
+    } catch (cleanupError) {
+      options.onCleanupFailure?.(cleanupError, storageKey);
+    }
+  }
+
+  function assertUploadBytes(bytes: Buffer): void {
+    if (bytes.byteLength === 0) {
+      throw new DocumentUploadError(
+        400,
+        "EMPTY_UPLOAD",
+        "Uploaded file is empty",
+      );
+    }
+
+    if (bytes.byteLength > options.uploadMaxBytes) {
+      throw new DocumentUploadError(
+        413,
+        "UPLOAD_TOO_LARGE",
+        `Uploaded file exceeds the ${options.uploadMaxBytes} byte limit`,
+      );
+    }
+  }
+
+  async function openStoredVersion(input: {
+    documentId: string;
+    versionId: string;
+    name: string;
+    format: OfficeFormat;
+    sizeBytes: number;
+    storageKey: string;
+  }): Promise<DocumentDownload> {
+    try {
+      const object = await storage.getObject(input.storageKey);
+      const contentLength = object.contentLength ?? input.sizeBytes;
+
+      return {
+        body: object.body,
+        contentType: contentTypeForFormat(input.format),
+        contentLength,
+        contentDisposition: contentDispositionForDocument(
+          input.name,
+          input.format,
+        ),
+      };
+    } catch (error) {
+      if (error instanceof ObjectNotFoundError) {
+        options.onMissingStorageObject?.({
+          documentId: input.documentId,
+          versionId: input.versionId,
+          storageKey: input.storageKey,
+          error,
+        });
+        throw new DocumentAccessError(
+          500,
+          "STORAGE_OBJECT_MISSING",
+          "Document content is temporarily unavailable",
+        );
+      }
+      throw error;
+    }
+  }
 
   return {
     async uploadOfficeDocument(input: {
@@ -176,21 +334,7 @@ export function createDocumentService(
         );
       }
 
-      if (input.bytes.byteLength === 0) {
-        throw new DocumentUploadError(
-          400,
-          "EMPTY_UPLOAD",
-          "Uploaded file is empty",
-        );
-      }
-
-      if (input.bytes.byteLength > options.uploadMaxBytes) {
-        throw new DocumentUploadError(
-          413,
-          "UPLOAD_TOO_LARGE",
-          `Uploaded file exceeds the ${options.uploadMaxBytes} byte limit`,
-        );
-      }
+      assertUploadBytes(input.bytes);
 
       const documentId = createId();
       const versionId = createId();
@@ -200,6 +344,7 @@ export function createDocumentService(
         versionId,
         format,
       });
+      const sha256 = sha256Hex(input.bytes);
 
       await storage.putObject({
         key: storageKey,
@@ -239,7 +384,7 @@ export function createDocumentService(
               parentVersionId: null,
               storageKey,
               sizeBytes: input.bytes.byteLength,
-              sha256: null,
+              sha256,
               source: "upload",
               createdByUserId: input.ownerUserId,
             })
@@ -247,8 +392,9 @@ export function createDocumentService(
               id: schema.documentVersion.id,
               documentId: schema.documentVersion.documentId,
               versionNumber: schema.documentVersion.versionNumber,
-              storageKey: schema.documentVersion.storageKey,
+              parentVersionId: schema.documentVersion.parentVersionId,
               sizeBytes: schema.documentVersion.sizeBytes,
+              sha256: schema.documentVersion.sha256,
               source: schema.documentVersion.source,
               createdByUserId: schema.documentVersion.createdByUserId,
               createdAt: schema.documentVersion.createdAt,
@@ -285,23 +431,212 @@ export function createDocumentService(
             createdAt: created.doc.createdAt.toISOString(),
             updatedAt: created.doc.updatedAt.toISOString(),
           },
-          version: {
-            id: created.version.id,
-            documentId: created.version.documentId,
-            versionNumber: created.version.versionNumber,
-            storageKey: created.version.storageKey,
-            sizeBytes: created.version.sizeBytes,
-            source: "upload",
-            createdByUserId: created.version.createdByUserId,
-            createdAt: created.version.createdAt.toISOString(),
-          },
+          version: toVersionDto(created.version),
         };
       } catch (error) {
-        try {
-          await storage.deleteObject(storageKey);
-        } catch (cleanupError) {
-          options.onCleanupFailure?.(cleanupError, storageKey);
+        await cleanupStorageKey(storageKey);
+        throw error;
+      }
+    },
+
+    /**
+     * Append an immutable Office artifact as the next version of an existing
+     * document. Requires `baseVersionId` to equal the current latest version
+     * (optimistic concurrency). Reusable for human saves and future agent
+     * artifacts. Never mutates existing version rows.
+     */
+    async appendDocumentVersion(input: {
+      documentId: string;
+      ownerUserId: string;
+      baseVersionId: string;
+      source: AppendDocumentVersionSource;
+      bytes: Buffer;
+    }): Promise<AppendedDocumentDto> {
+      if (!input.baseVersionId) {
+        throw new DocumentUploadError(
+          400,
+          "MISSING_BASE_VERSION",
+          "baseVersionId is required",
+        );
+      }
+
+      assertUploadBytes(input.bytes);
+
+      const [owned] = await db
+        .select({
+          id: schema.document.id,
+          workspaceId: schema.document.workspaceId,
+          name: schema.document.name,
+          format: schema.document.format,
+        })
+        .from(schema.document)
+        .innerJoin(
+          schema.workspace,
+          eq(schema.document.workspaceId, schema.workspace.id),
+        )
+        .where(
+          and(
+            eq(schema.document.id, input.documentId),
+            eq(schema.workspace.ownerUserId, input.ownerUserId),
+            isNull(schema.document.deletedAt),
+            isNull(schema.workspace.deletedAt),
+          ),
+        )
+        .limit(1);
+
+      if (!owned) {
+        throw new DocumentAccessError(
+          404,
+          "DOCUMENT_NOT_FOUND",
+          "Document not found",
+        );
+      }
+
+      const versionId = createId();
+      const storageKey = buildDocumentVersionStorageKey({
+        workspaceId: owned.workspaceId,
+        documentId: owned.id,
+        versionId,
+        format: owned.format,
+      });
+      const sha256 = sha256Hex(input.bytes);
+
+      await storage.putObject({
+        key: storageKey,
+        body: input.bytes,
+        contentType: contentTypeForFormat(owned.format),
+      });
+
+      try {
+        const created = await db.transaction(async (tx) => {
+          // Serialize version allocation per document. Unique(document_id,
+          // version_number) is the second line of defense against races.
+          await tx.execute(
+            sql`select ${schema.document.id} from ${schema.document}
+                where ${schema.document.id} = ${owned.id}
+                for update`,
+          );
+
+          const [latest] = await tx
+            .select({
+              id: schema.documentVersion.id,
+              versionNumber: schema.documentVersion.versionNumber,
+            })
+            .from(schema.documentVersion)
+            .where(eq(schema.documentVersion.documentId, owned.id))
+            .orderBy(desc(schema.documentVersion.versionNumber))
+            .limit(1);
+
+          if (!latest) {
+            throw new DocumentAccessError(
+              404,
+              "DOCUMENT_NOT_FOUND",
+              "Document not found",
+            );
+          }
+
+          if (latest.id !== input.baseVersionId) {
+            throw new DocumentAccessError(
+              409,
+              "VERSION_CONFLICT",
+              "Document was updated; reload the latest version before saving",
+            );
+          }
+
+          const nextVersionNumber = latest.versionNumber + 1;
+          const now = new Date();
+
+          const [version] = await tx
+            .insert(schema.documentVersion)
+            .values({
+              id: versionId,
+              documentId: owned.id,
+              versionNumber: nextVersionNumber,
+              parentVersionId: input.baseVersionId,
+              storageKey,
+              sizeBytes: input.bytes.byteLength,
+              sha256,
+              source: input.source,
+              createdByUserId: input.ownerUserId,
+            })
+            .returning({
+              id: schema.documentVersion.id,
+              documentId: schema.documentVersion.documentId,
+              versionNumber: schema.documentVersion.versionNumber,
+              parentVersionId: schema.documentVersion.parentVersionId,
+              sizeBytes: schema.documentVersion.sizeBytes,
+              sha256: schema.documentVersion.sha256,
+              source: schema.documentVersion.source,
+              createdByUserId: schema.documentVersion.createdByUserId,
+              createdAt: schema.documentVersion.createdAt,
+            });
+
+          if (!version || version.createdByUserId == null) {
+            throw new Error("Failed to create document version");
+          }
+
+          const [doc] = await tx
+            .update(schema.document)
+            .set({ updatedAt: now })
+            .where(eq(schema.document.id, owned.id))
+            .returning({
+              id: schema.document.id,
+              workspaceId: schema.document.workspaceId,
+              name: schema.document.name,
+              format: schema.document.format,
+              createdAt: schema.document.createdAt,
+              updatedAt: schema.document.updatedAt,
+            });
+
+          if (!doc) {
+            throw new Error("Failed to update document activity");
+          }
+
+          await tx
+            .update(schema.workspace)
+            .set({ updatedAt: now })
+            .where(eq(schema.workspace.id, owned.workspaceId));
+
+          return {
+            document: toListedDocument({
+              id: doc.id,
+              workspaceId: doc.workspaceId,
+              name: doc.name,
+              format: doc.format,
+              createdAt: doc.createdAt,
+              updatedAt: doc.updatedAt,
+              versionId: version.id,
+              versionNumber: version.versionNumber,
+              sizeBytes: version.sizeBytes,
+              source: version.source,
+              versionCreatedAt: version.createdAt,
+            }),
+            version: toVersionDto({
+              ...version,
+              createdByUserId: version.createdByUserId,
+            }),
+          };
+        });
+
+        return created;
+      } catch (error) {
+        await cleanupStorageKey(storageKey);
+
+        if (
+          error instanceof DocumentAccessError &&
+          error.code === "VERSION_CONFLICT"
+        ) {
+          throw error;
         }
+
+        if (isUniqueViolation(error)) {
+          throw new DocumentAccessError(
+            409,
+            "VERSION_CONFLICT",
+            "Document was updated; reload the latest version before saving",
+          );
+        }
+
         throw error;
       }
     },
@@ -376,20 +711,8 @@ export function createDocumentService(
         );
 
       return rows.map((row) => ({
-        id: row.id,
-        workspaceId: row.workspaceId,
-        name: row.name,
-        format: row.format,
-        createdAt: row.createdAt.toISOString(),
-        updatedAt: row.updatedAt.toISOString(),
+        ...toListedDocument(row),
         starred: row.starred ?? false,
-        latestVersion: {
-          id: row.versionId,
-          versionNumber: row.versionNumber,
-          sizeBytes: row.sizeBytes,
-          source: row.source,
-          createdAt: row.versionCreatedAt.toISOString(),
-        },
       }));
     },
 
@@ -443,21 +766,7 @@ export function createDocumentService(
         );
       }
 
-      return {
-        id: row.id,
-        workspaceId: row.workspaceId,
-        name: row.name,
-        format: row.format,
-        createdAt: row.createdAt.toISOString(),
-        updatedAt: row.updatedAt.toISOString(),
-        latestVersion: {
-          id: row.versionId,
-          versionNumber: row.versionNumber,
-          sizeBytes: row.sizeBytes,
-          source: row.source,
-          createdAt: row.versionCreatedAt.toISOString(),
-        },
-      };
+      return toListedDocument(row);
     },
 
     /**
@@ -506,35 +815,73 @@ export function createDocumentService(
         );
       }
 
-      try {
-        const object = await storage.getObject(row.storageKey);
-        const contentLength = object.contentLength ?? row.sizeBytes;
+      return openStoredVersion({
+        documentId: row.documentId,
+        versionId: row.versionId,
+        name: row.name,
+        format: row.format,
+        sizeBytes: row.sizeBytes,
+        storageKey: row.storageKey,
+      });
+    },
 
-        return {
-          body: object.body,
-          contentType: contentTypeForFormat(row.format),
-          contentLength,
-          contentDisposition: contentDispositionForDocument(
-            row.name,
-            row.format,
+    /**
+     * Streams the exact immutable Office artifact for a specific version.
+     * Version must belong to the owned, active document. Cross-document /
+     * non-owned / deleted → not found (404).
+     */
+    async openVersionContent(input: {
+      documentId: string;
+      versionId: string;
+      ownerUserId: string;
+    }): Promise<DocumentDownload> {
+      const [row] = await db
+        .select({
+          documentId: schema.document.id,
+          name: schema.document.name,
+          format: schema.document.format,
+          versionId: schema.documentVersion.id,
+          sizeBytes: schema.documentVersion.sizeBytes,
+          storageKey: schema.documentVersion.storageKey,
+        })
+        .from(schema.document)
+        .innerJoin(
+          schema.workspace,
+          eq(schema.document.workspaceId, schema.workspace.id),
+        )
+        .innerJoin(
+          schema.documentVersion,
+          and(
+            eq(schema.documentVersion.documentId, schema.document.id),
+            eq(schema.documentVersion.id, input.versionId),
           ),
-        };
-      } catch (error) {
-        if (error instanceof ObjectNotFoundError) {
-          options.onMissingStorageObject?.({
-            documentId: row.documentId,
-            versionId: row.versionId,
-            storageKey: row.storageKey,
-            error,
-          });
-          throw new DocumentAccessError(
-            500,
-            "STORAGE_OBJECT_MISSING",
-            "Document content is temporarily unavailable",
-          );
-        }
-        throw error;
+        )
+        .where(
+          and(
+            eq(schema.document.id, input.documentId),
+            eq(schema.workspace.ownerUserId, input.ownerUserId),
+            isNull(schema.document.deletedAt),
+            isNull(schema.workspace.deletedAt),
+          ),
+        )
+        .limit(1);
+
+      if (!row) {
+        throw new DocumentAccessError(
+          404,
+          "DOCUMENT_NOT_FOUND",
+          "Document not found",
+        );
       }
+
+      return openStoredVersion({
+        documentId: row.documentId,
+        versionId: row.versionId,
+        name: row.name,
+        format: row.format,
+        sizeBytes: row.sizeBytes,
+        storageKey: row.storageKey,
+      });
     },
 
     /**

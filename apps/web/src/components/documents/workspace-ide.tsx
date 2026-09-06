@@ -8,23 +8,17 @@ import { DocumentNavigationPanel } from "@/components/documents/document-navigat
 import {
   closeTabAndPickNext,
   DocumentOpenTabs,
-  readStoredTabs,
-  writeStoredTabs,
 } from "@/components/documents/document-open-tabs";
 import { DocumentCanvas } from "@/components/documents/document-canvas";
 import { DocumentAgentPanel } from "@/components/documents/document-agent-panel";
 import {
   deleteDocument,
   downloadDocument,
-  renameDocument,
   setDocumentStarred,
   type ListedDocument,
 } from "@/lib/api";
 import { userFacingError } from "@/components/files/format";
-import {
-  ConfirmDialog,
-  PromptDialog,
-} from "@/components/ui/context-menu";
+import { ConfirmDialog } from "@/components/ui/context-menu";
 import {
   PANEL_LIMITS,
   readIdePanelPrefs,
@@ -41,10 +35,12 @@ export function WorkspaceIde({
   workspaceId,
   workspaceName,
   document,
+  documentPending = false,
 }: {
   workspaceId: string;
   workspaceName?: string | null;
   document: ListedDocument | null;
+  documentPending?: boolean;
 }) {
   const router = useRouter();
   const { toast } = useToast();
@@ -63,11 +59,10 @@ export function WorkspaceIde({
   const [activeDocument, setActiveDocument] =
     React.useState<ListedDocument | null>(document);
   const [starred, setStarred] = React.useState(Boolean(document?.starred));
-  const [renameOpen, setRenameOpen] = React.useState(false);
   const [trashOpen, setTrashOpen] = React.useState(false);
   const [busy, setBusy] = React.useState(false);
   const [actionError, setActionError] = React.useState<string | null>(null);
-  const [tabEpoch, setTabEpoch] = React.useState(0);
+  const [tabsRevision, setTabsRevision] = React.useState(0);
   const [refreshKey, setRefreshKey] = React.useState(0);
   const [draggingOver, setDraggingOver] = React.useState(false);
   const [uploadingDrop, setUploadingDrop] = React.useState(false);
@@ -104,7 +99,7 @@ export function WorkspaceIde({
       activeDocument.id,
       activeDocument.id,
     );
-    setTabEpoch((value) => value + 1);
+    setTabsRevision((value) => value + 1);
     if (href) router.push(href);
   }, [activeDocument, router, workspaceId]);
 
@@ -205,30 +200,6 @@ export function WorkspaceIde({
     }
   }
 
-  async function handleRename(name: string) {
-    if (!activeDocument || busy) return;
-    setBusy(true);
-    setActionError(null);
-    try {
-      const updated = await renameDocument(activeDocument.id, name);
-      setActiveDocument({ ...activeDocument, ...updated });
-      const tabs = readStoredTabs(workspaceId).map((tab) =>
-        tab.id === updated.id
-          ? { ...tab, name: updated.name, format: updated.format }
-          : tab,
-      );
-      writeStoredTabs(workspaceId, tabs);
-      setTabEpoch((value) => value + 1);
-      setRefreshKey((value) => value + 1);
-      setRenameOpen(false);
-      toast({ tone: "success", title: "File renamed" });
-    } catch (error) {
-      setActionError(userFacingError(error, "Could not rename file."));
-    } finally {
-      setBusy(false);
-    }
-  }
-
   async function handleTrash() {
     if (!activeDocument || busy) return;
     setBusy(true);
@@ -239,7 +210,7 @@ export function WorkspaceIde({
       setTrashOpen(false);
       toast({ tone: "success", title: "Moved to Trash" });
       const { href } = closeTabAndPickNext(workspaceId, id, id);
-      setTabEpoch((value) => value + 1);
+      setTabsRevision((value) => value + 1);
       setRefreshKey((value) => value + 1);
       if (href) router.push(href);
     } catch (error) {
@@ -305,14 +276,6 @@ export function WorkspaceIde({
         onDownload={activeDocument ? () => void handleDownload() : undefined}
         starred={starred}
         onToggleStar={activeDocument ? () => void handleToggleStar() : undefined}
-        onRename={
-          activeDocument
-            ? () => {
-                setActionError(null);
-                setRenameOpen(true);
-              }
-            : undefined
-        }
         onTrash={
           activeDocument
             ? () => {
@@ -335,13 +298,11 @@ export function WorkspaceIde({
             if (activeDocument?.id === updated.id) {
               setActiveDocument({ ...activeDocument, ...updated });
             }
-            setTabEpoch((value) => value + 1);
+            setTabsRevision((value) => value + 1);
           }}
-          onDocumentTrashed={(documentId) => {
+          onDocumentTrashed={() => {
             setRefreshKey((value) => value + 1);
-            if (activeDocument?.id !== documentId) {
-              setTabEpoch((value) => value + 1);
-            }
+            setTabsRevision((value) => value + 1);
           }}
         />
         {!navCollapsed ? (
@@ -360,12 +321,16 @@ export function WorkspaceIde({
 
         <div className="flex min-h-0 min-w-0 flex-1 flex-col">
           <DocumentOpenTabs
-            key={tabEpoch}
             workspaceId={workspaceId}
             activeDocument={activeDocument}
+            revision={tabsRevision}
           />
           {activeDocument ? (
             <DocumentCanvas format={activeDocument.format} />
+          ) : documentPending ? (
+            <div className="flex h-full min-h-0 flex-1 items-center justify-center bg-sunken">
+              <p className="text-[12px] text-ink-faint">Opening file…</p>
+            </div>
           ) : (
             <WorkspaceHomeCanvas
               onUpload={() => fileInputRef.current?.click()}
@@ -407,17 +372,6 @@ export function WorkspaceIde({
             </p>
           </div>
         </div>
-      ) : null}
-
-      {renameOpen && activeDocument ? (
-        <PromptDialog
-          title="Rename file"
-          initialValue={activeDocument.name}
-          busy={busy}
-          error={actionError}
-          onCancel={() => setRenameOpen(false)}
-          onSubmit={(name) => void handleRename(name)}
-        />
       ) : null}
 
       {trashOpen && activeDocument ? (
@@ -509,14 +463,14 @@ function WorkspaceHomeCanvas({
           <button
             type="button"
             onClick={onUpload}
-            className="inline-flex h-8 items-center rounded-[9px] bg-ink px-3 text-[11.5px] font-medium text-white hover:bg-[#2A2D33]"
+            className="inline-flex h-8 items-center rounded-[var(--radius-sm)] bg-ink px-3 text-[11.5px] font-medium text-white hover:bg-[#2A2D33]"
           >
             Upload file
           </button>
           <button
             type="button"
             onClick={onSearch}
-            className="inline-flex h-8 items-center rounded-[9px] border border-line bg-surface px-3 text-[11.5px] font-medium text-ink-soft hover:text-ink"
+            className="inline-flex h-8 items-center rounded-[var(--radius-sm)] border border-line bg-surface px-3 text-[11.5px] font-medium text-ink-soft hover:text-ink"
           >
             Quick Open
           </button>

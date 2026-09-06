@@ -14,7 +14,7 @@ import {
 } from "drizzle-orm/pg-core";
 
 import { user } from "./auth.js";
-import { document, workspace } from "./product.js";
+import { document, documentVersion, workspace } from "./product.js";
 
 /**
  * User-visible conversation roles only. System prompts and tool calls are not
@@ -129,6 +129,8 @@ export const agentMessage = pgTable(
 
 /**
  * One durable attempt to execute an agent request (independent of HTTP).
+ * `base_document_version_id` is provenance only: the exact document_version
+ * the run resolved at start (null for workspace-only / non-document runs).
  */
 export const agentRun = pgTable(
   "agent_run",
@@ -144,6 +146,10 @@ export const agentRun = pgTable(
     createdByUserId: text("created_by_user_id").references(() => user.id, {
       onDelete: "set null",
     }),
+    baseDocumentVersionId: uuid("base_document_version_id").references(
+      () => documentVersion.id,
+      { onDelete: "restrict" },
+    ),
     status: agentRunStatusEnum("status").notNull().default("queued"),
     createdAt: timestamp("created_at").defaultNow().notNull(),
     startedAt: timestamp("started_at"),
@@ -219,6 +225,10 @@ export const agentRunRelations = relations(agentRun, ({ one, many }) => ({
   createdBy: one(user, {
     fields: [agentRun.createdByUserId],
     references: [user.id],
+  }),
+  baseDocumentVersion: one(documentVersion, {
+    fields: [agentRun.baseDocumentVersionId],
+    references: [documentVersion.id],
   }),
   steps: many(agentStep),
 }));

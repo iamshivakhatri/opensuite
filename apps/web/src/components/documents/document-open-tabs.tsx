@@ -89,9 +89,11 @@ export function closeTabAndPickNext(
 export function DocumentOpenTabs({
   workspaceId,
   activeDocument,
+  revision = 0,
 }: {
   workspaceId: string;
   activeDocument: ListedDocument | null;
+  revision?: number;
 }) {
   const router = useRouter();
   const [tabs, setTabs] = React.useState<OpenTabMeta[]>([]);
@@ -112,7 +114,7 @@ export function DocumentOpenTabs({
     const next = [...without, current];
     setTabs(next);
     writeStoredTabs(workspaceId, next);
-  }, [workspaceId, activeDocument]);
+  }, [workspaceId, activeDocument, revision]);
 
   function closeTab(event: React.MouseEvent, id: string) {
     event.preventDefault();
@@ -132,11 +134,12 @@ export function DocumentOpenTabs({
         {tabs.map((tab) => {
           const active = activeDocument?.id === tab.id;
           return (
-            <Link
-              key={tab.id}
-              href={documentPath(workspaceId, tab.id)}
-              title={tab.name}
-              className={
+              <Link
+                key={tab.id}
+                href={documentPath(workspaceId, tab.id)}
+                title={tab.name}
+                prefetch
+                className={
                 "group relative flex h-full max-w-[200px] min-w-[112px] items-center gap-1.5 border-x border-t px-2 text-[11px] " +
                 (active
                   ? "rounded-[8px_8px_0_0] border-line border-b-surface bg-surface font-medium text-ink"

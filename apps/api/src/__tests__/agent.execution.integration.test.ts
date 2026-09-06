@@ -304,6 +304,7 @@ test(
       assert.equal(success.userMessage.content, "Rewrite the intro");
       assert.equal(success.run.triggeringMessageId, success.userMessage.id);
       assert.equal(success.run.status, "completed");
+      assert.equal(success.run.baseDocumentVersionId, aliceDoc.version2Id);
       assert.ok(success.run.completedAt);
       assert.equal(success.assistantMessage?.role, "assistant");
       assert.equal(success.assistantMessage?.content, "Revised intro ready.");
@@ -352,6 +353,15 @@ test(
         format: "docx",
       });
 
+      const [persistedRun] = await db
+        .select({
+          baseDocumentVersionId: schema.agentRun.baseDocumentVersionId,
+        })
+        .from(schema.agentRun)
+        .where(eq(schema.agentRun.id, success.run.id))
+        .limit(1);
+      assert.equal(persistedRun?.baseDocumentVersionId, aliceDoc.version2Id);
+
       // Workspace-scoped thread → no primary document.
       const wsProbe: Array<unknown> = [];
       const wsService = createService(persistence, documents, {
@@ -377,6 +387,12 @@ test(
         instruction: "Workspace ask",
       });
       assert.equal(wsProbe[0], null);
+
+      const wsRun = await persistence.getLatestRunForThread({
+        threadId: workspaceThread.id,
+        ownerUserId: aliceId,
+      });
+      assert.equal(wsRun?.baseDocumentVersionId ?? null, null);
 
       // --- SEQUENTIAL TOOLS ---
       const seqThread = await persistence.createThread({

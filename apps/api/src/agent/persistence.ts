@@ -56,6 +56,7 @@ export interface AgentRun {
   readonly threadId: string;
   readonly triggeringMessageId: string | null;
   readonly createdByUserId: string | null;
+  readonly baseDocumentVersionId: string | null;
   readonly status: AgentRunStatus;
   readonly createdAt: string;
   readonly startedAt: string | null;
@@ -191,6 +192,7 @@ function toRun(row: {
   threadId: string;
   triggeringMessageId: string | null;
   createdByUserId: string | null;
+  baseDocumentVersionId: string | null;
   status: AgentRunStatus;
   createdAt: Date;
   startedAt: Date | null;
@@ -203,6 +205,7 @@ function toRun(row: {
     threadId: row.threadId,
     triggeringMessageId: row.triggeringMessageId,
     createdByUserId: row.createdByUserId,
+    baseDocumentVersionId: row.baseDocumentVersionId,
     status: row.status,
     createdAt: row.createdAt.toISOString(),
     startedAt: toIso(row.startedAt),
@@ -266,6 +269,7 @@ const runSelect = {
   threadId: schema.agentRun.threadId,
   triggeringMessageId: schema.agentRun.triggeringMessageId,
   createdByUserId: schema.agentRun.createdByUserId,
+  baseDocumentVersionId: schema.agentRun.baseDocumentVersionId,
   status: schema.agentRun.status,
   createdAt: schema.agentRun.createdAt,
   startedAt: schema.agentRun.startedAt,
@@ -918,6 +922,7 @@ export function createAgentPersistenceService(db: Db) {
         ownerUserId: string;
         createdByUserId: string;
         triggeringMessageId?: string | null;
+        baseDocumentVersionId?: string | null;
         status?: AgentRunStatus;
       },
       tx?: AgentPersistenceExecutor,
@@ -954,6 +959,7 @@ export function createAgentPersistenceService(db: Db) {
           threadId: input.threadId,
           triggeringMessageId,
           createdByUserId: input.createdByUserId,
+          baseDocumentVersionId: input.baseDocumentVersionId ?? null,
           status,
           startedAt,
         })

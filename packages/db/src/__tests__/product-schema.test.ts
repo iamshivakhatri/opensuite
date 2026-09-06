@@ -100,3 +100,7 @@ test("agent_thread soft-archives; messages/runs/steps are immutable history", ()
   assert.equal("deletedAt" in agentRun, false);
   assert.equal("deletedAt" in agentStep, false);
 });
+
+test("agent_run may record base document version provenance", () => {
+  assert.ok("baseDocumentVersionId" in agentRun);
+});

@@ -1,14 +1,4 @@
-"use client";
-
-import * as React from "react";
-
-import { WorkspaceHome } from "@/components/documents/workspace-home";
-
-export default function WorkspacePage({
-  params,
-}: {
-  params: Promise<{ workspaceId: string }>;
-}) {
-  const { workspaceId } = React.use(params);
-  return <WorkspaceHome workspaceId={workspaceId} />;
+export default function WorkspacePage() {
+  // Document selection is owned by the persistent workspace layout.
+  return null;
 }

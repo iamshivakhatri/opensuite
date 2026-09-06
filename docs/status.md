@@ -5,22 +5,29 @@ _Read this before starting any work. Keep it a concise current-state handoff, no
 ## What Exists
 
 * Workspace-first shell + Trash + rename/restore lifecycle.
-* Global metadata search + `/app/search` + Cmd/Ctrl+K palette.
-* Desktop UX polish: DnD upload, tab strip, resizable/collapsible panels (local prefs), breadcrumbs, ⌘W/⌘O, toasts, shared empty/loading/error states.
+* Global metadata search + Cmd/Ctrl+K palette.
+* Desktop UX polish: DnD upload, tabs, resizable panels, toasts, shortcuts.
+* Persistent workspace IDE layout (no full remount on file/tab switch).
+* `/app` home upload dropzone → pick existing workspace or create new.
+* **Immutable document version foundation** (no Casual editor yet):
+  * `appendDocumentVersion` — shared append path (`user` | `agent` | `system`)
+  * `GET /api/documents/:id/versions/:versionId/content` — exact version bytes
+  * `POST /api/documents/:id/versions` — human save (`baseVersionId` + file → `source=user`)
+  * Stale `baseVersionId` → `409 VERSION_CONFLICT`
+  * `agent_run.base_document_version_id` provenance for document-scoped runs
+  * Public DTOs never expose `storageKey`
+  * Web helpers: `fetchDocumentVersionContent`, `saveDocumentVersion`
 
 ## Just Completed
 
-* Workspace DnD + multi-file Office upload (shared `uploadOfficeFiles`).
-* Document tabs: active/close/hover, ⌘W, neighbor selection, scroll overflow.
-* Explorer + Agent: drag-resize, collapse, `localStorage` prefs.
-* Toasts for upload/rename/star/trash/restore/workspace CRUD.
-* Header breadcrumbs: Workspaces / Workspace / Document.
+* Human editing / version persistence contract (API + schema + frontend primitives).
 
 ## Current Decisions
 
-* No Office content search / FTS yet.
-* Soft-delete only; mock agent mutations in-memory.
-* Panel prefs browser-local only (no DB).
+* Soft-delete only (no permanent delete yet).
+* Panel prefs browser-local only.
+* Latest version = highest `version_number`; versions never mutated.
+* Optimistic concurrency via `baseVersionId` + `SELECT … FOR UPDATE` + unique `(document_id, version_number)`.
 
 ## Verification Status
 
@@ -29,14 +36,15 @@ _Read this before starting any work. Keep it a concise current-state handoff, no
 | `pnpm typecheck` | **Pass** |
 | `pnpm test` | **Pass** |
 | `pnpm build` | **Pass** |
-| Office content search / rendering | **Not implemented** |
+| `RUN_DB_INTEGRATION_TESTS=true` (api) | **Pass** (88/88) |
 
 ## Intentionally Deferred
 
-* Content search, semantic search, permanent delete
-* Real Office mutation / Rust engine / folders / sharing
-* Workspace-scoped agent / IDE-grade tab manager
+* Casual Docs/Sheets/Slides, autosave, editor UI, dirty/Cmd+S
+* Agent artifact persistence / `resultVersionId`
+* Diff/review/revert, merge/rebase, locks, version-history UI
+* Content search, permanent delete, Office rendering, engine mutation
 
 ## Recommended Next Step
 
-Manual QA of desktop polish (DnD, panels, shortcuts), then engine-backed DocumentRuntime when ready.
+Wire Casual Docs against `fetchDocumentVersionContent` + `saveDocumentVersion` (explicit save only).

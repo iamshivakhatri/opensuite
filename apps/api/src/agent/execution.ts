@@ -145,6 +145,7 @@ export function createAgentExecutionService(deps: AgentExecutionServiceDeps) {
             ownerUserId: input.userId,
             createdByUserId: input.userId,
             triggeringMessageId: message.id,
+            baseDocumentVersionId: primaryDocument?.versionId ?? null,
             status: "queued",
           },
           tx,

@@ -215,3 +215,79 @@ test("missing storage object maps to STORAGE_OBJECT_MISSING without leaking prov
 
   assert.deepEqual(logged, [{ storageKey }]);
 });
+
+test("append DB failure after storage upload deletes the uploaded object", async () => {
+  const documentId = randomUUID();
+  const workspaceId = randomUUID();
+  const baseVersionId = randomUUID();
+  const storage = createMemoryObjectStorage();
+
+  const db = {
+    select: () => ({
+      from: () => ({
+        innerJoin: () => ({
+          where: () => ({
+            limit: async () => [
+              {
+                id: documentId,
+                workspaceId,
+                name: "brief.docx",
+                format: "docx",
+              },
+            ],
+          }),
+        }),
+      }),
+    }),
+    transaction: async () => {
+      throw new Error("forced db failure");
+    },
+  } as unknown as Db;
+
+  const documents = createDocumentService(db, storage, {
+    uploadMaxBytes: 1024,
+  });
+
+  await assert.rejects(() =>
+    documents.appendDocumentVersion({
+      documentId,
+      ownerUserId: "user-1",
+      baseVersionId,
+      source: "user",
+      bytes: Buffer.from("PK next version"),
+    }),
+  );
+
+  assert.equal(storage.objects.size, 0);
+});
+
+test("append rejects empty bytes before touching storage", async () => {
+  const storage = createMemoryObjectStorage();
+  let selects = 0;
+  const db = {
+    select: () => {
+      selects += 1;
+      throw new Error("should not query");
+    },
+  } as unknown as Db;
+
+  const documents = createDocumentService(db, storage, {
+    uploadMaxBytes: 1024,
+  });
+
+  await assert.rejects(
+    () =>
+      documents.appendDocumentVersion({
+        documentId: randomUUID(),
+        ownerUserId: "user-1",
+        baseVersionId: randomUUID(),
+        source: "user",
+        bytes: Buffer.alloc(0),
+      }),
+    (error: unknown) =>
+      error instanceof DocumentUploadError && error.code === "EMPTY_UPLOAD",
+  );
+
+  assert.equal(selects, 0);
+  assert.equal(storage.objects.size, 0);
+});

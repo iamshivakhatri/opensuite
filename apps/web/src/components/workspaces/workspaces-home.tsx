@@ -7,7 +7,11 @@ import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { PageEmpty, PageError, PageLoading } from "@/components/ui/page-state";
-import { formatLabel, formatUpdatedAt, userFacingError } from "@/components/files/format";
+import {
+  formatLabel,
+  formatUpdatedAt,
+  userFacingError,
+} from "@/components/files/format";
 import {
   createWorkspace,
   deleteWorkspace,
@@ -16,10 +20,15 @@ import {
   type Workspace,
 } from "@/lib/api";
 import { documentPath, workspacePath } from "@/lib/paths";
+import {
+  filterOfficeUploadFiles,
+  isOfficeUploadFile,
+  uploadOfficeFiles,
+} from "@/lib/office-upload";
 import { useToast } from "@/lib/toast";
 
 /**
- * /app home — workspace cards, not an implicit file library.
+ * /app home — workspaces + direct upload into existing or new workspace.
  */
 export function WorkspacesHome() {
   const router = useRouter();
@@ -35,6 +44,10 @@ export function WorkspacesHome() {
   const [deleteTarget, setDeleteTarget] = React.useState<Workspace | null>(null);
   const [busy, setBusy] = React.useState(false);
   const [actionError, setActionError] = React.useState<string | null>(null);
+  const [pendingFiles, setPendingFiles] = React.useState<File[] | null>(null);
+  const [draggingOver, setDraggingOver] = React.useState(false);
+  const dragDepth = React.useRef(0);
+  const fileRef = React.useRef<HTMLInputElement>(null);
 
   const load = React.useCallback(async () => {
     setError(null);
@@ -55,6 +68,7 @@ export function WorkspacesHome() {
         setMenuId(null);
         setRenameId(null);
         setDeleteTarget(null);
+        setPendingFiles(null);
       }
     }
     function onClick() {
@@ -67,6 +81,21 @@ export function WorkspacesHome() {
       window.removeEventListener("click", onClick);
     };
   }, []);
+
+  function takeOfficeFiles(files: FileList | File[] | null) {
+    if (!files) return;
+    const accepted = filterOfficeUploadFiles(files);
+    const rejected = Array.from(files).filter((file) => !isOfficeUploadFile(file));
+    if (rejected.length > 0) {
+      toast({
+        tone: "error",
+        title: "Unsupported format",
+        description: "Only .docx, .pptx, and .xlsx are supported.",
+      });
+    }
+    if (accepted.length === 0) return;
+    setPendingFiles(accepted);
+  }
 
   async function handleCreate(event: React.FormEvent) {
     event.preventDefault();
@@ -129,19 +158,77 @@ export function WorkspacesHome() {
             Workspaces
           </h1>
           <p className="mt-1 text-[12px] text-ink-soft">
-            Open a workspace to browse files and work with the agent.
+            Open a workspace, or upload files into a new or existing one.
           </p>
         </div>
       </div>
 
+      <div
+        className={
+          "mb-5 rounded-[var(--radius-md)] border border-dashed px-5 py-7 text-center transition-colors " +
+          (draggingOver
+            ? "border-accent bg-accent-soft/40"
+            : "border-line bg-surface")
+        }
+        onDragEnter={(event) => {
+          if (!event.dataTransfer.types.includes("Files")) return;
+          event.preventDefault();
+          dragDepth.current += 1;
+          setDraggingOver(true);
+        }}
+        onDragLeave={(event) => {
+          if (!event.dataTransfer.types.includes("Files")) return;
+          event.preventDefault();
+          dragDepth.current = Math.max(0, dragDepth.current - 1);
+          if (dragDepth.current === 0) setDraggingOver(false);
+        }}
+        onDragOver={(event) => {
+          if (!event.dataTransfer.types.includes("Files")) return;
+          event.preventDefault();
+          event.dataTransfer.dropEffect = "copy";
+        }}
+        onDrop={(event) => {
+          event.preventDefault();
+          dragDepth.current = 0;
+          setDraggingOver(false);
+          takeOfficeFiles(event.dataTransfer.files);
+        }}
+      >
+        <input
+          ref={fileRef}
+          type="file"
+          accept=".docx,.pptx,.xlsx"
+          multiple
+          className="hidden"
+          onChange={(event) => {
+            takeOfficeFiles(event.target.files);
+            event.target.value = "";
+          }}
+        />
+        <p className="text-[13px] font-semibold tracking-[-0.01em] text-ink">
+          {draggingOver ? "Drop to upload" : "Drop Office files here"}
+        </p>
+        <p className="mt-1 text-[11.5px] text-ink-soft">
+          .docx · .pptx · .xlsx — then choose an existing workspace or create one
+        </p>
+        <Button
+          type="button"
+          size="sm"
+          className="mt-3"
+          onClick={() => fileRef.current?.click()}
+        >
+          Choose files
+        </Button>
+      </div>
+
       <form
         onSubmit={(event) => void handleCreate(event)}
-        className="mb-6 flex flex-wrap items-center gap-2 rounded-[14px] border border-line bg-surface px-3 py-3"
+        className="mb-6 flex flex-wrap items-center gap-2 rounded-[var(--radius-md)] border border-line bg-surface px-3 py-3"
       >
         <Input
           value={name}
           onChange={(event) => setName(event.target.value)}
-          placeholder="New workspace name"
+          placeholder="Or create an empty workspace…"
           className="min-w-[220px] flex-1"
           maxLength={100}
         />
@@ -160,13 +247,13 @@ export function WorkspacesHome() {
       ) : null}
 
       {workspaces === null && !error ? (
-        <PageLoading label="Loading workspaces…" />
+        <PageLoading variant="workspaces" />
       ) : null}
 
       {workspaces !== null && workspaces.length === 0 ? (
         <PageEmpty
           title="Create your first workspace"
-          description="Workspaces hold your Word, PowerPoint, and Excel files."
+          description="Drop a file above to create a workspace around it, or name one here."
         />
       ) : null}
 
@@ -174,7 +261,7 @@ export function WorkspacesHome() {
         {(workspaces ?? []).map((workspace) => (
           <div
             key={workspace.id}
-            className="group relative rounded-[14px] border border-line bg-surface px-4 py-3.5 transition-colors hover:border-[#D5D9E0]"
+            className="group relative rounded-[var(--radius-md)] border border-line bg-surface px-4 py-3.5 transition-colors hover:border-[#D5D9E0]"
           >
             <Link
               href={workspacePath(workspace.id)}
@@ -192,32 +279,32 @@ export function WorkspacesHome() {
               <div className="mb-2 text-[11px] text-ink-faint">
                 Updated {formatUpdatedAt(workspace.updatedAt)}
               </div>
-              {workspace.recentDocuments.length > 0 ? (
-                <div className="flex flex-wrap gap-1.5">
-                  {workspace.recentDocuments.map((doc) => (
-                    <span
-                      key={doc.id}
-                      className="inline-flex max-w-[180px] items-center gap-1.5 rounded-full border border-line bg-[var(--paper)] px-2 py-0.5 text-[10px] text-ink-soft"
-                      onClick={(event) => {
-                        event.preventDefault();
-                        router.push(documentPath(workspace.id, doc.id));
-                      }}
-                    >
-                      <span className="font-mono text-[7.5px] uppercase text-ink-faint">
-                        {formatLabel(doc.format)}
-                      </span>
-                      <span className="truncate">{doc.name}</span>
-                    </span>
-                  ))}
-                </div>
-              ) : (
-                <p className="text-[11px] text-ink-faint">No files yet</p>
-              )}
             </Link>
+            {workspace.recentDocuments.length > 0 ? (
+              <div className="flex flex-wrap gap-1.5">
+                {workspace.recentDocuments.map((doc) => (
+                  <Link
+                    key={doc.id}
+                    href={documentPath(workspace.id, doc.id)}
+                    className={
+                  "inline-flex max-w-[200px] items-center gap-1.5 rounded-[var(--radius-sm)] border border-line bg-[var(--paper)] px-2 py-0.5 text-[10px] text-ink-soft transition-colors hover:border-[#D5D9E0] hover:text-ink"
+                }
+                prefetch
+                  >
+                    <span className="font-mono text-[7.5px] uppercase text-ink-faint">
+                      {formatLabel(doc.format)}
+                    </span>
+                    <span className="truncate">{doc.name}</span>
+                  </Link>
+                ))}
+              </div>
+            ) : (
+              <p className="text-[11px] text-ink-faint">No files yet</p>
+            )}
             <button
               type="button"
               title="Workspace actions"
-              className="absolute right-3 top-3 grid h-7 w-7 place-items-center rounded-[8px] text-[12px] text-ink-faint opacity-0 hover:bg-sunken hover:text-ink group-hover:opacity-100"
+              className="absolute right-3 top-3 grid h-7 w-7 place-items-center rounded-[var(--radius-sm)] text-[12px] text-ink-faint opacity-0 hover:bg-sunken hover:text-ink group-hover:opacity-100"
               onClick={(event) => {
                 event.preventDefault();
                 event.stopPropagation();
@@ -230,7 +317,7 @@ export function WorkspacesHome() {
             </button>
             {menuId === workspace.id ? (
               <div
-                className="absolute right-3 top-11 z-10 min-w-[140px] overflow-hidden rounded-[10px] border border-line bg-surface py-1 shadow-[0_8px_28px_rgba(15,18,24,0.12)]"
+                className="absolute right-3 top-11 z-10 min-w-[140px] overflow-hidden rounded-[var(--radius-md)] border border-line bg-surface py-1 shadow-[0_8px_28px_rgba(15,18,24,0.12)]"
                 onClick={(event) => event.stopPropagation()}
               >
                 <button
@@ -259,6 +346,23 @@ export function WorkspacesHome() {
           </div>
         ))}
       </div>
+
+      {pendingFiles ? (
+        <UploadDestinationDialog
+          files={pendingFiles}
+          workspaces={workspaces ?? []}
+          onClose={() => setPendingFiles(null)}
+          onUploaded={async (workspaceId, documentId) => {
+            setPendingFiles(null);
+            await load();
+            toast({ tone: "success", title: "File uploaded" });
+            router.push(documentPath(workspaceId, documentId));
+          }}
+          onError={(message) =>
+            toast({ tone: "error", title: "Upload failed", description: message })
+          }
+        />
+      ) : null}
 
       {renameId ? (
         <Dialog title="Rename workspace" onClose={() => setRenameId(null)}>
@@ -313,6 +417,146 @@ export function WorkspacesHome() {
   );
 }
 
+function UploadDestinationDialog({
+  files,
+  workspaces,
+  onClose,
+  onUploaded,
+  onError,
+}: {
+  files: File[];
+  workspaces: Workspace[];
+  onClose: () => void;
+  onUploaded: (workspaceId: string, documentId: string) => void | Promise<void>;
+  onError: (message: string) => void;
+}) {
+  const defaultName =
+    files[0]?.name.replace(/\.(docx|pptx|xlsx)$/i, "").trim() || "New workspace";
+  const [mode, setMode] = React.useState<"existing" | "new">(
+    workspaces.length > 0 ? "existing" : "new",
+  );
+  const [workspaceId, setWorkspaceId] = React.useState(workspaces[0]?.id ?? "");
+  const [newName, setNewName] = React.useState(defaultName);
+  const [busy, setBusy] = React.useState(false);
+  const [error, setError] = React.useState<string | null>(null);
+
+  async function submit() {
+    if (busy) return;
+    setBusy(true);
+    setError(null);
+    try {
+      let targetId = workspaceId;
+      if (mode === "new") {
+        if (!newName.trim()) {
+          setError("Enter a workspace name.");
+          setBusy(false);
+          return;
+        }
+        const created = await createWorkspace(newName.trim());
+        targetId = created.id;
+      } else if (!targetId) {
+        setError("Select a workspace.");
+        setBusy(false);
+        return;
+      }
+
+      const result = await uploadOfficeFiles(targetId, files);
+      if (result.errors.length > 0 || result.uploaded.length === 0) {
+        const message = result.errors[0] ?? "Upload failed.";
+        setError(message);
+        onError(message);
+        return;
+      }
+      const first = result.uploaded[0]!;
+      await onUploaded(targetId, first.id);
+    } catch (err) {
+      const message = userFacingError(err, "Upload failed.");
+      setError(message);
+      onError(message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <Dialog title="Where should these files go?" onClose={onClose}>
+      <p className="mb-3 text-[12px] text-ink-soft">
+        {files.length === 1
+          ? files[0]!.name
+          : `${files.length} files ready to upload`}
+      </p>
+
+      <div className="mb-3 flex gap-1 rounded-[var(--radius-sm)] border border-line bg-[var(--paper)] p-1">
+        <button
+          type="button"
+          disabled={workspaces.length === 0}
+          className={
+            "flex-1 rounded-[var(--radius-sm)] px-2 py-1.5 text-[11.5px] font-medium disabled:opacity-40 " +
+            (mode === "existing"
+              ? "bg-surface text-ink shadow-sm"
+              : "text-ink-soft hover:text-ink")
+          }
+          onClick={() => setMode("existing")}
+        >
+          Existing workspace
+        </button>
+        <button
+          type="button"
+          className={
+            "flex-1 rounded-[var(--radius-sm)] px-2 py-1.5 text-[11.5px] font-medium " +
+            (mode === "new"
+              ? "bg-surface text-ink shadow-sm"
+              : "text-ink-soft hover:text-ink")
+          }
+          onClick={() => setMode("new")}
+        >
+          New workspace
+        </button>
+      </div>
+
+      {mode === "existing" ? (
+        <div className="mb-3 max-h-[220px] space-y-1 overflow-y-auto">
+          {workspaces.map((workspace) => (
+            <button
+              key={workspace.id}
+              type="button"
+              className={
+                "block w-full rounded-[var(--radius-sm)] px-3 py-2 text-left text-[12.5px] " +
+                (workspaceId === workspace.id
+                  ? "bg-accent-soft font-medium text-accent-hover"
+                  : "text-ink hover:bg-sunken")
+              }
+              onClick={() => setWorkspaceId(workspace.id)}
+            >
+              {workspace.name}
+            </button>
+          ))}
+        </div>
+      ) : (
+        <Input
+          autoFocus
+          value={newName}
+          onChange={(event) => setNewName(event.target.value)}
+          placeholder="Workspace name"
+          className="mb-3"
+          maxLength={100}
+        />
+      )}
+
+      {error ? <p className="mb-3 text-[11px] text-danger">{error}</p> : null}
+
+      <div className="flex justify-end gap-2">
+        <Button type="button" variant="outline" size="sm" onClick={onClose}>
+          Cancel
+        </Button>
+        <Button type="button" size="sm" disabled={busy} onClick={() => void submit()}>
+          {busy ? "Uploading…" : "Upload"}
+        </Button>
+      </div>
+    </Dialog>
+  );
+}
+
 function Dialog({
   title,
   onClose,
@@ -328,7 +572,7 @@ function Dialog({
       onClick={onClose}
     >
       <div
-        className="w-full max-w-[380px] rounded-[16px] border border-line bg-surface p-4 shadow-[0_24px_80px_rgba(15,18,24,0.2)]"
+        className="w-full max-w-[400px] rounded-[var(--radius-lg)] border border-line bg-surface p-4 shadow-[0_24px_80px_rgba(15,18,24,0.2)]"
         onClick={(event) => event.stopPropagation()}
       >
         <h2 className="mb-3 text-[14px] font-semibold tracking-[-0.02em] text-ink">

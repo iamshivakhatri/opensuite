@@ -401,9 +401,10 @@ export async function uploadDocument(
       documentId: string;
       versionNumber: number;
       sizeBytes: number;
-      source: "upload";
+      source: "upload" | "user" | "agent" | "system";
       createdAt: string;
-      storageKey?: string;
+      parentVersionId?: string | null;
+      sha256?: string | null;
       createdByUserId?: string;
     };
   };
@@ -432,6 +433,70 @@ export async function uploadDocument(
       source: body.version.source,
       createdAt: body.version.createdAt,
     },
+  };
+}
+
+export interface SavedDocumentVersion {
+  readonly id: string;
+  readonly documentId: string;
+  readonly versionNumber: number;
+  readonly parentVersionId: string | null;
+  readonly sizeBytes: number;
+  readonly sha256: string | null;
+  readonly source: "upload" | "user" | "agent" | "system";
+  readonly createdByUserId: string;
+  readonly createdAt: string;
+}
+
+/**
+ * Fetch exact immutable Office bytes for a specific document version.
+ * For a future browser editor — not latest-only download.
+ */
+export async function fetchDocumentVersionContent(
+  documentId: string,
+  versionId: string,
+): Promise<ArrayBuffer> {
+  const response = await apiFetch(
+    `/api/documents/${documentId}/versions/${versionId}/content`,
+  );
+  if (!response.ok) {
+    throw await parseError(response);
+  }
+  return response.arrayBuffer();
+}
+
+/**
+ * Explicit human save: append exported Office bytes as a new user version.
+ * One request = one immutable version. Client must pass the exact baseVersionId
+ * it loaded; stale bases return 409 VERSION_CONFLICT.
+ */
+export async function saveDocumentVersion(
+  documentId: string,
+  input: {
+    readonly baseVersionId: string;
+    readonly file: Blob;
+    readonly filename?: string;
+  },
+): Promise<{ document: ListedDocument; version: SavedDocumentVersion }> {
+  const form = new FormData();
+  form.append("baseVersionId", input.baseVersionId);
+  form.append(
+    "file",
+    input.file,
+    input.filename ?? "document.docx",
+  );
+
+  const response = await apiFetch(`/api/documents/${documentId}/versions`, {
+    method: "POST",
+    body: form,
+  });
+  if (!response.ok) {
+    throw await parseError(response);
+  }
+
+  return (await response.json()) as {
+    document: ListedDocument;
+    version: SavedDocumentVersion;
   };
 }
 
@@ -464,6 +529,7 @@ export interface AgentRun {
   readonly id: string;
   readonly threadId: string;
   readonly status: AgentRunStatus;
+  readonly baseDocumentVersionId?: string | null;
   readonly createdAt: string;
   readonly startedAt: string | null;
   readonly completedAt: string | null;
