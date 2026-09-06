@@ -15,11 +15,16 @@ _Read this before starting any work. Keep it a concise current-state handoff, no
   * `resolvedTheme` (`light|dark`) applied only via `data-opensuite-theme` on `<html>`
   * Casual Docs consumes theme: forced `casual-editor:color-theme` + mirrored `data-theme` (never `auto`)
   * DOCX page stays white paper; shell/chrome follow OpenSuite tokens
+* **First real engine adapter (ReplaceText only):**
+  * `OpenSuiteEngineAdapter` in `packages/engine-client` implements `DocumentRuntime`
+  * Path: AgentTool → DocumentRuntime → adapter → N-API `executeDocxReplaceText` → verified bytes
+  * Returns in-memory `artifactBytes` on success; no DB version append inside the adapter
+  * `MockDocumentRuntime` remains default for API/agent-core tests
 
 ## Just Completed
 
-* Theme source-of-truth + Casual Docs isolation (stop DOCX open from flipping app to dark).
-* Semantic token polish for dark mode across shell, agent, dialogs, palette.
+* `OpenSuiteEngineAdapter` + local `@opensuite/engine` optionalDependency integration
+* Adapter unit tests (fake binding) + N-API smoke test
 
 ## Current Decisions
 
@@ -28,21 +33,24 @@ _Read this before starting any work. Keep it a concise current-state handoff, no
 * Optimistic concurrency: `baseVersionId` + row lock + unique version number.
 * OpenSuite owns persistence + theme; Casual is render/edit/export only.
 * Do **not** share `data-theme` with OpenSuite tokens — Casual mutates that attribute.
+* Engine N-API is a hidden transport, not the permanent universal contract.
 
 ## Verification Status
 
 | Check | Status |
 |---|---|
 | `pnpm typecheck` | **Pass** |
-| `pnpm test` | **Pass** |
+| `pnpm test` | **Pass** (incl. engine-client adapter + N-API smoke) |
 | `pnpm build` | **Pass** |
+| Smoke artifact | `/private/tmp/opensuite-app-engine-adapter-output.docx` |
 
 ## Intentionally Deferred
 
-* Casual Sheets/Slides, autosave, agent selection context, agent artifact persistence
+* Wire adapter into `apps/api` default runtime (still MockDocumentRuntime)
+* Persist agent mutation `artifactBytes` as a new document version
+* Engine-backed inspect/find; PPTX/XLSX engine ops
+* Casual Sheets/Slides, autosave, agent selection context
 * Diff/review/revert, merge/rebase, version-history UI, collaboration
-* Content search, permanent delete, Rust engine mutation
-* Pixel-perfect Casual toolbar restyle (uses Casual vars; host passes resolved theme)
 
 ## Known Theme Limitations
 
@@ -51,4 +59,4 @@ _Read this before starting any work. Keep it a concise current-state handoff, no
 
 ## Recommended Next Step
 
-Manual theme QA checklist (Light/Dark/System + DOCX open), then Casual Sheets when ready.
+Inject a storage-backed `DocumentArtifactLoader` in `apps/api` and optionally swap DOCX mutate runs onto `OpenSuiteEngineAdapter` while keeping mock inspect/find (or a composed runtime).

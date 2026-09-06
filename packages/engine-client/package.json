@@ -14,7 +14,11 @@
     "test": "tsc -p tsconfig.json && node --test \"dist/**/*.test.js\""
   },
   "dependencies": {
+    "@opensuite/agent-core": "workspace:*",
     "@opensuite/contracts": "workspace:*"
+  },
+  "optionalDependencies": {
+    "@opensuite/engine": "file:../../../opensuite-engine/crates/opensuite-node"
   },
   "devDependencies": {
     "@types/node": "^22.10.2",

@@ -8,6 +8,50 @@ OpenSuite communicates with it only through `packages/engine-client`.
 
 Application code must never manipulate Office internals as a shortcut around the engine.
 
+## Proven mutation path (local N-API)
+
+```text
+AgentRunner
+  → AgentTool
+  → DocumentRuntime
+  → OpenSuiteEngineAdapter (@opensuite/engine-client)
+  → Node N-API (@opensuite/engine)
+  → Rust opensuite-engine
+  → verified artifact bytes
+```
+
+* Application owns version/storage lifecycle (`DocumentRef`, `baseVersionId`, artifact loader).
+* Engine owns semantic mutation, preservation, OPC verification, postconditions.
+* `MockDocumentRuntime` remains the default for agent-core / API until inspect is bound.
+* Native transport is hidden behind `DocxEngineBinding` — AgentRunner/tools never import N-API.
+* Only `document.replace_text` → `executeDocxReplaceText` is wired initially.
+* Successful mutations may return in-memory `artifactBytes`; persistence is not done inside the adapter.
+
+### Local Node binding setup
+
+Sibling checkout expected:
+
+```text
+opensuite-project/
+  opensuite/
+  opensuite-engine/
+```
+
+```bash
+# in opensuite-engine
+cd crates/opensuite-node
+npm install
+npm run build   # produces opensuite_node.<platform>-<arch>.node
+
+# in opensuite
+pnpm install    # optionalDependency file: link to crates/opensuite-node
+```
+
+`packages/engine-client` declares `@opensuite/engine` as an **optionalDependency** via
+`file:../../../opensuite-engine/crates/opensuite-node`. Do not commit native binaries into
+this repo. Smoke test writes `/private/tmp/opensuite-app-engine-adapter-output.docx` for
+manual inspection only.
+
 ## Conceptual Interface
 
 The application should eventually be able to request operations such as:
@@ -48,10 +92,11 @@ These types are plain, JSON-shaped TypeScript (no classes, enums-as-objects, or 
 
 ## Client
 
-`packages/engine-client` is the concrete implementation of the boundary described above. It is built around a small, fixed shape:
+`packages/engine-client` is the concrete implementation of the boundary described above. It is built around:
 
-* **`EngineTransport`** — the only interface that knows how to reach the engine (currently just `inspectDocument`). Nothing else in the package, and nothing outside it, is allowed to talk to the engine directly.
-* **`EngineClient`** — the application-facing entry point. It holds a single `EngineTransport` and forwards each call to it, returning the contract result unmodified. It contains no engine logic and does not depend on which transport it was given.
-* **`MockEngineTransport`** — an in-memory `EngineTransport` implementation used until `opensuite-engine` and a real transport exist. It resolves a caller-configured response and records received requests for tests.
+* **`EngineTransport` / `EngineClient` / `MockEngineTransport`** — existing inspect-oriented transport seam (still mock-backed).
+* **`OpenSuiteEngineAdapter`** — `DocumentRuntime` implementation for real DOCX `ReplaceText` via N-API.
+* **`DocumentArtifactLoader`** — injected exact-version byte loader (application storage owns resolution).
+* **`DocxEngineBinding` / `createNapiDocxEngineBinding`** — hides Node Buffer / N-API details.
 
-Swapping `MockEngineTransport` for a future `HttpEngineTransport` (or any other transport) only requires implementing `EngineTransport` — `EngineClient` and its callers (`agent-core`, eventually) do not change. The HTTP transport itself is intentionally not designed yet.
+Swapping N-API for a future remote engine service only requires a new `DocxEngineBinding` (or transport) — AgentRunner and AgentTools do not change.

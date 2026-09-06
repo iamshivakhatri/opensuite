@@ -169,7 +169,9 @@ export interface DocumentChangeSummary {
 export type OperationFailureCode =
   | "UNSUPPORTED_CAPABILITY"
   | "TARGET_NOT_FOUND"
+  | "TARGET_AMBIGUOUS"
   | "PRECONDITION_FAILED"
+  | "DOCUMENT_INVALID"
   | "CONFLICT"
   | "VALIDATION_FAILED"
   | (string & {});
@@ -177,6 +179,10 @@ export type OperationFailureCode =
 /**
  * Mutation result. Partial-success philosophy lives at the agent/tool
  * layer; a single operation is still success|error here.
+ *
+ * Verified artifact bytes (when present) are application-owned output from
+ * a successful engine mutation — persistence stays outside agent-core /
+ * DocumentRuntime adapters.
  */
 export type OperationResult =
   | {
@@ -186,6 +192,11 @@ export type OperationResult =
       readonly change?: DocumentChangeSummary;
       /** Candidate artifact id — persistence remains outside agent-core. */
       readonly outputVersionCandidateId?: string;
+      /**
+       * Verified output document bytes when the runtime produced an in-memory
+       * artifact. Absent on failure. Never partial/failed engine output.
+       */
+      readonly artifactBytes?: Uint8Array;
     }
   | {
       readonly status: "error";
