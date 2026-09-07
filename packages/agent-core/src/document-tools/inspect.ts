@@ -21,6 +21,7 @@ import {
   requireDocumentRuntime,
   unwrapResult,
 } from "./define-tool.js";
+import { collectOpaqueHandles } from "../artifact-handles.js";
 import { DOCUMENT_TOOL_NAMES } from "./names.js";
 import { PAGING_PROPERTIES } from "./shared-schema.js";
 import { parseInspectFocus } from "./selectors.js";
@@ -164,7 +165,12 @@ export function createDocumentInspectTool(): AgentTool<
         signal: ctx.signal,
         runId: ctx.runId,
       });
-      return unwrapResult(result);
+      const success = unwrapResult(result);
+      ctx.handles?.registerAll(
+        document.versionId,
+        collectOpaqueHandles(success.payload),
+      );
+      return success;
     },
   });
 }

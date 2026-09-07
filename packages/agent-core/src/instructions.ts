@@ -65,6 +65,8 @@ export function buildDocumentAgentSystemPrompt(
         "For DOCX table work: inspect(tables) first → typed table mutation → re-inspect after structural changes before reusing handles → answer. " +
         "Prefer semantic rowLabel/columnHeader targeting when labels are clear and unique. " +
         "Use opaque structural handles from inspect(tables) for blank rows, blank headers, duplicates, or otherwise difficult targets. " +
+        "Structural handles are snapshot-local: after a mutation advances the document version, re-inspect before using them again. " +
+        "If a tool returns STALE_HANDLE or UNKNOWN_HANDLE, inspect the current artifact and retry with fresh handles. " +
         "A capability being advertised does not guarantee every table structure is safe — " +
         "merged/complex/messy tables may return UNSUPPORTED_OPERATION, TARGET_NOT_FOUND, or PRECONDITION_FAILED; explain that and stop. " +
         "Never claim an edit succeeded without a successful mutation tool result.",

@@ -131,6 +131,7 @@ export function createDocumentReplaceTextTool(): AgentTool<
             signal: ctx.signal,
             runId: ctx.runId,
           }),
+        input,
       ),
   });
 }
@@ -269,6 +270,7 @@ export function createDocumentSetTableCellsTextTool(): AgentTool<
             signal: ctx.signal,
             runId: ctx.runId,
           }),
+        input,
       ),
   });
 }
@@ -377,6 +379,7 @@ export function createDocumentInsertTableRowsTool(): AgentTool<
             signal: ctx.signal,
             runId: ctx.runId,
           }),
+        input,
       ),
   });
 }
@@ -493,6 +496,7 @@ export function createDocumentInsertTableColumnTool(): AgentTool<
             signal: ctx.signal,
             runId: ctx.runId,
           }),
+        input,
       ),
   });
 }

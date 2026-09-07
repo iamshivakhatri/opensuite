@@ -27,6 +27,13 @@ export {
 export type { AgentCoreErrorCode } from "./errors.js";
 export { AgentCoreError, isAbortError } from "./errors.js";
 
+export {
+  ArtifactHandleRegistry,
+  collectOpaqueHandles,
+  collectOpaqueHandlesFromToolInput,
+  requireCurrentArtifactHandles,
+} from "./artifact-handles.js";
+
 export type {
   AgentMessage,
   AgentMessageRole,

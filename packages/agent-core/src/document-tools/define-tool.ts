@@ -4,6 +4,7 @@ import type {
   DocumentMutationResult,
   PersistedDocumentMutationToolResult,
 } from "../document-mutation.js";
+import { requireCurrentArtifactHandles } from "../artifact-handles.js";
 import type {
   AgentTool,
   ToolEffect,
@@ -137,8 +138,8 @@ export function requireMutations(
 
 /**
  * Shared DOCX persisted-mutation path:
- * mutations executor → immutable N+1 → advance RunDocumentState → standard result.
- * Does not advance on error.
+ * validate handles → mutations executor → immutable N+1 → advance RunDocumentState.
+ * Does not advance on error. Does not call Rust when handles are stale/unknown.
  */
 export async function executePersistedMutation(
   ctx: ToolExecutionContext,
@@ -147,7 +148,11 @@ export async function executePersistedMutation(
     document: DocumentRef,
     mutations: DocumentMutationExecutor,
   ) => Promise<DocumentMutationResult>,
+  toolInput?: unknown,
 ): Promise<PersistedDocumentMutationToolResult> {
+  if (toolInput !== undefined) {
+    requireCurrentArtifactHandles(ctx, toolInput);
+  }
   const mutations = requireMutations(ctx, toolName);
   const { document } = requireDocumentRuntime(ctx);
   await requireRuntimeCapability(ctx, Capabilities.DocumentMutate);
@@ -175,6 +180,7 @@ export async function executeRuntimeMutation(
   type: string,
   payload: Record<string, unknown>,
 ): Promise<OperationResult> {
+  requireCurrentArtifactHandles(ctx, payload);
   const { document, runtime } = requireDocumentRuntime(ctx);
   await requireRuntimeCapability(ctx, Capabilities.DocumentMutate);
   if (!runtime.execute) {
@@ -229,7 +235,11 @@ export function diagnosticError(diagnostic: {
   const code =
     diagnostic.code === "UNSUPPORTED_CAPABILITY"
       ? "UNSUPPORTED_CAPABILITY"
-      : "TOOL_FAILURE";
+      : diagnostic.code === "STALE_HANDLE"
+        ? "STALE_HANDLE"
+        : diagnostic.code === "UNKNOWN_HANDLE"
+          ? "UNKNOWN_HANDLE"
+          : "TOOL_FAILURE";
   return new AgentCoreError(code, diagnostic.message, { diagnostic });
 }
 

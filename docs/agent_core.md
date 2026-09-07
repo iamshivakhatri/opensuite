@@ -50,6 +50,9 @@ primary DocumentRef
 * Discovery failure → run fails with `CAPABILITY_DISCOVERY_FAILED` (does not expose all tools / mock DOCX caps).
 * `document.capabilities` remains model-facing for explicit inspection; it is not required for bootstrap.
 * PPTX/XLSX mock runtimes advertise format-specific caps (`slides.update_text`, `workbook.set_cells`).
+* **Version-bound handles:** `ArtifactHandleRegistry` (run-local, handle → versionId). `document.inspect`
+  registers opaque `handle` strings from the payload; handle-bearing mutations validate via
+  `requireCurrentArtifactHandles` before Rust. `STALE_HANDLE` / `UNKNOWN_HANDLE` — no version UUIDs to the model.
 
 **Read**
 

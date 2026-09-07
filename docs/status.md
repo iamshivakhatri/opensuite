@@ -12,55 +12,52 @@ _Read this before starting any work. Keep it a concise current-state handoff, no
 * Theme architecture (`themePreference` / `resolvedTheme` / Casual isolation).
 * **Production DOCX agent runtime is engine-backed (no mock DOCX content).**
 * **Real DOCX inspect: overview / headings / paragraphs / tables / context** (paged, Rust-authoritative).
-* Table inspect exposes opaque artifact-local handles (table/column/row/cell); mutations accept handle or semantic selectors.
-* **Agent DOCX mutations persist immutable N+1 and advance run DocumentRef:**
-  `replace_text`, `set_table_cells_text`, `insert_table_rows`, `insert_table_column`.
+* Table inspect exposes opaque artifact-local handles; mutations accept handle or semantic selectors.
+* **Agent DOCX mutations persist immutable N+1 and advance run DocumentRef.**
 * Agent chat: Cursor-style work toggle (“Thought for Xs”), single wall-clock timer, Stop square in composer.
 * Optional semantic `occurrence`: omit / null / "" / **0 → omitted**; explicit values stay **1-based**.
-* **Document tools are declarative descriptors** under `packages/agent-core/src/document-tools/`.
-* **Capability-driven tool discovery at run bootstrap** (global: which functions exist).
-* **Artifact affordances on inspect** (format-neutral `DocumentAffordance`): engine → binding → adapter →
-  `document.inspect` → model. DOCX tables/cells are the first populated objects; TS does not recompute editability.
+* **Capability-driven tool discovery** at run bootstrap (global: which functions exist).
+* **Artifact affordances** on inspect (format-neutral; TS does not recompute editability).
+* **Version-bound handle enforcement:** run-local `ArtifactHandleRegistry` (handle → inspected versionId).
+  Inspect registers opaque handles; handle-based mutations validate before Rust (`STALE_HANDLE` / `UNKNOWN_HANDLE`).
+  Model still sees plain handle strings — no version UUIDs in schemas.
 
 ## Just Completed
 
-* Milestone: format-neutral artifact affordances on inspect (DOCX table/cell transport).
-* Prior: capability-driven document tool discovery.
+* Milestone: enforce version-bound artifact handles (run-local registry; stale rejected before engine).
+* Prior: format-neutral artifact affordances; capability-driven tool discovery.
 
 ## Current Decisions
 
 * Soft-delete only; latest = max `version_number`.
 * Optimistic concurrency: `baseVersionId` + row lock.
-* Rust is capability / affordance / semantic-mutation source of truth; app owns versions/storage.
-* Global capabilities ≠ target affordances; both layers stay distinct.
+* Rust is capability / affordance / semantic-mutation source of truth; app owns versions + handle lifetime.
+* Structural handles are opaque and version-bound; re-inspect after N→N+1 before reuse.
+* Global capabilities ≠ target affordances ≠ handle lifetime (three distinct layers).
 * Affordance absence means “not provided” — never invent supported/unsupported in TS.
-* Inspect occurrence/order is version-local — never durable semantic identity.
-* Structural table handles are opaque, artifact-local, short-lived — never persisted; re-inspect after version-changing edits.
 * Real DOCX never falls back to mock inspect semantics.
-* Capability advertised ≠ every table structure is safe (merged/complex → `UNSUPPORTED_OPERATION`).
-* Separate tool calls = separate immutable versions; within one engine op, updates are atomic.
+* Capability advertised ≠ every table structure is safe.
 * `pnpm dev:api` rebuilds agent-core first — restart after agent-core changes.
-* Discovery failure → `CAPABILITY_DISCOVERY_FAILED` (never expose all document tools).
 
 ## Verification Status
 
 | Check | Status |
 |---|---|
-| `pnpm --filter @opensuite/agent-core test` | **Pass** (90) |
-| `pnpm --filter @opensuite/engine-client test` | **Pass** (37) |
+| `pnpm --filter @opensuite/agent-core test` | **Pass** (101) |
 | `pnpm --filter @opensuite/api test` | **Pass** (88+17 skip) |
-| Google Docs fixture native affordances | **Pass** (mixed Name/Year/OpenSuite/2026) |
+| `pnpm --filter @opensuite/agent-core typecheck` | **Pass** |
+| `pnpm --filter @opensuite/api typecheck` | **Pass** |
 
 ## Intentionally Deferred
 
-* Stale-handle enforcement; structured diagnostics; engine tool manifest
-* Affordance-driven agent recovery policies / reason-specific fallbacks
-* Affordances on paragraphs, pictures, slides, sheets, ranges, etc.
+* Structured Rust diagnostics; engine tool manifest
+* Affordance-driven recovery policies / reason-specific fallbacks
+* Affordances on paragraphs, pictures, slides, sheets, ranges
+* Separate affordance registry (handles becoming stale is enough for now)
 * Engine: harden `insert_table_column` verify for empty `headerCells`
 * Delete rows/columns / create_table / multi-column insert
 * PPTX/XLSX engine runtimes; HTTP mutation endpoint
-* Review/revert UI; automatic rebase; app-level multi-tool transactions
 
 ## Recommended Next Step
 
-Milestone 3 / structural-handle UX: richer handle-first browser flow on real DOCX, or stale-handle enforcement — pick one focused concern.
+Milestone 4 focus TBD: structured diagnostics, richer handle-first UX, or next engine mutation.

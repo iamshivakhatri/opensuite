@@ -70,6 +70,7 @@ export function createFakeToolExecutionContext(
     runtime: overrides.runtime,
     mutations: overrides.mutations,
     advancePrimaryDocument: overrides.advancePrimaryDocument,
+    handles: overrides.handles,
   };
 }
 

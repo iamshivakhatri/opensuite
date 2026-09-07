@@ -43,7 +43,8 @@ test("system prompt mentions mutate behavior without listing every tool", () => 
   assert.match(prompt, /NOT a tool name/i);
   assert.match(prompt, /Never claim an edit succeeded/i);
   assert.match(prompt, /structural handles/i);
-  assert.match(prompt, /re-inspect after structural changes/i);
+  assert.match(prompt, /STALE_HANDLE/);
+  assert.match(prompt, /re-inspect/i);
   assert.match(prompt, /do not retry that same tool/i);
   // Catalog communicates availability — prompt must not enumerate ops.
   assert.doesNotMatch(prompt, /document\.set_table_cells_text/);

@@ -65,6 +65,7 @@ exact immutable version N
   handles alongside semantic selectors. Prefer handles for blank/duplicate targets; re-inspect after N→N+1.
 * Table/cell inspect may include format-neutral `affordances[]` from Rust (capability + supported + optional reason).
   Adapter transport only — TypeScript does not recompute editability. Absence ≠ supported/unsupported.
+* Application enforces version-bound structural handles (run-local registry). Stale/unknown handles never reach Rust.
 * Proven blank-row path: inspect(tables) → cell handles → one atomic `set_table_cells_text` → persist N+1.
 * Table workflow: inspect(tables) → set cells / insert rows / insert one column → re-inspect.
 * Current engine verify for column insert still needs `headerCells` even with handles —

@@ -12,6 +12,7 @@ import {
 } from "./events.js";
 import type { DocumentMutationExecutor } from "./document-mutation.js";
 import { isPersistedDocumentMutationToolResult } from "./document-mutation.js";
+import { ArtifactHandleRegistry } from "./artifact-handles.js";
 import {
   filterDocumentToolsByCapabilities,
 } from "./document-tools.js";
@@ -146,6 +147,8 @@ export class AgentRunner {
     const documentState: RunDocumentState = {
       primary: request.primaryDocument ?? null,
     };
+    /** Opaque handle → inspected versionId for this run only. */
+    const handleRegistry = new ArtifactHandleRegistry();
     /** Failures per tool name in this run (circuit breaker). */
     const toolFailureCounts = new Map<string, number>();
     let forceAnswerOnly = false;
@@ -295,6 +298,7 @@ export class AgentRunner {
           documentState,
           toolFailureCounts,
           activeTools,
+          handleRegistry,
         );
         toolOutcomes.push(...turnOutcomes);
 
@@ -474,6 +478,7 @@ export class AgentRunner {
     documentState: RunDocumentState,
     toolFailureCounts: Map<string, number>,
     activeTools: ToolRegistry,
+    handleRegistry: ArtifactHandleRegistry,
   ): Promise<ToolOutcome[]> {
     const outcomes: ToolOutcome[] = new Array(toolCalls.length);
     let index = 0;
@@ -500,6 +505,7 @@ export class AgentRunner {
               documentState,
               toolFailureCounts,
               activeTools,
+              handleRegistry,
             ),
           ),
         );
@@ -517,6 +523,7 @@ export class AgentRunner {
         documentState,
         toolFailureCounts,
         activeTools,
+        handleRegistry,
       );
       index += 1;
     }
@@ -545,6 +552,7 @@ export class AgentRunner {
     documentState: RunDocumentState,
     toolFailureCounts: Map<string, number>,
     activeTools: ToolRegistry,
+    handleRegistry: ArtifactHandleRegistry,
   ): Promise<ToolOutcome> {
     this.throwIfAborted(signal);
 
@@ -727,6 +735,7 @@ export class AgentRunner {
       advancePrimaryDocument: (document) => {
         documentState.primary = document;
       },
+      handles: handleRegistry,
     };
 
     try {
