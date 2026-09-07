@@ -29,6 +29,11 @@ AgentRequest
 
 ### Document tools
 
+Implementation lives in `packages/agent-core/src/document-tools/`:
+`define-tool` (descriptor + capability/mutation plumbing), `shared-schema`,
+`selectors`, `inspect`, `mutations`. Individual typed tools stay model-visible;
+DOCX writes share `executePersistedMutation` (immutable N→N+1, no advance on failure).
+
 **Read**
 
 * `document.capabilities` — list runtime caps for the primary document
@@ -38,9 +43,9 @@ AgentRequest
 **Safe writes**
 
 * `document.replace_text` — DOCX prose/heading find/replace; **tool success = persisted immutable version**
-* `document.set_table_cells_text` — atomic multi-cell update in one supported table (expected-current preconditions)
-* `document.insert_table_rows` — contiguous multi-row insert after a semantic row anchor
-* `document.insert_table_column` — single column insert (simple rectangular tables with explicit grid)
+* `document.set_table_cells_text` — atomic multi-cell update (semantic labels **or** opaque cell handles from inspect)
+* `document.insert_table_rows` — contiguous multi-row insert after semantic row label **or** row handle
+* `document.insert_table_column` — single column insert after semantic header **or** column handle
 * `slides.update_text` — PPTX slide title or existing→new text (mock runtime path)
 * `workbook.set_cells` — XLSX small cell writes (mock runtime path)
 
@@ -63,6 +68,9 @@ Real DOCX path: `createOpenSuiteEngineAdapter` — caps/find/inspect/replace + t
 Inspect paging uses `offset`/`limit` (default 20, max 100). Occurrence/order is version-local only.
 
 Table workflow: inspect(tables) → typed table mutation → immutable version → re-inspect.
+Semantic selectors (rowLabel/columnHeader/headerCells) are human-readable convenience.
+Opaque structural handles from inspect are exact artifact-local targets for blank/duplicate/awkward cells —
+never persist them; re-inspect after any version-changing edit before reuse.
 Capability does not guarantee every structure is writable (merged/complex may return `UNSUPPORTED_OPERATION`).
 Not exposed: delete row/column, create table, multi-column insert, generic `document.mutate`.
 

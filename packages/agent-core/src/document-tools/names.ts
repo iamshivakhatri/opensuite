@@ -1,0 +1,20 @@
+/** Stable document tool names advertised to the model. */
+export const DOCUMENT_TOOL_NAMES = {
+  capabilities: "document.capabilities",
+  inspect: "document.inspect",
+  find: "document.find",
+  replaceText: "document.replace_text",
+  setTableCellsText: "document.set_table_cells_text",
+  insertTableRows: "document.insert_table_rows",
+  insertTableColumn: "document.insert_table_column",
+  updateSlideText: "slides.update_text",
+  setCells: "workbook.set_cells",
+} as const;
+
+/** Rust-advertised DOCX mutation capability ids (also mirrored in RuntimeCapabilities). */
+export const DOCX_ENGINE_CAPS = {
+  replaceText: "replace_text",
+  setTableCellsText: "set_table_cells_text",
+  insertTableRows: "insert_table_rows",
+  insertTableColumn: "insert_table_column",
+} as const;
