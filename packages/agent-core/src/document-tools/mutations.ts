@@ -152,9 +152,7 @@ export function createDocumentReplaceTextTool(): AgentTool<
   return defineDocumentTool({
     name: DOCUMENT_TOOL_NAMES.replaceText,
     description:
-      "Replace prose/heading text in the active DOCX document (not for semantic table cells). " +
-      "Success means an immutable new document version was persisted. " +
-      "For table cell updates prefer document.set_table_cells_text after inspect(tables).",
+      "Replace prose/heading text (not table cells — use set_table_cells_text).",
     effect: "write",
     executionMode: "sequential",
     capability: DOCX_ENGINE_CAPS.replaceText,
@@ -223,13 +221,9 @@ export function createDocumentInsertParagraphTool(): AgentTool<
   return defineDocumentTool({
     name: DOCUMENT_TOOL_NAMES.insertParagraph,
     description:
-      "Insert a single new paragraph into the active DOCX document. " +
-      "Pass a full human paragraph (usually multiple sentences) or a short heading. " +
-      "When creating several consecutive paragraphs you already know, prefer document.insert_paragraphs (one atomic version). " +
-      "Use inspect(body_blocks) first when placement relative to existing content matters. " +
-      "placement: start | end | before {handle} | after {handle} (body-block handles from inspect). " +
-      "After a structural mutation, re-inspect before reusing handles. " +
-      "Success means an immutable new document version was persisted.",
+      "Insert one paragraph. Prefer insert_paragraphs for several known consecutive paragraphs. " +
+      "placement: start | end | before/after body-block handle from inspect(body_blocks). " +
+      "Handles go stale after any write.",
     effect: "write",
     executionMode: "sequential",
     capability: DOCX_ENGINE_CAPS.insertParagraph,
@@ -317,12 +311,8 @@ export function createDocumentInsertParagraphsTool(): AgentTool<
   return defineDocumentTool({
     name: DOCUMENT_TOOL_NAMES.insertParagraphs,
     description:
-      "Atomically insert multiple consecutive paragraphs in one mutation (one immutable version). " +
-      "Prefer this over repeated document.insert_paragraph when you already know several paragraphs to create. " +
-      "Each texts[] entry should be a full human paragraph or short heading. " +
-      "Same placement model as insert_paragraph (start|end|before|after body-block handles). " +
-      "Do not pass styles here — compose with set_paragraph_style afterward. " +
-      "Success means one immutable new document version was persisted.",
+      "Insert multiple consecutive paragraphs in one version. Prefer over repeated insert_paragraph. " +
+      "Same placement rules as insert_paragraph (start|end|before|after handle).",
     effect: "write",
     executionMode: "sequential",
     capability: DOCX_ENGINE_CAPS.insertParagraphs,
@@ -402,10 +392,7 @@ export function createDocumentDeleteParagraphTool(): AgentTool<
   return defineDocumentTool({
     name: DOCUMENT_TOOL_NAMES.deleteParagraph,
     description:
-      "Delete one paragraph matched by exact visible text (optional occurrence). " +
-      "Do not empty text with replace_text — use this tool. " +
-      "After success, re-inspect before reusing structural handles. " +
-      "Success means an immutable new document version was persisted.",
+      "Delete one paragraph by exact visible text (optional occurrence).",
     effect: "write",
     executionMode: "sequential",
     capability: DOCX_ENGINE_CAPS.deleteParagraph,
@@ -446,10 +433,9 @@ export function createDocumentSetParagraphStyleTool(): AgentTool<
   return defineDocumentTool({
     name: DOCUMENT_TOOL_NAMES.setParagraphStyle,
     description:
-      "Set or clear a paragraph's style by display name (e.g. Heading 1). " +
-      "Target by exact visible text after insert/inspect. Omit style to clear. " +
-      "Compose with insert_paragraphs rather than embedding style in insertion. " +
-      "Success means an immutable new document version was persisted.",
+      "Set/clear paragraph style by display name that exists in the document stylesheet " +
+      "(e.g. Heading 1). Target exact visible text. Omit style to clear. " +
+      "Fails with TARGET_NOT_FOUND if the style name is missing from styles.xml.",
     effect: "write",
     executionMode: "sequential",
     capability: DOCX_ENGINE_CAPS.setParagraphStyle,
@@ -504,9 +490,7 @@ export function createDocumentSetParagraphFormattingTool(): AgentTool<
   return defineDocumentTool({
     name: DOCUMENT_TOOL_NAMES.setParagraphFormatting,
     description:
-      "Apply paragraph-level formatting (alignment, spacing before/after in twips). " +
-      "Target by exact visible text. Use for centering, spacing adjustments, etc. " +
-      "Success means an immutable new document version was persisted.",
+      "Set paragraph alignment and/or spacing (twips). Target exact visible text.",
     effect: "write",
     executionMode: "sequential",
     capability: DOCX_ENGINE_CAPS.setParagraphFormatting,
@@ -599,9 +583,7 @@ export function createDocumentSetTextFormattingTool(): AgentTool<
   return defineDocumentTool({
     name: DOCUMENT_TOOL_NAMES.setTextFormatting,
     description:
-      "Apply character formatting (bold, italic, font size in half-points, font family) " +
-      "to a text run matched by exact visible text. " +
-      "Success means an immutable new document version was persisted.",
+      "Set run formatting (bold/italic/fontSizeHalfPoints/fontFamily) on exact visible text.",
     effect: "write",
     executionMode: "sequential",
     capability: DOCX_ENGINE_CAPS.setTextFormatting,
@@ -704,16 +686,10 @@ export function createDocumentSetTableCellsTextTool(): AgentTool<
   return defineDocumentTool({
     name: DOCUMENT_TOOL_NAMES.setTableCellsText,
     description:
-      "Atomically update multiple existing cells in one supported DOCX table. " +
-      "Inspect tables first; supply expectedCurrentText from actual cell values. " +
-      "Prefer semantic rowLabel + columnHeader when labels are clear and unique. " +
-      "Use target.handle with an opaque cell handle from document.inspect(tables) when the row is blank, " +
-      "a header is blank, labels are duplicated, or exact structural targeting is easier — blank cells are editable by handle. " +
-      "Prefer one multi-cell call over several replace_text calls. " +
-      "All updates validate before mutation — one invalid target fails the whole operation. " +
-      "After a successful mutation, re-inspect before reusing structural handles. " +
-      "On TARGET_NOT_FOUND / PRECONDITION_FAILED / UNSUPPORTED_OPERATION: do not retry; explain and stop. " +
-      "Success = immutable version persisted. Capability does not guarantee every table shape is mutable.",
+      "Update one or more table cells atomically. Inspect tables first; pass expectedCurrentText. " +
+      "Prefer semantic {rowLabel, columnHeader} — required when batching with other writes " +
+      "(handles from earlier in the turn go stale). Use target.handle for blank/duplicate cells " +
+      "only when no other write precedes it in this turn.",
     effect: "write",
     executionMode: "sequential",
     capability: DOCX_ENGINE_CAPS.setTableCellsText,
@@ -721,32 +697,30 @@ export function createDocumentSetTableCellsTextTool(): AgentTool<
       type: "object",
       properties: {
         table: tableTargetSchema({
-          description:
-            "Table target from inspect(tables): headerCells (+ optional occurrence) and/or opaque table handle",
+          description: "Table: headerCells and/or handle from inspect(tables)",
         }),
         updates: {
           type: "array",
-          description: "Cell updates in one atomic engine operation",
+          description: "Cell updates (all-or-nothing)",
           items: {
             type: "object",
             properties: {
               target: {
                 type: "object",
                 description:
-                  "Cell selector: { handle } from inspect, or { rowLabel, columnHeader, occurrence? }",
+                  "{rowLabel,columnHeader} preferred; or {handle} from inspect",
                 properties: {
                   handle: {
                     type: "string",
-                    description:
-                      "Opaque cell handle from inspect(tables) — use for blank/duplicate/awkward cells",
+                    description: "Opaque cell handle (same-version only)",
                   },
                   rowLabel: {
                     type: "string",
-                    description: "First-column / row-label text from inspection",
+                    description: "First-column label",
                   },
                   columnHeader: {
                     type: "string",
-                    description: "Column header text from inspection",
+                    description: "Column header text",
                   },
                   occurrence: OCCURRENCE_PROPERTY,
                 },
@@ -754,23 +728,20 @@ export function createDocumentSetTableCellsTextTool(): AgentTool<
               },
               rowLabel: {
                 type: "string",
-                description:
-                  "Legacy flat semantic selector (same as target.rowLabel)",
+                description: "Legacy alias for target.rowLabel",
               },
               columnHeader: {
                 type: "string",
-                description:
-                  "Legacy flat semantic selector (same as target.columnHeader)",
+                description: "Legacy alias for target.columnHeader",
               },
               expectedCurrentText: {
                 type: "string",
-                description: "Current cell text (precondition from inspection)",
+                description: "Current cell text precondition",
               },
               replacement: { type: "string", description: "New cell text" },
               occurrence: {
                 type: "number",
-                description:
-                  "Optional 1-based disambiguation for legacy flat semantic form; omit when unique (never send 0)",
+                description: "Legacy 1-based occurrence; omit when unique",
               },
             },
             required: ["expectedCurrentText", "replacement"],
@@ -843,14 +814,8 @@ export function createDocumentInsertTableRowsTool(): AgentTool<
   return defineDocumentTool({
     name: DOCUMENT_TOOL_NAMES.insertTableRows,
     description:
-      "Insert one contiguous block of rows into a supported DOCX table after a row anchor. " +
-      "Inspect tables first; preserve column order; every row must supply exactly one string per column. " +
-      "Anchor with after.firstCellText (non-empty semantic label) or after.handle (opaque row handle from inspect) " +
-      "— use the handle for blank, duplicate, or awkward first cells. " +
-      "Use for adding records/guests/items. Do not invent column counts. " +
-      "After a successful mutation, re-inspect before reusing structural handles. " +
-      "On UNSUPPORTED_OPERATION / TARGET_NOT_FOUND / PRECONDITION_FAILED: do not retry; explain and stop. " +
-      "Capability does not guarantee complex/merged/messy tables are writable. Success = immutable version persisted.",
+      "Insert contiguous rows after a row anchor (handle preferred, or firstCellText). " +
+      "Each row must match table width. Inspect tables first.",
     effect: "write",
     executionMode: "sequential",
     capability: DOCX_ENGINE_CAPS.insertTableRows,
@@ -952,13 +917,8 @@ export function createDocumentInsertTableColumnTool(): AgentTool<
   return defineDocumentTool({
     name: DOCUMENT_TOOL_NAMES.insertTableColumn,
     description:
-      "Insert exactly one column into a simple rectangular DOCX table after an existing column. " +
-      "Inspect tables first; always pass table.headerCells from inspect (required). " +
-      "Optional table.handle / afterColumnHandle refine targeting; cells[] must supply one value per existing data row. " +
-      "Anchor with afterColumnHeader (semantic) or afterColumnHandle (opaque column handle from inspect). " +
-      "Not a general layout editor — merged/nested/complex tables may return UNSUPPORTED_OPERATION. " +
-      "After a successful mutation, re-inspect before reusing structural handles. " +
-      "Success = immutable version persisted.",
+      "Insert one column after afterColumnHeader or afterColumnHandle. " +
+      "table.headerCells from inspect required. cells length must match existing data rows.",
     effect: "write",
     executionMode: "sequential",
     capability: DOCX_ENGINE_CAPS.insertTableColumn,
@@ -1069,12 +1029,8 @@ export function createDocumentCreateTableTool(): AgentTool<
   return defineDocumentTool({
     name: DOCUMENT_TOOL_NAMES.createTable,
     description:
-      "Create a new rectangular DOCX table with a complete initial cell matrix in one atomic mutation. " +
-      "Prefer this when the full initial contents are already known — do not create an empty table then fill cells. " +
-      "rows[0] is typically the header row; empty string cells are allowed. " +
-      "placement: start | end | before {handle} | after {handle} (body-block handles from inspect(body_blocks)). " +
-      "After success, re-inspect before reusing structural handles. " +
-      "Success means one immutable new document version was persisted.",
+      "Create a rectangular table with full initial cell matrix at placement " +
+      "(start|end|before|after body-block handle). Prefer when contents are known.",
     effect: "write",
     executionMode: "sequential",
     capability: DOCX_ENGINE_CAPS.createTable,
@@ -1146,9 +1102,7 @@ export function createDocumentDeleteTableTool(): AgentTool<
   return defineDocumentTool({
     name: DOCUMENT_TOOL_NAMES.deleteTable,
     description:
-      "Delete an entire DOCX table. Inspect tables first; prefer opaque table.handle. " +
-      "Do not empty cells with replace_text. After success, re-inspect before reusing handles. " +
-      "Success means an immutable new document version was persisted.",
+      "Delete an entire table. Prefer table.handle from inspect(tables).",
     effect: "write",
     executionMode: "sequential",
     capability: DOCX_ENGINE_CAPS.deleteTable,
@@ -1191,11 +1145,8 @@ export function createDocumentDeleteTableRowTool(): AgentTool<
   return defineDocumentTool({
     name: DOCUMENT_TOOL_NAMES.deleteTableRow,
     description:
-      "Delete one row from a DOCX table. Inspect tables first. " +
-      "Target the row with row.handle (preferred) or row.firstCellText. " +
-      "If reasonCode is LAST_TABLE_ROW, delete the whole table instead — do not retry blindly. " +
-      "After success, re-inspect before reusing structural handles. " +
-      "Success means an immutable new document version was persisted.",
+      "Delete one table row (row.handle preferred, or firstCellText). " +
+      "LAST_TABLE_ROW → delete the whole table instead.",
     effect: "write",
     executionMode: "sequential",
     capability: DOCX_ENGINE_CAPS.deleteTableRow,
@@ -1249,11 +1200,8 @@ export function createDocumentDeleteTableColumnTool(): AgentTool<
   return defineDocumentTool({
     name: DOCUMENT_TOOL_NAMES.deleteTableColumn,
     description:
-      "Delete one column from a DOCX table. Inspect tables first. " +
-      "Provide columnHandle (preferred) or columnHeader. " +
-      "If reasonCode is LAST_TABLE_COLUMN, delete the whole table instead — do not retry blindly. " +
-      "After success, re-inspect before reusing structural handles. " +
-      "Success means an immutable new document version was persisted.",
+      "Delete one column (columnHandle preferred, or columnHeader). " +
+      "LAST_TABLE_COLUMN → delete the whole table instead.",
     effect: "write",
     executionMode: "sequential",
     capability: DOCX_ENGINE_CAPS.deleteTableColumn,
@@ -1329,13 +1277,8 @@ export function createDocumentSetTableFormattingTool(): AgentTool<
   return defineDocumentTool({
     name: DOCUMENT_TOOL_NAMES.setTableFormatting,
     description:
-      "Apply basic table-level formatting on a supported DOCX table: alignment " +
-      "(left|center|right|clear), simple borders (grid|none|clear), and optional " +
-      "cell padding via all four cellMargin*Twips together. " +
-      "Use only when the user asks for table presentation changes — not for every table. " +
-      "Inspect tables first; prefer opaque table.handle. Check set_table_formatting affordance when present. " +
-      "After success, re-inspect before reusing handles. " +
-      "Success means an immutable new document version was persisted.",
+      "Set table alignment (left|center|right|clear), borders (grid|none|clear), " +
+      "and optional cell margins (all four twips together). Prefer table.handle.",
     effect: "write",
     executionMode: "sequential",
     capability: DOCX_ENGINE_CAPS.setTableFormatting,
@@ -1505,9 +1448,7 @@ export function createSlidesUpdateTextTool(): AgentTool<
   return defineDocumentTool({
     name: DOCUMENT_TOOL_NAMES.updateSlideText,
     description:
-      "Update text on a PPTX slide. Provide slideIndex (0-based) plus either " +
-      "title, or existingText+newText to replace matching title/body text. " +
-      "Verify with document.inspect afterward.",
+      "Update PPTX slide text: slideIndex plus title, or existingText+newText.",
     effect: "write",
     executionMode: "sequential",
     capability: MOCK_FORMAT_CAPS.updateSlideText,
@@ -1596,8 +1537,7 @@ export function createWorkbookSetCellsTool(): AgentTool<
   return defineDocumentTool({
     name: DOCUMENT_TOOL_NAMES.setCells,
     description:
-      "Set one or more cell values on an XLSX sheet (small range write). " +
-      "Provide sheet name and cells[{address,value}]. Verify with document.inspect afterward.",
+      "Set XLSX cells: sheet + cells[{address,value}].",
     effect: "write",
     executionMode: "sequential",
     capability: MOCK_FORMAT_CAPS.setCells,

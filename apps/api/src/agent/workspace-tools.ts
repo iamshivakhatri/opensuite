@@ -34,12 +34,8 @@ export function createWorkspaceCreateBlankDocxTool(input: {
   return {
     name: WORKSPACE_TOOL_NAMES.createBlankDocx,
     description:
-      "Create a new blank Word (.docx) document in the current workspace. " +
-      "When the user wants a NEW document, call this tool ALONE as your first action " +
-      "(no inspect, no inserts in the same turn). " +
-      "After it succeeds, author content with document mutation tools on the next turn. " +
-      "Returns the new document id — it becomes the primary document for later tools in this run. " +
-      "Do not invent other create-document tool names; create_blank_docx is an engine capability id, not a callable tool.",
+      "Create a new blank DOCX. Call ALONE as the first action for a NEW document " +
+      "(no inspect/inserts in that turn). Author on the next turn.",
     risk: "safe",
     effect: "write",
     executionMode: "sequential",
@@ -49,8 +45,7 @@ export function createWorkspaceCreateBlankDocxTool(input: {
       properties: {
         name: {
           type: "string",
-          description:
-            "Optional display name (with or without .docx). Defaults to Untitled Document.",
+          description: "Optional display name (default Untitled Document).",
         },
       },
     },

@@ -349,10 +349,8 @@ export function createBenchCreateBlankTool(input: {
   return createFakeTool({
     name: WORKSPACE_TOOL_NAMES.createBlankDocx,
     description:
-      "Create a new blank Word (.docx) document in the current workspace. " +
-      "When the user wants a NEW document, call this tool ALONE as your first action " +
-      "(no inspect, no inserts in the same turn). " +
-      "After it succeeds, author content with document mutation tools on the next turn.",
+      "Create a new blank DOCX. Call ALONE as the first action for a NEW document " +
+      "(no inspect/inserts in that turn). Author on the next turn.",
     risk: "safe" as const,
     effect: "write" as const,
     executionMode: "sequential" as const,

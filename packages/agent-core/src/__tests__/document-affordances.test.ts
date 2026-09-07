@@ -169,17 +169,32 @@ test("document.inspect exposes engine-provided affordances to the model", async 
       (request: ModelRequest) => {
         const toolMsg = request.messages.find((m) => m.role === "tool");
         assert.ok(toolMsg && toolMsg.role === "tool");
-        const output = toolMsg.output as InspectionResult;
+        const output = toolMsg.output as {
+          status: string;
+          payload?: {
+            tables?: Array<{
+              affordances?: Array<{ capability: string; supported: boolean; reason?: string }>;
+              rows?: Array<{
+                cells?: Array<{
+                  text?: string;
+                  affordances?: Array<{
+                    capability: string;
+                    supported: boolean;
+                    reason?: string;
+                  }>;
+                }>;
+              }>;
+            }>;
+          };
+        };
         assert.equal(output.status, "success");
-        if (output.status === "success" && output.payload.format === "docx") {
-          const table = output.payload.tables?.[0];
-          assert.ok(table?.affordances?.some((a) => a.capability === "insert_table_rows"));
-          const year = table?.rows?.[0]?.cells?.[1];
-          assert.equal(year?.text, "Year");
-          assert.equal(year?.affordances?.[0]?.supported, false);
-          assert.equal(year?.affordances?.[0]?.reason, "MULTIPLE_PARAGRAPHS");
-          modelSawAffordances = true;
-        }
+        const table = output.payload?.tables?.[0];
+        assert.ok(table?.affordances?.some((a) => a.capability === "insert_table_rows"));
+        const year = table?.rows?.[0]?.cells?.[1];
+        assert.equal(year?.text, "Year");
+        assert.equal(year?.affordances?.[0]?.supported, false);
+        assert.equal(year?.affordances?.[0]?.reason, "MULTIPLE_PARAGRAPHS");
+        modelSawAffordances = true;
         return assistantOnlyResponse("ok");
       },
     ]),

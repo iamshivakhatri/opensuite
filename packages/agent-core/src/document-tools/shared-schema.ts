@@ -12,19 +12,17 @@ export type StructuralHandle = string;
 /** Shared 1-based occurrence property (omit / null / "" / 0 → omitted at parse). */
 export const OCCURRENCE_PROPERTY = {
   type: "number",
-  description:
-    "Version-local 1-based occurrence when targets collide; omit when unique (never send 0)",
+  description: "1-based occurrence when targets collide; omit when unique",
 } as const;
 
 /** Semantic text target (engine TextTarget) — not a structural handle. */
 export const TEXT_TARGET_SCHEMA = {
   type: "object",
-  description:
-    "Locate a paragraph/run by exact visible text (optional 1-based occurrence)",
+  description: "Exact visible paragraph/run text (+ optional occurrence)",
   properties: {
     text: {
       type: "string",
-      description: "Exact visible text to match",
+      description: "Exact visible text",
     },
     occurrence: OCCURRENCE_PROPERTY,
   },
@@ -34,21 +32,19 @@ export const TEXT_TARGET_SCHEMA = {
 
 export const STRUCTURAL_HANDLE_PROPERTY = {
   type: "string",
-  description:
-    "Opaque artifact-local handle from document.inspect(tables); never persist across versions",
+  description: "Opaque handle from inspect(tables); invalid after any write",
 } as const;
 
 export const TABLE_TARGET_PROPERTIES = {
   headerCells: {
     type: "array",
     items: { type: "string" },
-    description: "Exact header cell texts in order (semantic selector)",
+    description: "Exact header cells in order",
   },
   occurrence: OCCURRENCE_PROPERTY,
   handle: {
     type: "string",
-    description:
-      "Opaque table handle from inspect(tables); preferred when tables share headers",
+    description: "Opaque table handle from inspect(tables)",
   },
 } as const;
 
@@ -101,11 +97,11 @@ export const ROW_ANCHOR_SCHEMA = {
 export const PAGING_PROPERTIES = {
   offset: {
     type: "number",
-    description: "0-based page offset for headings/paragraphs/tables (default 0)",
+    description: "0-based page offset (default 0)",
   },
   limit: {
     type: "number",
-    description: "Page size for headings/paragraphs/tables (default 20, max 100)",
+    description: "Page size (default 20, max 100)",
   },
 } as const;
 

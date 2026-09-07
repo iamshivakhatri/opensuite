@@ -5,8 +5,23 @@
 
 const OFFICE_REL =
   "http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument";
+const PKG_REL =
+  "http://schemas.openxmlformats.org/package/2006/relationships";
+const WORD_REL =
+  "http://schemas.openxmlformats.org/officeDocument/2006/relationships";
 const WORD_NS =
   "http://schemas.openxmlformats.org/wordprocessingml/2006/main";
+const CT_NS =
+  "http://schemas.openxmlformats.org/package/2006/content-types";
+
+/** Minimal styles.xml so set_paragraph_style (Heading 1/2) works on fixtures. */
+const MINIMAL_STYLES_XML = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>` +
+  `<w:styles xmlns:w="${WORD_NS}">` +
+  `<w:docDefaults><w:rPrDefault><w:rPr><w:rFonts w:ascii="Arial" w:hAnsi="Arial"/><w:sz w:val="22"/></w:rPr></w:rPrDefault></w:docDefaults>` +
+  `<w:style w:type="paragraph" w:default="1" w:styleId="Normal"><w:name w:val="Normal"/></w:style>` +
+  `<w:style w:type="paragraph" w:styleId="Heading1"><w:name w:val="Heading 1"/><w:basedOn w:val="Normal"/><w:rPr><w:b/><w:sz w:val="32"/></w:rPr></w:style>` +
+  `<w:style w:type="paragraph" w:styleId="Heading2"><w:name w:val="Heading 2"/><w:basedOn w:val="Normal"/><w:rPr><w:b/><w:sz w:val="26"/></w:rPr></w:style>` +
+  `</w:styles>`;
 
 function crc32(bytes: Uint8Array): number {
   let value = 0xffffffff;
@@ -64,12 +79,29 @@ function packDocumentXml(bodyInner: string): Buffer {
   return zipDocxFiles([
     [
       "[Content_Types].xml",
-      '<Types><Default Extension="xml" ContentType="application/xml"/></Types>',
+      `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>` +
+        `<Types xmlns="${CT_NS}">` +
+        `<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>` +
+        `<Default Extension="xml" ContentType="application/xml"/>` +
+        `<Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/>` +
+        `<Override PartName="/word/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml"/>` +
+        `</Types>`,
     ],
     [
       "_rels/.rels",
-      `<Relationships><Relationship Id="rId1" Type="${OFFICE_REL}" Target="word/document.xml"/></Relationships>`,
+      `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>` +
+        `<Relationships xmlns="${PKG_REL}">` +
+        `<Relationship Id="rId1" Type="${OFFICE_REL}" Target="word/document.xml"/>` +
+        `</Relationships>`,
     ],
+    [
+      "word/_rels/document.xml.rels",
+      `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>` +
+        `<Relationships xmlns="${PKG_REL}">` +
+        `<Relationship Id="rId1" Type="${WORD_REL}/styles" Target="styles.xml"/>` +
+        `</Relationships>`,
+    ],
+    ["word/styles.xml", MINIMAL_STYLES_XML],
     [
       "word/document.xml",
       `<w:document xmlns:w="${WORD_NS}"><w:body>${bodyInner}</w:body></w:document>`,

@@ -82,19 +82,12 @@ export function createDocumentInspectTool(): AgentTool<
   return defineDocumentTool({
     name: DOCUMENT_TOOL_NAMES.inspect,
     description:
-      "Inspect the active Office document with a targeted focus. " +
-      "Use only when you need structure/targets for the document you will edit — " +
-      "not before creating a new blank document, and not for blank append/end authoring. " +
-      "DOCX: overview (compact structure/counts), headings (outline), paragraphs (body prose page), " +
-      "body_blocks (ordered paragraphs+tables with opaque handles for insert_paragraph placement), " +
-      "tables (rows/cells with opaque artifact-local handles), context (nearby content around exact text). " +
-      "body_blocks when placing relative to existing content; " +
-      "tables for tabular work — returned table/row/column/cell handles can be passed to table mutation tools " +
-      "for the same artifact version; when present, object affordances indicate whether an operation is safe " +
-      "on that exact target (supported:false → do not blindly call that op on that target); " +
-      "paragraphs for body prose; context after locating exact text. " +
-      "Use offset/limit paging (default limit 20, max 100) — do not request huge dumps. " +
-      "PPTX/XLSX mock runtimes also support slides/sheets/range.",
+      "Inspect the active document with a targeted focus. " +
+      "Use only when you need structure or mutation targets — not for blank append/end authoring. " +
+      "DOCX focus kinds: overview | headings | paragraphs | tables | body_blocks | context. " +
+      "Prefer the narrowest kind; page with offset/limit (default 20, max 100). " +
+      "tables/body_blocks return opaque handles for same-version mutations; " +
+      "when affordances present, supported:false means do not call that op on that target.",
     executionMode: "parallel-safe",
     capability: Capabilities.DocumentInspect,
     inputSchema: {
@@ -102,9 +95,7 @@ export function createDocumentInspectTool(): AgentTool<
       properties: {
         focus: {
           type: "object",
-          description:
-            "Targeted inspect focus. Omit for overview. " +
-            "overview=counts; headings/paragraphs/tables=paged collections; context=text neighborhood.",
+          description: "Omit for overview. Prefer headings|paragraphs|tables|body_blocks|context.",
           properties: {
             kind: {
               type: "string",
@@ -121,34 +112,29 @@ export function createDocumentInspectTool(): AgentTool<
                 "range",
                 "context",
               ],
-              description:
-                "overview=structure counts; headings=outline; paragraphs=body prose; " +
-                "body_blocks=ordered body for placement; tables=table rows/cells; " +
-                "context=near exact text; slides/sheets/range=PPTX/XLSX",
             },
             ...PAGING_PROPERTIES,
-            index: { type: "number", description: "0-based slide index when kind=slide" },
-            sheet: { type: "string", description: "Sheet name when kind=range" },
+            index: { type: "number", description: "0-based slide index (kind=slide)" },
+            sheet: { type: "string", description: "Sheet name (kind=range)" },
             address: {
               type: "string",
-              description: "Cell address like A1 when kind=range",
+              description: "A1 cell (kind=range)",
             },
             text: {
               type: "string",
-              description: "Target text when kind=context",
+              description: "Target text (kind=context)",
             },
             occurrence: {
               type: "number",
-              description:
-                "1-based occurrence when kind=context; omit when unique (never send 0)",
+              description: "1-based occurrence (kind=context); omit when unique",
             },
             before: {
               type: "number",
-              description: "Nearby containers before target when kind=context",
+              description: "Units before target (kind=context)",
             },
             after: {
               type: "number",
-              description: "Nearby containers after target when kind=context",
+              description: "Units after target (kind=context)",
             },
           },
           required: ["kind"],
@@ -188,8 +174,7 @@ export function createDocumentFindTool(): AgentTool<
   return defineDocumentTool({
     name: DOCUMENT_TOOL_NAMES.find,
     description:
-      "Find text or semantic matches in the active Office document. " +
-      "Use when the user asks to locate mentions, keywords, or related content.",
+      "Find literal or keyword matches in the active document. Prefer inspect for structure.",
     executionMode: "parallel-safe",
     capability: Capabilities.DocumentFind,
     inputSchema: {
@@ -199,7 +184,7 @@ export function createDocumentFindTool(): AgentTool<
         mode: {
           type: "string",
           enum: ["text", "semantic"],
-          description: "text=literal substring; semantic=case-insensitive keywords",
+          description: "text=substring; semantic=keywords",
         },
         maxResults: { type: "number", description: "Max matches (1-50)" },
       },

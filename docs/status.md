@@ -5,52 +5,54 @@ _Read this before starting any work. Keep it a concise current-state handoff, no
 ## What Exists
 
 * Workspace shell, Casual Docs DOCX, engine-backed inspect/mutate, blank create, workspace agent.
-* **Agent Efficiency v1/v2:** projection, timeouts, force-tools, write-batch terminalization, historical arg compaction, create-force stops after mutation **or** inspect/find on open primary.
-* **Agent Efficiency v3 (bench):** `pnpm agent:bench` — canonical scenarios A–E, reuses `model.turn.metrics` / `tool.execution.metrics`, JSON under `.agent-bench/` (gitignored). Fake-model architecture invariants in agent-core tests.
+* **Agent Efficiency v1–v3:** projection, timeouts, force-tools, write-batch terminalization, arg compaction, create-force Q&A fix, `pnpm agent:bench`.
+* **Agent Efficiency v4:** leaner tool descriptions/schemas + system prompt; slimmer model-facing inspect/mutation projection; fixture styles for Heading 1; semantic-cell guidance for batched writes.
 
 ## Just Completed
 
-* Reproducible agent benchmark harness (no AgentRunner redesign). Live suite vs production OpenRouter `deepseek/deepseek-v4-flash-0731`.
+* v4 lean model surface + failure root-causes (style fixture; stale handles on batched cell writes). Re-benched vs `deepseek/deepseek-v4-flash-0731`.
 
 ## Current Decisions
 
-* Soft-delete; optimistic concurrency; Rust SoT for caps/mutations; `pnpm dev:api` rebuilds agent-core first.
-* Terminalize only when confirmation text is ≥12 chars, all tools succeeded, ≥1 document write.
-* Canonical transcript keeps full tool args; model-facing context may compact large executed writes.
-* Bench is developer-only — not production analytics.
+* Soft-delete; optimistic concurrency; Rust SoT; `pnpm dev:api` rebuilds agent-core first.
+* Terminalize on Done (≥12 chars) + successful writes; canonical transcript stays rich.
+* Bench stays developer-local (`.agent-bench/`).
 
 ## Verification Status
 
 | Check | Status |
 |---|---|
-| `pnpm --filter @opensuite/agent-core test` | **Pass** (160) |
+| `pnpm --filter @opensuite/agent-core test` | **Pass** (163) |
 | `pnpm --filter @opensuite/api test` | **Pass** (100+17 skip) |
-| `pnpm agent:bench` (prod model) | **Pass** (5/5 correctness) |
+| `pnpm agent:bench` | **Pass** (5/5) |
 | `git diff --check` | **Pass** |
 
-## Benchmark (production model, 2026-09-07)
+## Benchmark (same model) BEFORE v3 → AFTER v4
 
 Provider/model: `openrouter` / `deepseek/deepseek-v4-flash-0731`
 
-| Scenario | OK | Turns | Tools | Total | Model | Tool/engine | Failures |
-|---|---|---|---|---|---|---|---|
-| simple-read | ok | 2 | 1 | 4.4s | 4.4s | ~0 | 0 |
-| simple-edit | ok | 4 | 4 | 27.8s | 27.7s | ~0 | 1 (style→text fallback) |
-| greenfield-small | ok | 4 | 5 | 6.9s | 6.9s | ~0 | 0 |
-| greenfield-large | ok | 4 | 6 | 28.3s | 28.3s | ~0 | 0 |
-| reason-mutate | ok | 6 | 8 | 19.2s | 19.2s | ~0 | 1 (retry cell write) |
+| Scenario | Turns B→A | Fail B→A | Total B→A | Schema B→A |
+|---|---|---|---|---|
+| simple-read | 2→2 | 0→0 | 4.4s→4.4s | 23.0→16.6KB |
+| simple-edit | 4→4 | 1→0 | 27.8s→5.8s | 23.0→16.6KB |
+| greenfield-small | 4→3 | 0→1* | 6.9s→20.3s | 7.4→5.4KB post-create |
+| greenfield-large | 4→5 | 0→0 | 28.3s→18.7s | (same pattern) |
+| reason-mutate | 6→4 | 1→0 | 19.2s→13.5s | 23.0→16.6KB |
 
-* Suite: model **86.6s** vs tool/engine **0.1s** vs persist **~0**.
-* greenfield-large heaviest turn (batched authoring): wall **20.2s**, TTFT **11.3s**, post-ttft **8.8s**, tool-arg bytes **1255** (not huge JSON).
-* Existing-doc tool schema ~**23KB**/turn; post-inspect context up to ~**20KB**.
-* Token usage often absent from OpenRouter stream for this model (reported as —).
+\*one `create_table` invalid input then retry — model-side, not engine contract.
 
-**Largest remaining bottleneck:** model/provider latency (especially TTFT on large authoring turns) — **not** AgentCore loop, engine, or persistence.
+* Catalog ~**22592→16301** bytes; system prompt ~**4055→2410** bytes.
+* Suite model time ~**86.6s→62.7s**; engine/persist still ~0.
+* simple-edit style now succeeds (fixtures include styles.xml).
+* reason-mutate: no cell-write retry (semantic targeting / guidance).
+* Greenfield still not reliably 2 turns (model splits authoring) — guidance tightened; not AgentRunner rewrite.
+
+**Largest remaining bottleneck:** model/provider latency + model turn-splitting on greenfield — not engine/persistence.
 
 ## Intentionally Deferred
 
-* Planner/DAG/sub-agents; lists/images; table themes; AgentRunner redesign; production analytics
+* Planner/DAG/sub-agents; AgentRunner redesign; model bakeoff; production analytics
 
 ## Recommended Next Step
 
-Reduce model-facing tool-schema / inspect-result bytes (23KB schema + large inspect payloads) and/or try a lower-TTFT model — **do not** rewrite AgentRunner without a schema/context experiment first.
+Optional: further slim large `inspect(tables)` affordance payloads, or nudge post-create narrow catalog to keep style+table+Done in one forced-tools turn — still without rewriting AgentRunner.

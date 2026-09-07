@@ -16,8 +16,10 @@ import {
   createMockDocumentRuntime,
   createRecordingEventSink,
   createScriptedAgentModel,
+  filterDocumentToolsByCapabilities,
   isPersistedDocumentMutationToolResult,
   listDocumentToolDescriptors,
+  measureToolCatalogBytes,
   mutableDocumentCapabilities,
   projectToolResultForModel,
   readOnlyDocumentCapabilities,
@@ -481,16 +483,15 @@ test("telemetry records model and tool metrics without changing outcomes", async
 test("system prompt with mutate caps encourages multi-tool batching", () => {
   const prompt = buildDocumentAgentSystemPrompt(mutableDocumentCapabilities());
   assert.match(prompt, /fewest MODEL ROUNDS/i);
-  assert.match(prompt, /multiple tool calls in the same assistant response/i);
-  assert.match(prompt, /needs no inspection before append/i);
-  assert.match(prompt, /do not call set_table_formatting merely/i);
-  assert.match(prompt, /Do not retry the same failed operation unchanged/i);
+  assert.match(prompt, /emit them together in one assistant response/i);
+  assert.match(prompt, /need no inspect before append/i);
+  assert.match(prompt, /do not retry the same call unchanged/i);
   assert.match(prompt, /create_blank_docx alone/i);
-  assert.match(prompt, /Never write titles, paragraphs, tables/i);
-  assert.match(prompt, /short Done confirmation/i);
-  assert.match(prompt, /NEW DOCUMENT STRUCTURE/i);
+  assert.match(prompt, /short Done/i);
+  assert.match(prompt, /NEW DOCUMENT/i);
   assert.match(prompt, /Heading 1/i);
-  assert.match(prompt, /Heading 2/i);
+  assert.match(prompt, /ideally 2 turns/i);
+  assert.match(prompt, /semantic rowLabel/i);
   assert.doesNotMatch(prompt, /Global capabilities tell you/i);
   assert.doesNotMatch(prompt, /Call document\.capabilities/i);
 });
@@ -517,20 +518,28 @@ test("inspect model projection drops Set capabilities that would become empty id
       payload: {
         format: "docx",
         summary: { title: null, unitKind: "page", unitCount: 1 },
+        paragraphs: [{ handle: "p0", text: "Hi", occurrence: 0 }],
       },
     },
   });
   const output = projected.output as Record<string, unknown>;
   assert.equal(output.status, "success");
   assert.equal("capabilities" in output, false);
+  assert.equal("format" in output, false);
+  assert.equal("diagnostics" in output, false);
+  const payload = output.payload as Record<string, unknown>;
+  assert.equal("format" in payload, false);
+  const summary = payload.summary as Record<string, unknown>;
+  assert.equal("title" in summary, false);
+  assert.equal(summary.unitCount, 1);
   assert.ok(!JSON.stringify(projected).includes('"ids":{}'));
 });
 
 test("empty-caps production prompt omits mutate guidance (static bug regression)", () => {
   const prompt = buildDocumentAgentSystemPrompt();
-  assert.match(prompt, /mutations are currently unavailable|OpenSuite/i);
+  assert.match(prompt, /Editing is currently unavailable|mutations are currently unavailable|OpenSuite/i);
   // Without caps arg, mutate guidance must not claim editing is allowed.
-  assert.doesNotMatch(prompt, /Editing uses the mutation tools/);
+  assert.doesNotMatch(prompt, /After create_blank succeeds/);
 });
 
 test("greenfield: forces toolChoice required and nudges chat-only replies", async () => {
@@ -1449,4 +1458,59 @@ test("architecture: sequential writes in one turn advance version between calls"
   assert.equal(seenBaseVersions[0], "ver-1");
   assert.notEqual(seenBaseVersions[1], seenBaseVersions[0]);
   assert.ok(String(seenBaseVersions[1]).startsWith("ver-1"));
+});
+
+test("v4: DOCX tool catalog is leaner than pre-v4 ~23KB baseline", () => {
+  const caps = mutableDocumentCapabilities();
+  const tools = filterDocumentToolsByCapabilities(
+    listDocumentToolDescriptors(),
+    caps,
+  ).map((t) => ({
+    name: t.name,
+    description: t.description,
+    inputSchema: t.inputSchema,
+  }));
+  const bytes = measureToolCatalogBytes(tools);
+  // Before v4: ~22592. Keep schemas strict but drop duplicated prose.
+  assert.ok(bytes < 18_000, `catalog still heavy: ${bytes}`);
+  assert.ok(bytes > 8_000, `catalog suspiciously tiny: ${bytes}`);
+});
+
+test("v4: set_table_cells_text prefers semantic targets when batching writes", () => {
+  const tool = listDocumentToolDescriptors().find(
+    (t) => t.name === DOCUMENT_TOOL_NAMES.setTableCellsText,
+  );
+  assert.ok(tool);
+  assert.match(tool!.description, /semantic/i);
+  assert.match(tool!.description, /stale/i);
+});
+
+test("v4: mutation projection omits document/version UUIDs", () => {
+  const projected = projectToolResultForModel({
+    role: "tool",
+    toolCallId: "c1",
+    toolName: DOCUMENT_TOOL_NAMES.setParagraphStyle,
+    status: "succeeded",
+    output: {
+      status: "success",
+      document: {
+        documentId: "doc-uuid",
+        versionId: "ver-uuid",
+        format: "docx",
+      },
+      versionNumber: 2,
+      baseVersionId: "ver-1",
+      change: {
+        operation: "document.set_paragraph_style",
+        area: "style",
+        before: "",
+        after: "Heading 1",
+      },
+      diagnostics: [],
+    },
+  });
+  const serialized = JSON.stringify(projected);
+  assert.ok(!serialized.includes("doc-uuid"));
+  assert.ok(!serialized.includes("ver-uuid"));
+  assert.equal((projected.output as { ok: boolean }).ok, true);
 });

@@ -126,7 +126,7 @@ test("tool schemas represent multi-cell, multi-row, and column ops", () => {
   );
 
   assert.match(setCells.description, /atomic/i);
-  assert.match(insertRows.description, /exactly one string per column/i);
+  assert.match(insertRows.description, /match table width/i);
   assert.match(insertColumn.description, /one column/i);
 });
 

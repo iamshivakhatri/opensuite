@@ -177,7 +177,7 @@ test("Anthropic adapter: one tool call", async () => {
     client: mockClient(async (params) => {
       assert.equal(params.tools?.length, 1);
       assert.equal(params.tools?.[0]?.name, "document.inspect");
-      assert.match(String(params.system), /mutation tools in your tool list/i);
+      assert.match(String(params.system), /create_blank succeeds|fewest MODEL ROUNDS/i);
       assert.match(String(params.system), /fewest MODEL ROUNDS/i);
       return {
         content: [

@@ -218,12 +218,16 @@ function projectCreateBlankForModel(output: unknown): Record<string, unknown> {
   }
   const record = output as Record<string, unknown>;
   const document = record.document;
+  // Name only — model must not invent DocumentRefs; runner advances primary.
+  let name: string | undefined;
+  if (document && typeof document === "object" && "name" in document) {
+    const n = (document as { name?: unknown }).name;
+    if (typeof n === "string") name = n;
+  }
   return {
     ok: true,
     operation: "workspace.create_blank_docx",
-    ...(document && typeof document === "object"
-      ? { document: jsonSafe(document) }
-      : {}),
+    ...(name !== undefined ? { name } : {}),
   };
 }
 
@@ -231,35 +235,119 @@ function projectReadToolOutputForModel(output: unknown): unknown {
   if (!output || typeof output !== "object") {
     return output;
   }
-  const record = { ...(output as Record<string, unknown>) };
-  // Never send Set-backed RuntimeCapabilities to the model — JSON becomes {"ids":{}}.
-  if ("capabilities" in record) {
-    const caps = record.capabilities;
-    if (isRuntimeCapabilities(caps)) {
-      // Omit entirely: filtered tool catalog is authoritative.
-      delete record.capabilities;
-    } else if (caps && typeof caps === "object" && "ids" in caps) {
-      const ids = (caps as { ids: unknown }).ids;
-      if (ids instanceof Set) {
-        delete record.capabilities;
-      } else if (
-        ids &&
-        typeof ids === "object" &&
-        !Array.isArray(ids) &&
-        Object.keys(ids as object).length === 0
-      ) {
-        // Already-broken {"ids":{}} from a prior stringify — drop it.
-        delete record.capabilities;
-      } else if (Array.isArray(ids)) {
-        record.capabilities = ids;
-      } else {
-        delete record.capabilities;
+  const record = output as Record<string, unknown>;
+
+  // Inspection / find success envelopes
+  if (record.status === "success" || record.status === "partial") {
+    return projectInspectionOrFindForModel(record);
+  }
+
+  return stripRuntimeCapabilities(jsonSafe(record) as Record<string, unknown>);
+}
+
+function projectInspectionOrFindForModel(
+  record: Record<string, unknown>,
+): Record<string, unknown> {
+  const projected: Record<string, unknown> = {
+    status: record.status,
+  };
+  if (record.focus !== undefined) {
+    projected.focus = jsonSafe(record.focus);
+  }
+  if (Array.isArray(record.diagnostics) && record.diagnostics.length > 0) {
+    projected.diagnostics = jsonSafe(record.diagnostics);
+  }
+  if (record.matches !== undefined) {
+    projected.matches = jsonSafe(record.matches);
+  }
+  if (record.payload && typeof record.payload === "object") {
+    projected.payload = slimInspectionPayload(
+      record.payload as Record<string, unknown>,
+    );
+  }
+  return projected;
+}
+
+function slimInspectionPayload(
+  payload: Record<string, unknown>,
+): Record<string, unknown> {
+  const slim: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(payload)) {
+    if (key === "format") continue; // redundant with tool/runtime context
+    if (key === "summary" && value && typeof value === "object") {
+      const summary = slimSummaryFields(value as Record<string, unknown>);
+      if (Object.keys(summary).length > 0) {
+        slim.summary = summary;
       }
+      continue;
+    }
+    if (key === "page" && value && typeof value === "object") {
+      slim.page = jsonSafe(value);
+      continue;
+    }
+    slim[key] = jsonSafe(pruneEmptyDefaults(value));
+  }
+  return slim;
+}
+
+function slimSummaryFields(
+  summary: Record<string, unknown>,
+): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(summary)) {
+    if (value === null || value === undefined) continue;
+    if (value === "") continue;
+    out[key] = value;
+  }
+  return out;
+}
+
+/** Drop empty arrays / nulls that add no targeting signal. */
+function pruneEmptyDefaults(value: unknown): unknown {
+  if (Array.isArray(value)) {
+    return value.map(pruneEmptyDefaults);
+  }
+  if (!value || typeof value !== "object") {
+    return value;
+  }
+  const out: Record<string, unknown> = {};
+  for (const [key, nested] of Object.entries(value as Record<string, unknown>)) {
+    if (nested === null || nested === undefined) continue;
+    if (Array.isArray(nested) && nested.length === 0) continue;
+    out[key] = pruneEmptyDefaults(nested);
+  }
+  return out;
+}
+
+function stripRuntimeCapabilities(
+  record: Record<string, unknown>,
+): Record<string, unknown> {
+  if (!("capabilities" in record)) {
+    return record;
+  }
+  const caps = record.capabilities;
+  if (isRuntimeCapabilities(caps)) {
+    delete record.capabilities;
+  } else if (caps && typeof caps === "object" && "ids" in caps) {
+    const ids = (caps as { ids: unknown }).ids;
+    if (ids instanceof Set) {
+      delete record.capabilities;
+    } else if (
+      ids &&
+      typeof ids === "object" &&
+      !Array.isArray(ids) &&
+      Object.keys(ids as object).length === 0
+    ) {
+      delete record.capabilities;
+    } else if (Array.isArray(ids)) {
+      record.capabilities = ids;
     } else {
       delete record.capabilities;
     }
+  } else {
+    delete record.capabilities;
   }
-  return jsonSafe(record);
+  return record;
 }
 
 function isRuntimeCapabilities(value: unknown): value is RuntimeCapabilities {
@@ -283,12 +371,6 @@ function projectSuccessfulMutationForModel(
       ? { versionNumber: result.versionNumber }
       : {}),
     changed: changedLabelForOperation(operation, toolName),
-    document: {
-      documentId: result.document.documentId,
-      versionId: result.document.versionId,
-      format: result.document.format,
-    },
-    baseVersionId: result.baseVersionId,
   };
 
   const count = countHintFromChangeArea(result.change?.area);
