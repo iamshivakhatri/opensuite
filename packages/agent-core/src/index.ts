@@ -73,7 +73,9 @@ export {
 } from "./model.js";
 
 export {
+  compactHistoricalToolCallArgs,
   projectToolResultForModel,
+  summarizeExecutedToolArgs,
   transformContext,
 } from "./model-context.js";
 export type { ModelFacingToolProjection } from "./model-context.js";

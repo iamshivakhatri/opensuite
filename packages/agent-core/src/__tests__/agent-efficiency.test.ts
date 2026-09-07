@@ -487,6 +487,7 @@ test("system prompt with mutate caps encourages multi-tool batching", () => {
   assert.match(prompt, /Do not retry the same failed operation unchanged/i);
   assert.match(prompt, /create_blank_docx alone/i);
   assert.match(prompt, /Never write titles, paragraphs, tables/i);
+  assert.match(prompt, /short Done confirmation/i);
   assert.match(prompt, /NEW DOCUMENT STRUCTURE/i);
   assert.match(prompt, /Heading 1/i);
   assert.match(prompt, /Heading 2/i);
@@ -879,4 +880,427 @@ test("edit follow-up after mutation allows final chat without create nudge fail"
   assert.equal(choices[0], "required");
   assert.equal(choices[1], "auto");
   assert.match(result.summary, /Heading 1/i);
+});
+
+test("open-doc Q&A: after inspect, text answer completes without create-nudge failure", async () => {
+  const createTool = createFakeTool({
+    name: "workspace.create_blank_docx",
+    effect: "write",
+    executionMode: "sequential",
+    execute: async () => {
+      throw new Error("must not create on paragraph Q&A");
+    },
+  });
+
+  const choices: Array<"auto" | "required" | undefined> = [];
+  let modelCalls = 0;
+  const runtime = createMockDocumentRuntime({
+    capabilities: mutableDocumentCapabilities(),
+  });
+
+  const runner = new AgentRunner({
+    model: createScriptedAgentModel([
+      (request) => {
+        modelCalls += 1;
+        choices.push(request.toolChoice);
+        return toolCallResponse("", [
+          {
+            id: "i1",
+            name: DOCUMENT_TOOL_NAMES.inspect,
+            input: { focus: { kind: "paragraphs", offset: 0, limit: 10 } },
+          },
+        ]);
+      },
+      (request) => {
+        modelCalls += 1;
+        choices.push(request.toolChoice);
+        return assistantOnlyResponse(
+          "The second paragraph is the intro about reading regularly to grow knowledge and reduce stress.",
+        );
+      },
+    ]),
+    tools: ToolRegistry.create([createTool]),
+    documentToolCatalog: listDocumentToolDescriptors(),
+    runtime,
+  });
+
+  const result = await runner.run({
+    instruction: "What does the second paragraph say?",
+    threadId: "t1",
+    runId: "r-qa-paragraph",
+    primaryDocument: docxRef,
+  });
+
+  assert.equal(result.status, "completed");
+  assert.equal(modelCalls, 2);
+  assert.equal(choices[0], "required");
+  assert.equal(choices[1], "auto");
+  assert.match(result.summary, /second paragraph|intro|reading/i);
+  assert.ok(
+    !result.toolOutcomes.some(
+      (o) => o.toolName === "workspace.create_blank_docx",
+    ),
+  );
+});
+
+test("v2 write-terminalization: content + successful writes finishes without third model turn", async () => {
+  const versions: string[] = [];
+  const runtime: DocumentRuntime = {
+    async capabilities() {
+      return mutableDocumentCapabilities();
+    },
+    async inspect() {
+      throw new Error("unused");
+    },
+    async execute() {
+      return {
+        status: "success",
+        diagnostics: [],
+        artifactBytes: new Uint8Array([1]),
+      };
+    },
+  };
+  const createTool = createFakeTool({
+    name: "workspace.create_blank_docx",
+    effect: "write",
+    executionMode: "sequential",
+    execute: async (_input, ctx) => {
+      const document = {
+        documentId: "new-doc",
+        versionId: "v1",
+        format: "docx" as const,
+      };
+      ctx.advancePrimaryDocument?.(document);
+      return {
+        document: { ...document, name: "Report.docx", versionNumber: 1 },
+      };
+    },
+  });
+
+  let modelCalls = 0;
+  const runner = new AgentRunner({
+    model: createScriptedAgentModel([
+      () => {
+        modelCalls += 1;
+        return toolCallResponse("", [
+          {
+            id: "c1",
+            name: "workspace.create_blank_docx",
+            input: { name: "Report.docx" },
+          },
+        ]);
+      },
+      () => {
+        modelCalls += 1;
+        return toolCallResponse("Done — your report is ready.", [
+          {
+            id: "w1",
+            name: DOCUMENT_TOOL_NAMES.insertParagraphs,
+            input: {
+              texts: ["Title", "Intro paragraph."],
+              placement: { kind: "end" },
+            },
+          },
+          {
+            id: "w2",
+            name: DOCUMENT_TOOL_NAMES.createTable,
+            input: {
+              rows: [
+                ["A", "B"],
+                ["1", "2"],
+              ],
+              placement: { kind: "end" },
+            },
+          },
+          {
+            id: "w3",
+            name: DOCUMENT_TOOL_NAMES.insertParagraphs,
+            input: {
+              texts: ["Closing."],
+              placement: { kind: "end" },
+            },
+          },
+        ]);
+      },
+      () => {
+        modelCalls += 1;
+        return assistantOnlyResponse("should not run");
+      },
+    ]),
+    tools: ToolRegistry.create([createTool]),
+    documentToolCatalog: listDocumentToolDescriptors(),
+    runtime,
+    mutations: createInMemoryDocumentMutationExecutor(runtime),
+    events: {
+      async emit(event) {
+        if (event.type === "document.version.advanced") {
+          versions.push(event.versionId);
+        }
+      },
+    },
+  });
+
+  const result = await runner.run({
+    instruction: "create a report with a table",
+    threadId: "t1",
+    runId: "r-terminalize",
+  });
+
+  assert.equal(result.status, "completed");
+  assert.equal(modelCalls, 2);
+  assert.equal(result.summary, "Done — your report is ready.");
+  assert.equal(result.toolOutcomes.length, 4);
+  assert.equal(versions.length, 3);
+  assert.deepEqual(
+    result.toolOutcomes.map((o) => o.status),
+    ["succeeded", "succeeded", "succeeded", "succeeded"],
+  );
+});
+
+test("v2 write-terminalization failure: optimistic content not final; model continues", async () => {
+  let writes = 0;
+  const runtime: DocumentRuntime = {
+    async capabilities() {
+      return mutableDocumentCapabilities();
+    },
+    async inspect() {
+      throw new Error("unused");
+    },
+    async execute() {
+      writes += 1;
+      if (writes === 2) {
+        return {
+          status: "error" as const,
+          code: "TARGET_NOT_FOUND" as const,
+          diagnostics: [
+            {
+              code: "TARGET_NOT_FOUND",
+              severity: "error" as const,
+              message: "table missing",
+            },
+          ],
+        };
+      }
+      return {
+        status: "success" as const,
+        diagnostics: [],
+        artifactBytes: new Uint8Array([writes]),
+      };
+    },
+  };
+
+  let modelCalls = 0;
+  const runner = new AgentRunner({
+    model: createScriptedAgentModel([
+      () => {
+        modelCalls += 1;
+        return toolCallResponse("Done — should not stick.", [
+          {
+            id: "w1",
+            name: DOCUMENT_TOOL_NAMES.insertParagraphs,
+            input: {
+              texts: ["Ok"],
+              placement: { kind: "end" },
+            },
+          },
+          {
+            id: "w2",
+            name: DOCUMENT_TOOL_NAMES.createTable,
+            input: {
+              rows: [["H"], ["1"]],
+              placement: { kind: "end" },
+            },
+          },
+          {
+            id: "w3",
+            name: DOCUMENT_TOOL_NAMES.insertParagraphs,
+            input: {
+              texts: ["After fail"],
+              placement: { kind: "end" },
+            },
+          },
+        ]);
+      },
+      (request) => {
+        modelCalls += 1;
+        const toolMsgs = request.messages.filter((m) => m.role === "tool");
+        assert.ok(toolMsgs.length >= 2);
+        assert.ok(
+          toolMsgs.some(
+            (m) => m.role === "tool" && m.status === "failed",
+          ),
+        );
+        return assistantOnlyResponse("Recovered after the failed write.");
+      },
+    ]),
+    tools: ToolRegistry.create([]),
+    documentToolCatalog: listDocumentToolDescriptors(),
+    runtime,
+    mutations: createInMemoryDocumentMutationExecutor(runtime),
+  });
+
+  const result = await runner.run({
+    instruction: "write content",
+    threadId: "t1",
+    runId: "r-term-fail",
+    primaryDocument: docxRef,
+  });
+
+  assert.equal(result.status, "completed");
+  assert.equal(modelCalls, 2);
+  assert.equal(result.summary, "Recovered after the failed write.");
+  assert.notEqual(result.summary, "Done — should not stick.");
+  assert.ok(result.toolOutcomes.some((o) => o.status === "failed"));
+  // Third write still executes under existing sequential batch semantics.
+  assert.equal(result.toolOutcomes.length, 3);
+});
+
+test("v2 read-only batch never terminalizes from pre-tool content", async () => {
+  let modelCalls = 0;
+  const runtime = createMockDocumentRuntime({
+    capabilities: mutableDocumentCapabilities(),
+  });
+  const runner = new AgentRunner({
+    model: createScriptedAgentModel([
+      () => {
+        modelCalls += 1;
+        return toolCallResponse("Here is what I found in the doc.", [
+          {
+            id: "i1",
+            name: DOCUMENT_TOOL_NAMES.inspect,
+            input: { focus: { kind: "overview" } },
+          },
+        ]);
+      },
+      () => {
+        modelCalls += 1;
+        return assistantOnlyResponse("Overview: blank-ish document.");
+      },
+    ]),
+    tools: ToolRegistry.create([]),
+    documentToolCatalog: listDocumentToolDescriptors(),
+    runtime,
+  });
+
+  const result = await runner.run({
+    instruction: "what is in this doc?",
+    threadId: "t1",
+    runId: "r-read-no-term",
+    primaryDocument: docxRef,
+  });
+
+  assert.equal(result.status, "completed");
+  assert.equal(modelCalls, 2);
+  assert.equal(result.summary, "Overview: blank-ish document.");
+});
+
+test("v2 confirmation-required batch does not terminalize", async () => {
+  const destructive = createFakeTool({
+    name: "document.danger_wipe",
+    risk: "destructive",
+    effect: "write",
+    executionMode: "sequential",
+    execute: async () => ({ wiped: true }),
+  });
+
+  let modelCalls = 0;
+  const runner = new AgentRunner({
+    model: createScriptedAgentModel([
+      () => {
+        modelCalls += 1;
+        return toolCallResponse("Done — wiped.", [
+          { id: "d1", name: "document.danger_wipe", input: {} },
+        ]);
+      },
+      () => {
+        modelCalls += 1;
+        return assistantOnlyResponse("Waiting was required; stopped.");
+      },
+      () => {
+        modelCalls += 1;
+        return assistantOnlyResponse("Waiting was required; stopped.");
+      },
+    ]),
+    tools: ToolRegistry.create([destructive]),
+    // denyAll confirmation gate by default → skipped / denied
+  });
+
+  const result = await runner.run({
+    instruction: "wipe it",
+    threadId: "t1",
+    runId: "r-confirm-no-term",
+  });
+
+  assert.ok(modelCalls >= 2);
+  assert.notEqual(result.summary, "Done — wiped.");
+  assert.ok(
+    result.toolOutcomes.some(
+      (o) =>
+        o.status === "awaiting_confirmation" || o.status === "skipped",
+    ),
+  );
+});
+
+test("v2 context compaction: large create_table args compacted for model, canonical retained", () => {
+  const giantRows = Array.from({ length: 12 }, (_, r) =>
+    Array.from({ length: 6 }, (_, c) => `cell-${r}-${c}-padding-${"x".repeat(20)}`),
+  );
+  const giantInput = {
+    rows: giantRows,
+    placement: { kind: "end" },
+  };
+  assert.ok(JSON.stringify(giantInput).length > 512);
+
+  const canonical: ModelMessage[] = [
+    { role: "user", content: "make a table" },
+    {
+      role: "assistant",
+      content: "",
+      toolCalls: [
+        {
+          id: "t1",
+          name: DOCUMENT_TOOL_NAMES.createTable,
+          input: giantInput,
+        },
+      ],
+    },
+    {
+      role: "tool",
+      toolCallId: "t1",
+      toolName: DOCUMENT_TOOL_NAMES.createTable,
+      status: "succeeded",
+      summary: "ok",
+      output: {
+        status: "success",
+        diagnostics: [],
+        document: docxRef,
+        versionNumber: 2,
+        baseVersionId: "ver-1",
+        change: {
+          operation: "document.create_table",
+          area: "table",
+          before: "",
+          after: "",
+        },
+      },
+    },
+  ];
+
+  const modelFacing = transformContext(canonical);
+  const assistant = modelFacing[1];
+  assert.ok(assistant && assistant.role === "assistant");
+  const call = assistant.toolCalls?.[0];
+  assert.ok(call);
+  assert.equal(call.id, "t1");
+  assert.equal(call.name, DOCUMENT_TOOL_NAMES.createTable);
+  const compact = call.input as Record<string, unknown>;
+  assert.equal(compact.executed, true);
+  assert.equal(compact.rows, 12);
+  assert.equal(compact.columns, 6);
+  assert.ok(!JSON.stringify(call.input).includes("cell-0-0-padding"));
+
+  // Canonical unchanged
+  const original = canonical[1];
+  assert.ok(original && original.role === "assistant");
+  assert.deepEqual(original.toolCalls?.[0]?.input, giantInput);
 });

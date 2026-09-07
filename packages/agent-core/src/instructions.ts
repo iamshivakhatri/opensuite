@@ -32,13 +32,17 @@ export function buildDocumentAgentSystemPrompt(
       "When several independent or ordered writes are already known, emit multiple tool calls in the same assistant response. " +
       "Document writes execute sequentially in that response; later writes observe the latest version.",
     "Never write titles, paragraphs, tables, songs, or plans into assistant chat as a substitute for tools. " +
-      "Chat text is only for a short final confirmation after tools succeed. " +
-      "Once the requested content is written into the document, stop calling tools and confirm briefly.",
+      "Chat text is only for a short final confirmation. " +
+      "When a write batch is likely to fully satisfy the request, include a short Done confirmation " +
+      "(at least one clear sentence) in the SAME assistant response as those write tool calls — " +
+      "it is held until tools succeed and avoids an extra final-answer model turn. " +
+      "Do not write lengthy prose before tools. Do not pair stub text like \"ok\" with writes. " +
+      "Inspect/find answers must wait for tool results — never treat inspect/find batches as finished.",
     "NEW DOCUMENT FLOW (strict): " +
       "(1) Call workspace.create_blank_docx alone — no inspect, no other tools in that turn. " +
       "(2) On the next turn, author with document.insert_paragraphs and/or document.create_table " +
-      "(multiple writes allowed in that one turn). Prefer one compact first pass " +
-      "(short intro + one bounded table) over a giant single tool payload. " +
+      "(multiple writes allowed in that one turn) and optionally a short Done confirmation in that same response. " +
+      "Prefer one compact first pass (short intro + one bounded table) over a giant single tool payload. " +
       "Do not inspect the currently open document when creating a new file. " +
       "A blank document needs no inspection before append/end authoring.",
     "NEW DOCUMENT STRUCTURE (default): " +
@@ -60,7 +64,9 @@ export function buildDocumentAgentSystemPrompt(
         "DOCX: overview for orientation; body_blocks for relative placement; tables for tabular work; " +
         "paragraphs for body prose; context after locating exact text. Page with offset/limit (default 20, max 100). " +
         "When object affordances are present, supported:false means do not call that op on that target. " +
-        "Absence of affordances does not mean supported or unsupported.",
+        "Absence of affordances does not mean supported or unsupported. " +
+        "For simple questions about visible content, inspect once, then answer from the tool result — " +
+        "do not create a new document and do not keep re-inspecting.",
     );
   }
   if (canFind) {

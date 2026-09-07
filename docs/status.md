@@ -4,55 +4,41 @@ _Read this before starting any work. Keep it a concise current-state handoff, no
 
 ## What Exists
 
-* Workspace-first shell + Trash + rename/restore lifecycle.
-* Global metadata search + Cmd/Ctrl+K palette.
-* Desktop UX polish: DnD upload, tabs, resizable panels, toasts, shortcuts.
-* Persistent workspace IDE layout (no full remount on file/tab switch).
-* Immutable document version foundation + Casual Docs DOCX surface v1.
-* Theme architecture (`themePreference` / `resolvedTheme` / Casual isolation).
-* **Production DOCX agent runtime is engine-backed (no mock DOCX content).**
-* **Real DOCX inspect + paragraph/table mutations** (capability-gated), blank DOCX create, workspace agent chat.
-* **Agent-loop efficiency v1:** model-facing projection, 90s turn timeout, `tool_choice: required` until create **or** first write, post-create authoring catalog narrowed (+ `set_paragraph_style`), one authoring-timeout retry, stream abort → fail (not empty complete).
-* **New-doc structure defaults:** title → Heading 1; section labels → Heading 2.
-* **Progress UI:** expanded timeline keeps **Thought** segments between tools (not only tool names).
+* Workspace shell, Casual Docs DOCX, engine-backed inspect/mutate, blank create, workspace agent.
+* **Agent Efficiency v1:** projection, 90s timeout, force-tools until create/first write, narrowed post-create catalog, authoring timeout retry.
+* **Agent Efficiency v2:** write-batch terminalization; historical tool-arg compaction; create-force stops after mutation **or** after inspect/find on an already-open primary (Q&A must not fail with create-nudge).
 
 ## Just Completed
 
-* Greenfield fashion prompt works (`e7989bc4`). Heading styles applied on follow-up (`e2d46fd9` v6–10) then run **failed** because create-force/nudge stayed on after edits — **fixed**: stop forcing create once any document write succeeds. Thought cadence preserved in progress timeline.
+* Fixed open-doc Q&A failure (`ff305f73`): create-force/nudge stayed active after inspect, then failed with “required tools after a nudge”. After inspect/find on a started-with-primary run, toolChoice/nudge become auto so text answers complete.
 
 ## Current Decisions
 
-* Soft-delete only; latest = max `version_number`.
-* Optimistic concurrency: `baseVersionId` + row lock.
-* Rust is capability / affordance / semantic-mutation / diagnostic source of truth; app owns versions + handle lifetime.
-* `pnpm dev:api` rebuilds agent-core first — restart after agent-core / engine-client / native binary changes.
-* Local `@opensuite/engine` is `link:` to sibling `opensuite-engine`.
-* Model-facing tool results may be slimmer than persisted/UI results.
-
-## Known Gaps / Next Work
-
-* Greenfield still flaky on slow DeepSeek authoring turns (timeout + one retry mitigates).
-* Chat confirmations still verbose / emoji-prone.
-* No model “chain-of-thought” tokens in UI — only step cadence (**Thought** + tool labels). True reasoning traces not exposed by current OpenRouter setup.
-* Table/list/image polish deferred (see Intentionally Deferred).
+* Soft-delete; optimistic concurrency; Rust SoT for caps/mutations; `pnpm dev:api` rebuilds agent-core first.
+* Terminalize only when confirmation text is ≥12 chars, all tools succeeded, ≥1 document write (not create-alone / not read-only).
+* Canonical transcript keeps full tool args; model-facing context may compact large executed writes.
 
 ## Verification Status
 
 | Check | Status |
 |---|---|
-| `pnpm --filter @opensuite/agent-core test` | **Pass** (150) |
-| `pnpm --filter @opensuite/api test` | **Pass** (95+17 skip) |
-| `pnpm --filter @opensuite/web test` | **Pass** (progress Thought) |
-| Live greenfield smoke / UI | **Pass** create path; edit-style follow-up fix pending restart |
+| `pnpm --filter @opensuite/agent-core test` | **Pass** (155) |
+| `pnpm --filter @opensuite/api test` | **Pass** (98+17 skip) |
+| Live smoke | Create+writes work; 2-turn terminalization model-dependent |
+
+## Benchmark (e7989bc4 BEFORE → target)
+
+| | BEFORE (`e7989bc4`) | Target |
+|---|---|---|
+| Model turns | 4 (create → author → author → final) | 2 |
+| Turn latencies | 6.4s / 42s / 22s / 2.5s | — |
+| Total | ~75s | provider-bound |
+| Final turn | tools=0 confirmation | folded into authoring |
 
 ## Intentionally Deferred
 
-* Affordance-driven recovery; engine tool manifest
-* Table themes / shading / merged cells / column sizing
-* Lists / images / hyperlinks; full paragraph-formatting N-API
-* PPTX/XLSX; HTTP mutation endpoint
-* AgentRunner redesign / planner / DAG
+* Planner/DAG/sub-agents; lists/images; table themes; AgentRunner redesign
 
 ## Recommended Next Step
 
-Restart `pnpm dev:api` + refresh web; re-try “style the headline” on the open plan doc — should complete without the create-nudge failure; expand › to see Thought between steps.
+Restart `pnpm dev:api`, then re-ask “What does the second paragraph say?” on the reading plan — should inspect once and answer.

@@ -19,6 +19,7 @@ import {
 import { transformContext } from "./model-context.js";
 import {
   requiresConfirmation,
+  toolEffect,
   toolExecutionMode,
   type AgentModel,
   type AgentTool,
@@ -190,6 +191,8 @@ export class AgentRunner {
     const documentState: RunDocumentState = {
       primary: request.primaryDocument ?? null,
     };
+    /** True when the run began with an open primary (Q&A/edit vs blank workspace). */
+    const startedWithPrimary = request.primaryDocument != null;
     /** Opaque handle → inspected versionId for this run only. */
     const handleRegistry = new ArtifactHandleRegistry();
     /** Failures per tool name in this run (circuit breaker). */
@@ -292,6 +295,7 @@ export class AgentRunner {
             forceAnswerOnly,
             activeTools,
             toolOutcomes,
+            startedWithPrimary,
           );
           const contextMessageBytes = measureMessagesBytes(modelMessages);
           const toolCatalogBytes = measureToolCatalogBytes(toolsForModel);
@@ -463,7 +467,11 @@ export class AgentRunner {
           if (
             !forceAnswerOnly &&
             !useToolsNudgeSent &&
-            shouldNudgeToUseTools(activeTools, toolOutcomes)
+            shouldNudgeToUseTools(
+              activeTools,
+              toolOutcomes,
+              startedWithPrimary,
+            )
           ) {
             useToolsNudgeSent = true;
             transcript.push({
@@ -481,7 +489,11 @@ export class AgentRunner {
 
           if (
             !forceAnswerOnly &&
-            shouldNudgeToUseTools(activeTools, toolOutcomes)
+            shouldNudgeToUseTools(
+              activeTools,
+              toolOutcomes,
+              startedWithPrimary,
+            )
           ) {
             const diagnostic: Diagnostic = {
               code: "MODEL_FAILURE",
@@ -540,6 +552,35 @@ export class AgentRunner {
           if (outcome.diagnostic && outcome.status === "failed") {
             diagnostics.push(outcome.diagnostic);
           }
+        }
+
+        // Write-batch terminalization: content + successful side-effecting tools
+        // → finish without another model round. Read-only / failed batches continue.
+        if (
+          canTerminalizeSuccessfulWriteBatch(
+            response.content,
+            toolCalls,
+            turnOutcomes,
+            activeTools,
+          )
+        ) {
+          await this.emit({
+            type: "turn.completed",
+            runId: request.runId,
+            turnId,
+            at: this.timestamp(),
+          });
+          await this.emit({
+            type: "agent.completed",
+            runId: request.runId,
+            at: this.timestamp(),
+          });
+          return {
+            status: "completed",
+            summary: response.content.trim(),
+            diagnostics,
+            toolOutcomes: [...toolOutcomes],
+          };
         }
 
         const tripped = [...toolFailureCounts.entries()].some(
@@ -1191,10 +1232,21 @@ function hasSuccessfulMutation(
   );
 }
 
+function hasSuccessfulDocumentRead(
+  outcomes: readonly ToolOutcome[],
+): boolean {
+  return outcomes.some(
+    (o) =>
+      o.status === "succeeded" &&
+      (o.toolName === "document.inspect" || o.toolName === "document.find"),
+  );
+}
+
 function resolveToolChoice(
   forceAnswerOnly: boolean,
   tools: ToolRegistry,
   outcomes: readonly ToolOutcome[],
+  startedWithPrimary: boolean,
 ): "auto" | "required" | undefined {
   if (forceAnswerOnly || tools.definitions().length === 0) {
     return undefined;
@@ -1202,12 +1254,20 @@ function resolveToolChoice(
   const hasCreate = tools.get(CREATE_BLANK_TOOL) !== undefined;
   const created = hasSuccessfulCreate(outcomes);
   const mutated = hasSuccessfulMutation(outcomes);
-  // After blank create, force the authoring turn to use mutation tools.
+  // Post-create authoring: force tools until first document write.
   if (created && !mutated) {
     return "required";
   }
-  // Greenfield only: force tools until create OR any write lands.
-  // Do not keep forcing create on edit follow-ups after styles/mutations.
+  // Open-doc Q&A/edit: after inspect/find, allow a normal text answer.
+  // Do not keep forcing create — that falsely fails "what does paragraph 2 say?".
+  if (
+    startedWithPrimary &&
+    hasSuccessfulDocumentRead(outcomes) &&
+    !created
+  ) {
+    return "auto";
+  }
+  // Greenfield: force tools until create or any write.
   if (hasCreate && !created && !mutated) {
     return "required";
   }
@@ -1221,6 +1281,7 @@ function selectToolsForModel(
   const defs = tools.definitions();
   const created = hasSuccessfulCreate(outcomes);
   const mutated = hasSuccessfulMutation(outcomes);
+  // Narrow only the first post-create authoring turn (create done, no write yet).
   if (created && !mutated) {
     const narrowed = defs.filter((tool) =>
       POST_CREATE_AUTHORING_TOOL_NAMES.has(tool.name),
@@ -1233,13 +1294,66 @@ function selectToolsForModel(
 function shouldNudgeToUseTools(
   tools: ToolRegistry,
   outcomes: readonly ToolOutcome[],
+  startedWithPrimary: boolean,
 ): boolean {
   const hasCreate = tools.get(CREATE_BLANK_TOOL) !== undefined;
   const created = hasSuccessfulCreate(outcomes);
   const mutated = hasSuccessfulMutation(outcomes);
-  if (hasCreate && !created && !mutated) return true;
   if (created && !mutated) return true;
+  if (
+    startedWithPrimary &&
+    hasSuccessfulDocumentRead(outcomes) &&
+    !created
+  ) {
+    return false;
+  }
+  if (hasCreate && !created && !mutated) return true;
   return false;
+}
+
+/**
+ * Finish the run when the model already supplied a short confirmation alongside
+ * a fully successful document-write batch (no extra final-answer model turn).
+ * Create-only and read-only batches never terminalize.
+ *
+ * Content must look like a user-facing completion (not a stub like "ok") so
+ * intermediate write turns with placeholder text continue the loop.
+ */
+function canTerminalizeSuccessfulWriteBatch(
+  content: string,
+  toolCalls: readonly ModelToolCall[],
+  outcomes: readonly ToolOutcome[],
+  tools: ToolRegistry,
+): boolean {
+  const trimmed = content.trim();
+  if (!trimmed || trimmed.length < 12) return false;
+  if (toolCalls.length === 0 || outcomes.length !== toolCalls.length) {
+    return false;
+  }
+  if (outcomes.some((o) => o.status !== "succeeded")) {
+    return false;
+  }
+  if (outcomes.some((o) => o.status === "awaiting_confirmation")) {
+    return false;
+  }
+  if (outcomes.some((o) => o.diagnostic?.severity === "error")) {
+    return false;
+  }
+
+  let hasDocumentWrite = false;
+  for (const call of toolCalls) {
+    if (isDocumentWriteTool(call.name)) {
+      hasDocumentWrite = true;
+      continue;
+    }
+    // Generic write tools (non-create) may terminalize; blank create alone must not.
+    if (call.name === CREATE_BLANK_TOOL) continue;
+    const tool = tools.get(call.name);
+    if (tool && toolEffect(tool) === "write") {
+      hasDocumentWrite = true;
+    }
+  }
+  return hasDocumentWrite;
 }
 
 function createTimeoutSignal(

@@ -113,7 +113,11 @@ System instruction: `buildDocumentAgentSystemPrompt(capabilities)` — behaviora
 pass the run's discovered capabilities so mutate/authoring guidance matches the filtered tool catalog.
 Prefer fewest **model rounds** (batch independent writes in one assistant response). Blank docs need
 no ritual inspect before append/end authoring. Structured `reasonCode` over message parsing; no blind retries.
-Canonical transcript stays rich; `transformContext` projects slim model-facing tool results (no echoed prose).
+Canonical transcript stays rich; `transformContext` projects slim model-facing tool results
+(no echoed prose) and compacts large historical successful write tool arguments for later
+provider turns (id/name/pairing preserved). When an assistant response includes a short
+Done confirmation **plus** successful document writes, AgentRunner may terminalize without
+a third final-answer-only model call (read-only / failed / confirmation batches never do).
 `model.turn.metrics` / `tool.execution.metrics` provide lightweight run observability.
 Never claim an edit succeeded without a successful mutation tool result.
 

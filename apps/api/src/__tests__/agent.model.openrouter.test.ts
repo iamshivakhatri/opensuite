@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { AgentCoreError } from "@opensuite/agent-core";
+import { AgentCoreError, transformContext } from "@opensuite/agent-core";
 
 import {
   createOpenRouterAgentModel,
@@ -71,6 +71,49 @@ test("toOpenAIChatMessages maps tool calls and results", () => {
   assert.equal(messages[1]?.role, "assistant");
   assert.ok("tool_calls" in messages[1]!);
   assert.equal(messages[2]?.role, "tool");
+});
+
+test("toOpenAIChatMessages keeps compacted historical write args valid for pairing", () => {
+  const giantRows = Array.from({ length: 10 }, () =>
+    Array.from({ length: 5 }, () => "x".repeat(40)),
+  );
+  const projected = transformContext([
+    { role: "user", content: "table" },
+    {
+      role: "assistant",
+      content: "",
+      toolCalls: [
+        {
+          id: "call_tbl",
+          name: "document.create_table",
+          input: { rows: giantRows, placement: { kind: "end" } },
+        },
+      ],
+    },
+    {
+      role: "tool",
+      toolCallId: "call_tbl",
+      toolName: "document.create_table",
+      status: "succeeded",
+      summary: "ok",
+    },
+  ]);
+  const mapped = toOpenAIChatMessages(projected);
+  const assistant = mapped[1];
+  assert.ok(assistant && "tool_calls" in assistant);
+  assert.equal(assistant.tool_calls[0]?.id, "call_tbl");
+  assert.equal(assistant.tool_calls[0]?.function.name, "document.create_table");
+  const args = JSON.parse(assistant.tool_calls[0]!.function.arguments) as {
+    executed?: boolean;
+    rows?: number;
+  };
+  assert.equal(args.executed, true);
+  assert.equal(args.rows, 10);
+  assert.equal(mapped[2]?.role, "tool");
+  assert.equal(
+    (mapped[2] as { tool_call_id: string }).tool_call_id,
+    "call_tbl",
+  );
 });
 
 test("fromOpenAIChatCompletion extracts text and tool calls", () => {

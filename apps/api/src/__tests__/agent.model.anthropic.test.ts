@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { AgentCoreError } from "@opensuite/agent-core";
+import { AgentCoreError, transformContext } from "@opensuite/agent-core";
 
 import {
   createAnthropicAgentModel,
@@ -82,6 +82,49 @@ test("toAnthropicMessages collapses consecutive tool results", () => {
   assert.equal(toolResults.length, 2);
   assert.equal(toolResults[0]?.type, "tool_result");
   assert.equal(mapped[3]?.role, "assistant");
+});
+
+test("toAnthropicMessages keeps compacted historical write args valid for pairing", () => {
+  const giantRows = Array.from({ length: 10 }, () =>
+    Array.from({ length: 5 }, () => "x".repeat(40)),
+  );
+  const projected = transformContext([
+    { role: "user", content: "table" },
+    {
+      role: "assistant",
+      content: "",
+      toolCalls: [
+        {
+          id: "call_tbl",
+          name: "document.create_table",
+          input: { rows: giantRows, placement: { kind: "end" } },
+        },
+      ],
+    },
+    {
+      role: "tool",
+      toolCallId: "call_tbl",
+      toolName: "document.create_table",
+      status: "succeeded",
+      summary: "ok",
+    },
+  ]);
+  const mapped = toAnthropicMessages(projected);
+  assert.equal(mapped[1]?.role, "assistant");
+  const content = mapped[1]!.content;
+  assert.ok(Array.isArray(content));
+  const toolUse = content.find(
+    (block) =>
+      typeof block === "object" &&
+      block !== null &&
+      "type" in block &&
+      block.type === "tool_use",
+  ) as { id: string; name: string; input: { executed?: boolean; rows?: number } };
+  assert.equal(toolUse.id, "call_tbl");
+  assert.equal(toolUse.name, "document.create_table");
+  assert.equal(toolUse.input.executed, true);
+  assert.equal(toolUse.input.rows, 10);
+  assert.equal(mapped[2]?.role, "user");
 });
 
 test("fromAnthropicMessage extracts text and tool calls", () => {

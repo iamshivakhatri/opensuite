@@ -1,29 +1,54 @@
 /**
  * Explicit boundary: canonical runtime transcript → model-facing messages.
  *
- * V1 is deterministic and local — no summarization, vector memory, or LLM compaction.
+ * Deterministic and local — no summarization, vector memory, or LLM compaction.
  * Provider adapters must not own this policy.
+ *
+ * After a write tool has succeeded, large historical tool-call arguments are
+ * compacted for future provider context only. Canonical transcript stays intact.
  */
 
 import {
   isPersistedDocumentMutationToolResult,
   type PersistedDocumentMutationToolResult,
 } from "./document-mutation.js";
-import type { ModelMessage } from "./model.js";
+import type { ModelMessage, ModelToolCall } from "./model.js";
 import {
   shapeDiagnosticForToolResult,
   type Diagnostic,
   type RuntimeCapabilities,
 } from "./types.js";
 
+/** Keep small args verbatim; compact only payloads that bloat future context. */
+const COMPACT_ARG_BYTE_THRESHOLD = 512;
+
 /**
  * Project the canonical in-memory transcript into messages safe to send to a provider.
- * Preserves tool-call / tool-result pairing and IDs; slims successful mutation payloads.
+ * Preserves tool-call / tool-result pairing and IDs; slims successful mutation payloads;
+ * compacts large historical write tool arguments after success.
  */
 export function transformContext(
   messages: readonly ModelMessage[],
 ): ModelMessage[] {
+  const succeededCallIds = new Set<string>();
+  for (const message of messages) {
+    if (message.role === "tool" && message.status === "succeeded") {
+      succeededCallIds.add(message.toolCallId);
+    }
+  }
+
   return messages.map((message) => {
+    if (message.role === "assistant" && message.toolCalls) {
+      return {
+        role: "assistant" as const,
+        content: message.content,
+        toolCalls: message.toolCalls.map((call) =>
+          succeededCallIds.has(call.id)
+            ? compactHistoricalToolCallArgs(call)
+            : call,
+        ),
+      };
+    }
     if (message.role !== "tool") {
       return message;
     }
@@ -42,6 +67,86 @@ export function transformContext(
         : {}),
     };
   });
+}
+
+/**
+ * Replace large executed write args with a compact summary for provider context.
+ * Always keeps id + name so OpenAI/Anthropic pairing remains valid.
+ */
+export function compactHistoricalToolCallArgs(
+  call: ModelToolCall,
+): ModelToolCall {
+  const byteLength = measureJsonBytes(call.input);
+  if (byteLength < COMPACT_ARG_BYTE_THRESHOLD) {
+    return call;
+  }
+  return {
+    id: call.id,
+    name: call.name,
+    input: summarizeExecutedToolArgs(call.name, call.input, byteLength),
+  };
+}
+
+export function summarizeExecutedToolArgs(
+  toolName: string,
+  input: unknown,
+  argumentBytes?: number,
+): Record<string, unknown> {
+  const bytes = argumentBytes ?? measureJsonBytes(input);
+  const summary: Record<string, unknown> = {
+    executed: true,
+    argumentBytes: bytes,
+  };
+
+  if (!input || typeof input !== "object") {
+    return summary;
+  }
+  const record = input as Record<string, unknown>;
+
+  if (
+    toolName === "document.create_table" ||
+    toolName.endsWith(".create_table")
+  ) {
+    const rows = record.rows ?? record.cells;
+    if (Array.isArray(rows)) {
+      summary.rows = rows.length;
+      const first = rows[0];
+      summary.columns = Array.isArray(first) ? first.length : 0;
+    }
+    return summary;
+  }
+
+  if (
+    toolName === "document.insert_paragraphs" ||
+    toolName.endsWith(".insert_paragraphs")
+  ) {
+    const texts = record.texts;
+    if (Array.isArray(texts)) {
+      summary.paragraphCount = texts.length;
+    }
+    return summary;
+  }
+
+  if (
+    toolName === "document.set_table_cells_text" ||
+    toolName.endsWith(".set_table_cells_text")
+  ) {
+    const updates = record.updates ?? record.cells;
+    if (Array.isArray(updates)) {
+      summary.cellCount = updates.length;
+    }
+    return summary;
+  }
+
+  return summary;
+}
+
+function measureJsonBytes(value: unknown): number {
+  try {
+    return Buffer.byteLength(JSON.stringify(value ?? null), "utf8");
+  } catch {
+    return Number.MAX_SAFE_INTEGER;
+  }
 }
 
 export interface ModelFacingToolProjection {

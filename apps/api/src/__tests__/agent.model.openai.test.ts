@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { AgentCoreError } from "@opensuite/agent-core";
+import { AgentCoreError, transformContext } from "@opensuite/agent-core";
 
 import {
   createOpenAIAgentModel,
@@ -73,6 +73,57 @@ test("toOpenAIResponsesInput maps tool calls and results", () => {
     (input[3] as { type: string; call_id: string }).type,
     "function_call_output",
   );
+});
+
+test("toOpenAIResponsesInput keeps compacted historical write args valid for pairing", () => {
+  const giantRows = Array.from({ length: 10 }, () =>
+    Array.from({ length: 5 }, () => "x".repeat(40)),
+  );
+  const projected = transformContext([
+    { role: "user", content: "table" },
+    {
+      role: "assistant",
+      content: "",
+      toolCalls: [
+        {
+          id: "call_tbl",
+          name: "document.create_table",
+          input: { rows: giantRows, placement: { kind: "end" } },
+        },
+      ],
+    },
+    {
+      role: "tool",
+      toolCallId: "call_tbl",
+      toolName: "document.create_table",
+      status: "succeeded",
+      summary: "ok",
+    },
+  ]);
+  const input = toOpenAIResponsesInput(projected);
+  const fnCall = input.find(
+    (item) =>
+      typeof item === "object" &&
+      item !== null &&
+      "type" in item &&
+      item.type === "function_call",
+  ) as { call_id: string; name: string; arguments: string };
+  assert.equal(fnCall.call_id, "call_tbl");
+  assert.equal(fnCall.name, "document.create_table");
+  const args = JSON.parse(fnCall.arguments) as {
+    executed?: boolean;
+    rows?: number;
+  };
+  assert.equal(args.executed, true);
+  assert.equal(args.rows, 10);
+  const fnOut = input.find(
+    (item) =>
+      typeof item === "object" &&
+      item !== null &&
+      "type" in item &&
+      item.type === "function_call_output",
+  ) as { call_id: string };
+  assert.equal(fnOut.call_id, "call_tbl");
 });
 
 test("fromOpenAIResponsesResult extracts text and tool calls", () => {
