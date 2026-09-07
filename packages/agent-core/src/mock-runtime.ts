@@ -485,6 +485,27 @@ function buildDocxPayload(
         tables: paged.items,
       };
     }
+    case "body_blocks": {
+      const blocks = [
+        ...docx.paragraphs.map((p) => ({
+          handle: p.handle,
+          kind: "paragraph",
+          text: p.text,
+        })),
+        ...docx.tables.map((t) => ({
+          handle: t.handle,
+          kind: "table",
+          tableHandle: t.handle,
+        })),
+      ];
+      const paged = pageItems(blocks, focus.offset, focus.limit);
+      return {
+        format: "docx",
+        summary,
+        page: paged.page,
+        bodyBlocks: paged.items,
+      };
+    }
     case "slides":
     case "slide":
     case "sheets":
@@ -569,6 +590,7 @@ function buildPptxPayload(
     case "headings":
     case "paragraphs":
     case "tables":
+    case "body_blocks":
     case "sheets":
     case "range":
     case "context":
@@ -638,6 +660,7 @@ function buildXlsxPayload(
     case "headings":
     case "paragraphs":
     case "tables":
+    case "body_blocks":
     case "slides":
     case "slide":
     case "context":

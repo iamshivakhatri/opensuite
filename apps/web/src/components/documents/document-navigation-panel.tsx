@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 
 import {
+  createBlankDocument,
   deleteDocument,
   downloadDocument,
   listDocuments,
@@ -57,6 +58,7 @@ export function DocumentNavigationPanel({
   const [siblings, setSiblings] = React.useState<ListedDocument[] | null>(null);
   const [loadError, setLoadError] = React.useState<string | null>(null);
   const [uploading, setUploading] = React.useState(false);
+  const [creating, setCreating] = React.useState(false);
   const [menuDocId, setMenuDocId] = React.useState<string | null>(null);
   const [renameDoc, setRenameDoc] = React.useState<ListedDocument | null>(null);
   const [trashDoc, setTrashDoc] = React.useState<ListedDocument | null>(null);
@@ -113,6 +115,27 @@ export function DocumentNavigationPanel({
     } finally {
       setUploading(false);
       if (fileRef.current) fileRef.current.value = "";
+    }
+  }
+
+  async function handleCreateBlank() {
+    if (creating) return;
+    setCreating(true);
+    try {
+      const created = await createBlankDocument(workspaceId);
+      await refresh();
+      toast({ tone: "success", title: "Document created" });
+      const href = documentPath(workspaceId, created.document.id);
+      if (onRequestNavigate?.(href) === false) return;
+      router.push(href);
+    } catch (error) {
+      toast({
+        tone: "error",
+        title: "Create failed",
+        description: userFacingError(error, "Could not create a blank document."),
+      });
+    } finally {
+      setCreating(false);
     }
   }
 
@@ -203,6 +226,15 @@ export function DocumentNavigationPanel({
             className="hidden"
             onChange={(event) => void handleUpload(event.target.files)}
           />
+          <button
+            type="button"
+            title="New Word document"
+            disabled={creating}
+            onClick={() => void handleCreateBlank()}
+            className="grid h-6 w-6 place-items-center rounded-[7px] text-[13px] text-ink-faint hover:bg-sunken hover:text-ink-soft disabled:opacity-50"
+          >
+            {creating ? "…" : "+"}
+          </button>
           <button
             type="button"
             title="Upload file (⌘O)"

@@ -70,6 +70,9 @@ test("failed document mutation exposes structured diagnostic to the model", asyn
     async replaceText() {
       throw new Error("unused");
     },
+    async insertParagraph() {
+      throw new Error("unused");
+    },
     async setTableCellsText() {
       return {
         status: "error",
@@ -195,6 +198,9 @@ test("affordance reason and mutation reasonCode stay the same identifier", async
 
   const mutations: DocumentMutationExecutor = {
     async replaceText() {
+      throw new Error("unused");
+    },
+    async insertParagraph() {
       throw new Error("unused");
     },
     async setTableCellsText() {

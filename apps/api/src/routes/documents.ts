@@ -49,6 +49,15 @@ function unauthenticated() {
   };
 }
 
+const CreateBlankDocumentBody = z.object({
+  name: z
+    .string()
+    .trim()
+    .min(1)
+    .max(255)
+    .optional(),
+});
+
 /**
  * Authenticated Office document upload, list, download, and per-user prefs
  * (recent / starred / format library).
@@ -138,6 +147,72 @@ export function registerDocumentRoutes(
 
       const list = await documents.listInWorkspace(workspace.id, user.id);
       return reply.send({ documents: list });
+    },
+  );
+
+  app.post(
+    "/api/workspaces/:workspaceId/documents/blank",
+    async (request, reply) => {
+      const user = await getRequestUser(auth, request);
+      if (!user) {
+        return reply.status(401).send(unauthenticated());
+      }
+
+      const params = WorkspaceIdParams.safeParse(request.params);
+      if (!params.success) {
+        return reply.status(400).send({
+          error: {
+            statusCode: 400,
+            message: params.error.issues[0]?.message ?? "Invalid workspace id",
+            code: "INVALID_WORKSPACE_ID",
+          },
+        });
+      }
+
+      const body = CreateBlankDocumentBody.safeParse(request.body ?? {});
+      if (!body.success) {
+        return reply.status(400).send({
+          error: {
+            statusCode: 400,
+            message: body.error.issues[0]?.message ?? "Invalid request body",
+            code: "INVALID_BODY",
+          },
+        });
+      }
+
+      const workspace = await workspaces.getOwned(
+        params.data.workspaceId,
+        user.id,
+      );
+      if (!workspace) {
+        return reply.status(404).send({
+          error: {
+            statusCode: 404,
+            message: "Workspace not found",
+            code: "WORKSPACE_NOT_FOUND",
+          },
+        });
+      }
+
+      try {
+        const created = await documents.createBlankDocxDocument({
+          workspaceId: workspace.id,
+          ownerUserId: user.id,
+          ...(body.data.name !== undefined ? { name: body.data.name } : {}),
+        });
+        return reply.status(201).send(created);
+      } catch (error) {
+        if (error instanceof DocumentUploadError) {
+          return reply.status(error.statusCode).send({
+            error: {
+              statusCode: error.statusCode,
+              message: error.message,
+              code: error.code,
+            },
+          });
+        }
+        throw error;
+      }
     },
   );
 

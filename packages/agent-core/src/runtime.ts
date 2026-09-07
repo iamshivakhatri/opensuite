@@ -124,6 +124,20 @@ export interface InspectedCell {
 }
 
 /**
+ * Ordered direct body block from DOCX inspect focus `body_blocks`.
+ * Handles are opaque and version-bound (engine uses `bN` today — do not parse).
+ */
+export interface InspectedBodyBlock {
+  readonly handle: string;
+  /** Engine kind string (e.g. paragraph | table). Pass through unchanged. */
+  readonly kind: string;
+  /** Visible text when the engine supplies it (paragraphs). */
+  readonly text?: string;
+  /** Related table handle when kind is table — optional transport field. */
+  readonly tableHandle?: string;
+}
+
+/**
  * Discriminated inspection payload. Format-specific fields can extend each arm
  * later without forcing one universal semantic tree.
  *
@@ -158,6 +172,8 @@ export type InspectionPayload =
       readonly headings?: readonly InspectedHeading[];
       readonly paragraphs?: readonly InspectedBlock[];
       readonly tables?: readonly InspectedTable[];
+      /** Ordered body blocks (paragraphs + tables) for placement-aware authoring. */
+      readonly bodyBlocks?: readonly InspectedBodyBlock[];
       /**
        * Bounded text context from engine `inspect_context` (focus.kind=context).
        * Not a full document dump — target container + nearby semantic units.
@@ -195,7 +211,7 @@ export type InspectionResult =
  * Targeted inspect request. Prefer a narrow focus over dumping the whole file.
  *
  * Real DOCX (OpenSuiteEngineAdapter) supports overview / headings / paragraphs /
- * tables / context. PPTX/XLSX mock runtimes support slides/sheets/range.
+ * tables / body_blocks / context. PPTX/XLSX mock runtimes support slides/sheets/range.
  * Collection focuses may include version-local offset/limit paging (max 100).
  */
 export type DocumentInspectFocus =
@@ -213,6 +229,11 @@ export type DocumentInspectFocus =
     }
   | {
       readonly kind: "tables";
+      readonly offset?: number;
+      readonly limit?: number;
+    }
+  | {
+      readonly kind: "body_blocks";
       readonly offset?: number;
       readonly limit?: number;
     }

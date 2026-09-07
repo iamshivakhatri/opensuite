@@ -83,8 +83,9 @@ export function createDocumentInspectTool(): AgentTool<
     description:
       "Inspect the active Office document with a targeted focus. " +
       "DOCX: overview (compact structure/counts), headings (outline), paragraphs (body prose page), " +
+      "body_blocks (ordered paragraphs+tables with opaque handles for insert_paragraph placement), " +
       "tables (rows/cells with opaque artifact-local handles), context (nearby content around exact text). " +
-      "Prefer overview first when structure is unknown; headings to navigate sections; " +
+      "Prefer overview first when structure is unknown; body_blocks when placing relative to existing content; " +
       "tables for tabular work — returned table/row/column/cell handles can be passed to table mutation tools " +
       "for the same artifact version; when present, object affordances indicate whether an operation is safe " +
       "on that exact target (supported:false → do not blindly call that op on that target); " +
@@ -110,6 +111,7 @@ export function createDocumentInspectTool(): AgentTool<
                 "headings",
                 "paragraphs",
                 "tables",
+                "body_blocks",
                 "slides",
                 "slide",
                 "sheets",
@@ -118,7 +120,8 @@ export function createDocumentInspectTool(): AgentTool<
               ],
               description:
                 "overview=structure counts; headings=outline; paragraphs=body prose; " +
-                "tables=table rows/cells; context=near exact text; slides/sheets/range=PPTX/XLSX",
+                "body_blocks=ordered body for placement; tables=table rows/cells; " +
+                "context=near exact text; slides/sheets/range=PPTX/XLSX",
             },
             ...PAGING_PROPERTIES,
             index: { type: "number", description: "0-based slide index when kind=slide" },

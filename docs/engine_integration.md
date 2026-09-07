@@ -12,7 +12,7 @@ Application code must never manipulate Office internals as a shortcut around the
 
 ```text
 AgentRunner
-  → AgentTool (replace_text | set_table_cells_text | insert_table_rows | insert_table_column)
+  → AgentTool (replace_text | insert_paragraph | set_table_cells_text | insert_table_rows | insert_table_column)
   → DocumentMutationExecutor (injected by apps/api)
   → apply* (shared authorize → execute → appendDocumentVersion)
   → DocumentRuntime.execute (once)
@@ -22,6 +22,16 @@ AgentRunner
   → verified artifact bytes → appendDocumentVersion
 ```
 
+### Blank DOCX create (not a DocumentRuntime mutation)
+
+```text
+POST /api/workspaces/:id/documents/blank
+  → DocumentService.createBlankDocxDocument
+  → engine-client DocxEngineBinding.createBlankDocx (Rust bytes)
+  → object storage + DB document + Version 1 (source: user)
+```
+
+No DocumentRef / runtime / Base64 / static template / TS OOXML.
 ### Real DOCX agent write lifecycle
 
 ```text
@@ -48,8 +58,9 @@ Agent run starts at Version N
 exact immutable version N
   → getDocxCapabilities (Rust RuntimeCapabilities)
   → findDocxText (mode=text)
-  → inspectDocx (overview | headings | paragraphs | tables | context)
+  → inspectDocx (overview | headings | paragraphs | tables | body_blocks | context)
   → executeDocxReplaceText
+    | executeDocxInsertParagraph
     | executeDocxSetTableCellsText
     | executeDocxInsertTableRows
     | executeDocxInsertTableColumn
@@ -59,7 +70,8 @@ exact immutable version N
 ```
 
 * Rust is capability / semantic source of truth.
-* Inspect focuses: overview, headings, paragraphs, tables, context — paged collections use offset/limit (default 20, max 100).
+* Inspect focuses: overview, headings, paragraphs, tables, body_blocks, context — paged collections use offset/limit (default 20, max 100).
+* `body_blocks`: ordered direct body paragraphs/tables with opaque `handle` (`bN` opaque to TS), optional text / tableHandle; used for insert_paragraph before/after.
 * Occurrence/order from inspect is VERSION-LOCAL — never persist as durable identity.
 * Table inspect returns opaque artifact-local handles (table/column/row/cell). Mutations accept those
   handles alongside semantic selectors. Prefer handles for blank/duplicate targets; re-inspect after N→N+1.
@@ -146,8 +158,10 @@ These types are plain, JSON-shaped TypeScript (no classes, enums-as-objects, or 
 `packages/engine-client` is the concrete implementation of the boundary described above. It is built around:
 
 * **`EngineTransport` / `EngineClient` / `MockEngineTransport`** — existing contracts inspect seam (still mock-backed).
-* **`DocxEngineBinding`** — hides N-API (`getDocxCapabilities`, `findDocxText`, `inspectDocx`, `executeDocxReplaceText`, `executeDocxSetTableCellsText`, `executeDocxInsertTableRows`, `executeDocxInsertTableColumn`).
-* **`OpenSuiteEngineAdapter`** — real DOCX `DocumentRuntime` (caps/find/inspect/replace + table mutations).
+* **`DocxEngineBinding`** — hides N-API (`getDocxCapabilities`, `createBlankDocx`, `findDocxText`, `inspectDocx`, `executeDocxReplaceText`, `executeDocxInsertParagraph`, `executeDocxSetTableCellsText`, `executeDocxInsertTableRows`, `executeDocxInsertTableColumn`).
+* **`OpenSuiteEngineAdapter`** — real DOCX `DocumentRuntime` (caps/find/inspect/replace + insert_paragraph + table mutations).
 * **`DocumentArtifactLoader`** — injected exact-version byte loader (application storage owns resolution).
 
 Swapping N-API for a future remote engine service only requires a new `DocxEngineBinding` — AgentRunner and AgentTools do not change.
+
+Not yet on N-API (Rust CLI/caps may exist): paragraph style/formatting, text formatting, delete_paragraph — do not invent app-side substitutes.

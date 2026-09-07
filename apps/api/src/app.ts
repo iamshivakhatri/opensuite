@@ -76,6 +76,8 @@ export interface AppDependencies {
   readonly db: Db;
   readonly storage: ObjectStorage;
   readonly agent?: AgentAppDependencies;
+  /** Test/override: blank DOCX bytes without loading N-API. */
+  readonly createBlankDocxBytes?: () => Uint8Array | Promise<Uint8Array>;
 }
 
 /**
@@ -147,8 +149,38 @@ export async function buildApp(
   });
 
   const workspaces = createWorkspaceService(deps.db);
+
+  // Production: load N-API once for DOCX runtime + blank DOCX creation.
+  // Tests may inject runtime and/or createBlankDocxBytes without the native binding.
+  let resolveRuntime: import("./documents/runtime.js").DocumentRuntimeResolver | undefined;
+  let documentRuntime = deps.agent?.runtime;
+  let createBlankDocxBytes:
+    | (() => Uint8Array | Promise<Uint8Array>)
+    | undefined = deps.createBlankDocxBytes;
+  let docxBinding: import("@opensuite/engine-client").DocxEngineBinding | undefined;
+
+  if (!documentRuntime || !createBlankDocxBytes) {
+    try {
+      docxBinding = await loadDocxEngineBinding();
+    } catch (error) {
+      if (!documentRuntime) {
+        throw error;
+      }
+      app.log.warn(
+        { err: error },
+        "DOCX engine binding unavailable; blank document creation disabled",
+      );
+    }
+  }
+
+  if (docxBinding && !createBlankDocxBytes) {
+    const binding = docxBinding;
+    createBlankDocxBytes = () => binding.createBlankDocx();
+  }
+
   const documents = createDocumentService(deps.db, deps.storage, {
     uploadMaxBytes: config.uploadMaxBytes,
+    ...(createBlankDocxBytes ? { createBlankDocxBytes } : {}),
     onCleanupFailure: (cleanupError, storageKey) => {
       app.log.error(
         { err: cleanupError, storageKey },
@@ -173,15 +205,10 @@ export async function buildApp(
   // explicitly injected (tests may still pass a fixed registry).
   const documentTools = deps.agent?.tools;
 
-  // Production: DOCX → real Rust engine; PPTX/XLSX stay on mock until wired.
-  // Tests may still inject a fixed `runtime` (skips engine binding load).
-  let resolveRuntime: import("./documents/runtime.js").DocumentRuntimeResolver | undefined;
-  let documentRuntime = deps.agent?.runtime;
-  if (!documentRuntime) {
-    const binding = await loadDocxEngineBinding();
+  if (!documentRuntime && docxBinding) {
     resolveRuntime = createDocumentRuntimeResolver({
       documents,
-      binding,
+      binding: docxBinding,
     });
   }
 

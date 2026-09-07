@@ -436,6 +436,70 @@ export async function uploadDocument(
   };
 }
 
+/** Create a blank Word document (Rust-generated DOCX) without uploading a file. */
+export async function createBlankDocument(
+  workspaceId: string,
+  options?: { name?: string },
+): Promise<{ document: ListedDocument; version: ListedDocumentVersion }> {
+  const response = await apiFetch(
+    `/api/workspaces/${workspaceId}/documents/blank`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(
+        options?.name !== undefined ? { name: options.name } : {},
+      ),
+    },
+  );
+  if (!response.ok) {
+    throw await parseError(response);
+  }
+
+  const body = (await response.json()) as {
+    document: {
+      id: string;
+      workspaceId: string;
+      name: string;
+      format: DocumentFormat;
+      createdAt: string;
+      updatedAt: string;
+    };
+    version: {
+      id: string;
+      documentId: string;
+      versionNumber: number;
+      sizeBytes: number;
+      source: "upload" | "user" | "agent" | "system";
+      createdAt: string;
+    };
+  };
+
+  return {
+    document: {
+      id: body.document.id,
+      workspaceId: body.document.workspaceId,
+      name: body.document.name,
+      format: body.document.format,
+      createdAt: body.document.createdAt,
+      updatedAt: body.document.updatedAt,
+      latestVersion: {
+        id: body.version.id,
+        versionNumber: body.version.versionNumber,
+        sizeBytes: body.version.sizeBytes,
+        source: body.version.source,
+        createdAt: body.version.createdAt,
+      },
+    },
+    version: {
+      id: body.version.id,
+      versionNumber: body.version.versionNumber,
+      sizeBytes: body.version.sizeBytes,
+      source: body.version.source,
+      createdAt: body.version.createdAt,
+    },
+  };
+}
+
 export interface SavedDocumentVersion {
   readonly id: string;
   readonly documentId: string;

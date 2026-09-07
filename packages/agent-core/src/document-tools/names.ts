@@ -4,6 +4,7 @@ export const DOCUMENT_TOOL_NAMES = {
   inspect: "document.inspect",
   find: "document.find",
   replaceText: "document.replace_text",
+  insertParagraph: "document.insert_paragraph",
   setTableCellsText: "document.set_table_cells_text",
   insertTableRows: "document.insert_table_rows",
   insertTableColumn: "document.insert_table_column",
@@ -14,6 +15,7 @@ export const DOCUMENT_TOOL_NAMES = {
 /** Rust-advertised DOCX mutation capability ids (also mirrored in RuntimeCapabilities). */
 export const DOCX_ENGINE_CAPS = {
   replaceText: "replace_text",
+  insertParagraph: "insert_paragraph",
   setTableCellsText: "set_table_cells_text",
   insertTableRows: "insert_table_rows",
   insertTableColumn: "insert_table_column",

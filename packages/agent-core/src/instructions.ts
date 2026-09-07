@@ -38,7 +38,8 @@ export function buildDocumentAgentSystemPrompt(
   if (canInspect) {
     parts.push(
       "When structure is unknown, inspect before editing. " +
-        "For DOCX: prefer overview first; headings for section navigation; tables for tabular work; " +
+        "For DOCX: prefer overview first; body_blocks for ordered body placement; " +
+        "headings for section navigation; tables for tabular work; " +
         "paragraphs for body prose; context after locating exact text. " +
         "Page with offset/limit (default 20, max 100). " +
         "PPTX/XLSX mock runtimes still support slides/sheets/range.",
@@ -65,6 +66,7 @@ export function buildDocumentAgentSystemPrompt(
   if (canMutate) {
     parts.push(
       "Editing is allowed via the mutation tools in your tool list — document.mutate is a capability id, not a tool name. " +
+        "Use document.insert_paragraph to create new paragraphs (placement start|end|before|after body-block handles from inspect(body_blocks)). " +
         "For DOCX table work: inspect(tables) first → typed table mutation → re-inspect after structural changes before reusing handles → answer. " +
         "Prefer semantic rowLabel/columnHeader targeting when labels are clear and unique. " +
         "Use opaque structural handles from inspect(tables) for blank rows, blank headers, duplicates, or otherwise difficult targets. " +

@@ -11,6 +11,7 @@ function unusedTableMutations(): Pick<
   | "executeDocxSetTableCellsText"
   | "executeDocxInsertTableRows"
   | "executeDocxInsertTableColumn"
+  | "executeDocxInsertParagraph"
 > {
   const fail = async () => ({
     result: {
@@ -30,6 +31,7 @@ function unusedTableMutations(): Pick<
     executeDocxSetTableCellsText: fail,
     executeDocxInsertTableRows: fail,
     executeDocxInsertTableColumn: fail,
+    executeDocxInsertParagraph: fail,
   };
 }
 
@@ -47,6 +49,9 @@ function fakeBinding(): DocxEngineBinding {
           },
         ],
       };
+    },
+    createBlankDocx() {
+      return new Uint8Array([0x50, 0x4b, 0x03, 0x04]);
     },
     async findDocxText() {
       return {

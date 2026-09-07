@@ -10,6 +10,7 @@ import {
 } from "@/components/files/format";
 import { PromptDialog } from "@/components/ui/context-menu";
 import {
+  createBlankDocument,
   createWorkspace,
   listRecentDocuments,
   listWorkspaces,
@@ -178,6 +179,7 @@ function CommandPalette({
   const [createError, setCreateError] = React.useState<string | null>(null);
   const [pickWorkspaceForUpload, setPickWorkspaceForUpload] =
     React.useState(startInUploadPick);
+  const [pickWorkspaceForBlank, setPickWorkspaceForBlank] = React.useState(false);
   const [uploadWorkspaceId, setUploadWorkspaceId] = React.useState<string | null>(
     null,
   );
@@ -251,6 +253,26 @@ function CommandPalette({
     [],
   );
 
+  const runCreateBlank = React.useCallback(
+    async (workspaceId: string) => {
+      setPickWorkspaceForBlank(false);
+      try {
+        const created = await createBlankDocument(workspaceId);
+        onClose();
+        toast({ tone: "success", title: "Document created" });
+        router.push(documentPath(workspaceId, created.document.id));
+      } catch (err) {
+        setError(userFacingError(err, "Could not create document."));
+        toast({
+          tone: "error",
+          title: "Create failed",
+          description: userFacingError(err, "Could not create a blank document."),
+        });
+      }
+    },
+    [onClose, router, toast],
+  );
+
   const commands = React.useMemo((): PaletteItem[] => {
     const go = (href: string) => {
       onClose();
@@ -279,6 +301,20 @@ function CommandPalette({
             return;
           }
           setPickWorkspaceForUpload(true);
+        },
+      },
+      {
+        kind: "command",
+        id: "cmd-new-document",
+        title: "New Document",
+        subtitle: "Command",
+        run: () => {
+          const inWorkspace = currentWorkspaceId(pathname);
+          if (inWorkspace) {
+            void runCreateBlank(inWorkspace);
+            return;
+          }
+          setPickWorkspaceForBlank(true);
         },
       },
       {
@@ -337,7 +373,7 @@ function CommandPalette({
         item.title.toLowerCase().includes(needle) ||
         item.subtitle.toLowerCase().includes(needle),
     );
-  }, [debounced, onClose, pathname, router, runUpload]);
+  }, [debounced, onClose, pathname, router, runCreateBlank, runUpload]);
 
   const openWorkspaceCommands = React.useMemo((): PaletteItem[] => {
     if (!debounced) {
@@ -411,12 +447,12 @@ function CommandPalette({
   React.useEffect(() => {
     function onKey(event: KeyboardEvent) {
       if (event.key === "Escape") {
-        if (createOpen || pickWorkspaceForUpload) return;
+        if (createOpen || pickWorkspaceForUpload || pickWorkspaceForBlank) return;
         event.preventDefault();
         onClose();
         return;
       }
-      if (createOpen || pickWorkspaceForUpload) return;
+      if (createOpen || pickWorkspaceForUpload || pickWorkspaceForBlank) return;
       if (event.key === "ArrowDown") {
         event.preventDefault();
         setActiveIndex((index) =>
@@ -616,6 +652,49 @@ function CommandPalette({
                 type="button"
                 className="text-[12px] text-ink-soft hover:text-ink"
                 onClick={() => setPickWorkspaceForUpload(false)}
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {pickWorkspaceForBlank ? (
+        <div
+          className="fixed inset-0 z-[70] flex items-center justify-center bg-overlay px-4 backdrop-blur-[6px]"
+          onClick={() => setPickWorkspaceForBlank(false)}
+        >
+          <div
+            className="w-full max-w-[380px] rounded-[16px] border border-line bg-surface p-4 shadow-[0_24px_80px_rgba(15,18,24,0.2)]"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <h2 className="mb-3 text-[14px] font-semibold text-ink">
+              New document in workspace
+            </h2>
+            {workspaces.length === 0 ? (
+              <p className="text-[12px] text-ink-soft">
+                Create a workspace first, then create a document.
+              </p>
+            ) : (
+              <div className="max-h-[280px] space-y-1 overflow-y-auto">
+                {workspaces.map((ws) => (
+                  <button
+                    key={ws.id}
+                    type="button"
+                    className="block w-full rounded-[10px] px-3 py-2 text-left text-[12.5px] text-ink hover:bg-sunken"
+                    onClick={() => void runCreateBlank(ws.id)}
+                  >
+                    {ws.name}
+                  </button>
+                ))}
+              </div>
+            )}
+            <div className="mt-3 flex justify-end">
+              <button
+                type="button"
+                className="text-[12px] text-ink-soft hover:text-ink"
+                onClick={() => setPickWorkspaceForBlank(false)}
               >
                 Cancel
               </button>

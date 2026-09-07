@@ -72,6 +72,18 @@ export function createAgentDocumentMutationExecutor(input: {
       return toExecutorResult(applied, request.document.versionId);
     },
 
+    async insertParagraph(request): Promise<DocumentMutationResult> {
+      const applied = await mutations.applyInsertParagraph({
+        documentId: request.document.documentId,
+        ownerUserId: input.ownerUserId,
+        baseVersionId: request.document.versionId,
+        text: request.text,
+        placement: request.placement,
+        runtime: input.runtime,
+      });
+      return toExecutorResult(applied, request.document.versionId);
+    },
+
     async setTableCellsText(request): Promise<DocumentMutationResult> {
       const applied = await mutations.applySetTableCellsText({
         documentId: request.document.documentId,

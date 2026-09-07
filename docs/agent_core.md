@@ -57,7 +57,7 @@ primary DocumentRef
 **Read**
 
 * `document.capabilities` — list runtime caps for the primary document
-* `document.inspect` — DOCX: `overview` / `headings` / `paragraphs` / `tables` / `context` (paged); PPTX/XLSX mock: slides/sheets/range.
+* `document.inspect` — DOCX: `overview` / `headings` / `paragraphs` / `tables` / `body_blocks` / `context` (paged); PPTX/XLSX mock: slides/sheets/range.
   Inspected objects may optionally carry format-neutral `affordances[]` (engine-authored; absence ≠ supported/unsupported).
   Failed mutations may carry structured diagnostics (`code` + optional `reasonCode` / `operation` / `targetHandle`);
   prefer those fields over parsing `message`. Application errors (`STALE_HANDLE` / `UNKNOWN_HANDLE`) stay separate.
@@ -66,6 +66,7 @@ primary DocumentRef
 **Safe writes**
 
 * `document.replace_text` — DOCX prose/heading find/replace; **tool success = persisted immutable version**
+* `document.insert_paragraph` — create paragraph at start|end|before|after body-block handle (from `inspect(body_blocks)`); capability `insert_paragraph`
 * `document.set_table_cells_text` — atomic multi-cell update (semantic labels **or** opaque cell handles from inspect)
 * `document.insert_table_rows` — contiguous multi-row insert after semantic row label **or** row handle
 * `document.insert_table_column` — single column insert after semantic header **or** column handle
@@ -74,7 +75,7 @@ primary DocumentRef
 
 `DocumentRef` always comes from `ToolExecutionContext.primaryDocument` — never from model input.
 DOCX writes use injected `DocumentMutationExecutor` (not bare `runtime.execute`).
-Agent-core does **not** own DB/storage; apps/api injects `applyReplaceText` / `applySetTableCellsText` / `applyInsertTableRows` / `applyInsertTableColumn`.
+Agent-core does **not** own DB/storage; apps/api injects `apply*` including `applyInsertParagraph`.
 
 After a persisted mutation, the run advances its active `DocumentRef` N → N+1
 (run-local only). Subsequent find/inspect/mutate in the **same run** read N+1.
@@ -82,19 +83,22 @@ Emits `document.version.advanced` for SSE/UI refresh. Raw `artifactBytes` alone
 is **not** tool success.
 
 Write tools use `effect: "write"` and `executionMode: "sequential"`.
-Table tools are gated on Rust capability ids (`set_table_cells_text`, `insert_table_rows`, `insert_table_column`).
+Table/paragraph insert tools are gated on Rust capability ids.
 
 Default product stack: `createMockDocumentRuntime({ capabilities: mutableDocumentCapabilities() })`.
-Real DOCX path: `createOpenSuiteEngineAdapter` — caps/find/inspect/replace + table mutations via N-API
+Real DOCX path: `createOpenSuiteEngineAdapter` — caps/find/inspect/replace + insert_paragraph + table mutations via N-API
 (see `docs/engine_integration.md`). No mock fallback for unsupported real-DOCX focuses (e.g. slides).
 Inspect paging uses `offset`/`limit` (default 20, max 100). Occurrence/order is version-local only.
 
+Body placement: inspect(`body_blocks`) → `insert_paragraph` before/after opaque handle → re-inspect after N+1.
 Table workflow: inspect(tables) → typed table mutation → immutable version → re-inspect.
 Semantic selectors (rowLabel/columnHeader/headerCells) are human-readable convenience.
 Opaque structural handles from inspect are exact artifact-local targets for blank/duplicate/awkward cells —
 never persist them; re-inspect after any version-changing edit before reuse.
 Capability does not guarantee every structure is writable (merged/complex may return `UNSUPPORTED_OPERATION`).
-Not exposed: delete row/column, create table, multi-column insert, generic `document.mutate`.
+Not exposed: delete row/column, create table, multi-column insert, paragraph style/format/delete (no N-API), generic `document.mutate`.
+
+Blank DOCX create is application/API → engine-client `createBlankDocx` → Version 1 — outside AgentRunner.
 
 Persisted mutation results include `document` (new DocumentRef), `baseVersionId`, optional `change`
 summary — never storage keys or engine source identities.

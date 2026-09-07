@@ -115,6 +115,19 @@ export interface ApplyInsertTableColumnInput {
   readonly runtime: DocumentRuntime;
 }
 
+export interface ApplyInsertParagraphInput {
+  readonly documentId: string;
+  readonly ownerUserId: string;
+  readonly baseVersionId: string;
+  readonly text: string;
+  readonly placement:
+    | { readonly kind: "start" }
+    | { readonly kind: "end" }
+    | { readonly kind: "before"; readonly handle: string }
+    | { readonly kind: "after"; readonly handle: string };
+  readonly runtime: DocumentRuntime;
+}
+
 export interface DocumentMutationServiceOptions {
   /**
    * Optional hook between successful runtime execute and version append.
@@ -318,6 +331,23 @@ export function createDocumentMutationService(
         operationType: "document.replace_text",
         payload,
         formatErrorLabel: "applyReplaceText",
+      });
+    },
+
+    async applyInsertParagraph(
+      input: ApplyInsertParagraphInput,
+    ): Promise<ApplyDocumentMutationResult> {
+      return authorizeAndPersist({
+        documentId: input.documentId,
+        ownerUserId: input.ownerUserId,
+        baseVersionId: input.baseVersionId,
+        runtime: input.runtime,
+        operationType: "document.insert_paragraph",
+        payload: {
+          text: input.text,
+          placement: input.placement,
+        },
+        formatErrorLabel: "applyInsertParagraph",
       });
     },
 

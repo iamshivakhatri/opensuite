@@ -102,7 +102,8 @@ export type DocumentUploadErrorCode =
   | "UNSUPPORTED_FORMAT"
   | "EMPTY_UPLOAD"
   | "UPLOAD_TOO_LARGE"
-  | "MISSING_BASE_VERSION";
+  | "MISSING_BASE_VERSION"
+  | "BLANK_DOCX_UNAVAILABLE";
 
 export class DocumentUploadError extends Error {
   readonly statusCode: number;
@@ -147,6 +148,11 @@ export interface DocumentServiceOptions {
   readonly uploadMaxBytes: number;
   /** Injectable for tests that need deterministic IDs / forced PK conflicts. */
   readonly createId?: () => string;
+  /**
+   * Rust blank DOCX bytes (via engine-client binding).
+   * Required for createBlankDocxDocument — never invent DOCX in TypeScript.
+   */
+  readonly createBlankDocxBytes?: () => Uint8Array | Promise<Uint8Array>;
   /** Optional logger for best-effort cleanup failures after a DB write error. */
   readonly onCleanupFailure?: (error: unknown, storageKey: string) => void;
   /** Optional logger when DB points at a missing storage object. */
@@ -403,6 +409,143 @@ export function createDocumentService(
           if (
             !version ||
             version.source !== "upload" ||
+            version.createdByUserId == null
+          ) {
+            throw new Error("Failed to create document version");
+          }
+
+          await tx
+            .update(schema.workspace)
+            .set({ updatedAt: new Date() })
+            .where(eq(schema.workspace.id, input.workspaceId));
+
+          return {
+            doc,
+            version: {
+              ...version,
+              createdByUserId: version.createdByUserId,
+            },
+          };
+        });
+
+        return {
+          document: {
+            id: created.doc.id,
+            workspaceId: created.doc.workspaceId,
+            name: created.doc.name,
+            format: created.doc.format,
+            createdAt: created.doc.createdAt.toISOString(),
+            updatedAt: created.doc.updatedAt.toISOString(),
+          },
+          version: toVersionDto(created.version),
+        };
+      } catch (error) {
+        await cleanupStorageKey(storageKey);
+        throw error;
+      }
+    },
+
+    /**
+     * Create a new blank DOCX from Rust (engine-client), persist as Version 1.
+     * Not a DocumentRuntime mutation — no DocumentRef exists yet.
+     */
+    async createBlankDocxDocument(input: {
+      workspaceId: string;
+      ownerUserId: string;
+      /** Display name without requiring .docx; default Untitled Document.docx */
+      name?: string;
+    }): Promise<UploadedDocumentDto> {
+      if (!options.createBlankDocxBytes) {
+        throw new DocumentUploadError(
+          500,
+          "BLANK_DOCX_UNAVAILABLE",
+          "Blank DOCX creation is not configured",
+        );
+      }
+
+      const rawName = (input.name ?? "Untitled Document").trim() || "Untitled Document";
+      const filename = sanitizeUploadFilename(
+        rawName.toLowerCase().endsWith(".docx") ? rawName : `${rawName}.docx`,
+      );
+      if (!filename) {
+        throw new DocumentUploadError(
+          400,
+          "INVALID_FILENAME",
+          "Invalid document name",
+        );
+      }
+
+      const blankBytes = await options.createBlankDocxBytes();
+      const bytes = Buffer.from(blankBytes);
+      assertUploadBytes(bytes);
+
+      const documentId = createId();
+      const versionId = createId();
+      const storageKey = buildDocumentVersionStorageKey({
+        workspaceId: input.workspaceId,
+        documentId,
+        versionId,
+        format: "docx",
+      });
+      const sha256 = sha256Hex(bytes);
+
+      await storage.putObject({
+        key: storageKey,
+        body: bytes,
+        contentType: contentTypeForFormat("docx"),
+      });
+
+      try {
+        const created = await db.transaction(async (tx) => {
+          const [doc] = await tx
+            .insert(schema.document)
+            .values({
+              id: documentId,
+              workspaceId: input.workspaceId,
+              name: filename,
+              format: "docx",
+            })
+            .returning({
+              id: schema.document.id,
+              workspaceId: schema.document.workspaceId,
+              name: schema.document.name,
+              format: schema.document.format,
+              createdAt: schema.document.createdAt,
+              updatedAt: schema.document.updatedAt,
+            });
+
+          if (!doc) {
+            throw new Error("Failed to create document");
+          }
+
+          const [version] = await tx
+            .insert(schema.documentVersion)
+            .values({
+              id: versionId,
+              documentId,
+              versionNumber: 1,
+              parentVersionId: null,
+              storageKey,
+              sizeBytes: bytes.byteLength,
+              sha256,
+              source: "user",
+              createdByUserId: input.ownerUserId,
+            })
+            .returning({
+              id: schema.documentVersion.id,
+              documentId: schema.documentVersion.documentId,
+              versionNumber: schema.documentVersion.versionNumber,
+              parentVersionId: schema.documentVersion.parentVersionId,
+              sizeBytes: schema.documentVersion.sizeBytes,
+              sha256: schema.documentVersion.sha256,
+              source: schema.documentVersion.source,
+              createdByUserId: schema.documentVersion.createdByUserId,
+              createdAt: schema.documentVersion.createdAt,
+            });
+
+          if (
+            !version ||
+            version.source !== "user" ||
             version.createdByUserId == null
           ) {
             throw new Error("Failed to create document version");

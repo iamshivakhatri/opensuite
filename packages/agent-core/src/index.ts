@@ -89,6 +89,7 @@ export type {
   FindResult,
   InspectedArtifactAffordances,
   InspectedBlock,
+  InspectedBodyBlock,
   InspectedCell,
   InspectedHeading,
   InspectedSheet,
@@ -115,10 +116,12 @@ export {
 } from "./runtime.js";
 
 export type {
+  DocumentInsertParagraphMutationRequest,
   DocumentInsertTableColumnMutationRequest,
   DocumentInsertTableRowsMutationRequest,
   DocumentMutationExecutor,
   DocumentMutationResult,
+  DocumentParagraphPlacement,
   DocumentReplaceTextMutationRequest,
   DocumentSetTableCellsTextMutationRequest,
   DocumentTableCellHandleTarget,
@@ -157,6 +160,7 @@ export {
   createDocumentCapabilitiesTool,
   createDocumentFindTool,
   createDocumentInspectTool,
+  createDocumentInsertParagraphTool,
   createDocumentInsertTableColumnTool,
   createDocumentInsertTableRowsTool,
   createDocumentReplaceTextTool,
@@ -173,6 +177,7 @@ export {
 } from "./document-tools.js";
 export type {
   DocumentFindToolInput,
+  DocumentInsertParagraphInput,
   DocumentInsertTableColumnInput,
   DocumentInsertTableRowsInput,
   DocumentInspectToolInput,

@@ -34,6 +34,7 @@ import {
   createDocumentInspectTool,
 } from "./inspect.js";
 import {
+  createDocumentInsertParagraphTool,
   createDocumentInsertTableColumnTool,
   createDocumentInsertTableRowsTool,
   createDocumentReplaceTextTool,
@@ -54,6 +55,7 @@ export type {
   DocumentInspectToolInput,
 } from "./inspect.js";
 export {
+  createDocumentInsertParagraphTool,
   createDocumentInsertTableColumnTool,
   createDocumentInsertTableRowsTool,
   createDocumentReplaceTextTool,
@@ -62,6 +64,7 @@ export {
   createWorkbookSetCellsTool,
 } from "./mutations.js";
 export type {
+  DocumentInsertParagraphInput,
   DocumentInsertTableColumnInput,
   DocumentInsertTableRowsInput,
   DocumentReplaceTextInput,
@@ -83,6 +86,7 @@ export function listDocumentToolDescriptors(): readonly AgentTool[] {
     createDocumentInspectTool(),
     createDocumentFindTool(),
     createDocumentReplaceTextTool(),
+    createDocumentInsertParagraphTool(),
     createDocumentSetTableCellsTextTool(),
     createDocumentInsertTableRowsTool(),
     createDocumentInsertTableColumnTool(),
@@ -211,6 +215,7 @@ export function mutableDocumentCapabilities(): RuntimeCapabilities {
     Capabilities.DocumentFind,
     Capabilities.DocumentMutate,
     DOCX_ENGINE_CAPS.replaceText,
+    DOCX_ENGINE_CAPS.insertParagraph,
     DOCX_ENGINE_CAPS.setTableCellsText,
     DOCX_ENGINE_CAPS.insertTableRows,
     DOCX_ENGINE_CAPS.insertTableColumn,

@@ -104,6 +104,19 @@ export interface DocxInsertTableColumnOperation {
   readonly baseRevision?: string;
 }
 
+/** Placement for insert_paragraph — engine protocol shape. */
+export type DocxParagraphPlacement =
+  | { readonly kind: "start" }
+  | { readonly kind: "end" }
+  | { readonly kind: "before"; readonly handle: string }
+  | { readonly kind: "after"; readonly handle: string };
+
+export interface DocxInsertParagraphOperation {
+  readonly text: string;
+  readonly placement: DocxParagraphPlacement;
+  readonly baseRevision?: string;
+}
+
 export interface DocxRuntimeCapabilities {
   readonly ok: boolean;
   readonly protocolVersion: number;
@@ -149,6 +162,11 @@ export type DocxInspectFocus =
     }
   | {
       readonly kind: "tables";
+      readonly offset?: number;
+      readonly limit?: number;
+    }
+  | {
+      readonly kind: "body_blocks";
       readonly offset?: number;
       readonly limit?: number;
     }
@@ -225,6 +243,14 @@ export interface DocxInspectTableItem {
   readonly rows: readonly DocxInspectTableRow[];
 }
 
+/** Ordered direct body block from engine inspect focus body_blocks. */
+export interface DocxInspectBodyBlockItem {
+  readonly handle: string;
+  readonly kind: string;
+  readonly text?: string | null;
+  readonly tableHandle?: string | null;
+}
+
 export interface DocxInspectContextUnit {
   readonly relativePosition: number;
   readonly text: string;
@@ -247,6 +273,10 @@ export interface DocxInspectResult {
     readonly page: DocxInspectionPageMeta;
     readonly items: readonly DocxInspectTableItem[];
   };
+  readonly bodyBlocks?: {
+    readonly page: DocxInspectionPageMeta;
+    readonly items: readonly DocxInspectBodyBlockItem[];
+  };
   readonly context?: {
     readonly target: DocxReplaceTextTarget;
     readonly container?: DocxInspectContextUnit;
@@ -257,6 +287,11 @@ export interface DocxInspectResult {
 
 export interface DocxEngineBinding {
   getDocxCapabilities(): DocxRuntimeCapabilities;
+  /**
+   * Deterministic blank DOCX bytes from Rust.
+   * Not a DocumentRuntime mutation — no DocumentRef exists yet.
+   */
+  createBlankDocx(): Uint8Array;
   findDocxText(
     input: Uint8Array,
     request: DocxFindTextRequest,
@@ -268,6 +303,10 @@ export interface DocxEngineBinding {
   executeDocxReplaceText(
     input: Uint8Array,
     operation: DocxReplaceTextOperation,
+  ): Promise<DocxMutationBindingResult>;
+  executeDocxInsertParagraph(
+    input: Uint8Array,
+    operation: DocxInsertParagraphOperation,
   ): Promise<DocxMutationBindingResult>;
   executeDocxSetTableCellsText(
     input: Uint8Array,
@@ -290,6 +329,7 @@ type NativeEngineModule = {
     engineVersion: string;
     formats: Array<{ format: string; capabilities: string[] }>;
   };
+  createBlankDocx: () => Buffer;
   findDocxText: (
     input: Buffer,
     request: { text: string },
@@ -309,84 +349,24 @@ type NativeEngineModule = {
   inspectDocx: (
     input: Buffer,
     request: { focus: Record<string, unknown> },
-  ) => Promise<{
-    ok: boolean;
-    focus: string;
-    overview?: {
-      bodyBlockCount: number;
-      paragraphCount: number;
-      tableCount: number;
-      sectionCount: number;
-    };
-    headings?: {
-      page: DocxInspectionPageMeta;
-      items: Array<{
-        occurrence: number;
-        text: string;
-        styleName: string;
-        level?: number;
-      }>;
-    };
-    paragraphs?: {
-      page: DocxInspectionPageMeta;
-      items: Array<{
-        occurrence: number;
-        text: string;
-        styleName?: string;
-      }>;
-    };
-    tables?: {
-      page: DocxInspectionPageMeta;
-      items: Array<{
-        occurrence: number;
-        handle: string;
-        rowCount: number;
-        isRectangular: boolean;
-        affordances?: Array<{
-          capability: string;
-          supported: boolean;
-          reason?: string;
-        }>;
-        columns: Array<{
-          occurrence: number;
-          handle: string;
-          text: string;
-        }>;
-        rows: Array<{
-          handle: string;
-          cells: string[];
-          cellHandles: string[];
-          cellAffordances?: Array<
-            Array<{
-              capability: string;
-              supported: boolean;
-              reason?: string;
-            }>
-          >;
-        }>;
-      }>;
-    };
-    context?: {
-      target: { text: string; occurrence?: number };
-      container?: {
-        relativePosition: number;
-        text: string;
-        container: string;
-      };
-      nearby: Array<{
-        relativePosition: number;
-        text: string;
-        container: string;
-      }>;
-    };
-    diagnostics: DocxEngineDiagnostic[];
-  }>;
+  ) => Promise<DocxInspectResult>;
   executeDocxReplaceText: (
     input: Buffer,
     operation: {
       target: { text: string; occurrence?: number };
       expectedCurrentText: string;
       replacement: string;
+      baseRevision?: string;
+    },
+  ) => Promise<{
+    result: DocxEngineOperationResult;
+    output?: Buffer;
+  }>;
+  executeDocxInsertParagraph: (
+    input: Buffer,
+    operation: {
+      text: string;
+      placement: { kind: string; handle?: string };
       baseRevision?: string;
     },
   ) => Promise<{
@@ -423,6 +403,7 @@ function toNativeInspectFocus(focus: DocxInspectFocus): Record<string, unknown> 
     case "headings":
     case "paragraphs":
     case "tables":
+    case "body_blocks":
       return {
         kind: focus.kind,
         ...(focus.offset !== undefined ? { offset: focus.offset } : {}),
@@ -460,9 +441,25 @@ export async function createNapiDocxEngineBinding(): Promise<DocxEngineBinding> 
     );
   }
 
+  if (typeof native.createBlankDocx !== "function") {
+    throw new Error(
+      "@opensuite/engine is missing createBlankDocx — rebuild opensuite-engine/crates/opensuite-node for Milestone 5A APIs",
+    );
+  }
+  if (typeof native.executeDocxInsertParagraph !== "function") {
+    throw new Error(
+      "@opensuite/engine is missing executeDocxInsertParagraph — rebuild opensuite-engine/crates/opensuite-node for Milestone 5A APIs",
+    );
+  }
+
   return {
     getDocxCapabilities() {
       return native.getDocxCapabilities();
+    },
+
+    createBlankDocx() {
+      const buffer = native.createBlankDocx();
+      return new Uint8Array(buffer);
     },
 
     async findDocxText(input, request) {
@@ -490,6 +487,25 @@ export async function createNapiDocxEngineBinding(): Promise<DocxEngineBinding> 
           : {}),
       });
 
+      return mapMutationBindingResponse(response);
+    },
+
+    async executeDocxInsertParagraph(input, operation) {
+      const response = await native.executeDocxInsertParagraph(
+        Buffer.from(input),
+        {
+          text: operation.text,
+          placement: {
+            kind: operation.placement.kind,
+            ...("handle" in operation.placement
+              ? { handle: operation.placement.handle }
+              : {}),
+          },
+          ...(operation.baseRevision !== undefined
+            ? { baseRevision: operation.baseRevision }
+            : {}),
+        },
+      );
       return mapMutationBindingResponse(response);
     },
 

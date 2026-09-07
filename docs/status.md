@@ -11,8 +11,11 @@ _Read this before starting any work. Keep it a concise current-state handoff, no
 * Immutable document version foundation + Casual Docs DOCX surface v1.
 * Theme architecture (`themePreference` / `resolvedTheme` / Casual isolation).
 * **Production DOCX agent runtime is engine-backed (no mock DOCX content).**
-* **Real DOCX inspect: overview / headings / paragraphs / tables / context** (paged, Rust-authoritative).
+* **Real DOCX inspect: overview / headings / paragraphs / tables / body_blocks / context** (paged, Rust-authoritative).
 * Table inspect exposes opaque artifact-local handles; mutations accept handle or semantic selectors.
+* **Blank DOCX creation:** API → engine-client `createBlankDocx` → Rust bytes → storage + Version 1 (`source: user`). Not a DocumentRuntime mutation.
+* **New Document** UI (palette + explorer) creates blank DOCX and opens the editor (no upload).
+* **`document.insert_paragraph`** capability-gated; placements start|end|before|after body-block handles.
 * **Agent DOCX mutations persist immutable N+1 and advance run DocumentRef.**
 * Agent chat: Cursor-style work toggle (“Thought for Xs”), single wall-clock timer, Stop square in composer.
 * Optional semantic `occurrence`: omit / null / "" / **0 → omitted**; explicit values stay **1-based**.
@@ -29,8 +32,8 @@ _Read this before starting any work. Keep it a concise current-state handoff, no
 
 ## Just Completed
 
-* Milestone 4B: wire structured engine diagnostics into the agent (transport + minimal prompt).
-* Prior: enforce version-bound artifact handles; format-neutral affordances; capability-driven discovery.
+* Milestone 5B: blank DOCX product create + body_blocks inspect + insert_paragraph through existing mutation/version/SSE path.
+* Prior: Milestone 4B structured diagnostics; version-bound handles; affordances; capability discovery.
 
 ## Current Decisions
 
@@ -49,13 +52,12 @@ _Read this before starting any work. Keep it a concise current-state handoff, no
 
 | Check | Status |
 |---|---|
-| `pnpm --filter @opensuite/agent-core test` | **Pass** (106) |
-| `pnpm --filter @opensuite/engine-client test` | **Pass** (42) |
-| `pnpm --filter @opensuite/api test` | **Pass** (91+17 skip) |
-| `pnpm --filter @opensuite/agent-core typecheck` | **Pass** |
-| `pnpm --filter @opensuite/engine-client typecheck` | **Pass** |
-| `pnpm --filter @opensuite/api typecheck` | **Pass** |
-| Native google-docs fixture structured diagnostic | **Pass** |
+| `pnpm --filter @opensuite/agent-core test` | **Pass** (111) |
+| `pnpm --filter @opensuite/engine-client test` | **Pass** (50) |
+| `pnpm --filter @opensuite/api test` | **Pass** (94+17 skip) |
+| `pnpm --filter @opensuite/web test` | **Pass** (15) |
+| `pnpm --filter @opensuite/{agent-core,engine-client,api,web} typecheck` | **Pass** |
+| Native blank + body_blocks + insert_paragraph | **Pass** |
 
 ## Intentionally Deferred
 
@@ -64,9 +66,12 @@ _Read this before starting any work. Keep it a concise current-state handoff, no
 * Affordances on paragraphs, pictures, slides, sheets, ranges
 * Separate affordance registry (handles becoming stale is enough for now)
 * Engine: harden `insert_table_column` verify for empty `headerCells`
-* Delete rows/columns / create_table / multi-column insert
+* Delete rows/columns / create_table / multi-column insert / lists / images
+* App wiring for paragraph style/format/delete (Rust caps exist; **no N-API yet**):
+  `set_paragraph_style`, `set_paragraph_formatting`, `set_text_formatting`,
+  `delete_paragraph`, `insert_paragraph_after`
 * PPTX/XLSX engine runtimes; HTTP mutation endpoint
 
 ## Recommended Next Step
 
-Affordance-aware recovery policies (still deferred), richer handle-first UX, or next engine mutation.
+Milestone 6 candidates: N-API for paragraph style/delete, or create_table — decide after product acceptance of blank + insert_paragraph.

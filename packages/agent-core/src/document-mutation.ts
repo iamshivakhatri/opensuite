@@ -96,6 +96,21 @@ export interface DocumentInsertTableColumnMutationRequest {
   readonly runId?: string;
 }
 
+/** Placement for document.insert_paragraph (engine protocol). */
+export type DocumentParagraphPlacement =
+  | { readonly kind: "start" }
+  | { readonly kind: "end" }
+  | { readonly kind: "before"; readonly handle: string }
+  | { readonly kind: "after"; readonly handle: string };
+
+export interface DocumentInsertParagraphMutationRequest {
+  readonly document: DocumentRef;
+  readonly text: string;
+  readonly placement: DocumentParagraphPlacement;
+  readonly signal?: AbortSignal;
+  readonly runId?: string;
+}
+
 export type DocumentMutationResult =
   | {
       readonly status: "success";
@@ -115,6 +130,9 @@ export type DocumentMutationResult =
 export interface DocumentMutationExecutor {
   replaceText(
     input: DocumentReplaceTextMutationRequest,
+  ): Promise<DocumentMutationResult>;
+  insertParagraph(
+    input: DocumentInsertParagraphMutationRequest,
   ): Promise<DocumentMutationResult>;
   setTableCellsText(
     input: DocumentSetTableCellsTextMutationRequest,
@@ -242,6 +260,19 @@ export function createInMemoryDocumentMutationExecutor(
           ...(input.occurrence !== undefined
             ? { occurrence: input.occurrence }
             : {}),
+        },
+        input.signal,
+        input.runId,
+      );
+    },
+
+    async insertParagraph(input) {
+      return executeOnce(
+        input.document,
+        "document.insert_paragraph",
+        {
+          text: input.text,
+          placement: input.placement,
         },
         input.signal,
         input.runId,

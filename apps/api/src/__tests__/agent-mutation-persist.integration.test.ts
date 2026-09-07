@@ -106,6 +106,25 @@ test(
             },
           ],
         }),
+        createBlankDocx() {
+          return new Uint8Array([0x50, 0x4b, 0x03, 0x04]);
+        },
+        async executeDocxInsertParagraph() {
+          return {
+            result: {
+              ok: false,
+              status: "failed",
+              diagnostics: [
+                {
+                  code: "UNSUPPORTED_OPERATION",
+                  severity: "error",
+                  message: "unused",
+                },
+              ],
+              changes: [],
+            },
+          };
+        },
         async findDocxText(input, request) {
           const haystack = Buffer.from(input).toString("utf8");
           const found = haystack.includes(request.text);
@@ -232,63 +251,11 @@ test(
 
     let executeCalls = 0;
     const countingBinding: DocxEngineBinding = {
-      getDocxCapabilities: () => engineBinding.getDocxCapabilities(),
-      findDocxText: (input, request) =>
-        engineBinding.findDocxText(input, request),
-      inspectDocx: (input, request) => engineBinding.inspectDocx(input, request),
+      ...engineBinding,
       async executeDocxReplaceText(input, operation) {
         executeCalls += 1;
         return engineBinding.executeDocxReplaceText(input, operation);
       },
-
-        async executeDocxSetTableCellsText() {
-          return {
-            result: {
-              ok: false,
-              status: "failed",
-              diagnostics: [
-                {
-                  code: "UNSUPPORTED_OPERATION",
-                  severity: "error",
-                  message: "unused",
-                },
-              ],
-              changes: [],
-            },
-          };
-        },
-        async executeDocxInsertTableRows() {
-          return {
-            result: {
-              ok: false,
-              status: "failed",
-              diagnostics: [
-                {
-                  code: "UNSUPPORTED_OPERATION",
-                  severity: "error",
-                  message: "unused",
-                },
-              ],
-              changes: [],
-            },
-          };
-        },
-        async executeDocxInsertTableColumn() {
-          return {
-            result: {
-              ok: false,
-              status: "failed",
-              diagnostics: [
-                {
-                  code: "UNSUPPORTED_OPERATION",
-                  severity: "error",
-                  message: "unused",
-                },
-              ],
-              changes: [],
-            },
-          };
-        },
     };
 
     const runtime = createOpenSuiteEngineAdapter({

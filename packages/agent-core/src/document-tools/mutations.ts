@@ -1,4 +1,5 @@
 import type {
+  DocumentParagraphPlacement,
   DocumentTableCellUpdate,
   DocumentTableRowAnchor,
   DocumentTableTarget,
@@ -21,6 +22,7 @@ import {
 } from "./shared-schema.js";
 import {
   parseCellTarget,
+  parseParagraphPlacement,
   parseRowAnchor,
   parseTableTarget,
 } from "./selectors.js";
@@ -29,6 +31,17 @@ export interface DocumentReplaceTextInput {
   readonly find: string;
   readonly replace: string;
   readonly scope?: "all" | "headings" | "paragraphs";
+}
+
+export type DocumentParagraphPlacementInput =
+  | { readonly kind: "start" }
+  | { readonly kind: "end" }
+  | { readonly kind: "before"; readonly handle: string }
+  | { readonly kind: "after"; readonly handle: string };
+
+export interface DocumentInsertParagraphInput {
+  readonly text: string;
+  readonly placement: DocumentParagraphPlacementInput;
 }
 
 export interface DocumentSetTableCellsTextInput {
@@ -128,6 +141,78 @@ export function createDocumentReplaceTextTool(): AgentTool<
             document,
             find: input.find,
             replace: input.replace,
+            signal: ctx.signal,
+            runId: ctx.runId,
+          }),
+        input,
+      ),
+  });
+}
+
+export function createDocumentInsertParagraphTool(): AgentTool<
+  DocumentInsertParagraphInput,
+  PersistedDocumentMutationToolResult
+> {
+  return defineDocumentTool({
+    name: DOCUMENT_TOOL_NAMES.insertParagraph,
+    description:
+      "Insert a new paragraph into the active DOCX document. " +
+      "Use inspect(body_blocks) first when placement relative to existing content matters. " +
+      "placement: start | end | before {handle} | after {handle} (body-block handles from inspect). " +
+      "After a structural mutation, re-inspect before reusing handles. " +
+      "Success means an immutable new document version was persisted.",
+    effect: "write",
+    executionMode: "sequential",
+    capability: DOCX_ENGINE_CAPS.insertParagraph,
+    inputSchema: {
+      type: "object",
+      properties: {
+        text: {
+          type: "string",
+          description: "Paragraph text to insert",
+        },
+        placement: {
+          type: "object",
+          description:
+            "Where to insert: start/end of body, or before/after a body-block handle",
+          properties: {
+            kind: {
+              type: "string",
+              enum: ["start", "end", "before", "after"],
+            },
+            handle: {
+              type: "string",
+              description:
+                "Opaque body-block handle from inspect(body_blocks) when kind is before|after",
+            },
+          },
+          required: ["kind"],
+          additionalProperties: false,
+        },
+      },
+      required: ["text", "placement"],
+      additionalProperties: false,
+    },
+    parseInput(raw) {
+      const obj = assertObject(raw, DOCUMENT_TOOL_NAMES.insertParagraph);
+      if (typeof obj.text !== "string") {
+        invalidInput("document.insert_paragraph requires a text string");
+      }
+      const placement = parseParagraphPlacement(
+        obj.placement,
+        DOCUMENT_TOOL_NAMES.insertParagraph,
+      );
+      return { text: obj.text, placement };
+    },
+    execute: (input, ctx) =>
+      executePersistedMutation(
+        ctx,
+        DOCUMENT_TOOL_NAMES.insertParagraph,
+        (document, mutations) =>
+          mutations.insertParagraph({
+            document,
+            text: input.text,
+            placement: input.placement as DocumentParagraphPlacement,
             signal: ctx.signal,
             runId: ctx.runId,
           }),

@@ -4,6 +4,7 @@
  */
 
 import type {
+  DocumentParagraphPlacement,
   DocumentTableCellTarget,
   DocumentTableRowAnchor,
   DocumentTableTarget,
@@ -18,6 +19,37 @@ import {
 } from "./shared-schema.js";
 
 export type { StructuralHandle };
+
+export function parseParagraphPlacement(
+  raw: unknown,
+  toolName: string,
+): DocumentParagraphPlacement {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+    throw new AgentCoreError(
+      "INVALID_TOOL_INPUT",
+      `${toolName} requires a placement object`,
+    );
+  }
+  const placement = raw as Record<string, unknown>;
+  const kind = placement.kind;
+  if (kind === "start" || kind === "end") {
+    return { kind };
+  }
+  if (kind === "before" || kind === "after") {
+    const handle = parseOptionalHandle(placement.handle);
+    if (!handle) {
+      throw new AgentCoreError(
+        "INVALID_TOOL_INPUT",
+        `${toolName} placement.${kind} requires a non-empty handle`,
+      );
+    }
+    return { kind, handle };
+  }
+  throw new AgentCoreError(
+    "INVALID_TOOL_INPUT",
+    `${toolName} placement.kind must be start|end|before|after`,
+  );
+}
 
 export function parseTableTarget(
   raw: unknown,
@@ -154,7 +186,8 @@ export function parseInspectFocus(raw: unknown): DocumentInspectFocus {
       return { kind };
     case "headings":
     case "paragraphs":
-    case "tables": {
+    case "tables":
+    case "body_blocks": {
       const offset = parseOptionalNonNegativeInt(
         focus.offset,
         "document.inspect focus.offset",

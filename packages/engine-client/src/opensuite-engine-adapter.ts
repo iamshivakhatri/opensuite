@@ -28,12 +28,14 @@ import type { DocumentArtifactLoader } from "./document-artifact-loader.js";
 import type {
   DocxEngineBinding,
   DocxEngineDiagnostic,
+  DocxInsertParagraphOperation,
   DocxInsertTableColumnOperation,
   DocxInsertTableRowsOperation,
   DocxInspectAffordance,
   DocxInspectFocus,
   DocxInspectResult,
   DocxMutationBindingResult,
+  DocxParagraphPlacement,
   DocxReplaceTextOperation,
   DocxRuntimeCapabilities,
   DocxSetTableCellsTextOperation,
@@ -56,6 +58,7 @@ import type {
 
 const DOCX_MUTATION_TYPES = new Set([
   "document.replace_text",
+  "document.insert_paragraph",
   "document.set_table_cells_text",
   "document.insert_table_rows",
   "document.insert_table_column",
@@ -233,6 +236,18 @@ export function createOpenSuiteEngineAdapter(
         return mapEngineMutationResult(engineResponse, operation.type);
       }
 
+      if (operation.type === "document.insert_paragraph") {
+        const mapped = mapInsertParagraphOperation(operation);
+        if (!mapped.ok) {
+          return mapped.error;
+        }
+        const engineResponse = await binding.executeDocxInsertParagraph(
+          inputBytes,
+          mapped.operation,
+        );
+        return mapEngineMutationResult(engineResponse, operation.type);
+      }
+
       if (operation.type === "document.set_table_cells_text") {
         const mapped = mapSetTableCellsTextOperation(operation);
         if (!mapped.ok) {
@@ -292,6 +307,7 @@ export function mapRustCapabilitiesToRuntime(
   }
   if (
     rustIds.includes("replace_text") ||
+    rustIds.includes("insert_paragraph") ||
     rustIds.includes("set_table_cells_text") ||
     rustIds.includes("insert_table_rows") ||
     rustIds.includes("insert_table_column") ||
@@ -348,6 +364,18 @@ export function mapApplicationInspectFocus(
         ok: true,
         focus: {
           kind: "tables",
+          offset: bounds.offset,
+          limit: bounds.limit,
+        },
+      };
+    }
+    case "body_blocks": {
+      const bounds = normalizeInspectBounds(focus.offset, focus.limit);
+      if (!bounds.ok) return { ok: false, error: bounds.error };
+      return {
+        ok: true,
+        focus: {
+          kind: "body_blocks",
           offset: bounds.offset,
           limit: bounds.limit,
         },
@@ -492,6 +520,12 @@ function toApplicationFocus(focus: DocxInspectFocus): DocumentInspectFocus {
         offset: focus.offset,
         limit: focus.limit,
       };
+    case "body_blocks":
+      return {
+        kind: "body_blocks",
+        offset: focus.offset,
+        limit: focus.limit,
+      };
     case "context":
       return {
         kind: "context",
@@ -617,6 +651,28 @@ function mapInspectPayload(
         }),
       };
     }
+    case "body_blocks": {
+      if (!response.bodyBlocks) return null;
+      return {
+        format: "docx",
+        summary: {
+          title: null,
+          unitKind: "page",
+          unitCount: response.bodyBlocks.page.total,
+        },
+        page: mapPage(response.bodyBlocks.page),
+        bodyBlocks: response.bodyBlocks.items.map((item) => ({
+          handle: item.handle,
+          kind: item.kind,
+          ...(item.text != null && item.text !== undefined
+            ? { text: item.text }
+            : {}),
+          ...(item.tableHandle != null && item.tableHandle !== undefined
+            ? { tableHandle: item.tableHandle }
+            : {}),
+        })),
+      };
+    }
     case "context": {
       if (!response.context) return null;
       const unitCount =
@@ -700,6 +756,69 @@ function mapAffordances(
 }
 
 /** Exported for unit tests — application DTO → binding DTO only. */
+export function mapInsertParagraphOperation(
+  operation: DocumentOperation,
+):
+  | { readonly ok: true; readonly operation: DocxInsertParagraphOperation }
+  | { readonly ok: false; readonly error: OperationResult } {
+  const text = readString(operation.payload.text);
+  if (text === null) {
+    return {
+      ok: false,
+      error: operationError(
+        "VALIDATION_FAILED",
+        "document.insert_paragraph requires payload.text (string)",
+      ),
+    };
+  }
+
+  const placementRaw = operation.payload.placement;
+  if (!isRecord(placementRaw) || typeof placementRaw.kind !== "string") {
+    return {
+      ok: false,
+      error: operationError(
+        "VALIDATION_FAILED",
+        "document.insert_paragraph requires payload.placement.kind",
+      ),
+    };
+  }
+
+  const kind = placementRaw.kind;
+  let placement: DocxParagraphPlacement;
+  if (kind === "start" || kind === "end") {
+    placement = { kind };
+  } else if (kind === "before" || kind === "after") {
+    const handle = readNonEmptyString(placementRaw.handle);
+    if (handle === null) {
+      return {
+        ok: false,
+        error: operationError(
+          "VALIDATION_FAILED",
+          `document.insert_paragraph placement.${kind} requires non-empty handle`,
+        ),
+      };
+    }
+    placement = { kind, handle };
+  } else {
+    return {
+      ok: false,
+      error: operationError(
+        "VALIDATION_FAILED",
+        "document.insert_paragraph placement.kind must be start|end|before|after",
+      ),
+    };
+  }
+
+  return {
+    ok: true,
+    operation: {
+      text,
+      placement,
+      baseRevision: operation.baseVersionId,
+    },
+  };
+}
+
 export function mapReplaceTextOperation(
   operation: DocumentOperation,
 ):
