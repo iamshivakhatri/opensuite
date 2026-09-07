@@ -48,7 +48,10 @@ test("reduceAgentProgress keeps completed tools then Generating (not Thinking)",
   );
   assert.deepEqual(
     lines.map((line) => ({ status: line.status, label: line.label })),
-    [{ status: "active", label: "Inspecting document…" }],
+    [
+      { status: "done", label: "Thought" },
+      { status: "active", label: "Inspecting document…" },
+    ],
   );
 
   lines = reduceAgentProgress(
@@ -62,12 +65,13 @@ test("reduceAgentProgress keeps completed tools then Generating (not Thinking)",
   assert.deepEqual(
     lines.map((line) => ({ status: line.status, label: line.label })),
     [
+      { status: "done", label: "Thought" },
       { status: "done", label: "Inspected document" },
       { status: "active", label: "Generating…" },
     ],
   );
-  assert.equal(lines[0]?.startedAt, t0 + 100);
-  assert.equal(lines[0]?.endedAt, t0 + 500);
+  assert.equal(lines[1]?.startedAt, t0 + 100);
+  assert.equal(lines[1]?.endedAt, t0 + 500);
   assert.equal(
     lines.some((line) => line.label === "Thinking…" && line.status === "active"),
     false,
@@ -81,7 +85,9 @@ test("reduceAgentProgress keeps completed tools then Generating (not Thinking)",
   assert.deepEqual(
     lines.map((line) => ({ status: line.status, label: line.label })),
     [
+      { status: "done", label: "Thought" },
       { status: "done", label: "Inspected document" },
+      { status: "done", label: "Thought" },
       { status: "active", label: "Searching document…" },
     ],
   );
@@ -97,8 +103,8 @@ test("reduceAgentProgress keeps completed tools then Generating (not Thinking)",
   assert.ok(lines.some((line) => line.label === "Search complete" && line.status === "done"));
   assert.ok(lines.some((line) => line.label === "Generating…" && line.status === "active"));
   assert.equal(
-    lines.some((line) => line.label === "Thinking…"),
-    false,
+    lines.filter((line) => line.label === "Thought").length,
+    2,
   );
 
   lines = reduceAgentProgress(lines, event("message.started"), t0 + 1000);
@@ -259,6 +265,30 @@ test("formatProgressElapsed, progressElapsedLabel, agentRunDurationMs, thoughtFo
   assert.equal(
     thoughtForLabel(12_000, "completed", 15),
     "Finished 15 steps · 12s",
+  );
+});
+
+test("groupProgressLines preserves Thought segments between tools", () => {
+  const lines: AgentProgressLine[] = [
+    { id: "thought:1", label: "Thought", status: "done", startedAt: 1, endedAt: 2 },
+    { id: "t1", label: "Inspected document", status: "done", startedAt: 3, endedAt: 4 },
+    { id: "thought:2", label: "Thought", status: "done", startedAt: 5, endedAt: 6 },
+    { id: "t2", label: "Set paragraph style", status: "done", startedAt: 7, endedAt: 8 },
+    { id: "writing", label: "Generating…", status: "active", startedAt: 9 },
+  ];
+  const groups = groupProgressLines(lines);
+  assert.deepEqual(
+    groups.map((g) => ({ label: g.label, count: g.count })),
+    [
+      { label: "Thought", count: 1 },
+      { label: "Inspected document", count: 1 },
+      { label: "Thought", count: 1 },
+      { label: "Set paragraph style", count: 1 },
+    ],
+  );
+  assert.equal(
+    progressSummaryLabel(lines, { durationMs: 10_000, outcome: "completed" }),
+    "Finished 2 steps · 10s",
   );
 });
 

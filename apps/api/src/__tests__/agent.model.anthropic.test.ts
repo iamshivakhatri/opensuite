@@ -122,7 +122,10 @@ test("Anthropic adapter: text-only response", async () => {
     messages: [{ role: "user", content: "Hi" }],
     tools: [],
   });
-  assert.deepEqual(result, { content: "Plain answer", toolCalls: [] });
+  assert.equal(result.content, "Plain answer");
+  assert.deepEqual(result.toolCalls, []);
+  assert.equal(result.meta?.provider, "anthropic");
+  assert.equal(result.meta?.modelId, "claude-test");
 });
 
 test("Anthropic adapter: one tool call", async () => {
@@ -131,6 +134,8 @@ test("Anthropic adapter: one tool call", async () => {
     client: mockClient(async (params) => {
       assert.equal(params.tools?.length, 1);
       assert.equal(params.tools?.[0]?.name, "document.inspect");
+      assert.match(String(params.system), /mutation tools in your tool list/i);
+      assert.match(String(params.system), /fewest MODEL ROUNDS/i);
       return {
         content: [
           {
@@ -153,6 +158,9 @@ test("Anthropic adapter: one tool call", async () => {
         inputSchema: { type: "object" },
       },
     ],
+    capabilities: {
+      ids: new Set(["document.inspect", "document.mutate", "insert_paragraphs"]),
+    },
   });
   assert.equal(result.content, "");
   assert.equal(result.toolCalls.length, 1);

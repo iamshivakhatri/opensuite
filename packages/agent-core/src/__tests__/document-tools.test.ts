@@ -6,6 +6,7 @@ import {
   AgentRunner,
   Capabilities,
   createCapabilities,
+  createDocumentCapabilitiesTool,
   createDocumentToolRegistry,
   createFakeToolExecutionContext,
   createMockDocumentRuntime,
@@ -41,11 +42,7 @@ test("document tool registry advertises capabilities-aware tools", () => {
   const full = createDocumentToolRegistry();
   assert.deepEqual(
     full.list().map((t) => t.name),
-    [
-      DOCUMENT_TOOL_NAMES.capabilities,
-      DOCUMENT_TOOL_NAMES.find,
-      DOCUMENT_TOOL_NAMES.inspect,
-    ],
+    [DOCUMENT_TOOL_NAMES.find, DOCUMENT_TOOL_NAMES.inspect],
   );
 
   const inspectOnly = createDocumentToolRegistry(
@@ -53,13 +50,11 @@ test("document tool registry advertises capabilities-aware tools", () => {
   );
   assert.deepEqual(
     inspectOnly.list().map((t) => t.name),
-    [DOCUMENT_TOOL_NAMES.capabilities, DOCUMENT_TOOL_NAMES.inspect],
+    [DOCUMENT_TOOL_NAMES.inspect],
   );
 
   const none = createDocumentToolRegistry(createCapabilities());
-  assert.deepEqual(none.list().map((t) => t.name), [
-    DOCUMENT_TOOL_NAMES.capabilities,
-  ]);
+  assert.deepEqual(none.list().map((t) => t.name), []);
 });
 
 test("MockDocumentRuntime inspects DOCX/PPTX/XLSX fixtures", async () => {
@@ -241,9 +236,8 @@ test("AgentRunner loop: document.find then grounded reply", async () => {
   assert.match(result.summary, /Found \d+ revenue mentions/);
 });
 
-test("document.capabilities reports read-only stack", async () => {
-  const tools = createDocumentToolRegistry();
-  const capsTool = tools.require(DOCUMENT_TOOL_NAMES.capabilities);
+test("document.capabilities factory reports read-only stack", async () => {
+  const capsTool = createDocumentCapabilitiesTool();
   const result = (await capsTool.execute(
     {},
     createFakeToolExecutionContext({

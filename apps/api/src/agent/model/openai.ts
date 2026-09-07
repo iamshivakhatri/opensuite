@@ -9,11 +9,11 @@ import {
 
 import {
   cancelledError,
-  DEFAULT_AGENT_SYSTEM,
   ensureObjectSchema,
   formatToolResultContent,
   isAbortLike,
   normalizeProviderError,
+  resolveAgentSystemPrompt,
 } from "./shared.js";
 
 /** Minimal OpenAI Responses shapes for injectable/mocked clients. */
@@ -58,6 +58,13 @@ export type OpenAIResponsesOutputItem =
 export interface OpenAIResponsesResult {
   readonly output: readonly OpenAIResponsesOutputItem[];
   readonly output_text?: string;
+  readonly usage?: {
+    readonly input_tokens?: number;
+    readonly output_tokens?: number;
+    readonly input_tokens_details?: { readonly cached_tokens?: number };
+    readonly output_tokens_details?: { readonly reasoning_tokens?: number };
+  };
+  readonly status?: string;
 }
 
 export interface OpenAIResponsesCreateParams {
@@ -104,7 +111,7 @@ export function createOpenAIAgentModel(
   options: OpenAIAgentModelOptions,
 ): AgentModel {
   const maxOutputTokens = options.maxOutputTokens ?? 4096;
-  const system = options.system ?? DEFAULT_AGENT_SYSTEM;
+  const systemOverride = options.system;
   const providerLabel = options.providerLabel ?? "OpenAI";
 
   return {
@@ -112,6 +119,10 @@ export function createOpenAIAgentModel(
       if (request.signal?.aborted) {
         throw cancelledError();
       }
+
+      const system = resolveAgentSystemPrompt(request, systemOverride);
+      const startedAt = Date.now();
+      let timeToFirstTokenMs: number | undefined;
 
       const baseParams = {
         model: options.model,
@@ -146,6 +157,9 @@ export function createOpenAIAgentModel(
               typeof event.delta === "string" &&
               event.delta.length > 0
             ) {
+              if (timeToFirstTokenMs === undefined) {
+                timeToFirstTokenMs = Date.now() - startedAt;
+              }
               streamed += event.delta;
               await request.onTextDelta(event.delta);
             }
@@ -158,17 +172,41 @@ export function createOpenAIAgentModel(
             }
           }
 
-          if (final) {
-            return fromOpenAIResponsesResult(final);
+          if (request.signal?.aborted) {
+            throw cancelledError();
           }
-          return { content: streamed.trim(), toolCalls: [] };
+
+          if (final) {
+            return withOpenAIMeta(
+              fromOpenAIResponsesResult(final),
+              options.model,
+              providerLabel,
+              startedAt,
+              timeToFirstTokenMs,
+              final,
+            );
+          }
+          return withOpenAIMeta(
+            { content: streamed.trim(), toolCalls: [] },
+            options.model,
+            providerLabel,
+            startedAt,
+            timeToFirstTokenMs,
+          );
         }
 
         const result = (await options.client.responses.create(
           { ...baseParams, stream: false },
           callOptions,
         )) as OpenAIResponsesResult;
-        return fromOpenAIResponsesResult(result);
+        return withOpenAIMeta(
+          fromOpenAIResponsesResult(result),
+          options.model,
+          providerLabel,
+          startedAt,
+          timeToFirstTokenMs,
+          result,
+        );
       } catch (error) {
         if (request.signal?.aborted || isAbortLike(error)) {
           throw cancelledError(error);
@@ -266,6 +304,54 @@ export function fromOpenAIResponsesResult(
     textParts.join("\n").trim() || (result.output_text ?? "").trim();
 
   return { content, toolCalls };
+}
+
+function withOpenAIMeta(
+  response: ModelResponse,
+  modelId: string,
+  providerLabel: string,
+  startedAt: number,
+  timeToFirstTokenMs?: number,
+  raw?: OpenAIResponsesResult,
+): ModelResponse {
+  const usage = raw?.usage;
+  return {
+    ...response,
+    meta: {
+      provider: providerLabel.toLowerCase().includes("openrouter")
+        ? "openrouter"
+        : "openai",
+      modelId,
+      latencyMs: Date.now() - startedAt,
+      ...(timeToFirstTokenMs !== undefined ? { timeToFirstTokenMs } : {}),
+      ...(raw?.status ? { finishReason: String(raw.status) } : {}),
+      ...(usage
+        ? {
+            usage: {
+              ...(typeof usage.input_tokens === "number"
+                ? { inputTokens: usage.input_tokens }
+                : {}),
+              ...(typeof usage.output_tokens === "number"
+                ? { outputTokens: usage.output_tokens }
+                : {}),
+              ...(typeof usage.input_tokens_details?.cached_tokens === "number"
+                ? {
+                    cachedInputTokens:
+                      usage.input_tokens_details.cached_tokens,
+                  }
+                : {}),
+              ...(typeof usage.output_tokens_details?.reasoning_tokens ===
+              "number"
+                ? {
+                    reasoningTokens:
+                      usage.output_tokens_details.reasoning_tokens,
+                  }
+                : {}),
+            },
+          }
+        : {}),
+    },
+  };
 }
 
 function safeJsonStringify(value: unknown): string {

@@ -35,7 +35,9 @@ export function createWorkspaceCreateBlankDocxTool(input: {
     name: WORKSPACE_TOOL_NAMES.createBlankDocx,
     description:
       "Create a new blank Word (.docx) document in the current workspace. " +
-      "Use when the user asks for a new blank document or a fresh file to write into. " +
+      "When the user wants a NEW document, call this tool ALONE as your first action " +
+      "(no inspect, no inserts in the same turn). " +
+      "After it succeeds, author content with document mutation tools on the next turn. " +
       "Returns the new document id — it becomes the primary document for later tools in this run. " +
       "Do not invent other create-document tool names; create_blank_docx is an engine capability id, not a callable tool.",
     risk: "safe",

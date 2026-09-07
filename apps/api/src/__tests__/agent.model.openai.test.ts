@@ -119,7 +119,10 @@ test("OpenAI adapter: text-only response", async () => {
     messages: [{ role: "user", content: "Hi" }],
     tools: [],
   });
-  assert.deepEqual(result, { content: "Plain answer", toolCalls: [] });
+  assert.equal(result.content, "Plain answer");
+  assert.deepEqual(result.toolCalls, []);
+  assert.equal(result.meta?.provider, "openai");
+  assert.equal(result.meta?.modelId, "gpt-test");
 });
 
 test("OpenAI adapter: one tool call", async () => {

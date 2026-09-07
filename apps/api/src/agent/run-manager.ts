@@ -178,6 +178,8 @@ function toLiveAgentEvent(
       };
     case "turn.started":
     case "turn.completed":
+    case "model.turn.metrics":
+    case "tool.execution.metrics":
       return null;
     case "message.started":
       return {

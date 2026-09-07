@@ -331,9 +331,10 @@ export function createDocumentInsertParagraphsTool(): AgentTool<
       properties: {
         texts: {
           type: "array",
-          items: { type: "string" },
+          items: { type: "string", minLength: 1 },
+          minItems: 1,
           description:
-            "Ordered paragraph texts to insert (prefer multi-sentence prose per entry)",
+            "Non-empty ordered paragraph texts (prefer multi-sentence prose per entry)",
         },
         placement: PARAGRAPH_PLACEMENT_SCHEMA,
       },
@@ -343,14 +344,33 @@ export function createDocumentInsertParagraphsTool(): AgentTool<
     parseInput(raw) {
       const obj = assertObject(raw, DOCUMENT_TOOL_NAMES.insertParagraphs);
       if (!Array.isArray(obj.texts)) {
-        invalidInput("document.insert_paragraphs requires a texts array");
+        invalidInput(
+          "document.insert_paragraphs requires texts: string[] (non-empty)",
+        );
+      }
+      if (obj.texts.length === 0) {
+        invalidInput(
+          "document.insert_paragraphs texts must contain at least one string",
+        );
       }
       const texts: string[] = [];
       for (const item of obj.texts) {
         if (typeof item !== "string") {
-          invalidInput("document.insert_paragraphs texts must be strings");
+          invalidInput(
+            "document.insert_paragraphs texts entries must be strings",
+          );
+        }
+        if (item.length === 0) {
+          invalidInput(
+            "document.insert_paragraphs texts entries must be non-empty strings",
+          );
         }
         texts.push(item);
+      }
+      if (obj.placement === undefined) {
+        invalidInput(
+          "document.insert_paragraphs requires placement: { kind: start|end|before|after, handle? }",
+        );
       }
       const placement = parseParagraphPlacement(
         obj.placement,

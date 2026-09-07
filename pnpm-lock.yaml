@@ -201,8 +201,8 @@ importers:
         version: 5.9.3
     optionalDependencies:
       '@opensuite/engine':
-        specifier: file:../../../opensuite-engine/crates/opensuite-node
-        version: file:../opensuite-engine/crates/opensuite-node
+        specifier: link:../../../opensuite-engine/crates/opensuite-node
+        version: link:../../../opensuite-engine/crates/opensuite-node
 
 packages:
 
@@ -1326,9 +1326,6 @@ packages:
   '@noble/hashes@2.4.0':
     resolution: {integrity: sha512-X5XaVWZIBCT7HHZGm5I7ZQXDwLG+bGXuSrMQAW+7Zvl87h1kmc1ZB1VSRJcpUfoUrGQp4Fkoxm5kZ+Ms+aW+eA==}
     engines: {node: '>= 20.19.0'}
-
-  '@opensuite/engine@file:../opensuite-engine/crates/opensuite-node':
-    resolution: {directory: ../opensuite-engine/crates/opensuite-node, type: directory}
 
   '@opentelemetry/semantic-conventions@1.43.0':
     resolution: {integrity: sha512-eSYWTm620tTk45EKSedaUL8MFYI8hW164hIXsgIHyxu3VobUB3fFCu5t0hQby6OoWRPsG1KkKUG2M5UadiLiVg==}
@@ -3618,9 +3615,6 @@ snapshots:
   '@noble/ciphers@2.4.0': {}
 
   '@noble/hashes@2.4.0': {}
-
-  '@opensuite/engine@file:../opensuite-engine/crates/opensuite-node':
-    optional: true
 
   '@opentelemetry/semantic-conventions@1.43.0': {}
 

@@ -71,7 +71,6 @@ test("DOCX advertised caps → first model request gets exactly those document t
   assert.equal(result.status, "completed");
   assert.deepEqual(firstTools, [
     "agent.ping",
-    DOCUMENT_TOOL_NAMES.capabilities,
     DOCUMENT_TOOL_NAMES.find,
     DOCUMENT_TOOL_NAMES.insertTableRows,
     DOCUMENT_TOOL_NAMES.inspect,
@@ -107,7 +106,6 @@ test("inspect+find only → mutation tools absent from first model request", asy
   });
 
   assert.deepEqual(firstTools, [
-    DOCUMENT_TOOL_NAMES.capabilities,
     DOCUMENT_TOOL_NAMES.find,
     DOCUMENT_TOOL_NAMES.inspect,
   ]);

@@ -5,6 +5,7 @@ import {
   AgentRunner,
   ToolRegistry,
   assistantOnlyResponse,
+  createInMemoryDocumentMutationExecutor,
   createScriptedAgentModel,
   listDocumentToolDescriptors,
   toolCallResponse,
@@ -51,7 +52,13 @@ test("workspace.create_blank_docx creates Version 1 and advances primary", async
 
   const runtime: DocumentRuntime = {
     async capabilities() {
-      return { ids: new Set(["document.inspect", "insert_paragraph"]) };
+      return {
+        ids: new Set([
+          "document.inspect",
+          "document.mutate",
+          "insert_paragraph",
+        ]),
+      };
     },
     async inspect() {
       return {
@@ -67,7 +74,11 @@ test("workspace.create_blank_docx creates Version 1 and advances primary", async
       };
     },
     async execute() {
-      throw new Error("unused");
+      return {
+        status: "success",
+        diagnostics: [],
+        artifactBytes: new Uint8Array([1]),
+      };
     },
   };
 
@@ -81,11 +92,20 @@ test("workspace.create_blank_docx creates Version 1 and advances primary", async
           input: { name: "Board Report" },
         },
       ]),
+      // After create, runner forces tools until a mutation lands.
+      toolCallResponse("", [
+        {
+          id: "c2",
+          name: "document.insert_paragraph",
+          input: { text: "Hello", placement: { kind: "end" } },
+        },
+      ]),
       assistantOnlyResponse("Created blank document."),
     ]),
     tools: ToolRegistry.create([tool]),
     documentToolCatalog: listDocumentToolDescriptors(),
     runtime,
+    mutations: createInMemoryDocumentMutationExecutor(runtime),
     events: {
       async emit(event) {
         events.push(event.type);

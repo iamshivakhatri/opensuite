@@ -9,11 +9,11 @@ import {
 
 import {
   cancelledError,
-  DEFAULT_AGENT_SYSTEM,
   ensureObjectSchema,
   formatToolResultContent,
   isAbortLike,
   normalizeProviderError,
+  resolveAgentSystemPrompt,
 } from "./shared.js";
 
 /** Chat Completions shapes — OpenRouter's OpenAI-compatible surface. */
@@ -54,14 +54,21 @@ export interface OpenAIChatCompletion {
       readonly content?: string | null;
       readonly tool_calls?: readonly OpenAIChatToolCall[];
     };
+    readonly finish_reason?: string | null;
   }>;
+  readonly usage?: {
+    readonly prompt_tokens?: number;
+    readonly completion_tokens?: number;
+    readonly prompt_tokens_details?: { readonly cached_tokens?: number };
+    readonly completion_tokens_details?: { readonly reasoning_tokens?: number };
+  };
 }
 
 export interface OpenAIChatCompletionsCreateParams {
   readonly model: string;
   readonly messages: readonly OpenAIChatMessage[];
   readonly tools?: readonly OpenAIChatTool[];
-  readonly tool_choice?: "auto";
+  readonly tool_choice?: "auto" | "required";
   readonly stream?: boolean;
 }
 
@@ -109,7 +116,7 @@ export interface OpenRouterAgentModelOptions {
 export function createOpenRouterAgentModel(
   options: OpenRouterAgentModelOptions,
 ): AgentModel {
-  const system = options.system ?? DEFAULT_AGENT_SYSTEM;
+  const systemOverride = options.system;
   const providerLabel = options.providerLabel ?? "OpenRouter";
 
   return {
@@ -117,6 +124,10 @@ export function createOpenRouterAgentModel(
       if (request.signal?.aborted) {
         throw cancelledError();
       }
+
+      const system = resolveAgentSystemPrompt(request, systemOverride);
+      const startedAt = Date.now();
+      let timeToFirstTokenMs: number | undefined;
 
       const baseParams = {
         model: options.model,
@@ -127,7 +138,10 @@ export function createOpenRouterAgentModel(
         ...(request.tools.length > 0
           ? {
               tools: request.tools.map(toOpenAIChatTool),
-              tool_choice: "auto" as const,
+              tool_choice:
+                request.toolChoice === "required"
+                  ? ("required" as const)
+                  : ("auto" as const),
             }
           : {}),
       };
@@ -156,11 +170,17 @@ export function createOpenRouterAgentModel(
             if (!delta) continue;
 
             if (typeof delta.content === "string" && delta.content.length > 0) {
+              if (timeToFirstTokenMs === undefined) {
+                timeToFirstTokenMs = Date.now() - startedAt;
+              }
               content += delta.content;
               await request.onTextDelta(delta.content);
             }
 
             for (const toolDelta of delta.tool_calls ?? []) {
+              if (timeToFirstTokenMs === undefined) {
+                timeToFirstTokenMs = Date.now() - startedAt;
+              }
               const index = toolDelta.index ?? 0;
               const current = toolAcc.get(index) ?? {
                 id: "",
@@ -180,6 +200,12 @@ export function createOpenRouterAgentModel(
             }
           }
 
+          // Stream may end quietly when AbortSignal fires — treat as cancel so
+          // AgentRunner timeouts fail the run instead of "completing" empty.
+          if (request.signal?.aborted) {
+            throw cancelledError();
+          }
+
           const toolCalls: ModelToolCall[] = [...toolAcc.entries()]
             .sort((a, b) => a[0] - b[0])
             .map(([, call]) => ({
@@ -189,17 +215,28 @@ export function createOpenRouterAgentModel(
             }))
             .filter((call) => call.name.length > 0);
 
-          return {
-            content: content.trim(),
-            toolCalls,
-          };
+          return withOpenRouterMeta(
+            {
+              content: content.trim(),
+              toolCalls,
+            },
+            options.model,
+            startedAt,
+            timeToFirstTokenMs,
+          );
         }
 
         const completion = (await options.client.chat.completions.create(
           { ...baseParams, stream: false },
           callOptions,
         )) as OpenAIChatCompletion;
-        return fromOpenAIChatCompletion(completion);
+        return withOpenRouterMeta(
+          fromOpenAIChatCompletion(completion),
+          options.model,
+          startedAt,
+          timeToFirstTokenMs,
+          completion,
+        );
       } catch (error) {
         if (request.signal?.aborted || isAbortLike(error)) {
           throw cancelledError(error);
@@ -276,6 +313,52 @@ export function fromOpenAIChatCompletion(
   return {
     content: (message?.content ?? "").trim(),
     toolCalls,
+  };
+}
+
+function withOpenRouterMeta(
+  response: ModelResponse,
+  modelId: string,
+  startedAt: number,
+  timeToFirstTokenMs?: number,
+  raw?: OpenAIChatCompletion,
+): ModelResponse {
+  const usage = raw?.usage;
+  const finishReason = raw?.choices[0]?.finish_reason;
+  return {
+    ...response,
+    meta: {
+      provider: "openrouter",
+      modelId,
+      latencyMs: Date.now() - startedAt,
+      ...(timeToFirstTokenMs !== undefined ? { timeToFirstTokenMs } : {}),
+      ...(finishReason ? { finishReason: String(finishReason) } : {}),
+      ...(usage
+        ? {
+            usage: {
+              ...(typeof usage.prompt_tokens === "number"
+                ? { inputTokens: usage.prompt_tokens }
+                : {}),
+              ...(typeof usage.completion_tokens === "number"
+                ? { outputTokens: usage.completion_tokens }
+                : {}),
+              ...(typeof usage.prompt_tokens_details?.cached_tokens === "number"
+                ? {
+                    cachedInputTokens:
+                      usage.prompt_tokens_details.cached_tokens,
+                  }
+                : {}),
+              ...(typeof usage.completion_tokens_details?.reasoning_tokens ===
+              "number"
+                ? {
+                    reasoningTokens:
+                      usage.completion_tokens_details.reasoning_tokens,
+                  }
+                : {}),
+            },
+          }
+        : {}),
+    },
   };
 }
 

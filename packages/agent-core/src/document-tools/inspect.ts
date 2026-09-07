@@ -49,7 +49,8 @@ export function createDocumentCapabilitiesTool(): AgentTool<
   return defineDocumentTool({
     name: DOCUMENT_TOOL_NAMES.capabilities,
     description:
-      "List document capabilities supported by the current DocumentRuntime for the active document (inspect, find, mutate, …).",
+      "Internal/runtime capability listing for the active document. " +
+      "Not part of the model-facing catalog — bootstrap already filters tools by DocumentRuntime.capabilities().",
     executionMode: "parallel-safe",
     inputSchema: {
       type: "object",
@@ -82,10 +83,12 @@ export function createDocumentInspectTool(): AgentTool<
     name: DOCUMENT_TOOL_NAMES.inspect,
     description:
       "Inspect the active Office document with a targeted focus. " +
+      "Use only when you need structure/targets for the document you will edit — " +
+      "not before creating a new blank document, and not for blank append/end authoring. " +
       "DOCX: overview (compact structure/counts), headings (outline), paragraphs (body prose page), " +
       "body_blocks (ordered paragraphs+tables with opaque handles for insert_paragraph placement), " +
       "tables (rows/cells with opaque artifact-local handles), context (nearby content around exact text). " +
-      "Prefer overview first when structure is unknown; body_blocks when placing relative to existing content; " +
+      "body_blocks when placing relative to existing content; " +
       "tables for tabular work — returned table/row/column/cell handles can be passed to table mutation tools " +
       "for the same artifact version; when present, object affordances indicate whether an operation is safe " +
       "on that exact target (supported:false → do not blindly call that op on that target); " +

@@ -130,12 +130,45 @@ function withoutTransient(
   );
 }
 
+/**
+ * Keep finished Thinking/Generating segments in the timeline so users can see
+ * the cadence between tools (not only the tool names).
+ */
+function freezeThoughtSegment(
+  lines: readonly AgentProgressLine[],
+  nowMs: number,
+): AgentProgressLine[] {
+  const out: AgentProgressLine[] = [];
+  for (const line of lines) {
+    if (
+      (line.id === "thinking" || line.id === "writing") &&
+      line.status === "active"
+    ) {
+      out.push({
+        id: `thought:${line.startedAt ?? nowMs}`,
+        label: "Thought",
+        status: "done",
+        startedAt: line.startedAt ?? nowMs,
+        endedAt: nowMs,
+      });
+      continue;
+    }
+    if (line.id === "thinking" || line.id === "writing") {
+      continue;
+    }
+    out.push(line);
+  }
+  return out;
+}
+
 /** Model is working between tools — never re-introduce initial "Thinking…". */
 function withGenerating(
   lines: readonly AgentProgressLine[],
   now: number,
 ): AgentProgressLine[] {
-  const base = withoutTransient(lines);
+  const base = freezeThoughtSegment(lines, now).filter(
+    (line) => line.id !== "writing",
+  );
   const existing = lines.find(
     (line) => line.id === "writing" && line.status === "active",
   );
@@ -316,7 +349,7 @@ export function reduceAgentProgress(
           return [...lines];
         }
         return [
-          ...freezeActive(withoutTransient(lines), nowMs),
+          ...freezeActive(freezeThoughtSegment(lines, nowMs), nowMs),
           {
             id: "writing",
             label: "Generating…",
@@ -336,12 +369,12 @@ export function reduceAgentProgress(
       );
     }
     case "message.completed":
-      return freezeActive(withoutTransient(lines), nowMs);
+      return freezeActive(freezeThoughtSegment(lines, nowMs), nowMs);
     case "tool.started": {
       const toolCallId = String(event.data.toolCallId ?? "tool");
       const toolName = String(event.data.toolName ?? "tool");
       const labels = toolLabels(toolName);
-      const kept = withoutTransient(lines).filter(
+      const kept = freezeThoughtSegment(lines, nowMs).filter(
         (line) => line.id !== `tool:${toolCallId}`,
       );
       return [
@@ -360,7 +393,9 @@ export function reduceAgentProgress(
       const labels = toolLabels(toolName);
       const id = `tool:${toolCallId}`;
       const previous = lines.find((line) => line.id === id);
-      const withoutActive = withoutTransient(lines).filter((line) => line.id !== id);
+      const withoutActive = freezeThoughtSegment(lines, nowMs).filter(
+        (line) => line.id !== id,
+      );
       return withGenerating(
         [
           ...withoutActive,
@@ -382,7 +417,9 @@ export function reduceAgentProgress(
         typeof event.data.code === "string" ? event.data.code : undefined;
       const id = `tool:${toolCallId}`;
       const previous = lines.find((line) => line.id === id);
-      const withoutActive = withoutTransient(lines).filter((line) => line.id !== id);
+      const withoutActive = freezeThoughtSegment(lines, nowMs).filter(
+        (line) => line.id !== id,
+      );
       return withGenerating(
         [
           ...withoutActive,
@@ -400,7 +437,7 @@ export function reduceAgentProgress(
     case "confirmation.required": {
       const toolCallId = String(event.data.toolCallId ?? "confirm");
       return [
-        ...freezeActive(withoutTransient(lines), nowMs).filter(
+        ...freezeActive(freezeThoughtSegment(lines, nowMs), nowMs).filter(
           (line) => line.status === "done" || line.status === "error",
         ),
         {
@@ -412,10 +449,10 @@ export function reduceAgentProgress(
       ];
     }
     case "agent.completed":
-      return freezeActive(withoutTransient(lines), nowMs);
+      return freezeActive(freezeThoughtSegment(lines, nowMs), nowMs);
     case "agent.failed":
       return [
-        ...freezeActive(withoutTransient(lines), nowMs),
+        ...freezeActive(freezeThoughtSegment(lines, nowMs), nowMs),
         {
           id: "failed",
           label: "Something went wrong",
@@ -426,7 +463,7 @@ export function reduceAgentProgress(
       ];
     case "agent.cancelled":
       return [
-        ...freezeActive(withoutTransient(lines), nowMs),
+        ...freezeActive(freezeThoughtSegment(lines, nowMs), nowMs),
         {
           id: "cancelled",
           label: "Stopped",
@@ -488,9 +525,8 @@ export function groupProgressLines(
 ): ProgressGroup[] {
   const groups: ProgressGroup[] = [];
   for (const line of lines) {
-    // Skip transient "Generating…" noise in the expanded list — it is the
-    // between-tools filler, not a meaningful user-facing step.
-    if (line.id === "writing" || line.id === "thinking") continue;
+    // Skip only the live Generating filler — finished "Thought" segments stay.
+    if (line.id === "writing") continue;
 
     const baseLabel = line.label
       .replace(/…$/, "")
@@ -500,6 +536,8 @@ export function groupProgressLines(
       .replace(/^Replacing /, "Replaced ")
       .replace(/^Searching /, "Searched ")
       .replace(/^Creating /, "Created ")
+      .replace(/^Setting /, "Set ")
+      .replace(/^Formatting /, "Formatted ")
       .trim();
 
     const last = groups[groups.length - 1];
@@ -545,10 +583,13 @@ export function progressSummaryLabel(
 ): string {
   const visible = visibleAgentProgress(lines);
   const groups = groupProgressLines(visible);
-  const doneCount = groups.reduce(
-    (sum, group) => sum + (group.status === "active" ? 0 : group.count),
-    0,
-  );
+  const doneCount = groups.reduce((sum, group) => {
+    if (group.status === "active") return sum;
+    // Thought cadence rows stay visible in the expanded list but do not
+    // inflate the "Finished N steps" headline.
+    if (group.key === "Thought") return sum;
+    return sum + group.count;
+  }, 0);
   const active = [...groups].reverse().find((group) => group.status === "active");
 
   if (options?.live) {

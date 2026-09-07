@@ -3,9 +3,24 @@ import {
   buildDocumentAgentSystemPrompt,
   shapeDiagnosticForToolResult,
 } from "@opensuite/agent-core";
-import type { ModelMessage } from "@opensuite/agent-core";
+import type { ModelMessage, ModelRequest } from "@opensuite/agent-core";
 
-/** Provider-neutral Office agent instruction (behavioral; tools come from catalog). */
+/**
+ * Resolve the effective system prompt for a model turn.
+ * Prefer run capabilities so mutation/authoring guidance matches the tool catalog.
+ * Static `override` is only for explicit test injection.
+ */
+export function resolveAgentSystemPrompt(
+  request: Pick<ModelRequest, "capabilities">,
+  override?: string,
+): string {
+  if (override !== undefined) {
+    return override;
+  }
+  return buildDocumentAgentSystemPrompt(request.capabilities);
+}
+
+/** @deprecated Prefer resolveAgentSystemPrompt(request) — static prompt omits mutate guidance. */
 export const DEFAULT_AGENT_SYSTEM = buildDocumentAgentSystemPrompt();
 
 export function cancelledError(cause?: unknown): AgentCoreError {

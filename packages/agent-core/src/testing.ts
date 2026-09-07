@@ -109,6 +109,7 @@ export function createFakeAgentModel(
       return {
         content: response.content,
         toolCalls: response.toolCalls ?? [],
+        ...(response.meta !== undefined ? { meta: response.meta } : {}),
       };
     },
   };

@@ -51,6 +51,7 @@ test("BASIC: user request → model final response", async () => {
     "turn.started",
     "message.started",
     "message.delta",
+    "model.turn.metrics",
     "message.completed",
     "turn.completed",
     "agent.completed",

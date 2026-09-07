@@ -16,6 +16,7 @@ import { ArtifactHandleRegistry } from "./artifact-handles.js";
 import {
   filterDocumentToolsByCapabilities,
 } from "./document-tools.js";
+import { transformContext } from "./model-context.js";
 import {
   requiresConfirmation,
   toolExecutionMode,
@@ -33,6 +34,13 @@ import type {
 } from "./request.js";
 import type { DocumentRuntime } from "./runtime.js";
 import type { SteeringSource } from "./steering.js";
+import {
+  elapsedMs,
+  measureJsonBytes,
+  measureMessagesBytes,
+  measureToolArgumentBytes,
+  measureToolCatalogBytes,
+} from "./telemetry.js";
 import { ToolRegistry } from "./tools.js";
 import {
   createCapabilities,
@@ -44,11 +52,41 @@ import {
 const DEFAULT_MAX_TURNS = 20;
 /** Same tool failing this many times → block further calls and force an answer. */
 const MAX_FAILURES_PER_TOOL = 2;
+/** Hard cap on a single provider round-trip so chat essays cannot hang the UI for minutes. */
+const DEFAULT_MODEL_TURN_TIMEOUT_MS = 90_000;
 
 const REPEATED_FAILURE_STOP_MESSAGE =
   "Runtime policy: stop calling tools. The same tool already failed twice in this run. " +
   "Summarize what succeeded, what failed (include the error codes if known), and ask the user how to proceed. " +
   "Do not invent workarounds or retry the failed tool.";
+
+const USE_TOOLS_NUDGE_MESSAGE =
+  "Runtime policy: you must use tools for document work — do not put the document body in chat. " +
+  "If the user wants a NEW document, call workspace.create_blank_docx alone first. " +
+  "If editing the already-open document, use inspect / set_paragraph_style / mutation tools as needed — do not create another blank file. " +
+  "Short confirmation text only after tools succeed.";
+
+const AUTHORING_TIMEOUT_RETRY_MESSAGE =
+  "Runtime policy: previous authoring model turn timed out. " +
+  "Call tools now with a compact first pass only: document.insert_paragraphs " +
+  "(title + short intro), document.set_paragraph_style Heading 1 on the title, " +
+  "and one document.create_table with at most 6–8 rows. " +
+  "Do not generate a giant single payload.";
+
+const CREATE_BLANK_TOOL = "workspace.create_blank_docx";
+
+/**
+ * After blank create, only advertise core authoring tools until the first write
+ * lands. A full catalog + tool_choice=required can hang slow models for minutes
+ * while they stall before the first token.
+ */
+const POST_CREATE_AUTHORING_TOOL_NAMES = new Set<string>([
+  "document.insert_paragraph",
+  "document.insert_paragraphs",
+  "document.create_table",
+  "document.set_table_cells_text",
+  "document.set_paragraph_style",
+]);
 
 
 /** Run-scoped mutable pointer to the active primary document version. */
@@ -82,6 +120,8 @@ export interface AgentRunnerOptions {
   readonly capabilities?: RuntimeCapabilities;
   /** Hard cap on model turns. Default 20. */
   readonly maxTurns?: number;
+  /** Per model.complete wall-time budget in ms. Default 90000. */
+  readonly modelTurnTimeoutMs?: number;
   /** Injectable clock for deterministic event timestamps in tests. */
   readonly now?: () => Date;
   /** Injectable id factory for turn/message ids. */
@@ -109,6 +149,7 @@ export class AgentRunner {
   private readonly steering: SteeringSource | undefined;
   private readonly capabilities: RuntimeCapabilities;
   private readonly maxTurns: number;
+  private readonly modelTurnTimeoutMs: number;
   private readonly now: () => Date;
   private readonly createId: () => string;
 
@@ -123,6 +164,8 @@ export class AgentRunner {
     this.steering = options.steering;
     this.capabilities = options.capabilities ?? createCapabilities();
     this.maxTurns = options.maxTurns ?? DEFAULT_MAX_TURNS;
+    this.modelTurnTimeoutMs =
+      options.modelTurnTimeoutMs ?? DEFAULT_MODEL_TURN_TIMEOUT_MS;
     this.now = options.now ?? (() => new Date());
     this.createId = options.createId ?? randomUUID;
   }
@@ -153,6 +196,8 @@ export class AgentRunner {
     const toolFailureCounts = new Map<string, number>();
     let forceAnswerOnly = false;
     let stopNudgeSent = false;
+    let useToolsNudgeSent = false;
+    let authoringTimeoutRetrySent = false;
 
     await this.emit({
       type: "agent.started",
@@ -239,23 +284,136 @@ export class AgentRunner {
             at: this.timestamp(),
           });
 
-          response = await this.model.complete({
-            messages: transcript,
-            // Empty tools when circuit-broken — model must answer, not keep looping.
-            tools: forceAnswerOnly ? [] : activeTools.definitions(),
+          const modelMessages = transformContext(transcript);
+          const toolsForModel = forceAnswerOnly
+            ? []
+            : selectToolsForModel(activeTools, toolOutcomes);
+          const toolChoice = resolveToolChoice(
+            forceAnswerOnly,
+            activeTools,
+            toolOutcomes,
+          );
+          const contextMessageBytes = measureMessagesBytes(modelMessages);
+          const toolCatalogBytes = measureToolCatalogBytes(toolsForModel);
+          const modelStartedAt = Date.now();
+
+          const timeout = createTimeoutSignal(
             signal,
-            capabilities: runCapabilities,
-            onTextDelta: async (delta) => {
-              if (!delta) return;
+            this.modelTurnTimeoutMs,
+          );
+          try {
+            response = await this.model.complete({
+              messages: modelMessages,
+              // Empty tools when circuit-broken — model must answer, not keep looping.
+              tools: toolsForModel,
+              signal: timeout.signal,
+              capabilities: runCapabilities,
+              ...(toolChoice !== undefined ? { toolChoice } : {}),
+              onTextDelta: async (delta) => {
+                if (!delta) return;
+                await this.emit({
+                  type: "message.delta",
+                  runId: request.runId,
+                  messageId,
+                  role: "assistant",
+                  delta,
+                  at: this.timestamp(),
+                });
+              },
+            });
+          } catch (error) {
+            if (signal.aborted) {
+              throw error;
+            }
+            if (timeout.timedOut) {
+              // One retry after create when the first authoring turn stalls
+              // (common with slow models under tool_choice=required).
+              if (
+                !authoringTimeoutRetrySent &&
+                hasSuccessfulCreate(toolOutcomes) &&
+                !hasSuccessfulMutation(toolOutcomes)
+              ) {
+                authoringTimeoutRetrySent = true;
+                transcript.push({
+                  role: "user",
+                  content: AUTHORING_TIMEOUT_RETRY_MESSAGE,
+                });
+                await this.emit({
+                  type: "turn.completed",
+                  runId: request.runId,
+                  turnId,
+                  at: this.timestamp(),
+                });
+                continue;
+              }
+              const diagnostic: Diagnostic = {
+                code: "MODEL_FAILURE",
+                severity: "error",
+                message: `Model turn exceeded ${this.modelTurnTimeoutMs}ms without completing`,
+                details: {
+                  timeoutMs: this.modelTurnTimeoutMs,
+                  turnIndex: turn,
+                },
+              };
+              diagnostics.push(diagnostic);
               await this.emit({
-                type: "message.delta",
+                type: "agent.failed",
                 runId: request.runId,
-                messageId,
-                role: "assistant",
-                delta,
+                diagnostic,
                 at: this.timestamp(),
               });
-            },
+              return {
+                status: "failed",
+                summary: diagnostic.message,
+                diagnostics,
+                toolOutcomes: [...toolOutcomes],
+              };
+            }
+            throw error;
+          } finally {
+            timeout.clear();
+          }
+
+          const modelWallMs =
+            response.meta?.latencyMs ?? elapsedMs(modelStartedAt);
+          const toolCallsForMetrics = forceAnswerOnly
+            ? []
+            : (response.toolCalls ?? []);
+          await this.emit({
+            type: "model.turn.metrics",
+            runId: request.runId,
+            turnId,
+            turnIndex: turn,
+            at: this.timestamp(),
+            ...(response.meta?.provider !== undefined
+              ? { provider: response.meta.provider }
+              : {}),
+            ...(response.meta?.modelId !== undefined
+              ? { modelId: response.meta.modelId }
+              : {}),
+            modelWallMs,
+            ...(response.meta?.timeToFirstTokenMs !== undefined
+              ? { timeToFirstTokenMs: response.meta.timeToFirstTokenMs }
+              : {}),
+            ...(response.meta?.usage?.inputTokens !== undefined
+              ? { inputTokens: response.meta.usage.inputTokens }
+              : {}),
+            ...(response.meta?.usage?.cachedInputTokens !== undefined
+              ? { cachedInputTokens: response.meta.usage.cachedInputTokens }
+              : {}),
+            ...(response.meta?.usage?.outputTokens !== undefined
+              ? { outputTokens: response.meta.usage.outputTokens }
+              : {}),
+            ...(response.meta?.usage?.reasoningTokens !== undefined
+              ? { reasoningTokens: response.meta.usage.reasoningTokens }
+              : {}),
+            toolCallCount: toolCallsForMetrics.length,
+            toolArgumentBytes: measureToolArgumentBytes(toolCallsForMetrics),
+            contextMessageBytes,
+            toolCatalogBytes,
+            ...(response.meta?.finishReason !== undefined
+              ? { finishReason: response.meta.finishReason }
+              : {}),
           });
 
           await this.emit({
@@ -302,6 +460,51 @@ export class AgentRunner {
         });
 
         if (toolCalls.length === 0) {
+          if (
+            !forceAnswerOnly &&
+            !useToolsNudgeSent &&
+            shouldNudgeToUseTools(activeTools, toolOutcomes)
+          ) {
+            useToolsNudgeSent = true;
+            transcript.push({
+              role: "user",
+              content: USE_TOOLS_NUDGE_MESSAGE,
+            });
+            await this.emit({
+              type: "turn.completed",
+              runId: request.runId,
+              turnId,
+              at: this.timestamp(),
+            });
+            continue;
+          }
+
+          if (
+            !forceAnswerOnly &&
+            shouldNudgeToUseTools(activeTools, toolOutcomes)
+          ) {
+            const diagnostic: Diagnostic = {
+              code: "MODEL_FAILURE",
+              severity: "error",
+              message:
+                "Model finished without calling required tools after a nudge",
+              details: { turnIndex: turn },
+            };
+            diagnostics.push(diagnostic);
+            await this.emit({
+              type: "agent.failed",
+              runId: request.runId,
+              diagnostic,
+              at: this.timestamp(),
+            });
+            return {
+              status: "failed",
+              summary: diagnostic.message,
+              diagnostics,
+              toolOutcomes: [...toolOutcomes],
+            };
+          }
+
           await this.emit({
             type: "turn.completed",
             runId: request.runId,
@@ -660,6 +863,17 @@ export class AgentRunner {
         diagnostic,
         at: this.timestamp(),
       });
+      await this.emit({
+        type: "tool.execution.metrics",
+        runId: request.runId,
+        toolCallId: call.id,
+        toolName: tool.name,
+        at: this.timestamp(),
+        wallMs: 0,
+        inputBytes: measureJsonBytes(call.input),
+        resultBytes: measureJsonBytes(diagnostic),
+        success: false,
+      });
       return {
         toolCallId: call.id,
         toolName: tool.name,
@@ -768,9 +982,13 @@ export class AgentRunner {
       handles: handleRegistry,
     };
 
+    const inputBytes = measureJsonBytes(input);
+    const toolStartedAt = Date.now();
+
     try {
       this.throwIfAborted(signal);
       const output = await tool.execute(input, ctx);
+      const wallMs = elapsedMs(toolStartedAt);
       if (isPersistedDocumentMutationToolResult(output)) {
         documentState.primary = output.document;
         await this.emit({
@@ -795,6 +1013,17 @@ export class AgentRunner {
         output,
         at: this.timestamp(),
       });
+      await this.emit({
+        type: "tool.execution.metrics",
+        runId: request.runId,
+        toolCallId: call.id,
+        toolName: tool.name,
+        at: this.timestamp(),
+        wallMs,
+        inputBytes,
+        resultBytes: measureJsonBytes(output),
+        success: true,
+      });
       return {
         toolCallId: call.id,
         toolName: tool.name,
@@ -806,6 +1035,7 @@ export class AgentRunner {
       if (this.isCancellation(error, signal)) {
         throw error;
       }
+      const wallMs = elapsedMs(toolStartedAt);
       const diagnostic = this.toDiagnostic(
         error,
         "TOOL_FAILURE",
@@ -822,6 +1052,17 @@ export class AgentRunner {
         toolName: tool.name,
         diagnostic,
         at: this.timestamp(),
+      });
+      await this.emit({
+        type: "tool.execution.metrics",
+        runId: request.runId,
+        toolCallId: call.id,
+        toolName: tool.name,
+        at: this.timestamp(),
+        wallMs,
+        inputBytes,
+        resultBytes: measureJsonBytes(diagnostic),
+        success: false,
       });
       return {
         toolCallId: call.id,
@@ -922,6 +1163,114 @@ function steeringToUserMessage(message: SteeringMessage): ModelMessage {
   return {
     role: "user",
     content: message.content,
+  };
+}
+
+function isDocumentWriteTool(name: string): boolean {
+  if (!name.startsWith("document.")) return false;
+  return (
+    name !== "document.inspect" &&
+    name !== "document.find" &&
+    name !== "document.capabilities"
+  );
+}
+
+function hasSuccessfulCreate(
+  outcomes: readonly ToolOutcome[],
+): boolean {
+  return outcomes.some(
+    (o) => o.status === "succeeded" && o.toolName === CREATE_BLANK_TOOL,
+  );
+}
+
+function hasSuccessfulMutation(
+  outcomes: readonly ToolOutcome[],
+): boolean {
+  return outcomes.some(
+    (o) => o.status === "succeeded" && isDocumentWriteTool(o.toolName),
+  );
+}
+
+function resolveToolChoice(
+  forceAnswerOnly: boolean,
+  tools: ToolRegistry,
+  outcomes: readonly ToolOutcome[],
+): "auto" | "required" | undefined {
+  if (forceAnswerOnly || tools.definitions().length === 0) {
+    return undefined;
+  }
+  const hasCreate = tools.get(CREATE_BLANK_TOOL) !== undefined;
+  const created = hasSuccessfulCreate(outcomes);
+  const mutated = hasSuccessfulMutation(outcomes);
+  // After blank create, force the authoring turn to use mutation tools.
+  if (created && !mutated) {
+    return "required";
+  }
+  // Greenfield only: force tools until create OR any write lands.
+  // Do not keep forcing create on edit follow-ups after styles/mutations.
+  if (hasCreate && !created && !mutated) {
+    return "required";
+  }
+  return "auto";
+}
+
+function selectToolsForModel(
+  tools: ToolRegistry,
+  outcomes: readonly ToolOutcome[],
+): ReturnType<ToolRegistry["definitions"]> {
+  const defs = tools.definitions();
+  const created = hasSuccessfulCreate(outcomes);
+  const mutated = hasSuccessfulMutation(outcomes);
+  if (created && !mutated) {
+    const narrowed = defs.filter((tool) =>
+      POST_CREATE_AUTHORING_TOOL_NAMES.has(tool.name),
+    );
+    return narrowed.length > 0 ? narrowed : defs;
+  }
+  return defs;
+}
+
+function shouldNudgeToUseTools(
+  tools: ToolRegistry,
+  outcomes: readonly ToolOutcome[],
+): boolean {
+  const hasCreate = tools.get(CREATE_BLANK_TOOL) !== undefined;
+  const created = hasSuccessfulCreate(outcomes);
+  const mutated = hasSuccessfulMutation(outcomes);
+  if (hasCreate && !created && !mutated) return true;
+  if (created && !mutated) return true;
+  return false;
+}
+
+function createTimeoutSignal(
+  parent: AbortSignal,
+  timeoutMs: number,
+): { signal: AbortSignal; timedOut: boolean; clear: () => void } {
+  const controller = new AbortController();
+  let timedOut = false;
+  const onParentAbort = () => {
+    controller.abort();
+  };
+  if (parent.aborted) {
+    controller.abort();
+  } else {
+    parent.addEventListener("abort", onParentAbort, { once: true });
+  }
+  const timer = setTimeout(() => {
+    timedOut = true;
+    controller.abort();
+  }, timeoutMs);
+  return {
+    get signal() {
+      return controller.signal;
+    },
+    get timedOut() {
+      return timedOut;
+    },
+    clear() {
+      clearTimeout(timer);
+      parent.removeEventListener("abort", onParentAbort);
+    },
   };
 }
 

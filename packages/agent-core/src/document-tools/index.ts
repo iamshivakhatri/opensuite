@@ -111,8 +111,10 @@ export type { StructuralHandle } from "./selectors.js";
  * Bootstrap filters this against runtime-advertised capability ids.
  */
 export function listDocumentToolDescriptors(): readonly AgentTool[] {
+  // document.capabilities is intentionally omitted from the model-facing catalog:
+  // bootstrap already capability-gates tools via DocumentRuntime.capabilities().
+  // The factory remains exported for direct/internal use.
   return [
-    createDocumentCapabilitiesTool(),
     createDocumentInspectTool(),
     createDocumentFindTool(),
     createDocumentReplaceTextTool(),

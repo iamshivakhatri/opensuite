@@ -126,6 +126,39 @@ export type AgentEvent =
       readonly type: "agent.cancelled";
       readonly runId: string;
       readonly at: string;
+    }
+  | {
+      /** Dev/runtime model-turn metrics — not product analytics. */
+      readonly type: "model.turn.metrics";
+      readonly runId: string;
+      readonly turnId: string;
+      readonly turnIndex: number;
+      readonly at: string;
+      readonly provider?: string;
+      readonly modelId?: string;
+      readonly modelWallMs: number;
+      readonly timeToFirstTokenMs?: number;
+      readonly inputTokens?: number;
+      readonly cachedInputTokens?: number;
+      readonly outputTokens?: number;
+      readonly reasoningTokens?: number;
+      readonly toolCallCount: number;
+      readonly toolArgumentBytes: number;
+      readonly contextMessageBytes: number;
+      readonly toolCatalogBytes: number;
+      readonly finishReason?: string;
+    }
+  | {
+      /** Dev/runtime tool-execution metrics — not product analytics. */
+      readonly type: "tool.execution.metrics";
+      readonly runId: string;
+      readonly toolCallId: string;
+      readonly toolName: string;
+      readonly at: string;
+      readonly wallMs: number;
+      readonly inputBytes: number;
+      readonly resultBytes: number;
+      readonly success: boolean;
     };
 
 /**

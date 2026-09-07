@@ -118,13 +118,14 @@ npm install
 npm run build   # produces opensuite_node.<platform>-<arch>.node
 
 # in opensuite
-pnpm install    # optionalDependency file: link to crates/opensuite-node
+pnpm install    # optionalDependency link: → sibling crates/opensuite-node
 ```
 
 `packages/engine-client` declares `@opensuite/engine` as an **optionalDependency** via
-`file:../../../opensuite-engine/crates/opensuite-node`. Do not commit native binaries into
-this repo. Smoke test writes `/private/tmp/opensuite-app-engine-adapter-output.docx` for
-manual inspection only.
+`link:../../../opensuite-engine/crates/opensuite-node` (symlink to the live package —
+not `file:`, which copies into the pnpm store and goes stale after `npm run build`).
+Do not commit native binaries into this repo. Smoke test writes
+`/private/tmp/opensuite-app-engine-adapter-output.docx` for manual inspection only.
 
 ## Conceptual Interface
 

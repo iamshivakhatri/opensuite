@@ -18,7 +18,7 @@
     "@opensuite/contracts": "workspace:*"
   },
   "optionalDependencies": {
-    "@opensuite/engine": "file:../../../opensuite-engine/crates/opensuite-node"
+    "@opensuite/engine": "link:../../../opensuite-engine/crates/opensuite-node"
   },
   "devDependencies": {
     "@types/node": "^22.10.2",

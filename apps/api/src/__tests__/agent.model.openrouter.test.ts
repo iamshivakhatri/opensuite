@@ -133,7 +133,10 @@ test("OpenRouter adapter: streams text deltas", async () => {
   });
 
   assert.deepEqual(deltas, ["Hel", "lo"]);
-  assert.deepEqual(result, { content: "Hello", toolCalls: [] });
+  assert.equal(result.content, "Hello");
+  assert.deepEqual(result.toolCalls, []);
+  assert.equal(result.meta?.provider, "openrouter");
+  assert.equal(result.meta?.modelId, "meta-llama/test");
 });
 
 test("OpenRouter adapter: text-only response", async () => {
@@ -148,7 +151,9 @@ test("OpenRouter adapter: text-only response", async () => {
     messages: [{ role: "user", content: "Hi" }],
     tools: [],
   });
-  assert.deepEqual(result, { content: "Plain answer", toolCalls: [] });
+  assert.equal(result.content, "Plain answer");
+  assert.deepEqual(result.toolCalls, []);
+  assert.equal(result.meta?.provider, "openrouter");
 });
 
 test("OpenRouter adapter: one tool call", async () => {

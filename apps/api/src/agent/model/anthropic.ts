@@ -9,11 +9,11 @@ import {
 
 import {
   cancelledError,
-  DEFAULT_AGENT_SYSTEM,
   ensureObjectSchema,
   formatToolResultContent,
   isAbortLike,
   normalizeProviderError,
+  resolveAgentSystemPrompt,
 } from "./shared.js";
 
 export { normalizeProviderError };
@@ -48,6 +48,11 @@ export interface AnthropicMessageParam {
 export interface AnthropicMessage {
   readonly content: readonly AnthropicContentBlock[];
   readonly stop_reason?: string | null;
+  readonly usage?: {
+    readonly input_tokens?: number;
+    readonly output_tokens?: number;
+    readonly cache_read_input_tokens?: number;
+  };
 }
 
 export interface AnthropicMessagesCreateParams {
@@ -55,6 +60,7 @@ export interface AnthropicMessagesCreateParams {
   readonly max_tokens: number;
   readonly messages: readonly AnthropicMessageParam[];
   readonly tools?: readonly AnthropicToolDefinition[];
+  readonly tool_choice?: { readonly type: "auto" } | { readonly type: "any" };
   readonly system?: string;
 }
 
@@ -100,13 +106,17 @@ export function createAnthropicAgentModel(
   options: AnthropicAgentModelOptions,
 ): AgentModel {
   const maxTokens = options.maxTokens ?? 4096;
-  const system = options.system ?? DEFAULT_AGENT_SYSTEM;
+  const systemOverride = options.system;
 
   return {
     async complete(request: ModelRequest): Promise<ModelResponse> {
       if (request.signal?.aborted) {
         throw cancelledError();
       }
+
+      const system = resolveAgentSystemPrompt(request, systemOverride);
+      const startedAt = Date.now();
+      let timeToFirstTokenMs: number | undefined;
 
       const params: AnthropicMessagesCreateParams = {
         model: options.model,
@@ -117,6 +127,14 @@ export function createAnthropicAgentModel(
           request.tools.length > 0
             ? request.tools.map(toAnthropicTool)
             : undefined,
+        ...(request.tools.length > 0
+          ? {
+              tool_choice:
+                request.toolChoice === "required"
+                  ? ({ type: "any" } as const)
+                  : ({ type: "auto" } as const),
+            }
+          : {}),
       };
       const callOptions = request.signal
         ? { signal: request.signal }
@@ -140,11 +158,22 @@ export function createAnthropicAgentModel(
                 typeof delta.text === "string" &&
                 delta.text.length > 0
               ) {
+                if (timeToFirstTokenMs === undefined) {
+                  timeToFirstTokenMs = Date.now() - startedAt;
+                }
                 await request.onTextDelta(delta.text);
               }
             }
           }
-          return fromAnthropicMessage(await stream.finalMessage());
+          if (request.signal?.aborted) {
+            throw cancelledError();
+          }
+          return withAnthropicMeta(
+            fromAnthropicMessage(await stream.finalMessage()),
+            options.model,
+            startedAt,
+            timeToFirstTokenMs,
+          );
         }
 
         const message = await options.client.messages.create(
@@ -155,7 +184,13 @@ export function createAnthropicAgentModel(
         if (request.onTextDelta && response.content) {
           await request.onTextDelta(response.content);
         }
-        return response;
+        return withAnthropicMeta(
+          response,
+          options.model,
+          startedAt,
+          timeToFirstTokenMs,
+          message,
+        );
       } catch (error) {
         if (request.signal?.aborted || isAbortLike(error)) {
           throw cancelledError(error);
@@ -254,5 +289,42 @@ export function fromAnthropicMessage(message: AnthropicMessage): ModelResponse {
   return {
     content: textParts.join("\n").trim(),
     toolCalls,
+  };
+}
+
+function withAnthropicMeta(
+  response: ModelResponse,
+  modelId: string,
+  startedAt: number,
+  timeToFirstTokenMs?: number,
+  raw?: AnthropicMessage,
+): ModelResponse {
+  const usage = raw?.usage;
+  return {
+    ...response,
+    meta: {
+      provider: "anthropic",
+      modelId,
+      latencyMs: Date.now() - startedAt,
+      ...(timeToFirstTokenMs !== undefined ? { timeToFirstTokenMs } : {}),
+      ...(raw?.stop_reason
+        ? { finishReason: String(raw.stop_reason) }
+        : {}),
+      ...(usage
+        ? {
+            usage: {
+              ...(typeof usage.input_tokens === "number"
+                ? { inputTokens: usage.input_tokens }
+                : {}),
+              ...(typeof usage.output_tokens === "number"
+                ? { outputTokens: usage.output_tokens }
+                : {}),
+              ...(typeof usage.cache_read_input_tokens === "number"
+                ? { cachedInputTokens: usage.cache_read_input_tokens }
+                : {}),
+            },
+          }
+        : {}),
+    },
   };
 }

@@ -31,5 +31,8 @@ test("engine-client is the only package that optionally depends on the binding",
   ) as {
     optionalDependencies?: Record<string, string>;
   };
-  assert.ok(pkg.optionalDependencies?.["@opensuite/engine"]);
+  const spec = pkg.optionalDependencies?.["@opensuite/engine"];
+  assert.ok(spec);
+  // link: (not file:) so pnpm symlinks the sibling package — rebuilds are live.
+  assert.match(spec, /^link:/);
 });

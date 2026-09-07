@@ -61,6 +61,11 @@ export interface ModelRequest {
   /** Optional runtime capabilities for model/prompt adapters. */
   readonly capabilities?: RuntimeCapabilities;
   /**
+   * Provider tool_choice hint. `required` forces at least one tool call when
+   * tools are present (adapters that support it). Default: auto.
+   */
+  readonly toolChoice?: "auto" | "required";
+  /**
    * When set, streaming-capable adapters should invoke this with text chunks
    * as they arrive. Non-streaming adapters may ignore it and return the full
    * completion normally.
@@ -69,11 +74,38 @@ export interface ModelRequest {
 }
 
 /**
+ * Provider-neutral token usage. Only include fields the provider actually returned —
+ * never fabricate counts.
+ */
+export interface ModelTokenUsage {
+  readonly inputTokens?: number;
+  readonly cachedInputTokens?: number;
+  readonly outputTokens?: number;
+  readonly reasoningTokens?: number;
+}
+
+/**
+ * Optional adapter-reported metadata for run observability.
+ * AgentRunner must stay provider-neutral; adapters attach what they know.
+ */
+export interface ModelResponseMeta {
+  readonly provider?: string;
+  readonly modelId?: string;
+  readonly finishReason?: string;
+  readonly usage?: ModelTokenUsage;
+  /** Wall time inside the adapter for the provider round-trip, ms. */
+  readonly latencyMs?: number;
+  /** Time to first streamed text/tool token when available, ms. */
+  readonly timeToFirstTokenMs?: number;
+}
+
+/**
  * Model completion. `toolCalls` may be empty, one, or many.
  */
 export interface ModelResponse {
   readonly content: string;
   readonly toolCalls: readonly ModelToolCall[];
+  readonly meta?: ModelResponseMeta;
 }
 
 /**
@@ -145,7 +177,7 @@ export interface AgentTool<TInput = unknown, TResult = unknown> {
   /**
    * Runtime capability id required for model-facing discovery.
    * When set, bootstrap filters this tool against DocumentRuntime.capabilities.
-   * Omitted → always eligible (e.g. document.capabilities introspection).
+   * Omitted → always eligible (rare; prefer explicit capability gating).
    */
   readonly requireCapability?: string;
   readonly inputSchema: ToolInputSchema;

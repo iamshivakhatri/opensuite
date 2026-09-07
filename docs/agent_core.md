@@ -48,7 +48,7 @@ primary DocumentRef
 * Runtime capability ids are the sole availability source — no `if (format === "docx")` tool switches.
 * Discovery runs once per AgentRunner run when `documentToolCatalog` is set; N→N+1 does not re-discover.
 * Discovery failure → run fails with `CAPABILITY_DISCOVERY_FAILED` (does not expose all tools / mock DOCX caps).
-* `document.capabilities` remains model-facing for explicit inspection; it is not required for bootstrap.
+* Model-facing catalog is capability-filtered only — `document.capabilities` is **not** model-facing (internal factory remains for tests).
 * PPTX/XLSX mock runtimes advertise format-specific caps (`slides.update_text`, `workbook.set_cells`).
 * **Version-bound handles:** `ArtifactHandleRegistry` (run-local, handle → versionId). `document.inspect`
   registers opaque `handle` strings from the payload; handle-bearing mutations validate via
@@ -56,7 +56,6 @@ primary DocumentRef
 
 **Read**
 
-* `document.capabilities` — list runtime caps for the primary document
 * `document.inspect` — DOCX: `overview` / `headings` / `paragraphs` / `tables` / `body_blocks` / `context` (paged); PPTX/XLSX mock: slides/sheets/range.
   Inspected objects may optionally carry format-neutral `affordances[]` (engine-authored; absence ≠ supported/unsupported).
   Failed mutations may carry structured diagnostics (`code` + optional `reasonCode` / `operation` / `targetHandle`);
@@ -110,9 +109,13 @@ Blank DOCX create is application/API → engine-client `createBlankDocx` → Ver
 Persisted mutation results include `document` (new DocumentRef), `baseVersionId`, optional `change`
 summary — never storage keys or engine source identities.
 
-System instruction: `buildDocumentAgentSystemPrompt` — behavioral only (inspect-before-edit, affordances,
-structured `reasonCode` over message parsing, no retry loops); the filtered tool catalog communicates which
-ops exist. Never claim an edit succeeded without a successful mutation tool result.
+System instruction: `buildDocumentAgentSystemPrompt(capabilities)` — behavioral only; adapters must
+pass the run's discovered capabilities so mutate/authoring guidance matches the filtered tool catalog.
+Prefer fewest **model rounds** (batch independent writes in one assistant response). Blank docs need
+no ritual inspect before append/end authoring. Structured `reasonCode` over message parsing; no blind retries.
+Canonical transcript stays rich; `transformContext` projects slim model-facing tool results (no echoed prose).
+`model.turn.metrics` / `tool.execution.metrics` provide lightweight run observability.
+Never claim an edit succeeded without a successful mutation tool result.
 
 * Safe tools execute immediately; write tools default sequential
 * Destructive + `ConfirmationGate` → ask gate; **no gate → deny**

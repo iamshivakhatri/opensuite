@@ -538,8 +538,26 @@ function logAgentTurn(shortRun: string, event: AgentEvent): void {
     case "turn.started":
       devLog(`agent ${shortRun} turn ${event.turnId.slice(0, 8)}`);
       return;
+    case "model.turn.metrics": {
+      const tokens =
+        event.inputTokens !== undefined || event.outputTokens !== undefined
+          ? ` in=${event.inputTokens ?? "?"} out=${event.outputTokens ?? "?"}` +
+            (event.cachedInputTokens !== undefined
+              ? ` cached=${event.cachedInputTokens}`
+              : "")
+          : "";
+      devLog(
+        `agent ${shortRun} model turn#${event.turnIndex} ${event.modelWallMs}ms tools=${event.toolCallCount} ctx=${event.contextMessageBytes}B catalog=${event.toolCatalogBytes}B args=${event.toolArgumentBytes}B${tokens}`,
+      );
+      return;
+    }
     case "tool.started":
       devLog(`agent ${shortRun} → ${event.toolName}`);
+      return;
+    case "tool.execution.metrics":
+      devLog(
+        `agent ${shortRun} tool ${event.toolName} ${event.wallMs}ms in=${event.inputBytes}B out=${event.resultBytes}B ${event.success ? "ok" : "fail"}`,
+      );
       return;
     case "tool.completed": {
       const note = event.summary ? ` — ${event.summary}` : "";
@@ -950,6 +968,8 @@ function createRunEventBridge(input: {
       case "message.started":
       case "message.delta":
       case "message.completed":
+      case "model.turn.metrics":
+      case "tool.execution.metrics":
         return;
       default: {
         const _exhaustive: never = event;

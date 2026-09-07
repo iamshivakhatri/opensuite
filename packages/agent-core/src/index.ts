@@ -55,6 +55,8 @@ export type {
   ModelMessage,
   ModelRequest,
   ModelResponse,
+  ModelResponseMeta,
+  ModelTokenUsage,
   ModelToolCall,
   ModelToolDefinition,
   ToolEffect,
@@ -69,6 +71,20 @@ export {
   toolExecutionMode,
   toModelToolDefinition,
 } from "./model.js";
+
+export {
+  projectToolResultForModel,
+  transformContext,
+} from "./model-context.js";
+export type { ModelFacingToolProjection } from "./model-context.js";
+
+export {
+  elapsedMs,
+  measureJsonBytes,
+  measureMessagesBytes,
+  measureToolArgumentBytes,
+  measureToolCatalogBytes,
+} from "./telemetry.js";
 
 export { ToolRegistry } from "./tools.js";
 
