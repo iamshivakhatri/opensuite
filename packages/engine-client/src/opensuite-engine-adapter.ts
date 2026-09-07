@@ -1231,11 +1231,24 @@ function normalizeDiagnosticCode(diagnostic: Diagnostic): Diagnostic {
   return diagnostic;
 }
 
+/**
+ * Transport-only: copy engine diagnostic fields unchanged.
+ * Never derive reasonCode/operation/targetHandle from message.
+ */
 function mapDiagnostic(diagnostic: DocxEngineDiagnostic): Diagnostic {
   return {
     code: diagnostic.code,
     severity: normalizeSeverity(diagnostic.severity),
     message: diagnostic.message,
+    ...(diagnostic.reasonCode !== undefined
+      ? { reasonCode: diagnostic.reasonCode }
+      : {}),
+    ...(diagnostic.operation !== undefined
+      ? { operation: diagnostic.operation }
+      : {}),
+    ...(diagnostic.targetHandle !== undefined
+      ? { targetHandle: diagnostic.targetHandle }
+      : {}),
   };
 }
 

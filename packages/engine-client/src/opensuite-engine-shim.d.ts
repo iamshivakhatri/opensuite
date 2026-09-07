@@ -18,6 +18,9 @@ declare module "@opensuite/engine" {
     code: string;
     severity: string;
     message: string;
+    reasonCode?: string;
+    operation?: string;
+    targetHandle?: string;
   }
 
   export interface OperationChangeOutput {

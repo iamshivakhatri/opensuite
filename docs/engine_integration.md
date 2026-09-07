@@ -66,6 +66,8 @@ exact immutable version N
 * Table/cell inspect may include format-neutral `affordances[]` from Rust (capability + supported + optional reason).
   Adapter transport only — TypeScript does not recompute editability. Absence ≠ supported/unsupported.
 * Application enforces version-bound structural handles (run-local registry). Stale/unknown handles never reach Rust.
+* Engine diagnostics may include optional `reasonCode` / `operation` / `targetHandle` (transport-only).
+  Same reason id can appear on affordance `reason` and mutation `reasonCode`. Never parse `message` for control flow.
 * Proven blank-row path: inspect(tables) → cell handles → one atomic `set_table_cells_text` → persist N+1.
 * Table workflow: inspect(tables) → set cells / insert rows / insert one column → re-inspect.
 * Current engine verify for column insert still needs `headerCells` even with handles —

@@ -21,6 +21,12 @@ export interface DocxEngineDiagnostic {
   readonly code: string;
   readonly severity: string;
   readonly message: string;
+  /** Engine-authored precise reason; pass through unchanged when present. */
+  readonly reasonCode?: string;
+  /** Engine operation id that failed (e.g. set_table_cells_text). */
+  readonly operation?: string;
+  /** Public opaque target handle when the engine supplies one. */
+  readonly targetHandle?: string;
 }
 
 export interface DocxEngineChange {

@@ -22,6 +22,7 @@ export {
   createCapabilities,
   hasCapability,
   listCapabilities,
+  shapeDiagnosticForToolResult,
 } from "./types.js";
 
 export type { AgentCoreErrorCode } from "./errors.js";

@@ -59,6 +59,8 @@ primary DocumentRef
 * `document.capabilities` — list runtime caps for the primary document
 * `document.inspect` — DOCX: `overview` / `headings` / `paragraphs` / `tables` / `context` (paged); PPTX/XLSX mock: slides/sheets/range.
   Inspected objects may optionally carry format-neutral `affordances[]` (engine-authored; absence ≠ supported/unsupported).
+  Failed mutations may carry structured diagnostics (`code` + optional `reasonCode` / `operation` / `targetHandle`);
+  prefer those fields over parsing `message`. Application errors (`STALE_HANDLE` / `UNKNOWN_HANDLE`) stay separate.
 * `document.find` — text or semantic matches
 
 **Safe writes**
@@ -97,8 +99,9 @@ Not exposed: delete row/column, create table, multi-column insert, generic `docu
 Persisted mutation results include `document` (new DocumentRef), `baseVersionId`, optional `change`
 summary — never storage keys or engine source identities.
 
-System instruction: `buildDocumentAgentSystemPrompt` — behavioral only (inspect-before-edit, no retry loops);
-the filtered tool catalog communicates which ops exist. Never claim an edit succeeded without a successful mutation tool result.
+System instruction: `buildDocumentAgentSystemPrompt` — behavioral only (inspect-before-edit, affordances,
+structured `reasonCode` over message parsing, no retry loops); the filtered tool catalog communicates which
+ops exist. Never claim an edit succeeded without a successful mutation tool result.
 
 * Safe tools execute immediately; write tools default sequential
 * Destructive + `ConfirmationGate` → ask gate; **no gate → deny**

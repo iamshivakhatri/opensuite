@@ -17,6 +17,7 @@ import type { DocumentRuntime, OperationResult } from "../runtime.js";
 import {
   Capabilities,
   hasCapability,
+  type Diagnostic,
   type DocumentRef,
 } from "../types.js";
 
@@ -215,23 +216,14 @@ export function unwrapResult<T extends { status: string; diagnostics: readonly u
         code: "TOOL_FAILURE",
         severity: "error",
         message: "Operation failed",
-      }) as {
-        code: string;
-        severity: "info" | "warning" | "error";
-        message: string;
-        details?: Record<string, unknown>;
-      },
+      }) as Diagnostic,
     );
   }
   return result as Exclude<T, { status: "error" }>;
 }
 
-export function diagnosticError(diagnostic: {
-  code: string;
-  severity: "info" | "warning" | "error";
-  message: string;
-  details?: Record<string, unknown>;
-}): AgentCoreError {
+/** Preserve full structured Diagnostic on tool failures (reasonCode, etc.). */
+export function diagnosticError(diagnostic: Diagnostic): AgentCoreError {
   const code =
     diagnostic.code === "UNSUPPORTED_CAPABILITY"
       ? "UNSUPPORTED_CAPABILITY"

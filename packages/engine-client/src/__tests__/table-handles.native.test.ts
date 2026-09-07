@@ -2,6 +2,8 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 
 import {
+  ArtifactHandleRegistry,
+  collectOpaqueHandles,
   createDocumentSetTableCellsTextTool,
   createInMemoryDocumentMutationExecutor,
   createFakeToolExecutionContext,
@@ -86,10 +88,13 @@ test("native: blank trailing row filled atomically by cell handles", async (t) =
   };
 
   const tool = createDocumentSetTableCellsTextTool();
+  const handles = new ArtifactHandleRegistry();
+  handles.registerAll(v1Ref.versionId, collectOpaqueHandles(inspected.payload));
   const ctx = createFakeToolExecutionContext({
     primaryDocument: v1Ref,
     runtime,
     mutations: createInMemoryDocumentMutationExecutor(runtime),
+    handles,
   });
 
   const result = await tool.execute(

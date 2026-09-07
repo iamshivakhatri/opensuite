@@ -49,7 +49,10 @@ export function buildDocumentAgentSystemPrompt(
         "implemented operation is safe on that exact inspected target. " +
         "If an affordance has supported:false, do not blindly call that operation on that target — " +
         "choose another available primitive if appropriate, or explain the limit. " +
-        "Absence of affordances does not mean supported or unsupported.",
+        "Absence of affordances does not mean supported or unsupported. " +
+        "When a document tool fails and reasonCode is present, treat it as the authoritative " +
+        "machine-readable failure reason (the same identifier may appear on an affordance reason). " +
+        "message is explanatory text, not a field to parse for control flow.",
     );
   }
   if (canFind) {

@@ -1,6 +1,7 @@
 import {
   AgentRunner,
   listDocumentToolDescriptors,
+  shapeDiagnosticForToolResult,
   ToolRegistry,
   type AgentEvent,
   type AgentEventSink,
@@ -811,7 +812,7 @@ function createRunEventBridge(input: {
       case "tool.failed": {
         const binding = byToolCallId.get(event.toolCallId);
         const output = {
-          code: event.diagnostic.code,
+          ...shapeDiagnosticForToolResult(event.diagnostic),
           message: safeErrorMessage(event.diagnostic.message, "Tool failed"),
         };
         if (binding) {

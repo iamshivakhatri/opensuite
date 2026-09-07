@@ -38,17 +38,53 @@ export interface SemanticTarget {
 export type DiagnosticSeverity = "info" | "warning" | "error";
 
 /**
- * Provider/runtime-neutral diagnostic. `code` is machine-readable;
- * `message` is for humans/logs only.
+ * Provider/runtime-neutral diagnostic. Format-neutral transport shape.
+ *
+ * `code` is the broad machine-readable failure class.
+ * Optional `reasonCode` / `operation` / `targetHandle` are engine-authored
+ * structured fields when present — pass through unchanged; never derive them
+ * from `message`. Absence means unavailable (do not invent values).
+ * `message` is explanatory text for humans/logs only — not for control flow.
+ * `details` may carry application-owned context (e.g. STALE_HANDLE handle).
  */
 export interface Diagnostic {
   readonly code: string;
   readonly severity: DiagnosticSeverity;
   readonly message: string;
+  readonly reasonCode?: string;
+  readonly operation?: string;
+  readonly targetHandle?: string;
   readonly details?: Record<string, unknown>;
 }
 
 export type NonEmptyDiagnostics = readonly [Diagnostic, ...Diagnostic[]];
+
+/**
+ * Model-visible / persisted tool-failure projection.
+ * Preserves structured engine fields when present; omits absent optionals.
+ * Does not invent reasonCode/operation/targetHandle.
+ */
+export function shapeDiagnosticForToolResult(
+  diagnostic: Diagnostic,
+): Record<string, unknown> {
+  const shaped: Record<string, unknown> = {
+    code: diagnostic.code,
+    message: diagnostic.message,
+  };
+  if (diagnostic.reasonCode !== undefined) {
+    shaped.reasonCode = diagnostic.reasonCode;
+  }
+  if (diagnostic.operation !== undefined) {
+    shaped.operation = diagnostic.operation;
+  }
+  if (diagnostic.targetHandle !== undefined) {
+    shaped.targetHandle = diagnostic.targetHandle;
+  }
+  if (diagnostic.details !== undefined) {
+    shaped.details = diagnostic.details;
+  }
+  return shaped;
+}
 
 /** Extensible capability identifiers (e.g. `document.inspect`). */
 export type CapabilityId = string;

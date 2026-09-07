@@ -1,6 +1,7 @@
 import {
   AgentCoreError,
   buildDocumentAgentSystemPrompt,
+  shapeDiagnosticForToolResult,
 } from "@opensuite/agent-core";
 import type { ModelMessage } from "@opensuite/agent-core";
 
@@ -101,8 +102,12 @@ export function formatToolResultContent(
       parts.push(String(message.output));
     }
   }
-  if (message.diagnostic?.message) {
-    parts.push(message.diagnostic.message);
+  if (message.diagnostic) {
+    try {
+      parts.push(JSON.stringify(shapeDiagnosticForToolResult(message.diagnostic)));
+    } catch {
+      parts.push(message.diagnostic.message);
+    }
   }
   return parts.join("\n").slice(0, 8_000);
 }

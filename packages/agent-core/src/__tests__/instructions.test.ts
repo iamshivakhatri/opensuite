@@ -14,6 +14,9 @@ test("system prompt is task-oriented and read-only aware", () => {
   assert.match(prompt, /inspect before editing/i);
   assert.match(prompt, /object affordances/i);
   assert.match(prompt, /supported:false/i);
+  assert.match(prompt, /reasonCode/i);
+  assert.match(prompt, /authoritative/i);
+  assert.match(prompt, /not a field to parse/i);
   assert.match(prompt, /mutations are currently unavailable/i);
   assert.match(prompt, /never invent names/i);
   assert.match(prompt, /chain-of-thought/i);
