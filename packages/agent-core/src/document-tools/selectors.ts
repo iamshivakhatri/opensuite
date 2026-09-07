@@ -8,6 +8,7 @@ import type {
   DocumentTableCellTarget,
   DocumentTableRowAnchor,
   DocumentTableTarget,
+  DocumentTextTarget,
 } from "../document-mutation.js";
 import type { DocumentInspectFocus } from "../runtime.js";
 import { AgentCoreError } from "../errors.js";
@@ -49,6 +50,33 @@ export function parseParagraphPlacement(
     "INVALID_TOOL_INPUT",
     `${toolName} placement.kind must be start|end|before|after`,
   );
+}
+
+export function parseTextTarget(
+  raw: unknown,
+  toolName: string,
+): DocumentTextTarget {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+    throw new AgentCoreError(
+      "INVALID_TOOL_INPUT",
+      `${toolName} requires a target object`,
+    );
+  }
+  const target = raw as Record<string, unknown>;
+  if (typeof target.text !== "string" || !target.text) {
+    throw new AgentCoreError(
+      "INVALID_TOOL_INPUT",
+      `${toolName} target.text must be a non-empty string`,
+    );
+  }
+  const occurrence = parseOptionalOccurrence(
+    target.occurrence,
+    `${toolName} target.occurrence`,
+  );
+  return {
+    text: target.text,
+    ...(occurrence !== undefined ? { occurrence } : {}),
+  };
 }
 
 export function parseTableTarget(

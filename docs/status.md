@@ -17,7 +17,8 @@ _Read this before starting any work. Keep it a concise current-state handoff, no
 * **New Document** UI (palette + explorer) creates blank DOCX and opens the editor (no upload).
 * **Workspace agent chat** (not document-forced): `@` tag / drag files from explorer; optional open file used as primary when untagged.
 * **`workspace.create_blank_docx`** agent tool creates blank DOCX and promotes it as run primary (re-discovers document tools).
-* **`document.insert_paragraph`** capability-gated; placements start|end|before|after body-block handles.
+* **Paragraph authoring (capability-gated):** `insert_paragraph`, `insert_paragraphs` (atomic batch), `delete_paragraph`, `set_paragraph_style`, `set_paragraph_formatting`, `set_text_formatting`.
+  Placements start|end|before|after body-block handles; style/format/delete use semantic text targets.
 * **Agent DOCX mutations persist immutable N+1 and advance run DocumentRef.**
 * Agent chat: Cursor-style work toggle (“Thought for Xs”), single wall-clock timer, Stop square in composer.
 * Optional semantic `occurrence`: omit / null / "" / **0 → omitted**; explicit values stay **1-based**.
@@ -34,9 +35,9 @@ _Read this before starting any work. Keep it a concise current-state handoff, no
 
 ## Just Completed
 
-* Perplexity-style agent progress: compact “Finished N steps · Xs ›”, grouped repeats (not 13× Inserted paragraph).
-* Agent guidance: human multi-sentence paragraphs; fewer insert_paragraph calls (app/model, not Rust).
-* Prior: Thought stay-visible; editor conflict/dirty race; header flicker; workspace chat + blank tool.
+* Milestone 5C-B: wired native paragraph authoring through engine-client → DocumentRuntime → DocumentMutationExecutor → agent tools (batch insert, style, paragraph/text formatting, delete).
+* Prefer `insert_paragraphs` for multi-paragraph creation (one immutable version).
+* Prior: Perplexity-style agent progress; Thought stay-visible; workspace chat + blank tool.
 
 ## Current Decisions
 
@@ -50,17 +51,18 @@ _Read this before starting any work. Keep it a concise current-state handoff, no
 * Real DOCX never falls back to mock inspect semantics.
 * Capability advertised ≠ every table structure is safe.
 * `pnpm dev:api` rebuilds agent-core first — restart after agent-core changes.
+* N-API paragraph formatting patch currently exposes alignment + spacingBefore/AfterTwips only (indent/keep* remain engine-protocol / deferred N-API).
 
 ## Verification Status
 
 | Check | Status |
 |---|---|
-| `pnpm --filter @opensuite/agent-core test` | **Pass** (111) |
-| `pnpm --filter @opensuite/engine-client test` | **Pass** (50) |
+| `pnpm --filter @opensuite/agent-core test` | **Pass** (120) |
+| `pnpm --filter @opensuite/engine-client test` | **Pass** (55, native included) |
 | `pnpm --filter @opensuite/api test` | **Pass** (95+17 skip) |
-| `pnpm --filter @opensuite/web test` | **Pass** (15) |
+| `pnpm --filter @opensuite/web test` | **Pass** (16) |
 | `pnpm --filter @opensuite/{agent-core,engine-client,api,web} typecheck` | **Pass** |
-| Native blank + body_blocks + insert_paragraph | **Pass** |
+| Native paragraph authoring N-API | **Pass** (linked fresh `.node`) |
 
 ## Intentionally Deferred
 
@@ -70,11 +72,10 @@ _Read this before starting any work. Keep it a concise current-state handoff, no
 * Separate affordance registry (handles becoming stale is enough for now)
 * Engine: harden `insert_table_column` verify for empty `headerCells`
 * Delete rows/columns / create_table / multi-column insert / lists / images
-* App wiring for paragraph style/format/delete (Rust caps exist; **no N-API yet**):
-  `set_paragraph_style`, `set_paragraph_formatting`, `set_text_formatting`,
-  `delete_paragraph`, `insert_paragraph_after`
+* N-API exposure of full paragraph formatting patch (indent, lineSpacing, keepWithNext, …)
 * PPTX/XLSX engine runtimes; HTTP mutation endpoint
+* Legacy `insert_paragraph_after` model tool (placement primitives supersede)
 
 ## Recommended Next Step
 
-Restart API (`pnpm dev:api`) and verify: workspace chat without open file, `@` tag / drag file, “create a blank doc” via agent.
+Restart API (`pnpm dev:api`) and browser-accept: blank DOCX → essay via `insert_paragraphs` + Heading 1 → center/spacing → bold → delete conclusion → insert before table.

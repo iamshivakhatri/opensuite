@@ -1,6 +1,6 @@
 # OpenSuite Engine Integration
 
-`opensuite-engine` is a separate Rust project.
+`opensuite-engine` is a separate Rust project. 
 
 OpenSuite communicates with it only through `packages/engine-client`.
 
@@ -12,7 +12,9 @@ Application code must never manipulate Office internals as a shortcut around the
 
 ```text
 AgentRunner
-  → AgentTool (replace_text | insert_paragraph | set_table_cells_text | insert_table_rows | insert_table_column)
+  → AgentTool (replace_text | insert_paragraph | insert_paragraphs | delete_paragraph
+               | set_paragraph_style | set_paragraph_formatting | set_text_formatting
+               | set_table_cells_text | insert_table_rows | insert_table_column)
   → DocumentMutationExecutor (injected by apps/api)
   → apply* (shared authorize → execute → appendDocumentVersion)
   → DocumentRuntime.execute (once)
@@ -21,7 +23,6 @@ AgentRunner
   → Rust opensuite-engine
   → verified artifact bytes → appendDocumentVersion
 ```
-
 ### Blank DOCX create (not a DocumentRuntime mutation)
 
 ```text
@@ -61,6 +62,11 @@ exact immutable version N
   → inspectDocx (overview | headings | paragraphs | tables | body_blocks | context)
   → executeDocxReplaceText
     | executeDocxInsertParagraph
+    | executeDocxInsertParagraphs
+    | executeDocxDeleteParagraph
+    | executeDocxSetParagraphStyle
+    | executeDocxSetParagraphFormatting
+    | executeDocxSetTextFormatting
     | executeDocxSetTableCellsText
     | executeDocxInsertTableRows
     | executeDocxInsertTableColumn
@@ -68,7 +74,6 @@ exact immutable version N
   → appendDocumentVersion → N+1
   → find/inspect N+1 independently
 ```
-
 * Rust is capability / semantic source of truth.
 * Inspect focuses: overview, headings, paragraphs, tables, body_blocks, context — paged collections use offset/limit (default 20, max 100).
 * `body_blocks`: ordered direct body paragraphs/tables with opaque `handle` (`bN` opaque to TS), optional text / tableHandle; used for insert_paragraph before/after.
@@ -158,10 +163,10 @@ These types are plain, JSON-shaped TypeScript (no classes, enums-as-objects, or 
 `packages/engine-client` is the concrete implementation of the boundary described above. It is built around:
 
 * **`EngineTransport` / `EngineClient` / `MockEngineTransport`** — existing contracts inspect seam (still mock-backed).
-* **`DocxEngineBinding`** — hides N-API (`getDocxCapabilities`, `createBlankDocx`, `findDocxText`, `inspectDocx`, `executeDocxReplaceText`, `executeDocxInsertParagraph`, `executeDocxSetTableCellsText`, `executeDocxInsertTableRows`, `executeDocxInsertTableColumn`).
-* **`OpenSuiteEngineAdapter`** — real DOCX `DocumentRuntime` (caps/find/inspect/replace + insert_paragraph + table mutations).
+* **`DocxEngineBinding`** — hides N-API (`getDocxCapabilities`, `createBlankDocx`, `findDocxText`, `inspectDocx`, `executeDocxReplaceText`, `executeDocxInsertParagraph`, `executeDocxInsertParagraphs`, `executeDocxDeleteParagraph`, `executeDocxSetParagraphStyle`, `executeDocxSetParagraphFormatting`, `executeDocxSetTextFormatting`, `executeDocxSetTableCellsText`, `executeDocxInsertTableRows`, `executeDocxInsertTableColumn`).
+* **`OpenSuiteEngineAdapter`** — real DOCX `DocumentRuntime` (caps/find/inspect/replace + paragraph authoring + table mutations).
 * **`DocumentArtifactLoader`** — injected exact-version byte loader (application storage owns resolution).
 
 Swapping N-API for a future remote engine service only requires a new `DocxEngineBinding` — AgentRunner and AgentTools do not change.
 
-Not yet on N-API (Rust CLI/caps may exist): paragraph style/formatting, text formatting, delete_paragraph — do not invent app-side substitutes.
+N-API paragraph formatting currently maps alignment + spacingBefore/AfterTwips only; fuller protocol patch fields (indent/keep*) await N-API exposure. Do not invent app-side substitutes.

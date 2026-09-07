@@ -16,6 +16,22 @@ export const OCCURRENCE_PROPERTY = {
     "Version-local 1-based occurrence when targets collide; omit when unique (never send 0)",
 } as const;
 
+/** Semantic text target (engine TextTarget) — not a structural handle. */
+export const TEXT_TARGET_SCHEMA = {
+  type: "object",
+  description:
+    "Locate a paragraph/run by exact visible text (optional 1-based occurrence)",
+  properties: {
+    text: {
+      type: "string",
+      description: "Exact visible text to match",
+    },
+    occurrence: OCCURRENCE_PROPERTY,
+  },
+  required: ["text"],
+  additionalProperties: false,
+} as const;
+
 export const STRUCTURAL_HANDLE_PROPERTY = {
   type: "string",
   description:

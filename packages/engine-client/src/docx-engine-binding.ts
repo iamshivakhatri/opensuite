@@ -117,6 +117,49 @@ export interface DocxInsertParagraphOperation {
   readonly baseRevision?: string;
 }
 
+export interface DocxInsertParagraphsOperation {
+  readonly texts: readonly string[];
+  readonly placement: DocxParagraphPlacement;
+  readonly baseRevision?: string;
+}
+
+/** Semantic text target used by delete / style / formatting N-API ops. */
+export interface DocxTextTarget {
+  readonly text: string;
+  readonly occurrence?: number;
+}
+
+export interface DocxDeleteParagraphOperation {
+  readonly target: DocxTextTarget;
+  readonly baseRevision?: string;
+}
+
+export interface DocxSetParagraphStyleOperation {
+  readonly target: DocxTextTarget;
+  /** Omit or undefined → Clear style (N-API PropertyPatch::Clear). */
+  readonly style?: string;
+  readonly baseRevision?: string;
+}
+
+export type DocxParagraphAlignment = "left" | "center" | "right";
+
+export interface DocxSetParagraphFormattingOperation {
+  readonly target: DocxTextTarget;
+  readonly alignment?: DocxParagraphAlignment;
+  readonly spacingBeforeTwips?: number;
+  readonly spacingAfterTwips?: number;
+  readonly baseRevision?: string;
+}
+
+export interface DocxSetTextFormattingOperation {
+  readonly target: DocxTextTarget;
+  readonly bold?: boolean;
+  readonly italic?: boolean;
+  readonly fontSizeHalfPoints?: number;
+  readonly fontFamily?: string;
+  readonly baseRevision?: string;
+}
+
 export interface DocxRuntimeCapabilities {
   readonly ok: boolean;
   readonly protocolVersion: number;
@@ -308,6 +351,26 @@ export interface DocxEngineBinding {
     input: Uint8Array,
     operation: DocxInsertParagraphOperation,
   ): Promise<DocxMutationBindingResult>;
+  executeDocxInsertParagraphs(
+    input: Uint8Array,
+    operation: DocxInsertParagraphsOperation,
+  ): Promise<DocxMutationBindingResult>;
+  executeDocxDeleteParagraph(
+    input: Uint8Array,
+    operation: DocxDeleteParagraphOperation,
+  ): Promise<DocxMutationBindingResult>;
+  executeDocxSetParagraphStyle(
+    input: Uint8Array,
+    operation: DocxSetParagraphStyleOperation,
+  ): Promise<DocxMutationBindingResult>;
+  executeDocxSetParagraphFormatting(
+    input: Uint8Array,
+    operation: DocxSetParagraphFormattingOperation,
+  ): Promise<DocxMutationBindingResult>;
+  executeDocxSetTextFormatting(
+    input: Uint8Array,
+    operation: DocxSetTextFormattingOperation,
+  ): Promise<DocxMutationBindingResult>;
   executeDocxSetTableCellsText(
     input: Uint8Array,
     operation: DocxSetTableCellsTextOperation,
@@ -369,6 +432,45 @@ type NativeEngineModule = {
       placement: { kind: string; handle?: string };
       baseRevision?: string;
     },
+  ) => Promise<{
+    result: DocxEngineOperationResult;
+    output?: Buffer;
+  }>;
+  executeDocxInsertParagraphs: (
+    input: Buffer,
+    operation: {
+      texts: string[];
+      placement: { kind: string; handle?: string };
+      baseRevision?: string;
+    },
+  ) => Promise<{
+    result: DocxEngineOperationResult;
+    output?: Buffer;
+  }>;
+  executeDocxDeleteParagraph: (
+    input: Buffer,
+    operation: Record<string, unknown>,
+  ) => Promise<{
+    result: DocxEngineOperationResult;
+    output?: Buffer;
+  }>;
+  executeDocxSetParagraphStyle: (
+    input: Buffer,
+    operation: Record<string, unknown>,
+  ) => Promise<{
+    result: DocxEngineOperationResult;
+    output?: Buffer;
+  }>;
+  executeDocxSetParagraphFormatting: (
+    input: Buffer,
+    operation: Record<string, unknown>,
+  ) => Promise<{
+    result: DocxEngineOperationResult;
+    output?: Buffer;
+  }>;
+  executeDocxSetTextFormatting: (
+    input: Buffer,
+    operation: Record<string, unknown>,
   ) => Promise<{
     result: DocxEngineOperationResult;
     output?: Buffer;
@@ -451,6 +553,19 @@ export async function createNapiDocxEngineBinding(): Promise<DocxEngineBinding> 
       "@opensuite/engine is missing executeDocxInsertParagraph — rebuild opensuite-engine/crates/opensuite-node for Milestone 5A APIs",
     );
   }
+  for (const name of [
+    "executeDocxInsertParagraphs",
+    "executeDocxDeleteParagraph",
+    "executeDocxSetParagraphStyle",
+    "executeDocxSetParagraphFormatting",
+    "executeDocxSetTextFormatting",
+  ] as const) {
+    if (typeof native[name] !== "function") {
+      throw new Error(
+        `@opensuite/engine is missing ${name} — rebuild opensuite-engine/crates/opensuite-node for Milestone 5C-B APIs`,
+      );
+    }
+  }
 
   return {
     getDocxCapabilities() {
@@ -495,12 +610,93 @@ export async function createNapiDocxEngineBinding(): Promise<DocxEngineBinding> 
         Buffer.from(input),
         {
           text: operation.text,
-          placement: {
-            kind: operation.placement.kind,
-            ...("handle" in operation.placement
-              ? { handle: operation.placement.handle }
-              : {}),
-          },
+          placement: toNativeParagraphPlacement(operation.placement),
+          ...(operation.baseRevision !== undefined
+            ? { baseRevision: operation.baseRevision }
+            : {}),
+        },
+      );
+      return mapMutationBindingResponse(response);
+    },
+
+    async executeDocxInsertParagraphs(input, operation) {
+      const response = await native.executeDocxInsertParagraphs(
+        Buffer.from(input),
+        {
+          texts: [...operation.texts],
+          placement: toNativeParagraphPlacement(operation.placement),
+          ...(operation.baseRevision !== undefined
+            ? { baseRevision: operation.baseRevision }
+            : {}),
+        },
+      );
+      return mapMutationBindingResponse(response);
+    },
+
+    async executeDocxDeleteParagraph(input, operation) {
+      const response = await native.executeDocxDeleteParagraph(
+        Buffer.from(input),
+        {
+          target: toNativeTextTarget(operation.target),
+          ...(operation.baseRevision !== undefined
+            ? { baseRevision: operation.baseRevision }
+            : {}),
+        },
+      );
+      return mapMutationBindingResponse(response);
+    },
+
+    async executeDocxSetParagraphStyle(input, operation) {
+      const response = await native.executeDocxSetParagraphStyle(
+        Buffer.from(input),
+        {
+          target: toNativeTextTarget(operation.target),
+          ...(operation.style !== undefined ? { style: operation.style } : {}),
+          ...(operation.baseRevision !== undefined
+            ? { baseRevision: operation.baseRevision }
+            : {}),
+        },
+      );
+      return mapMutationBindingResponse(response);
+    },
+
+    async executeDocxSetParagraphFormatting(input, operation) {
+      const response = await native.executeDocxSetParagraphFormatting(
+        Buffer.from(input),
+        {
+          target: toNativeTextTarget(operation.target),
+          ...(operation.alignment !== undefined
+            ? { alignment: operation.alignment }
+            : {}),
+          ...(operation.spacingBeforeTwips !== undefined
+            ? { spacingBeforeTwips: operation.spacingBeforeTwips }
+            : {}),
+          ...(operation.spacingAfterTwips !== undefined
+            ? { spacingAfterTwips: operation.spacingAfterTwips }
+            : {}),
+          ...(operation.baseRevision !== undefined
+            ? { baseRevision: operation.baseRevision }
+            : {}),
+        },
+      );
+      return mapMutationBindingResponse(response);
+    },
+
+    async executeDocxSetTextFormatting(input, operation) {
+      const response = await native.executeDocxSetTextFormatting(
+        Buffer.from(input),
+        {
+          target: toNativeTextTarget(operation.target),
+          ...(operation.bold !== undefined ? { bold: operation.bold } : {}),
+          ...(operation.italic !== undefined
+            ? { italic: operation.italic }
+            : {}),
+          ...(operation.fontSizeHalfPoints !== undefined
+            ? { fontSizeHalfPoints: operation.fontSizeHalfPoints }
+            : {}),
+          ...(operation.fontFamily !== undefined
+            ? { fontFamily: operation.fontFamily }
+            : {}),
           ...(operation.baseRevision !== undefined
             ? { baseRevision: operation.baseRevision }
             : {}),
@@ -562,6 +758,22 @@ export async function createNapiDocxEngineBinding(): Promise<DocxEngineBinding> 
       );
       return mapMutationBindingResponse(response);
     },
+  };
+}
+
+function toNativeParagraphPlacement(
+  placement: DocxParagraphPlacement,
+): { kind: string; handle?: string } {
+  return {
+    kind: placement.kind,
+    ...("handle" in placement ? { handle: placement.handle } : {}),
+  };
+}
+
+function toNativeTextTarget(target: DocxTextTarget): Record<string, unknown> {
+  return {
+    text: target.text,
+    ...(target.occurrence !== undefined ? { occurrence: target.occurrence } : {}),
   };
 }
 

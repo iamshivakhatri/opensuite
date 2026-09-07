@@ -73,6 +73,21 @@ test("failed document mutation exposes structured diagnostic to the model", asyn
     async insertParagraph() {
       throw new Error("unused");
     },
+    async insertParagraphs() {
+      throw new Error("unused");
+    },
+    async deleteParagraph() {
+      throw new Error("unused");
+    },
+    async setParagraphStyle() {
+      throw new Error("unused");
+    },
+    async setParagraphFormatting() {
+      throw new Error("unused");
+    },
+    async setTextFormatting() {
+      throw new Error("unused");
+    },
     async setTableCellsText() {
       return {
         status: "error",
@@ -201,6 +216,21 @@ test("affordance reason and mutation reasonCode stay the same identifier", async
       throw new Error("unused");
     },
     async insertParagraph() {
+      throw new Error("unused");
+    },
+    async insertParagraphs() {
+      throw new Error("unused");
+    },
+    async deleteParagraph() {
+      throw new Error("unused");
+    },
+    async setParagraphStyle() {
+      throw new Error("unused");
+    },
+    async setParagraphFormatting() {
+      throw new Error("unused");
+    },
+    async setTextFormatting() {
       throw new Error("unused");
     },
     async setTableCellsText() {

@@ -128,6 +128,64 @@ export interface ApplyInsertParagraphInput {
   readonly runtime: DocumentRuntime;
 }
 
+export interface ApplyInsertParagraphsInput {
+  readonly documentId: string;
+  readonly ownerUserId: string;
+  readonly baseVersionId: string;
+  readonly texts: readonly string[];
+  readonly placement:
+    | { readonly kind: "start" }
+    | { readonly kind: "end" }
+    | { readonly kind: "before"; readonly handle: string }
+    | { readonly kind: "after"; readonly handle: string };
+  readonly runtime: DocumentRuntime;
+}
+
+export interface DocumentTextTargetInput {
+  readonly text: string;
+  readonly occurrence?: number;
+}
+
+export interface ApplyDeleteParagraphInput {
+  readonly documentId: string;
+  readonly ownerUserId: string;
+  readonly baseVersionId: string;
+  readonly target: DocumentTextTargetInput;
+  readonly runtime: DocumentRuntime;
+}
+
+export interface ApplySetParagraphStyleInput {
+  readonly documentId: string;
+  readonly ownerUserId: string;
+  readonly baseVersionId: string;
+  readonly target: DocumentTextTargetInput;
+  readonly style?: string;
+  readonly runtime: DocumentRuntime;
+}
+
+export interface ApplySetParagraphFormattingInput {
+  readonly documentId: string;
+  readonly ownerUserId: string;
+  readonly baseVersionId: string;
+  readonly target: DocumentTextTargetInput;
+  readonly alignment?: "left" | "center" | "right";
+  readonly spacingBeforeTwips?: number;
+  readonly spacingAfterTwips?: number;
+  readonly runtime: DocumentRuntime;
+}
+
+export interface ApplySetTextFormattingInput {
+  readonly documentId: string;
+  readonly ownerUserId: string;
+  readonly baseVersionId: string;
+  readonly target: DocumentTextTargetInput;
+  readonly bold?: boolean;
+  readonly italic?: boolean;
+  readonly fontSizeHalfPoints?: number;
+  readonly fontFamily?: string;
+  readonly runtime: DocumentRuntime;
+}
+
 export interface DocumentMutationServiceOptions {
   /**
    * Optional hook between successful runtime execute and version append.
@@ -348,6 +406,103 @@ export function createDocumentMutationService(
           placement: input.placement,
         },
         formatErrorLabel: "applyInsertParagraph",
+      });
+    },
+
+    async applyInsertParagraphs(
+      input: ApplyInsertParagraphsInput,
+    ): Promise<ApplyDocumentMutationResult> {
+      return authorizeAndPersist({
+        documentId: input.documentId,
+        ownerUserId: input.ownerUserId,
+        baseVersionId: input.baseVersionId,
+        runtime: input.runtime,
+        operationType: "document.insert_paragraphs",
+        payload: {
+          texts: input.texts,
+          placement: input.placement,
+        },
+        formatErrorLabel: "applyInsertParagraphs",
+      });
+    },
+
+    async applyDeleteParagraph(
+      input: ApplyDeleteParagraphInput,
+    ): Promise<ApplyDocumentMutationResult> {
+      return authorizeAndPersist({
+        documentId: input.documentId,
+        ownerUserId: input.ownerUserId,
+        baseVersionId: input.baseVersionId,
+        runtime: input.runtime,
+        operationType: "document.delete_paragraph",
+        payload: { target: input.target },
+        formatErrorLabel: "applyDeleteParagraph",
+      });
+    },
+
+    async applySetParagraphStyle(
+      input: ApplySetParagraphStyleInput,
+    ): Promise<ApplyDocumentMutationResult> {
+      return authorizeAndPersist({
+        documentId: input.documentId,
+        ownerUserId: input.ownerUserId,
+        baseVersionId: input.baseVersionId,
+        runtime: input.runtime,
+        operationType: "document.set_paragraph_style",
+        payload: {
+          target: input.target,
+          ...(input.style !== undefined ? { style: input.style } : {}),
+        },
+        formatErrorLabel: "applySetParagraphStyle",
+      });
+    },
+
+    async applySetParagraphFormatting(
+      input: ApplySetParagraphFormattingInput,
+    ): Promise<ApplyDocumentMutationResult> {
+      return authorizeAndPersist({
+        documentId: input.documentId,
+        ownerUserId: input.ownerUserId,
+        baseVersionId: input.baseVersionId,
+        runtime: input.runtime,
+        operationType: "document.set_paragraph_formatting",
+        payload: {
+          target: input.target,
+          ...(input.alignment !== undefined
+            ? { alignment: input.alignment }
+            : {}),
+          ...(input.spacingBeforeTwips !== undefined
+            ? { spacingBeforeTwips: input.spacingBeforeTwips }
+            : {}),
+          ...(input.spacingAfterTwips !== undefined
+            ? { spacingAfterTwips: input.spacingAfterTwips }
+            : {}),
+        },
+        formatErrorLabel: "applySetParagraphFormatting",
+      });
+    },
+
+    async applySetTextFormatting(
+      input: ApplySetTextFormattingInput,
+    ): Promise<ApplyDocumentMutationResult> {
+      return authorizeAndPersist({
+        documentId: input.documentId,
+        ownerUserId: input.ownerUserId,
+        baseVersionId: input.baseVersionId,
+        runtime: input.runtime,
+        operationType: "document.set_text_formatting",
+        payload: {
+          target: input.target,
+          ...(input.bold !== undefined ? { bold: input.bold } : {}),
+          ...(input.italic !== undefined ? { italic: input.italic } : {}),
+          ...(input.fontSizeHalfPoints !== undefined
+            ? { fontSizeHalfPoints: input.fontSizeHalfPoints }
+            : {}),
+          ...(input.fontFamily !== undefined
+            ? { fontFamily: input.fontFamily }
+            : {}),
+        },
+        formatErrorLabel: "applySetTextFormatting",
       });
     },
 

@@ -84,6 +84,80 @@ export function createAgentDocumentMutationExecutor(input: {
       return toExecutorResult(applied, request.document.versionId);
     },
 
+    async insertParagraphs(request): Promise<DocumentMutationResult> {
+      const applied = await mutations.applyInsertParagraphs({
+        documentId: request.document.documentId,
+        ownerUserId: input.ownerUserId,
+        baseVersionId: request.document.versionId,
+        texts: request.texts,
+        placement: request.placement,
+        runtime: input.runtime,
+      });
+      return toExecutorResult(applied, request.document.versionId);
+    },
+
+    async deleteParagraph(request): Promise<DocumentMutationResult> {
+      const applied = await mutations.applyDeleteParagraph({
+        documentId: request.document.documentId,
+        ownerUserId: input.ownerUserId,
+        baseVersionId: request.document.versionId,
+        target: request.target,
+        runtime: input.runtime,
+      });
+      return toExecutorResult(applied, request.document.versionId);
+    },
+
+    async setParagraphStyle(request): Promise<DocumentMutationResult> {
+      const applied = await mutations.applySetParagraphStyle({
+        documentId: request.document.documentId,
+        ownerUserId: input.ownerUserId,
+        baseVersionId: request.document.versionId,
+        target: request.target,
+        ...(request.style !== undefined ? { style: request.style } : {}),
+        runtime: input.runtime,
+      });
+      return toExecutorResult(applied, request.document.versionId);
+    },
+
+    async setParagraphFormatting(request): Promise<DocumentMutationResult> {
+      const applied = await mutations.applySetParagraphFormatting({
+        documentId: request.document.documentId,
+        ownerUserId: input.ownerUserId,
+        baseVersionId: request.document.versionId,
+        target: request.target,
+        ...(request.alignment !== undefined
+          ? { alignment: request.alignment }
+          : {}),
+        ...(request.spacingBeforeTwips !== undefined
+          ? { spacingBeforeTwips: request.spacingBeforeTwips }
+          : {}),
+        ...(request.spacingAfterTwips !== undefined
+          ? { spacingAfterTwips: request.spacingAfterTwips }
+          : {}),
+        runtime: input.runtime,
+      });
+      return toExecutorResult(applied, request.document.versionId);
+    },
+
+    async setTextFormatting(request): Promise<DocumentMutationResult> {
+      const applied = await mutations.applySetTextFormatting({
+        documentId: request.document.documentId,
+        ownerUserId: input.ownerUserId,
+        baseVersionId: request.document.versionId,
+        target: request.target,
+        ...(request.bold !== undefined ? { bold: request.bold } : {}),
+        ...(request.italic !== undefined ? { italic: request.italic } : {}),
+        ...(request.fontSizeHalfPoints !== undefined
+          ? { fontSizeHalfPoints: request.fontSizeHalfPoints }
+          : {}),
+        ...(request.fontFamily !== undefined
+          ? { fontFamily: request.fontFamily }
+          : {}),
+        runtime: input.runtime,
+      });
+      return toExecutorResult(applied, request.document.versionId);
+    },
+
     async setTableCellsText(request): Promise<DocumentMutationResult> {
       const applied = await mutations.applySetTableCellsText({
         documentId: request.document.documentId,

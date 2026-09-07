@@ -30,6 +30,7 @@ export function buildDocumentAgentSystemPrompt(
     "Do not reveal chain-of-thought; respond with concise, grounded answers.",
       "Prefer the fewest tool calls that answer the question. " +
         "For prose: write like a human — multi-sentence paragraphs, not one short line per tool call. " +
+        "When writing several consecutive paragraphs, prefer one document.insert_paragraphs call. " +
         "Usually 1–2 tool calls for a small edit; for longer writing prefer a handful of full paragraphs " +
         "(title, body sections), not a dozen single-sentence inserts. Max ~4 tool calls for typical multi-cell table edits.",
     "Only call tools that appear in your tool list — never invent names like document.mutate or document.add_row.",
@@ -73,11 +74,12 @@ export function buildDocumentAgentSystemPrompt(
     parts.push(
       "Editing is allowed via the mutation tools in your tool list — document.mutate is a capability id, not a tool name. " +
         "After workspace.create_blank_docx, the new file becomes the primary document for later tools in the same run. " +
-        "Use document.insert_paragraph to create new paragraphs (placement start|end|before|after body-block handles from inspect(body_blocks)). " +
-        "Write human document prose: each insert_paragraph should be a real paragraph (or a short heading), " +
-        "typically 2–5 sentences — never emit one tool call per bullet fragment or single short line when a fuller paragraph would do. " +
-        "For a short essay prefer ~3–8 inserts total (title + section bodies), not 15+ micro-inserts. " +
-        "True bullet lists may use one short line per bullet only when the user asked for a list; otherwise prefer flowing paragraphs. " +
+        "Prefer document.insert_paragraphs when creating several consecutive paragraphs you already know (one atomic version). " +
+        "Use document.insert_paragraph for a single paragraph or precise placement after inspect(body_blocks). " +
+        "Write human prose: multi-sentence paragraphs, not one short line per call. " +
+        "Use set_paragraph_style / set_paragraph_formatting / set_text_formatting for style and formatting — do not embed formatting assumptions into plain text. " +
+        "Use delete_paragraph to remove a paragraph (not empty-string replace). " +
+        "Inspect when exact placement or targeting matters. After structural mutation, re-inspect before reusing handles. " +
         "For DOCX table work: inspect(tables) first → typed table mutation → re-inspect after structural changes before reusing handles → answer. " +
         "Prefer semantic rowLabel/columnHeader targeting when labels are clear and unique. " +
         "Use opaque structural handles from inspect(tables) for blank rows, blank headers, duplicates, or otherwise difficult targets. " +

@@ -111,6 +111,59 @@ export interface DocumentInsertParagraphMutationRequest {
   readonly runId?: string;
 }
 
+export interface DocumentInsertParagraphsMutationRequest {
+  readonly document: DocumentRef;
+  readonly texts: readonly string[];
+  readonly placement: DocumentParagraphPlacement;
+  readonly signal?: AbortSignal;
+  readonly runId?: string;
+}
+
+/** Semantic text target for delete / style / formatting mutations. */
+export interface DocumentTextTarget {
+  readonly text: string;
+  readonly occurrence?: number;
+}
+
+export interface DocumentDeleteParagraphMutationRequest {
+  readonly document: DocumentRef;
+  readonly target: DocumentTextTarget;
+  readonly signal?: AbortSignal;
+  readonly runId?: string;
+}
+
+export interface DocumentSetParagraphStyleMutationRequest {
+  readonly document: DocumentRef;
+  readonly target: DocumentTextTarget;
+  /** Omit to clear the paragraph style (engine Clear). */
+  readonly style?: string;
+  readonly signal?: AbortSignal;
+  readonly runId?: string;
+}
+
+export type DocumentParagraphAlignment = "left" | "center" | "right";
+
+export interface DocumentSetParagraphFormattingMutationRequest {
+  readonly document: DocumentRef;
+  readonly target: DocumentTextTarget;
+  readonly alignment?: DocumentParagraphAlignment;
+  readonly spacingBeforeTwips?: number;
+  readonly spacingAfterTwips?: number;
+  readonly signal?: AbortSignal;
+  readonly runId?: string;
+}
+
+export interface DocumentSetTextFormattingMutationRequest {
+  readonly document: DocumentRef;
+  readonly target: DocumentTextTarget;
+  readonly bold?: boolean;
+  readonly italic?: boolean;
+  readonly fontSizeHalfPoints?: number;
+  readonly fontFamily?: string;
+  readonly signal?: AbortSignal;
+  readonly runId?: string;
+}
+
 export type DocumentMutationResult =
   | {
       readonly status: "success";
@@ -133,6 +186,21 @@ export interface DocumentMutationExecutor {
   ): Promise<DocumentMutationResult>;
   insertParagraph(
     input: DocumentInsertParagraphMutationRequest,
+  ): Promise<DocumentMutationResult>;
+  insertParagraphs(
+    input: DocumentInsertParagraphsMutationRequest,
+  ): Promise<DocumentMutationResult>;
+  deleteParagraph(
+    input: DocumentDeleteParagraphMutationRequest,
+  ): Promise<DocumentMutationResult>;
+  setParagraphStyle(
+    input: DocumentSetParagraphStyleMutationRequest,
+  ): Promise<DocumentMutationResult>;
+  setParagraphFormatting(
+    input: DocumentSetParagraphFormattingMutationRequest,
+  ): Promise<DocumentMutationResult>;
+  setTextFormatting(
+    input: DocumentSetTextFormattingMutationRequest,
   ): Promise<DocumentMutationResult>;
   setTableCellsText(
     input: DocumentSetTableCellsTextMutationRequest,
@@ -273,6 +341,83 @@ export function createInMemoryDocumentMutationExecutor(
         {
           text: input.text,
           placement: input.placement,
+        },
+        input.signal,
+        input.runId,
+      );
+    },
+
+    async insertParagraphs(input) {
+      return executeOnce(
+        input.document,
+        "document.insert_paragraphs",
+        {
+          texts: input.texts,
+          placement: input.placement,
+        },
+        input.signal,
+        input.runId,
+      );
+    },
+
+    async deleteParagraph(input) {
+      return executeOnce(
+        input.document,
+        "document.delete_paragraph",
+        { target: input.target },
+        input.signal,
+        input.runId,
+      );
+    },
+
+    async setParagraphStyle(input) {
+      return executeOnce(
+        input.document,
+        "document.set_paragraph_style",
+        {
+          target: input.target,
+          ...(input.style !== undefined ? { style: input.style } : {}),
+        },
+        input.signal,
+        input.runId,
+      );
+    },
+
+    async setParagraphFormatting(input) {
+      return executeOnce(
+        input.document,
+        "document.set_paragraph_formatting",
+        {
+          target: input.target,
+          ...(input.alignment !== undefined
+            ? { alignment: input.alignment }
+            : {}),
+          ...(input.spacingBeforeTwips !== undefined
+            ? { spacingBeforeTwips: input.spacingBeforeTwips }
+            : {}),
+          ...(input.spacingAfterTwips !== undefined
+            ? { spacingAfterTwips: input.spacingAfterTwips }
+            : {}),
+        },
+        input.signal,
+        input.runId,
+      );
+    },
+
+    async setTextFormatting(input) {
+      return executeOnce(
+        input.document,
+        "document.set_text_formatting",
+        {
+          target: input.target,
+          ...(input.bold !== undefined ? { bold: input.bold } : {}),
+          ...(input.italic !== undefined ? { italic: input.italic } : {}),
+          ...(input.fontSizeHalfPoints !== undefined
+            ? { fontSizeHalfPoints: input.fontSizeHalfPoints }
+            : {}),
+          ...(input.fontFamily !== undefined
+            ? { fontFamily: input.fontFamily }
+            : {}),
         },
         input.signal,
         input.runId,

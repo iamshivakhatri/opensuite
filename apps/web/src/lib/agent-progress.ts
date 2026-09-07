@@ -53,6 +53,26 @@ const TOOL_LABELS: Record<string, { active: string; done: string }> = {
     active: "Inserting paragraph…",
     done: "Inserted paragraph",
   },
+  "document.insert_paragraphs": {
+    active: "Inserting paragraphs…",
+    done: "Inserted paragraphs",
+  },
+  "document.delete_paragraph": {
+    active: "Deleting paragraph…",
+    done: "Deleted paragraph",
+  },
+  "document.set_paragraph_style": {
+    active: "Setting paragraph style…",
+    done: "Set paragraph style",
+  },
+  "document.set_paragraph_formatting": {
+    active: "Formatting paragraph…",
+    done: "Formatted paragraph",
+  },
+  "document.set_text_formatting": {
+    active: "Formatting text…",
+    done: "Formatted text",
+  },
   "workspace.create_blank_docx": {
     active: "Creating blank document…",
     done: "Created blank document",

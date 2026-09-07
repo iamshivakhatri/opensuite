@@ -132,6 +132,86 @@ test(
             },
           };
         },
+        async executeDocxInsertParagraphs() {
+          return {
+            result: {
+              ok: false,
+              status: "failed",
+              diagnostics: [
+                {
+                  code: "UNSUPPORTED_OPERATION",
+                  severity: "error",
+                  message: "unused",
+                },
+              ],
+              changes: [],
+            },
+          };
+        },
+        async executeDocxDeleteParagraph() {
+          return {
+            result: {
+              ok: false,
+              status: "failed",
+              diagnostics: [
+                {
+                  code: "UNSUPPORTED_OPERATION",
+                  severity: "error",
+                  message: "unused",
+                },
+              ],
+              changes: [],
+            },
+          };
+        },
+        async executeDocxSetParagraphStyle() {
+          return {
+            result: {
+              ok: false,
+              status: "failed",
+              diagnostics: [
+                {
+                  code: "UNSUPPORTED_OPERATION",
+                  severity: "error",
+                  message: "unused",
+                },
+              ],
+              changes: [],
+            },
+          };
+        },
+        async executeDocxSetParagraphFormatting() {
+          return {
+            result: {
+              ok: false,
+              status: "failed",
+              diagnostics: [
+                {
+                  code: "UNSUPPORTED_OPERATION",
+                  severity: "error",
+                  message: "unused",
+                },
+              ],
+              changes: [],
+            },
+          };
+        },
+        async executeDocxSetTextFormatting() {
+          return {
+            result: {
+              ok: false,
+              status: "failed",
+              diagnostics: [
+                {
+                  code: "UNSUPPORTED_OPERATION",
+                  severity: "error",
+                  message: "unused",
+                },
+              ],
+              changes: [],
+            },
+          };
+        },
         async findDocxText(input, request) {
           const haystack = Buffer.from(input).toString("utf8");
           const found = haystack.includes(request.text);
@@ -615,6 +695,86 @@ test("unit-adjacent: real adapter + owned loader + mutation service without DB",
           return new Uint8Array([0x50, 0x4b, 0x03, 0x04]);
         },
         async executeDocxInsertParagraph() {
+          return {
+            result: {
+              ok: false,
+              status: "failed",
+              diagnostics: [
+                {
+                  code: "UNSUPPORTED_OPERATION",
+                  severity: "error",
+                  message: "unused",
+                },
+              ],
+              changes: [],
+            },
+          };
+        },
+        async executeDocxInsertParagraphs() {
+          return {
+            result: {
+              ok: false,
+              status: "failed",
+              diagnostics: [
+                {
+                  code: "UNSUPPORTED_OPERATION",
+                  severity: "error",
+                  message: "unused",
+                },
+              ],
+              changes: [],
+            },
+          };
+        },
+        async executeDocxDeleteParagraph() {
+          return {
+            result: {
+              ok: false,
+              status: "failed",
+              diagnostics: [
+                {
+                  code: "UNSUPPORTED_OPERATION",
+                  severity: "error",
+                  message: "unused",
+                },
+              ],
+              changes: [],
+            },
+          };
+        },
+        async executeDocxSetParagraphStyle() {
+          return {
+            result: {
+              ok: false,
+              status: "failed",
+              diagnostics: [
+                {
+                  code: "UNSUPPORTED_OPERATION",
+                  severity: "error",
+                  message: "unused",
+                },
+              ],
+              changes: [],
+            },
+          };
+        },
+        async executeDocxSetParagraphFormatting() {
+          return {
+            result: {
+              ok: false,
+              status: "failed",
+              diagnostics: [
+                {
+                  code: "UNSUPPORTED_OPERATION",
+                  severity: "error",
+                  message: "unused",
+                },
+              ],
+              changes: [],
+            },
+          };
+        },
+        async executeDocxSetTextFormatting() {
           return {
             result: {
               ok: false,

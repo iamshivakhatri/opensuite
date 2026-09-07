@@ -1,8 +1,10 @@
 import type {
+  DocxDeleteParagraphOperation,
   DocxEngineBinding,
   DocxFindTextRequest,
   DocxFindTextResult,
   DocxInsertParagraphOperation,
+  DocxInsertParagraphsOperation,
   DocxInsertTableColumnOperation,
   DocxInsertTableRowsOperation,
   DocxInspectRequest,
@@ -10,7 +12,10 @@ import type {
   DocxMutationBindingResult,
   DocxReplaceTextOperation,
   DocxRuntimeCapabilities,
+  DocxSetParagraphFormattingOperation,
+  DocxSetParagraphStyleOperation,
   DocxSetTableCellsTextOperation,
+  DocxSetTextFormattingOperation,
 } from "../docx-engine-binding.js";
 
 const DEFAULT_CAPS: DocxRuntimeCapabilities = {
@@ -28,6 +33,11 @@ const DEFAULT_CAPS: DocxRuntimeCapabilities = {
         "replace_text",
         "create_blank_docx",
         "insert_paragraph",
+        "insert_paragraphs",
+        "delete_paragraph",
+        "set_paragraph_style",
+        "set_paragraph_formatting",
+        "set_text_formatting",
         "set_table_cells_text",
         "insert_table_rows",
         "insert_table_column",
@@ -74,6 +84,26 @@ export function createFakeDocxEngineBinding(
       input: Uint8Array,
       operation: DocxInsertParagraphOperation,
     ) => DocxMutationBindingResult | Promise<DocxMutationBindingResult>;
+    executeDocxInsertParagraphs?: (
+      input: Uint8Array,
+      operation: DocxInsertParagraphsOperation,
+    ) => DocxMutationBindingResult | Promise<DocxMutationBindingResult>;
+    executeDocxDeleteParagraph?: (
+      input: Uint8Array,
+      operation: DocxDeleteParagraphOperation,
+    ) => DocxMutationBindingResult | Promise<DocxMutationBindingResult>;
+    executeDocxSetParagraphStyle?: (
+      input: Uint8Array,
+      operation: DocxSetParagraphStyleOperation,
+    ) => DocxMutationBindingResult | Promise<DocxMutationBindingResult>;
+    executeDocxSetParagraphFormatting?: (
+      input: Uint8Array,
+      operation: DocxSetParagraphFormattingOperation,
+    ) => DocxMutationBindingResult | Promise<DocxMutationBindingResult>;
+    executeDocxSetTextFormatting?: (
+      input: Uint8Array,
+      operation: DocxSetTextFormattingOperation,
+    ) => DocxMutationBindingResult | Promise<DocxMutationBindingResult>;
     executeDocxSetTableCellsText?: (
       input: Uint8Array,
       operation: DocxSetTableCellsTextOperation,
@@ -104,6 +134,26 @@ export function createFakeDocxEngineBinding(
     input: Uint8Array;
     operation: DocxInsertParagraphOperation;
   }>;
+  readonly insertParagraphsCalls: Array<{
+    input: Uint8Array;
+    operation: DocxInsertParagraphsOperation;
+  }>;
+  readonly deleteParagraphCalls: Array<{
+    input: Uint8Array;
+    operation: DocxDeleteParagraphOperation;
+  }>;
+  readonly setParagraphStyleCalls: Array<{
+    input: Uint8Array;
+    operation: DocxSetParagraphStyleOperation;
+  }>;
+  readonly setParagraphFormattingCalls: Array<{
+    input: Uint8Array;
+    operation: DocxSetParagraphFormattingOperation;
+  }>;
+  readonly setTextFormattingCalls: Array<{
+    input: Uint8Array;
+    operation: DocxSetTextFormattingOperation;
+  }>;
   readonly setCellsCalls: Array<{
     input: Uint8Array;
     operation: DocxSetTableCellsTextOperation;
@@ -133,6 +183,26 @@ export function createFakeDocxEngineBinding(
     input: Uint8Array;
     operation: DocxInsertParagraphOperation;
   }> = [];
+  const insertParagraphsCalls: Array<{
+    input: Uint8Array;
+    operation: DocxInsertParagraphsOperation;
+  }> = [];
+  const deleteParagraphCalls: Array<{
+    input: Uint8Array;
+    operation: DocxDeleteParagraphOperation;
+  }> = [];
+  const setParagraphStyleCalls: Array<{
+    input: Uint8Array;
+    operation: DocxSetParagraphStyleOperation;
+  }> = [];
+  const setParagraphFormattingCalls: Array<{
+    input: Uint8Array;
+    operation: DocxSetParagraphFormattingOperation;
+  }> = [];
+  const setTextFormattingCalls: Array<{
+    input: Uint8Array;
+    operation: DocxSetTextFormattingOperation;
+  }> = [];
   const setCellsCalls: Array<{
     input: Uint8Array;
     operation: DocxSetTableCellsTextOperation;
@@ -151,6 +221,11 @@ export function createFakeDocxEngineBinding(
     findCalls,
     inspectCalls,
     insertParagraphCalls,
+    insertParagraphsCalls,
+    deleteParagraphCalls,
+    setParagraphStyleCalls,
+    setParagraphFormattingCalls,
+    setTextFormattingCalls,
     setCellsCalls,
     insertRowsCalls,
     insertColumnCalls,
@@ -243,6 +318,41 @@ export function createFakeDocxEngineBinding(
       insertParagraphCalls.push({ input, operation });
       if (overrides.executeDocxInsertParagraph) {
         return overrides.executeDocxInsertParagraph(input, operation);
+      }
+      return notStubbed();
+    },
+    async executeDocxInsertParagraphs(input, operation) {
+      insertParagraphsCalls.push({ input, operation });
+      if (overrides.executeDocxInsertParagraphs) {
+        return overrides.executeDocxInsertParagraphs(input, operation);
+      }
+      return notStubbed();
+    },
+    async executeDocxDeleteParagraph(input, operation) {
+      deleteParagraphCalls.push({ input, operation });
+      if (overrides.executeDocxDeleteParagraph) {
+        return overrides.executeDocxDeleteParagraph(input, operation);
+      }
+      return notStubbed();
+    },
+    async executeDocxSetParagraphStyle(input, operation) {
+      setParagraphStyleCalls.push({ input, operation });
+      if (overrides.executeDocxSetParagraphStyle) {
+        return overrides.executeDocxSetParagraphStyle(input, operation);
+      }
+      return notStubbed();
+    },
+    async executeDocxSetParagraphFormatting(input, operation) {
+      setParagraphFormattingCalls.push({ input, operation });
+      if (overrides.executeDocxSetParagraphFormatting) {
+        return overrides.executeDocxSetParagraphFormatting(input, operation);
+      }
+      return notStubbed();
+    },
+    async executeDocxSetTextFormatting(input, operation) {
+      setTextFormattingCalls.push({ input, operation });
+      if (overrides.executeDocxSetTextFormatting) {
+        return overrides.executeDocxSetTextFormatting(input, operation);
       }
       return notStubbed();
     },

@@ -1,8 +1,10 @@
 import type {
+  DocumentParagraphAlignment,
   DocumentParagraphPlacement,
   DocumentTableCellUpdate,
   DocumentTableRowAnchor,
   DocumentTableTarget,
+  DocumentTextTarget,
   PersistedDocumentMutationToolResult,
 } from "../document-mutation.js";
 import type { AgentTool } from "../model.js";
@@ -18,6 +20,7 @@ import { DOCUMENT_TOOL_NAMES, DOCX_ENGINE_CAPS, MOCK_FORMAT_CAPS } from "./names
 import {
   OCCURRENCE_PROPERTY,
   ROW_ANCHOR_SCHEMA,
+  TEXT_TARGET_SCHEMA,
   tableTargetSchema,
 } from "./shared-schema.js";
 import {
@@ -25,6 +28,7 @@ import {
   parseParagraphPlacement,
   parseRowAnchor,
   parseTableTarget,
+  parseTextTarget,
 } from "./selectors.js";
 
 export interface DocumentReplaceTextInput {
@@ -42,6 +46,36 @@ export type DocumentParagraphPlacementInput =
 export interface DocumentInsertParagraphInput {
   readonly text: string;
   readonly placement: DocumentParagraphPlacementInput;
+}
+
+export interface DocumentInsertParagraphsInput {
+  readonly texts: readonly string[];
+  readonly placement: DocumentParagraphPlacementInput;
+}
+
+export interface DocumentDeleteParagraphInput {
+  readonly target: DocumentTextTarget;
+}
+
+export interface DocumentSetParagraphStyleInput {
+  readonly target: DocumentTextTarget;
+  /** Omit to clear the paragraph style. */
+  readonly style?: string;
+}
+
+export interface DocumentSetParagraphFormattingInput {
+  readonly target: DocumentTextTarget;
+  readonly alignment?: DocumentParagraphAlignment;
+  readonly spacingBeforeTwips?: number;
+  readonly spacingAfterTwips?: number;
+}
+
+export interface DocumentSetTextFormattingInput {
+  readonly target: DocumentTextTarget;
+  readonly bold?: boolean;
+  readonly italic?: boolean;
+  readonly fontSizeHalfPoints?: number;
+  readonly fontFamily?: string;
 }
 
 export interface DocumentSetTableCellsTextInput {
@@ -156,10 +190,9 @@ export function createDocumentInsertParagraphTool(): AgentTool<
   return defineDocumentTool({
     name: DOCUMENT_TOOL_NAMES.insertParagraph,
     description:
-      "Insert a new paragraph into the active DOCX document. " +
-      "Pass a full human paragraph (usually multiple sentences) or a short heading — " +
-      "do not call this once per short line or bullet fragment when composing prose. " +
-      "Prefer fewer inserts with richer text over many micro-inserts. " +
+      "Insert a single new paragraph into the active DOCX document. " +
+      "Pass a full human paragraph (usually multiple sentences) or a short heading. " +
+      "When creating several consecutive paragraphs you already know, prefer document.insert_paragraphs (one atomic version). " +
       "Use inspect(body_blocks) first when placement relative to existing content matters. " +
       "placement: start | end | before {handle} | after {handle} (body-block handles from inspect). " +
       "After a structural mutation, re-inspect before reusing handles. " +
@@ -223,6 +256,392 @@ export function createDocumentInsertParagraphTool(): AgentTool<
         input,
       ),
   });
+}
+
+const PARAGRAPH_PLACEMENT_SCHEMA = {
+  type: "object",
+  description:
+    "Where to insert: start/end of body, or before/after a body-block handle",
+  properties: {
+    kind: {
+      type: "string",
+      enum: ["start", "end", "before", "after"],
+    },
+    handle: {
+      type: "string",
+      description:
+        "Opaque body-block handle from inspect(body_blocks) when kind is before|after",
+    },
+  },
+  required: ["kind"],
+  additionalProperties: false,
+} as const;
+
+export function createDocumentInsertParagraphsTool(): AgentTool<
+  DocumentInsertParagraphsInput,
+  PersistedDocumentMutationToolResult
+> {
+  return defineDocumentTool({
+    name: DOCUMENT_TOOL_NAMES.insertParagraphs,
+    description:
+      "Atomically insert multiple consecutive paragraphs in one mutation (one immutable version). " +
+      "Prefer this over repeated document.insert_paragraph when you already know several paragraphs to create. " +
+      "Each texts[] entry should be a full human paragraph or short heading. " +
+      "Same placement model as insert_paragraph (start|end|before|after body-block handles). " +
+      "Do not pass styles here — compose with set_paragraph_style afterward. " +
+      "Success means one immutable new document version was persisted.",
+    effect: "write",
+    executionMode: "sequential",
+    capability: DOCX_ENGINE_CAPS.insertParagraphs,
+    inputSchema: {
+      type: "object",
+      properties: {
+        texts: {
+          type: "array",
+          items: { type: "string" },
+          description:
+            "Ordered paragraph texts to insert (prefer multi-sentence prose per entry)",
+        },
+        placement: PARAGRAPH_PLACEMENT_SCHEMA,
+      },
+      required: ["texts", "placement"],
+      additionalProperties: false,
+    },
+    parseInput(raw) {
+      const obj = assertObject(raw, DOCUMENT_TOOL_NAMES.insertParagraphs);
+      if (!Array.isArray(obj.texts)) {
+        invalidInput("document.insert_paragraphs requires a texts array");
+      }
+      const texts: string[] = [];
+      for (const item of obj.texts) {
+        if (typeof item !== "string") {
+          invalidInput("document.insert_paragraphs texts must be strings");
+        }
+        texts.push(item);
+      }
+      const placement = parseParagraphPlacement(
+        obj.placement,
+        DOCUMENT_TOOL_NAMES.insertParagraphs,
+      );
+      return { texts, placement };
+    },
+    execute: (input, ctx) =>
+      executePersistedMutation(
+        ctx,
+        DOCUMENT_TOOL_NAMES.insertParagraphs,
+        (document, mutations) =>
+          mutations.insertParagraphs({
+            document,
+            texts: input.texts,
+            placement: input.placement as DocumentParagraphPlacement,
+            signal: ctx.signal,
+            runId: ctx.runId,
+          }),
+        input,
+      ),
+  });
+}
+
+export function createDocumentDeleteParagraphTool(): AgentTool<
+  DocumentDeleteParagraphInput,
+  PersistedDocumentMutationToolResult
+> {
+  return defineDocumentTool({
+    name: DOCUMENT_TOOL_NAMES.deleteParagraph,
+    description:
+      "Delete one paragraph matched by exact visible text (optional occurrence). " +
+      "Do not empty text with replace_text — use this tool. " +
+      "After success, re-inspect before reusing structural handles. " +
+      "Success means an immutable new document version was persisted.",
+    effect: "write",
+    executionMode: "sequential",
+    capability: DOCX_ENGINE_CAPS.deleteParagraph,
+    inputSchema: {
+      type: "object",
+      properties: {
+        target: TEXT_TARGET_SCHEMA,
+      },
+      required: ["target"],
+      additionalProperties: false,
+    },
+    parseInput(raw) {
+      const obj = assertObject(raw, DOCUMENT_TOOL_NAMES.deleteParagraph);
+      return {
+        target: parseTextTarget(obj.target, DOCUMENT_TOOL_NAMES.deleteParagraph),
+      };
+    },
+    execute: (input, ctx) =>
+      executePersistedMutation(
+        ctx,
+        DOCUMENT_TOOL_NAMES.deleteParagraph,
+        (document, mutations) =>
+          mutations.deleteParagraph({
+            document,
+            target: input.target,
+            signal: ctx.signal,
+            runId: ctx.runId,
+          }),
+        input,
+      ),
+  });
+}
+
+export function createDocumentSetParagraphStyleTool(): AgentTool<
+  DocumentSetParagraphStyleInput,
+  PersistedDocumentMutationToolResult
+> {
+  return defineDocumentTool({
+    name: DOCUMENT_TOOL_NAMES.setParagraphStyle,
+    description:
+      "Set or clear a paragraph's style by display name (e.g. Heading 1). " +
+      "Target by exact visible text after insert/inspect. Omit style to clear. " +
+      "Compose with insert_paragraphs rather than embedding style in insertion. " +
+      "Success means an immutable new document version was persisted.",
+    effect: "write",
+    executionMode: "sequential",
+    capability: DOCX_ENGINE_CAPS.setParagraphStyle,
+    inputSchema: {
+      type: "object",
+      properties: {
+        target: TEXT_TARGET_SCHEMA,
+        style: {
+          type: "string",
+          description:
+            "Existing style display name (e.g. Heading 1). Omit to clear.",
+        },
+      },
+      required: ["target"],
+      additionalProperties: false,
+    },
+    parseInput(raw) {
+      const obj = assertObject(raw, DOCUMENT_TOOL_NAMES.setParagraphStyle);
+      const target = parseTextTarget(
+        obj.target,
+        DOCUMENT_TOOL_NAMES.setParagraphStyle,
+      );
+      if (obj.style !== undefined && typeof obj.style !== "string") {
+        invalidInput("document.set_paragraph_style style must be a string");
+      }
+      return {
+        target,
+        ...(typeof obj.style === "string" ? { style: obj.style } : {}),
+      };
+    },
+    execute: (input, ctx) =>
+      executePersistedMutation(
+        ctx,
+        DOCUMENT_TOOL_NAMES.setParagraphStyle,
+        (document, mutations) =>
+          mutations.setParagraphStyle({
+            document,
+            target: input.target,
+            ...(input.style !== undefined ? { style: input.style } : {}),
+            signal: ctx.signal,
+            runId: ctx.runId,
+          }),
+        input,
+      ),
+  });
+}
+
+export function createDocumentSetParagraphFormattingTool(): AgentTool<
+  DocumentSetParagraphFormattingInput,
+  PersistedDocumentMutationToolResult
+> {
+  return defineDocumentTool({
+    name: DOCUMENT_TOOL_NAMES.setParagraphFormatting,
+    description:
+      "Apply paragraph-level formatting (alignment, spacing before/after in twips). " +
+      "Target by exact visible text. Use for centering, spacing adjustments, etc. " +
+      "Success means an immutable new document version was persisted.",
+    effect: "write",
+    executionMode: "sequential",
+    capability: DOCX_ENGINE_CAPS.setParagraphFormatting,
+    inputSchema: {
+      type: "object",
+      properties: {
+        target: TEXT_TARGET_SCHEMA,
+        alignment: {
+          type: "string",
+          enum: ["left", "center", "right"],
+        },
+        spacingBeforeTwips: {
+          type: "number",
+          description: "Spacing before paragraph in twips",
+        },
+        spacingAfterTwips: {
+          type: "number",
+          description: "Spacing after paragraph in twips",
+        },
+      },
+      required: ["target"],
+      additionalProperties: false,
+    },
+    parseInput(raw) {
+      const obj = assertObject(
+        raw,
+        DOCUMENT_TOOL_NAMES.setParagraphFormatting,
+      );
+      const target = parseTextTarget(
+        obj.target,
+        DOCUMENT_TOOL_NAMES.setParagraphFormatting,
+      );
+      let alignment: DocumentParagraphAlignment | undefined;
+      if (obj.alignment !== undefined) {
+        if (
+          obj.alignment !== "left" &&
+          obj.alignment !== "center" &&
+          obj.alignment !== "right"
+        ) {
+          invalidInput(
+            "document.set_paragraph_formatting alignment must be left|center|right",
+          );
+        }
+        alignment = obj.alignment;
+      }
+      const spacingBeforeTwips = parseOptionalIntField(
+        obj.spacingBeforeTwips,
+        "document.set_paragraph_formatting spacingBeforeTwips",
+      );
+      const spacingAfterTwips = parseOptionalIntField(
+        obj.spacingAfterTwips,
+        "document.set_paragraph_formatting spacingAfterTwips",
+      );
+      return {
+        target,
+        ...(alignment !== undefined ? { alignment } : {}),
+        ...(spacingBeforeTwips !== undefined ? { spacingBeforeTwips } : {}),
+        ...(spacingAfterTwips !== undefined ? { spacingAfterTwips } : {}),
+      };
+    },
+    execute: (input, ctx) =>
+      executePersistedMutation(
+        ctx,
+        DOCUMENT_TOOL_NAMES.setParagraphFormatting,
+        (document, mutations) =>
+          mutations.setParagraphFormatting({
+            document,
+            target: input.target,
+            ...(input.alignment !== undefined
+              ? { alignment: input.alignment }
+              : {}),
+            ...(input.spacingBeforeTwips !== undefined
+              ? { spacingBeforeTwips: input.spacingBeforeTwips }
+              : {}),
+            ...(input.spacingAfterTwips !== undefined
+              ? { spacingAfterTwips: input.spacingAfterTwips }
+              : {}),
+            signal: ctx.signal,
+            runId: ctx.runId,
+          }),
+        input,
+      ),
+  });
+}
+
+export function createDocumentSetTextFormattingTool(): AgentTool<
+  DocumentSetTextFormattingInput,
+  PersistedDocumentMutationToolResult
+> {
+  return defineDocumentTool({
+    name: DOCUMENT_TOOL_NAMES.setTextFormatting,
+    description:
+      "Apply character formatting (bold, italic, font size in half-points, font family) " +
+      "to a text run matched by exact visible text. " +
+      "Success means an immutable new document version was persisted.",
+    effect: "write",
+    executionMode: "sequential",
+    capability: DOCX_ENGINE_CAPS.setTextFormatting,
+    inputSchema: {
+      type: "object",
+      properties: {
+        target: TEXT_TARGET_SCHEMA,
+        bold: { type: "boolean" },
+        italic: { type: "boolean" },
+        fontSizeHalfPoints: {
+          type: "number",
+          description: "Font size in Word half-points (e.g. 24 = 12pt)",
+        },
+        fontFamily: { type: "string" },
+      },
+      required: ["target"],
+      additionalProperties: false,
+    },
+    parseInput(raw) {
+      const obj = assertObject(raw, DOCUMENT_TOOL_NAMES.setTextFormatting);
+      const target = parseTextTarget(
+        obj.target,
+        DOCUMENT_TOOL_NAMES.setTextFormatting,
+      );
+      if (obj.bold !== undefined && typeof obj.bold !== "boolean") {
+        invalidInput("document.set_text_formatting bold must be a boolean");
+      }
+      if (obj.italic !== undefined && typeof obj.italic !== "boolean") {
+        invalidInput("document.set_text_formatting italic must be a boolean");
+      }
+      if (
+        obj.fontFamily !== undefined &&
+        typeof obj.fontFamily !== "string"
+      ) {
+        invalidInput(
+          "document.set_text_formatting fontFamily must be a string",
+        );
+      }
+      let fontSizeHalfPoints: number | undefined;
+      if (obj.fontSizeHalfPoints !== undefined) {
+        if (
+          typeof obj.fontSizeHalfPoints !== "number" ||
+          !Number.isInteger(obj.fontSizeHalfPoints) ||
+          obj.fontSizeHalfPoints < 1
+        ) {
+          invalidInput(
+            "document.set_text_formatting fontSizeHalfPoints must be a positive integer",
+          );
+        }
+        fontSizeHalfPoints = obj.fontSizeHalfPoints;
+      }
+      return {
+        target,
+        ...(typeof obj.bold === "boolean" ? { bold: obj.bold } : {}),
+        ...(typeof obj.italic === "boolean" ? { italic: obj.italic } : {}),
+        ...(fontSizeHalfPoints !== undefined ? { fontSizeHalfPoints } : {}),
+        ...(typeof obj.fontFamily === "string"
+          ? { fontFamily: obj.fontFamily }
+          : {}),
+      };
+    },
+    execute: (input, ctx) =>
+      executePersistedMutation(
+        ctx,
+        DOCUMENT_TOOL_NAMES.setTextFormatting,
+        (document, mutations) =>
+          mutations.setTextFormatting({
+            document,
+            target: input.target,
+            ...(input.bold !== undefined ? { bold: input.bold } : {}),
+            ...(input.italic !== undefined ? { italic: input.italic } : {}),
+            ...(input.fontSizeHalfPoints !== undefined
+              ? { fontSizeHalfPoints: input.fontSizeHalfPoints }
+              : {}),
+            ...(input.fontFamily !== undefined
+              ? { fontFamily: input.fontFamily }
+              : {}),
+            signal: ctx.signal,
+            runId: ctx.runId,
+          }),
+        input,
+      ),
+  });
+}
+
+function parseOptionalIntField(value: unknown, label: string): number | undefined {
+  if (value === undefined || value === null || value === "") {
+    return undefined;
+  }
+  if (typeof value !== "number" || !Number.isInteger(value)) {
+    invalidInput(`${label} must be an integer`);
+  }
+  return value;
 }
 
 export function createDocumentSetTableCellsTextTool(): AgentTool<

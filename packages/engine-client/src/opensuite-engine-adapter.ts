@@ -26,22 +26,29 @@ import {
 
 import type { DocumentArtifactLoader } from "./document-artifact-loader.js";
 import type {
+  DocxDeleteParagraphOperation,
   DocxEngineBinding,
   DocxEngineDiagnostic,
   DocxInsertParagraphOperation,
+  DocxInsertParagraphsOperation,
   DocxInsertTableColumnOperation,
   DocxInsertTableRowsOperation,
   DocxInspectAffordance,
   DocxInspectFocus,
   DocxInspectResult,
   DocxMutationBindingResult,
+  DocxParagraphAlignment,
   DocxParagraphPlacement,
   DocxReplaceTextOperation,
   DocxRuntimeCapabilities,
+  DocxSetParagraphFormattingOperation,
+  DocxSetParagraphStyleOperation,
   DocxSetTableCellsTextOperation,
+  DocxSetTextFormattingOperation,
   DocxTableCellTarget,
   DocxTableRowAnchor,
   DocxTableTarget,
+  DocxTextTarget,
 } from "./docx-engine-binding.js";
 
 /**
@@ -59,6 +66,11 @@ import type {
 const DOCX_MUTATION_TYPES = new Set([
   "document.replace_text",
   "document.insert_paragraph",
+  "document.insert_paragraphs",
+  "document.delete_paragraph",
+  "document.set_paragraph_style",
+  "document.set_paragraph_formatting",
+  "document.set_text_formatting",
   "document.set_table_cells_text",
   "document.insert_table_rows",
   "document.insert_table_column",
@@ -248,6 +260,66 @@ export function createOpenSuiteEngineAdapter(
         return mapEngineMutationResult(engineResponse, operation.type);
       }
 
+      if (operation.type === "document.insert_paragraphs") {
+        const mapped = mapInsertParagraphsOperation(operation);
+        if (!mapped.ok) {
+          return mapped.error;
+        }
+        const engineResponse = await binding.executeDocxInsertParagraphs(
+          inputBytes,
+          mapped.operation,
+        );
+        return mapEngineMutationResult(engineResponse, operation.type);
+      }
+
+      if (operation.type === "document.delete_paragraph") {
+        const mapped = mapDeleteParagraphOperation(operation);
+        if (!mapped.ok) {
+          return mapped.error;
+        }
+        const engineResponse = await binding.executeDocxDeleteParagraph(
+          inputBytes,
+          mapped.operation,
+        );
+        return mapEngineMutationResult(engineResponse, operation.type);
+      }
+
+      if (operation.type === "document.set_paragraph_style") {
+        const mapped = mapSetParagraphStyleOperation(operation);
+        if (!mapped.ok) {
+          return mapped.error;
+        }
+        const engineResponse = await binding.executeDocxSetParagraphStyle(
+          inputBytes,
+          mapped.operation,
+        );
+        return mapEngineMutationResult(engineResponse, operation.type);
+      }
+
+      if (operation.type === "document.set_paragraph_formatting") {
+        const mapped = mapSetParagraphFormattingOperation(operation);
+        if (!mapped.ok) {
+          return mapped.error;
+        }
+        const engineResponse = await binding.executeDocxSetParagraphFormatting(
+          inputBytes,
+          mapped.operation,
+        );
+        return mapEngineMutationResult(engineResponse, operation.type);
+      }
+
+      if (operation.type === "document.set_text_formatting") {
+        const mapped = mapSetTextFormattingOperation(operation);
+        if (!mapped.ok) {
+          return mapped.error;
+        }
+        const engineResponse = await binding.executeDocxSetTextFormatting(
+          inputBytes,
+          mapped.operation,
+        );
+        return mapEngineMutationResult(engineResponse, operation.type);
+      }
+
       if (operation.type === "document.set_table_cells_text") {
         const mapped = mapSetTableCellsTextOperation(operation);
         if (!mapped.ok) {
@@ -308,6 +380,11 @@ export function mapRustCapabilitiesToRuntime(
   if (
     rustIds.includes("replace_text") ||
     rustIds.includes("insert_paragraph") ||
+    rustIds.includes("insert_paragraphs") ||
+    rustIds.includes("delete_paragraph") ||
+    rustIds.includes("set_paragraph_style") ||
+    rustIds.includes("set_paragraph_formatting") ||
+    rustIds.includes("set_text_formatting") ||
     rustIds.includes("set_table_cells_text") ||
     rustIds.includes("insert_table_rows") ||
     rustIds.includes("insert_table_column") ||
@@ -772,39 +849,186 @@ export function mapInsertParagraphOperation(
     };
   }
 
-  const placementRaw = operation.payload.placement;
-  if (!isRecord(placementRaw) || typeof placementRaw.kind !== "string") {
+  const placementMapped = mapParagraphPlacementPayload(
+    operation.payload.placement,
+    "document.insert_paragraph",
+  );
+  if (!placementMapped.ok) {
+    return placementMapped;
+  }
+
+  return {
+    ok: true,
+    operation: {
+      text,
+      placement: placementMapped.placement,
+      baseRevision: operation.baseVersionId,
+    },
+  };
+}
+
+/** Exported for unit tests — application DTO → binding DTO only. */
+export function mapInsertParagraphsOperation(
+  operation: DocumentOperation,
+):
+  | { readonly ok: true; readonly operation: DocxInsertParagraphsOperation }
+  | { readonly ok: false; readonly error: OperationResult } {
+  const textsRaw = operation.payload.texts;
+  if (!Array.isArray(textsRaw)) {
     return {
       ok: false,
       error: operationError(
         "VALIDATION_FAILED",
-        "document.insert_paragraph requires payload.placement.kind",
+        "document.insert_paragraphs requires payload.texts (string array)",
       ),
     };
   }
-
-  const kind = placementRaw.kind;
-  let placement: DocxParagraphPlacement;
-  if (kind === "start" || kind === "end") {
-    placement = { kind };
-  } else if (kind === "before" || kind === "after") {
-    const handle = readNonEmptyString(placementRaw.handle);
-    if (handle === null) {
+  const texts: string[] = [];
+  for (const item of textsRaw) {
+    if (typeof item !== "string") {
       return {
         ok: false,
         error: operationError(
           "VALIDATION_FAILED",
-          `document.insert_paragraph placement.${kind} requires non-empty handle`,
+          "document.insert_paragraphs payload.texts must be strings",
         ),
       };
     }
-    placement = { kind, handle };
-  } else {
+    texts.push(item);
+  }
+
+  const placementMapped = mapParagraphPlacementPayload(
+    operation.payload.placement,
+    "document.insert_paragraphs",
+  );
+  if (!placementMapped.ok) {
+    return placementMapped;
+  }
+
+  return {
+    ok: true,
+    operation: {
+      texts,
+      placement: placementMapped.placement,
+      baseRevision: operation.baseVersionId,
+    },
+  };
+}
+
+export function mapDeleteParagraphOperation(
+  operation: DocumentOperation,
+):
+  | { readonly ok: true; readonly operation: DocxDeleteParagraphOperation }
+  | { readonly ok: false; readonly error: OperationResult } {
+  const target = mapTextTargetPayload(
+    operation.payload.target,
+    "document.delete_paragraph",
+  );
+  if (!target.ok) {
+    return target;
+  }
+  return {
+    ok: true,
+    operation: {
+      target: target.target,
+      baseRevision: operation.baseVersionId,
+    },
+  };
+}
+
+export function mapSetParagraphStyleOperation(
+  operation: DocumentOperation,
+):
+  | { readonly ok: true; readonly operation: DocxSetParagraphStyleOperation }
+  | { readonly ok: false; readonly error: OperationResult } {
+  const target = mapTextTargetPayload(
+    operation.payload.target,
+    "document.set_paragraph_style",
+  );
+  if (!target.ok) {
+    return target;
+  }
+
+  let style: string | undefined;
+  if (operation.payload.style !== undefined && operation.payload.style !== null) {
+    const parsed = readString(operation.payload.style);
+    if (parsed === null) {
+      return {
+        ok: false,
+        error: operationError(
+          "VALIDATION_FAILED",
+          "document.set_paragraph_style style must be a string when provided",
+        ),
+      };
+    }
+    style = parsed;
+  }
+
+  return {
+    ok: true,
+    operation: {
+      target: target.target,
+      ...(style !== undefined ? { style } : {}),
+      baseRevision: operation.baseVersionId,
+    },
+  };
+}
+
+export function mapSetParagraphFormattingOperation(
+  operation: DocumentOperation,
+):
+  | {
+      readonly ok: true;
+      readonly operation: DocxSetParagraphFormattingOperation;
+    }
+  | { readonly ok: false; readonly error: OperationResult } {
+  const target = mapTextTargetPayload(
+    operation.payload.target,
+    "document.set_paragraph_formatting",
+  );
+  if (!target.ok) {
+    return target;
+  }
+
+  let alignment: DocxParagraphAlignment | undefined;
+  if (operation.payload.alignment !== undefined) {
+    const value = readString(operation.payload.alignment);
+    if (value !== "left" && value !== "center" && value !== "right") {
+      return {
+        ok: false,
+        error: operationError(
+          "VALIDATION_FAILED",
+          "document.set_paragraph_formatting alignment must be left|center|right",
+        ),
+      };
+    }
+    alignment = value;
+  }
+
+  const spacingBefore = readOptionalInt(
+    operation.payload.spacingBeforeTwips,
+    "document.set_paragraph_formatting spacingBeforeTwips",
+  );
+  if (spacingBefore === "invalid") {
     return {
       ok: false,
       error: operationError(
         "VALIDATION_FAILED",
-        "document.insert_paragraph placement.kind must be start|end|before|after",
+        "document.set_paragraph_formatting spacingBeforeTwips must be an integer",
+      ),
+    };
+  }
+
+  const spacingAfter = readOptionalInt(
+    operation.payload.spacingAfterTwips,
+    "document.set_paragraph_formatting spacingAfterTwips",
+  );
+  if (spacingAfter === "invalid") {
+    return {
+      ok: false,
+      error: operationError(
+        "VALIDATION_FAILED",
+        "document.set_paragraph_formatting spacingAfterTwips must be an integer",
       ),
     };
   }
@@ -812,9 +1036,187 @@ export function mapInsertParagraphOperation(
   return {
     ok: true,
     operation: {
-      text,
-      placement,
+      target: target.target,
+      ...(alignment !== undefined ? { alignment } : {}),
+      ...(spacingBefore !== undefined
+        ? { spacingBeforeTwips: spacingBefore }
+        : {}),
+      ...(spacingAfter !== undefined
+        ? { spacingAfterTwips: spacingAfter }
+        : {}),
       baseRevision: operation.baseVersionId,
+    },
+  };
+}
+
+export function mapSetTextFormattingOperation(
+  operation: DocumentOperation,
+):
+  | { readonly ok: true; readonly operation: DocxSetTextFormattingOperation }
+  | { readonly ok: false; readonly error: OperationResult } {
+  const target = mapTextTargetPayload(
+    operation.payload.target,
+    "document.set_text_formatting",
+  );
+  if (!target.ok) {
+    return target;
+  }
+
+  let bold: boolean | undefined;
+  if (operation.payload.bold !== undefined) {
+    if (typeof operation.payload.bold !== "boolean") {
+      return {
+        ok: false,
+        error: operationError(
+          "VALIDATION_FAILED",
+          "document.set_text_formatting bold must be a boolean",
+        ),
+      };
+    }
+    bold = operation.payload.bold;
+  }
+
+  let italic: boolean | undefined;
+  if (operation.payload.italic !== undefined) {
+    if (typeof operation.payload.italic !== "boolean") {
+      return {
+        ok: false,
+        error: operationError(
+          "VALIDATION_FAILED",
+          "document.set_text_formatting italic must be a boolean",
+        ),
+      };
+    }
+    italic = operation.payload.italic;
+  }
+
+  const fontSize = readOptionalPositiveInt(
+    operation.payload.fontSizeHalfPoints,
+    "document.set_text_formatting fontSizeHalfPoints",
+  );
+  if (fontSize === "invalid") {
+    return {
+      ok: false,
+      error: operationError(
+        "VALIDATION_FAILED",
+        "document.set_text_formatting fontSizeHalfPoints must be a positive integer",
+      ),
+    };
+  }
+
+  let fontFamily: string | undefined;
+  if (operation.payload.fontFamily !== undefined) {
+    const parsed = readString(operation.payload.fontFamily);
+    if (parsed === null) {
+      return {
+        ok: false,
+        error: operationError(
+          "VALIDATION_FAILED",
+          "document.set_text_formatting fontFamily must be a string",
+        ),
+      };
+    }
+    fontFamily = parsed;
+  }
+
+  return {
+    ok: true,
+    operation: {
+      target: target.target,
+      ...(bold !== undefined ? { bold } : {}),
+      ...(italic !== undefined ? { italic } : {}),
+      ...(fontSize !== undefined ? { fontSizeHalfPoints: fontSize } : {}),
+      ...(fontFamily !== undefined ? { fontFamily } : {}),
+      baseRevision: operation.baseVersionId,
+    },
+  };
+}
+
+function mapParagraphPlacementPayload(
+  placementRaw: unknown,
+  label: string,
+):
+  | { readonly ok: true; readonly placement: DocxParagraphPlacement }
+  | { readonly ok: false; readonly error: OperationResult } {
+  if (!isRecord(placementRaw) || typeof placementRaw.kind !== "string") {
+    return {
+      ok: false,
+      error: operationError(
+        "VALIDATION_FAILED",
+        `${label} requires payload.placement.kind`,
+      ),
+    };
+  }
+
+  const kind = placementRaw.kind;
+  if (kind === "start" || kind === "end") {
+    return { ok: true, placement: { kind } };
+  }
+  if (kind === "before" || kind === "after") {
+    const handle = readNonEmptyString(placementRaw.handle);
+    if (handle === null) {
+      return {
+        ok: false,
+        error: operationError(
+          "VALIDATION_FAILED",
+          `${label} placement.${kind} requires non-empty handle`,
+        ),
+      };
+    }
+    return { ok: true, placement: { kind, handle } };
+  }
+  return {
+    ok: false,
+    error: operationError(
+      "VALIDATION_FAILED",
+      `${label} placement.kind must be start|end|before|after`,
+    ),
+  };
+}
+
+function mapTextTargetPayload(
+  raw: unknown,
+  label: string,
+):
+  | { readonly ok: true; readonly target: DocxTextTarget }
+  | { readonly ok: false; readonly error: OperationResult } {
+  if (!isRecord(raw)) {
+    return {
+      ok: false,
+      error: operationError(
+        "VALIDATION_FAILED",
+        `${label} requires a target object with text`,
+      ),
+    };
+  }
+  const text = readNonEmptyString(raw.text);
+  if (text === null) {
+    return {
+      ok: false,
+      error: operationError(
+        "VALIDATION_FAILED",
+        `${label} requires non-empty target.text`,
+      ),
+    };
+  }
+  const occurrence = readOptionalPositiveInt(
+    raw.occurrence,
+    `${label} target.occurrence`,
+  );
+  if (occurrence === "invalid") {
+    return {
+      ok: false,
+      error: operationError(
+        "VALIDATION_FAILED",
+        `${label} target.occurrence must be a positive integer when provided`,
+      ),
+    };
+  }
+  return {
+    ok: true,
+    target: {
+      text,
+      ...(occurrence !== undefined ? { occurrence } : {}),
     },
   };
 }
@@ -1264,6 +1666,19 @@ function mapCellTarget(
       ...(occurrence !== undefined ? { occurrence } : {}),
     },
   };
+}
+
+function readOptionalInt(
+  value: unknown,
+  _label: string,
+): number | undefined | "invalid" {
+  if (value === undefined || value === null || value === "") {
+    return undefined;
+  }
+  if (typeof value !== "number" || !Number.isInteger(value)) {
+    return "invalid";
+  }
+  return value;
 }
 
 function readOptionalPositiveInt(
