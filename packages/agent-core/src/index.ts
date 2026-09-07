@@ -116,7 +116,11 @@ export {
 } from "./runtime.js";
 
 export type {
+  DocumentCreateTableMutationRequest,
   DocumentDeleteParagraphMutationRequest,
+  DocumentDeleteTableColumnMutationRequest,
+  DocumentDeleteTableMutationRequest,
+  DocumentDeleteTableRowMutationRequest,
   DocumentInsertParagraphMutationRequest,
   DocumentInsertParagraphsMutationRequest,
   DocumentInsertTableColumnMutationRequest,
@@ -165,7 +169,11 @@ export {
   DOCUMENT_TOOL_NAMES,
   MOCK_FORMAT_CAPS,
   createDocumentCapabilitiesTool,
+  createDocumentCreateTableTool,
   createDocumentDeleteParagraphTool,
+  createDocumentDeleteTableColumnTool,
+  createDocumentDeleteTableRowTool,
+  createDocumentDeleteTableTool,
   createDocumentFindTool,
   createDocumentInspectTool,
   createDocumentInsertParagraphTool,
@@ -188,7 +196,11 @@ export {
   readOnlyDocumentCapabilities,
 } from "./document-tools.js";
 export type {
+  DocumentCreateTableInput,
   DocumentDeleteParagraphInput,
+  DocumentDeleteTableColumnInput,
+  DocumentDeleteTableInput,
+  DocumentDeleteTableRowInput,
   DocumentFindToolInput,
   DocumentInsertParagraphInput,
   DocumentInsertParagraphsInput,

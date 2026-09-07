@@ -1,5 +1,9 @@
 import type {
+  DocxCreateTableOperation,
   DocxDeleteParagraphOperation,
+  DocxDeleteTableColumnOperation,
+  DocxDeleteTableOperation,
+  DocxDeleteTableRowOperation,
   DocxEngineBinding,
   DocxFindTextRequest,
   DocxFindTextResult,
@@ -41,6 +45,10 @@ const DEFAULT_CAPS: DocxRuntimeCapabilities = {
         "set_table_cells_text",
         "insert_table_rows",
         "insert_table_column",
+        "create_table",
+        "delete_table",
+        "delete_table_row",
+        "delete_table_column",
       ],
     },
   ],
@@ -116,6 +124,22 @@ export function createFakeDocxEngineBinding(
       input: Uint8Array,
       operation: DocxInsertTableColumnOperation,
     ) => DocxMutationBindingResult | Promise<DocxMutationBindingResult>;
+    executeDocxCreateTable?: (
+      input: Uint8Array,
+      operation: DocxCreateTableOperation,
+    ) => DocxMutationBindingResult | Promise<DocxMutationBindingResult>;
+    executeDocxDeleteTable?: (
+      input: Uint8Array,
+      operation: DocxDeleteTableOperation,
+    ) => DocxMutationBindingResult | Promise<DocxMutationBindingResult>;
+    executeDocxDeleteTableRow?: (
+      input: Uint8Array,
+      operation: DocxDeleteTableRowOperation,
+    ) => DocxMutationBindingResult | Promise<DocxMutationBindingResult>;
+    executeDocxDeleteTableColumn?: (
+      input: Uint8Array,
+      operation: DocxDeleteTableColumnOperation,
+    ) => DocxMutationBindingResult | Promise<DocxMutationBindingResult>;
   } = {},
 ): DocxEngineBinding & {
   readonly replaceCalls: Array<{
@@ -166,6 +190,22 @@ export function createFakeDocxEngineBinding(
     input: Uint8Array;
     operation: DocxInsertTableColumnOperation;
   }>;
+  readonly createTableCalls: Array<{
+    input: Uint8Array;
+    operation: DocxCreateTableOperation;
+  }>;
+  readonly deleteTableCalls: Array<{
+    input: Uint8Array;
+    operation: DocxDeleteTableOperation;
+  }>;
+  readonly deleteTableRowCalls: Array<{
+    input: Uint8Array;
+    operation: DocxDeleteTableRowOperation;
+  }>;
+  readonly deleteTableColumnCalls: Array<{
+    input: Uint8Array;
+    operation: DocxDeleteTableColumnOperation;
+  }>;
 } {
   const replaceCalls: Array<{
     input: Uint8Array;
@@ -215,6 +255,22 @@ export function createFakeDocxEngineBinding(
     input: Uint8Array;
     operation: DocxInsertTableColumnOperation;
   }> = [];
+  const createTableCalls: Array<{
+    input: Uint8Array;
+    operation: DocxCreateTableOperation;
+  }> = [];
+  const deleteTableCalls: Array<{
+    input: Uint8Array;
+    operation: DocxDeleteTableOperation;
+  }> = [];
+  const deleteTableRowCalls: Array<{
+    input: Uint8Array;
+    operation: DocxDeleteTableRowOperation;
+  }> = [];
+  const deleteTableColumnCalls: Array<{
+    input: Uint8Array;
+    operation: DocxDeleteTableColumnOperation;
+  }> = [];
 
   return {
     replaceCalls,
@@ -229,6 +285,10 @@ export function createFakeDocxEngineBinding(
     setCellsCalls,
     insertRowsCalls,
     insertColumnCalls,
+    createTableCalls,
+    deleteTableCalls,
+    deleteTableRowCalls,
+    deleteTableColumnCalls,
     getDocxCapabilities:
       overrides.getDocxCapabilities ?? (() => DEFAULT_CAPS),
     createBlankDocx:
@@ -374,6 +434,34 @@ export function createFakeDocxEngineBinding(
       insertColumnCalls.push({ input, operation });
       if (overrides.executeDocxInsertTableColumn) {
         return overrides.executeDocxInsertTableColumn(input, operation);
+      }
+      return notStubbed();
+    },
+    async executeDocxCreateTable(input, operation) {
+      createTableCalls.push({ input, operation });
+      if (overrides.executeDocxCreateTable) {
+        return overrides.executeDocxCreateTable(input, operation);
+      }
+      return notStubbed();
+    },
+    async executeDocxDeleteTable(input, operation) {
+      deleteTableCalls.push({ input, operation });
+      if (overrides.executeDocxDeleteTable) {
+        return overrides.executeDocxDeleteTable(input, operation);
+      }
+      return notStubbed();
+    },
+    async executeDocxDeleteTableRow(input, operation) {
+      deleteTableRowCalls.push({ input, operation });
+      if (overrides.executeDocxDeleteTableRow) {
+        return overrides.executeDocxDeleteTableRow(input, operation);
+      }
+      return notStubbed();
+    },
+    async executeDocxDeleteTableColumn(input, operation) {
+      deleteTableColumnCalls.push({ input, operation });
+      if (overrides.executeDocxDeleteTableColumn) {
+        return overrides.executeDocxDeleteTableColumn(input, operation);
       }
       return notStubbed();
     },

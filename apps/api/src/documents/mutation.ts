@@ -115,6 +115,48 @@ export interface ApplyInsertTableColumnInput {
   readonly runtime: DocumentRuntime;
 }
 
+export type DocumentBodyPlacementInput =
+  | { readonly kind: "start" }
+  | { readonly kind: "end" }
+  | { readonly kind: "before"; readonly handle: string }
+  | { readonly kind: "after"; readonly handle: string };
+
+export interface ApplyCreateTableInput {
+  readonly documentId: string;
+  readonly ownerUserId: string;
+  readonly baseVersionId: string;
+  readonly rows: readonly (readonly string[])[];
+  readonly placement: DocumentBodyPlacementInput;
+  readonly runtime: DocumentRuntime;
+}
+
+export interface ApplyDeleteTableInput {
+  readonly documentId: string;
+  readonly ownerUserId: string;
+  readonly baseVersionId: string;
+  readonly table: DocumentTableTargetInput;
+  readonly runtime: DocumentRuntime;
+}
+
+export interface ApplyDeleteTableRowInput {
+  readonly documentId: string;
+  readonly ownerUserId: string;
+  readonly baseVersionId: string;
+  readonly table: DocumentTableTargetInput;
+  readonly row: DocumentTableRowAnchorInput;
+  readonly runtime: DocumentRuntime;
+}
+
+export interface ApplyDeleteTableColumnInput {
+  readonly documentId: string;
+  readonly ownerUserId: string;
+  readonly baseVersionId: string;
+  readonly table: DocumentTableTargetInput;
+  readonly columnHeader?: string;
+  readonly columnHandle?: string;
+  readonly runtime: DocumentRuntime;
+}
+
 export interface ApplyInsertParagraphInput {
   readonly documentId: string;
   readonly ownerUserId: string;
@@ -562,6 +604,76 @@ export function createDocumentMutationService(
           cells: input.cells,
         },
         formatErrorLabel: "applyInsertTableColumn",
+      });
+    },
+
+    async applyCreateTable(
+      input: ApplyCreateTableInput,
+    ): Promise<ApplyDocumentMutationResult> {
+      return authorizeAndPersist({
+        documentId: input.documentId,
+        ownerUserId: input.ownerUserId,
+        baseVersionId: input.baseVersionId,
+        runtime: input.runtime,
+        operationType: "document.create_table",
+        payload: {
+          rows: input.rows,
+          placement: input.placement,
+        },
+        formatErrorLabel: "applyCreateTable",
+      });
+    },
+
+    async applyDeleteTable(
+      input: ApplyDeleteTableInput,
+    ): Promise<ApplyDocumentMutationResult> {
+      return authorizeAndPersist({
+        documentId: input.documentId,
+        ownerUserId: input.ownerUserId,
+        baseVersionId: input.baseVersionId,
+        runtime: input.runtime,
+        operationType: "document.delete_table",
+        payload: { table: input.table },
+        formatErrorLabel: "applyDeleteTable",
+      });
+    },
+
+    async applyDeleteTableRow(
+      input: ApplyDeleteTableRowInput,
+    ): Promise<ApplyDocumentMutationResult> {
+      return authorizeAndPersist({
+        documentId: input.documentId,
+        ownerUserId: input.ownerUserId,
+        baseVersionId: input.baseVersionId,
+        runtime: input.runtime,
+        operationType: "document.delete_table_row",
+        payload: {
+          table: input.table,
+          row: input.row,
+        },
+        formatErrorLabel: "applyDeleteTableRow",
+      });
+    },
+
+    async applyDeleteTableColumn(
+      input: ApplyDeleteTableColumnInput,
+    ): Promise<ApplyDocumentMutationResult> {
+      return authorizeAndPersist({
+        documentId: input.documentId,
+        ownerUserId: input.ownerUserId,
+        baseVersionId: input.baseVersionId,
+        runtime: input.runtime,
+        operationType: "document.delete_table_column",
+        payload: {
+          table: input.table,
+          ...(input.columnHeader !== undefined
+            ? { columnHeader: input.columnHeader }
+            : {}),
+          ...(input.columnHandle !== undefined
+            ? { columnHandle: input.columnHandle }
+            : {}),
+        },
+        formatErrorLabel: "applyDeleteTableColumn",
       });
     },
   };

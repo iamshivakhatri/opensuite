@@ -201,5 +201,57 @@ export function createAgentDocumentMutationExecutor(input: {
       });
       return toExecutorResult(applied, request.document.versionId);
     },
+
+    async createTable(request): Promise<DocumentMutationResult> {
+      const applied = await mutations.applyCreateTable({
+        documentId: request.document.documentId,
+        ownerUserId: input.ownerUserId,
+        baseVersionId: request.document.versionId,
+        rows: request.rows,
+        placement: request.placement,
+        runtime: input.runtime,
+      });
+      return toExecutorResult(applied, request.document.versionId);
+    },
+
+    async deleteTable(request): Promise<DocumentMutationResult> {
+      const applied = await mutations.applyDeleteTable({
+        documentId: request.document.documentId,
+        ownerUserId: input.ownerUserId,
+        baseVersionId: request.document.versionId,
+        table: request.table,
+        runtime: input.runtime,
+      });
+      return toExecutorResult(applied, request.document.versionId);
+    },
+
+    async deleteTableRow(request): Promise<DocumentMutationResult> {
+      const applied = await mutations.applyDeleteTableRow({
+        documentId: request.document.documentId,
+        ownerUserId: input.ownerUserId,
+        baseVersionId: request.document.versionId,
+        table: request.table,
+        row: request.row,
+        runtime: input.runtime,
+      });
+      return toExecutorResult(applied, request.document.versionId);
+    },
+
+    async deleteTableColumn(request): Promise<DocumentMutationResult> {
+      const applied = await mutations.applyDeleteTableColumn({
+        documentId: request.document.documentId,
+        ownerUserId: input.ownerUserId,
+        baseVersionId: request.document.versionId,
+        table: request.table,
+        ...(request.columnHeader !== undefined
+          ? { columnHeader: request.columnHeader }
+          : {}),
+        ...(request.columnHandle !== undefined
+          ? { columnHandle: request.columnHandle }
+          : {}),
+        runtime: input.runtime,
+      });
+      return toExecutorResult(applied, request.document.versionId);
+    },
   };
 }

@@ -104,6 +104,30 @@ export interface DocxInsertTableColumnOperation {
   readonly baseRevision?: string;
 }
 
+export interface DocxCreateTableOperation {
+  readonly rows: readonly (readonly string[])[];
+  readonly placement: DocxParagraphPlacement;
+  readonly baseRevision?: string;
+}
+
+export interface DocxDeleteTableOperation {
+  readonly table: DocxTableTarget;
+  readonly baseRevision?: string;
+}
+
+export interface DocxDeleteTableRowOperation {
+  readonly table: DocxTableTarget;
+  readonly row: DocxTableRowAnchor;
+  readonly baseRevision?: string;
+}
+
+export interface DocxDeleteTableColumnOperation {
+  readonly table: DocxTableTarget;
+  readonly columnHeader?: string;
+  readonly columnHandle?: string;
+  readonly baseRevision?: string;
+}
+
 /** Placement for insert_paragraph — engine protocol shape. */
 export type DocxParagraphPlacement =
   | { readonly kind: "start" }
@@ -383,6 +407,22 @@ export interface DocxEngineBinding {
     input: Uint8Array,
     operation: DocxInsertTableColumnOperation,
   ): Promise<DocxMutationBindingResult>;
+  executeDocxCreateTable(
+    input: Uint8Array,
+    operation: DocxCreateTableOperation,
+  ): Promise<DocxMutationBindingResult>;
+  executeDocxDeleteTable(
+    input: Uint8Array,
+    operation: DocxDeleteTableOperation,
+  ): Promise<DocxMutationBindingResult>;
+  executeDocxDeleteTableRow(
+    input: Uint8Array,
+    operation: DocxDeleteTableRowOperation,
+  ): Promise<DocxMutationBindingResult>;
+  executeDocxDeleteTableColumn(
+    input: Uint8Array,
+    operation: DocxDeleteTableColumnOperation,
+  ): Promise<DocxMutationBindingResult>;
 }
 
 type NativeEngineModule = {
@@ -496,6 +536,34 @@ type NativeEngineModule = {
     result: DocxEngineOperationResult;
     output?: Buffer;
   }>;
+  executeDocxCreateTable: (
+    input: Buffer,
+    operation: Record<string, unknown>,
+  ) => Promise<{
+    result: DocxEngineOperationResult;
+    output?: Buffer;
+  }>;
+  executeDocxDeleteTable: (
+    input: Buffer,
+    operation: Record<string, unknown>,
+  ) => Promise<{
+    result: DocxEngineOperationResult;
+    output?: Buffer;
+  }>;
+  executeDocxDeleteTableRow: (
+    input: Buffer,
+    operation: Record<string, unknown>,
+  ) => Promise<{
+    result: DocxEngineOperationResult;
+    output?: Buffer;
+  }>;
+  executeDocxDeleteTableColumn: (
+    input: Buffer,
+    operation: Record<string, unknown>,
+  ) => Promise<{
+    result: DocxEngineOperationResult;
+    output?: Buffer;
+  }>;
 };
 
 function toNativeInspectFocus(focus: DocxInspectFocus): Record<string, unknown> {
@@ -559,10 +627,14 @@ export async function createNapiDocxEngineBinding(): Promise<DocxEngineBinding> 
     "executeDocxSetParagraphStyle",
     "executeDocxSetParagraphFormatting",
     "executeDocxSetTextFormatting",
+    "executeDocxCreateTable",
+    "executeDocxDeleteTable",
+    "executeDocxDeleteTableRow",
+    "executeDocxDeleteTableColumn",
   ] as const) {
     if (typeof native[name] !== "function") {
       throw new Error(
-        `@opensuite/engine is missing ${name} — rebuild opensuite-engine/crates/opensuite-node for Milestone 5C-B APIs`,
+        `@opensuite/engine is missing ${name} — rebuild opensuite-engine/crates/opensuite-node for Milestone 5C-B/6A APIs`,
       );
     }
   }
@@ -751,6 +823,60 @@ export async function createNapiDocxEngineBinding(): Promise<DocxEngineBinding> 
             : {}),
           header: operation.header,
           cells: [...operation.cells],
+          ...(operation.baseRevision !== undefined
+            ? { baseRevision: operation.baseRevision }
+            : {}),
+        },
+      );
+      return mapMutationBindingResponse(response);
+    },
+
+    async executeDocxCreateTable(input, operation) {
+      const response = await native.executeDocxCreateTable(Buffer.from(input), {
+        rows: operation.rows.map((row) => [...row]),
+        placement: toNativeParagraphPlacement(operation.placement),
+        ...(operation.baseRevision !== undefined
+          ? { baseRevision: operation.baseRevision }
+          : {}),
+      });
+      return mapMutationBindingResponse(response);
+    },
+
+    async executeDocxDeleteTable(input, operation) {
+      const response = await native.executeDocxDeleteTable(Buffer.from(input), {
+        table: toNativeTableTarget(operation.table),
+        ...(operation.baseRevision !== undefined
+          ? { baseRevision: operation.baseRevision }
+          : {}),
+      });
+      return mapMutationBindingResponse(response);
+    },
+
+    async executeDocxDeleteTableRow(input, operation) {
+      const response = await native.executeDocxDeleteTableRow(
+        Buffer.from(input),
+        {
+          table: toNativeTableTarget(operation.table),
+          row: toNativeRowAnchor(operation.row),
+          ...(operation.baseRevision !== undefined
+            ? { baseRevision: operation.baseRevision }
+            : {}),
+        },
+      );
+      return mapMutationBindingResponse(response);
+    },
+
+    async executeDocxDeleteTableColumn(input, operation) {
+      const response = await native.executeDocxDeleteTableColumn(
+        Buffer.from(input),
+        {
+          table: toNativeTableTarget(operation.table),
+          ...(operation.columnHeader !== undefined
+            ? { columnHeader: operation.columnHeader }
+            : {}),
+          ...(operation.columnHandle !== undefined
+            ? { columnHandle: operation.columnHandle }
+            : {}),
           ...(operation.baseRevision !== undefined
             ? { baseRevision: operation.baseRevision }
             : {}),

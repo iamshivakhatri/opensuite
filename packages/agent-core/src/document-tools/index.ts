@@ -34,7 +34,11 @@ import {
   createDocumentInspectTool,
 } from "./inspect.js";
 import {
+  createDocumentCreateTableTool,
   createDocumentDeleteParagraphTool,
+  createDocumentDeleteTableColumnTool,
+  createDocumentDeleteTableRowTool,
+  createDocumentDeleteTableTool,
   createDocumentInsertParagraphTool,
   createDocumentInsertParagraphsTool,
   createDocumentInsertTableColumnTool,
@@ -60,7 +64,11 @@ export type {
   DocumentInspectToolInput,
 } from "./inspect.js";
 export {
+  createDocumentCreateTableTool,
   createDocumentDeleteParagraphTool,
+  createDocumentDeleteTableColumnTool,
+  createDocumentDeleteTableRowTool,
+  createDocumentDeleteTableTool,
   createDocumentInsertParagraphTool,
   createDocumentInsertParagraphsTool,
   createDocumentInsertTableColumnTool,
@@ -74,7 +82,11 @@ export {
   createWorkbookSetCellsTool,
 } from "./mutations.js";
 export type {
+  DocumentCreateTableInput,
   DocumentDeleteParagraphInput,
+  DocumentDeleteTableColumnInput,
+  DocumentDeleteTableInput,
+  DocumentDeleteTableRowInput,
   DocumentInsertParagraphInput,
   DocumentInsertParagraphsInput,
   DocumentInsertTableColumnInput,
@@ -107,9 +119,13 @@ export function listDocumentToolDescriptors(): readonly AgentTool[] {
     createDocumentSetParagraphStyleTool(),
     createDocumentSetParagraphFormattingTool(),
     createDocumentSetTextFormattingTool(),
+    createDocumentCreateTableTool(),
     createDocumentSetTableCellsTextTool(),
     createDocumentInsertTableRowsTool(),
     createDocumentInsertTableColumnTool(),
+    createDocumentDeleteTableTool(),
+    createDocumentDeleteTableRowTool(),
+    createDocumentDeleteTableColumnTool(),
     createSlidesUpdateTextTool(),
     createWorkbookSetCellsTool(),
   ];
@@ -244,5 +260,9 @@ export function mutableDocumentCapabilities(): RuntimeCapabilities {
     DOCX_ENGINE_CAPS.setTableCellsText,
     DOCX_ENGINE_CAPS.insertTableRows,
     DOCX_ENGINE_CAPS.insertTableColumn,
+    DOCX_ENGINE_CAPS.createTable,
+    DOCX_ENGINE_CAPS.deleteTable,
+    DOCX_ENGINE_CAPS.deleteTableRow,
+    DOCX_ENGINE_CAPS.deleteTableColumn,
   );
 }

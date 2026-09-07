@@ -101,6 +101,18 @@ test("failed document mutation exposes structured diagnostic to the model", asyn
     async insertTableColumn() {
       throw new Error("unused");
     },
+    async createTable() {
+      throw new Error("unused");
+    },
+    async deleteTable() {
+      throw new Error("unused");
+    },
+    async deleteTableRow() {
+      throw new Error("unused");
+    },
+    async deleteTableColumn() {
+      throw new Error("unused");
+    },
   };
 
   const seenDiagnostics: Diagnostic[] = [];
@@ -244,6 +256,18 @@ test("affordance reason and mutation reasonCode stay the same identifier", async
       throw new Error("unused");
     },
     async insertTableColumn() {
+      throw new Error("unused");
+    },
+    async createTable() {
+      throw new Error("unused");
+    },
+    async deleteTable() {
+      throw new Error("unused");
+    },
+    async deleteTableRow() {
+      throw new Error("unused");
+    },
+    async deleteTableColumn() {
       throw new Error("unused");
     },
   };

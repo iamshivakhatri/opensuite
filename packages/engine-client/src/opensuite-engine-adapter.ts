@@ -26,7 +26,11 @@ import {
 
 import type { DocumentArtifactLoader } from "./document-artifact-loader.js";
 import type {
+  DocxCreateTableOperation,
   DocxDeleteParagraphOperation,
+  DocxDeleteTableColumnOperation,
+  DocxDeleteTableOperation,
+  DocxDeleteTableRowOperation,
   DocxEngineBinding,
   DocxEngineDiagnostic,
   DocxInsertParagraphOperation,
@@ -74,6 +78,10 @@ const DOCX_MUTATION_TYPES = new Set([
   "document.set_table_cells_text",
   "document.insert_table_rows",
   "document.insert_table_column",
+  "document.create_table",
+  "document.delete_table",
+  "document.delete_table_row",
+  "document.delete_table_column",
 ]);
 export interface OpenSuiteEngineAdapterOptions {
   readonly artifactLoader: DocumentArtifactLoader;
@@ -344,11 +352,59 @@ export function createOpenSuiteEngineAdapter(
         return mapEngineMutationResult(engineResponse, operation.type);
       }
 
-      const mapped = mapInsertTableColumnOperation(operation);
+      if (operation.type === "document.insert_table_column") {
+        const mapped = mapInsertTableColumnOperation(operation);
+        if (!mapped.ok) {
+          return mapped.error;
+        }
+        const engineResponse = await binding.executeDocxInsertTableColumn(
+          inputBytes,
+          mapped.operation,
+        );
+        return mapEngineMutationResult(engineResponse, operation.type);
+      }
+
+      if (operation.type === "document.create_table") {
+        const mapped = mapCreateTableOperation(operation);
+        if (!mapped.ok) {
+          return mapped.error;
+        }
+        const engineResponse = await binding.executeDocxCreateTable(
+          inputBytes,
+          mapped.operation,
+        );
+        return mapEngineMutationResult(engineResponse, operation.type);
+      }
+
+      if (operation.type === "document.delete_table") {
+        const mapped = mapDeleteTableOperation(operation);
+        if (!mapped.ok) {
+          return mapped.error;
+        }
+        const engineResponse = await binding.executeDocxDeleteTable(
+          inputBytes,
+          mapped.operation,
+        );
+        return mapEngineMutationResult(engineResponse, operation.type);
+      }
+
+      if (operation.type === "document.delete_table_row") {
+        const mapped = mapDeleteTableRowOperation(operation);
+        if (!mapped.ok) {
+          return mapped.error;
+        }
+        const engineResponse = await binding.executeDocxDeleteTableRow(
+          inputBytes,
+          mapped.operation,
+        );
+        return mapEngineMutationResult(engineResponse, operation.type);
+      }
+
+      const mapped = mapDeleteTableColumnOperation(operation);
       if (!mapped.ok) {
         return mapped.error;
       }
-      const engineResponse = await binding.executeDocxInsertTableColumn(
+      const engineResponse = await binding.executeDocxDeleteTableColumn(
         inputBytes,
         mapped.operation,
       );
@@ -388,6 +444,10 @@ export function mapRustCapabilitiesToRuntime(
     rustIds.includes("set_table_cells_text") ||
     rustIds.includes("insert_table_rows") ||
     rustIds.includes("insert_table_column") ||
+    rustIds.includes("create_table") ||
+    rustIds.includes("delete_table") ||
+    rustIds.includes("delete_table_row") ||
+    rustIds.includes("delete_table_column") ||
     rustIds.includes("set_table_cell_text") ||
     rustIds.includes("insert_table_row")
   ) {
@@ -1512,6 +1572,151 @@ export function mapInsertTableColumnOperation(
         : {}),
       header,
       cells,
+      baseRevision: operation.baseVersionId,
+    },
+  };
+}
+
+/** Exported for unit tests. */
+export function mapCreateTableOperation(
+  operation: DocumentOperation,
+):
+  | { readonly ok: true; readonly operation: DocxCreateTableOperation }
+  | { readonly ok: false; readonly error: OperationResult } {
+  const rowsRaw = operation.payload.rows;
+  if (!Array.isArray(rowsRaw) || rowsRaw.length === 0) {
+    return {
+      ok: false,
+      error: operationError(
+        "VALIDATION_FAILED",
+        "document.create_table requires a non-empty rows matrix",
+      ),
+    };
+  }
+  const rows: string[][] = [];
+  for (const row of rowsRaw) {
+    if (!Array.isArray(row)) {
+      return {
+        ok: false,
+        error: operationError(
+          "VALIDATION_FAILED",
+          "document.create_table each row must be a string array",
+        ),
+      };
+    }
+    const cells: string[] = [];
+    for (const cell of row) {
+      if (typeof cell !== "string") {
+        return {
+          ok: false,
+          error: operationError(
+            "VALIDATION_FAILED",
+            "document.create_table cells must be strings (empty string allowed)",
+          ),
+        };
+      }
+      cells.push(cell);
+    }
+    rows.push(cells);
+  }
+
+  const placementMapped = mapParagraphPlacementPayload(
+    operation.payload.placement,
+    "document.create_table",
+  );
+  if (!placementMapped.ok) {
+    return placementMapped;
+  }
+
+  return {
+    ok: true,
+    operation: {
+      rows,
+      placement: placementMapped.placement,
+      baseRevision: operation.baseVersionId,
+    },
+  };
+}
+
+export function mapDeleteTableOperation(
+  operation: DocumentOperation,
+):
+  | { readonly ok: true; readonly operation: DocxDeleteTableOperation }
+  | { readonly ok: false; readonly error: OperationResult } {
+  const table = mapTableTarget(
+    operation.payload.table,
+    "document.delete_table",
+  );
+  if (!table.ok) return table;
+  return {
+    ok: true,
+    operation: {
+      table: table.value,
+      baseRevision: operation.baseVersionId,
+    },
+  };
+}
+
+export function mapDeleteTableRowOperation(
+  operation: DocumentOperation,
+):
+  | { readonly ok: true; readonly operation: DocxDeleteTableRowOperation }
+  | { readonly ok: false; readonly error: OperationResult } {
+  const table = mapTableTarget(
+    operation.payload.table,
+    "document.delete_table_row",
+  );
+  if (!table.ok) return table;
+  if (!isRecord(operation.payload.row)) {
+    return {
+      ok: false,
+      error: operationError(
+        "VALIDATION_FAILED",
+        "document.delete_table_row requires a row target object",
+      ),
+    };
+  }
+  const row = mapRowAnchor(operation.payload.row, "document.delete_table_row");
+  if (!row.ok) return row;
+  return {
+    ok: true,
+    operation: {
+      table: table.value,
+      row: row.value,
+      baseRevision: operation.baseVersionId,
+    },
+  };
+}
+
+export function mapDeleteTableColumnOperation(
+  operation: DocumentOperation,
+):
+  | { readonly ok: true; readonly operation: DocxDeleteTableColumnOperation }
+  | { readonly ok: false; readonly error: OperationResult } {
+  const table = mapTableTarget(
+    operation.payload.table,
+    "document.delete_table_column",
+  );
+  if (!table.ok) return table;
+
+  const columnHeader = readNonEmptyString(operation.payload.columnHeader);
+  const columnHandle = readNonEmptyString(operation.payload.columnHandle);
+  if (columnHeader === null && columnHandle === null) {
+    return {
+      ok: false,
+      error: operationError(
+        "VALIDATION_FAILED",
+        "document.delete_table_column requires columnHeader or columnHandle",
+      ),
+    };
+  }
+
+  return {
+    ok: true,
+    operation: {
+      table: table.value,
+      ...(columnHeader !== null ? { columnHeader } : {}),
+      ...(columnHandle !== null ? { columnHandle } : {}),
       baseRevision: operation.baseVersionId,
     },
   };

@@ -72,15 +72,17 @@ primary DocumentRef
 * `document.set_paragraph_style` — set/clear style display name (e.g. Heading 1); capability `set_paragraph_style`
 * `document.set_paragraph_formatting` — alignment / spacing (twips); capability `set_paragraph_formatting`
 * `document.set_text_formatting` — bold/italic/font size/family; capability `set_text_formatting`
+* `document.create_table` — atomic rectangular matrix + body placement; prefer when initial contents known; capability `create_table`
 * `document.set_table_cells_text` — atomic multi-cell update (semantic labels **or** opaque cell handles from inspect)
 * `document.insert_table_rows` — contiguous multi-row insert after semantic row label **or** row handle
 * `document.insert_table_column` — single column insert after semantic header **or** column handle
+* `document.delete_table` / `document.delete_table_row` / `document.delete_table_column` — structural deletes; capability ids match
 * `slides.update_text` — PPTX slide title or existing→new text (mock runtime path)
 * `workbook.set_cells` — XLSX small cell writes (mock runtime path)
 
 `DocumentRef` always comes from `ToolExecutionContext.primaryDocument` — never from model input.
 DOCX writes use injected `DocumentMutationExecutor` (not bare `runtime.execute`).
-Agent-core does **not** own DB/storage; apps/api injects `apply*` including paragraph authoring apply methods.
+Agent-core does **not** own DB/storage; apps/api injects `apply*` including paragraph + table lifecycle apply methods.
 
 After a persisted mutation, the run advances its active `DocumentRef` N → N+1
 (run-local only). Subsequent find/inspect/mutate in the **same run** read N+1.
@@ -91,18 +93,18 @@ Write tools use `effect: "write"` and `executionMode: "sequential"`.
 Table/paragraph tools are gated on Rust capability ids.
 
 Default product stack: `createMockDocumentRuntime({ capabilities: mutableDocumentCapabilities() })`.
-Real DOCX path: `createOpenSuiteEngineAdapter` — caps/find/inspect/replace + paragraph authoring + table mutations via N-API
+Real DOCX path: `createOpenSuiteEngineAdapter` — caps/find/inspect + paragraph authoring + full table lifecycle via N-API
 (see `docs/engine_integration.md`). No mock fallback for unsupported real-DOCX focuses (e.g. slides).
 Inspect paging uses `offset`/`limit` (default 20, max 100). Occurrence/order is version-local only.
 
-Body placement: inspect(`body_blocks`) → `insert_paragraph(s)` before/after opaque handle → re-inspect after N+1.
-Prefer `insert_paragraphs` for multi-paragraph creation (one version); compose style/formatting tools afterward.
-Table workflow: inspect(tables) → typed table mutation → immutable version → re-inspect.
+Body placement: inspect(`body_blocks`) → `insert_paragraph(s)` / `create_table` before/after opaque handle → re-inspect after N+1.
+Prefer `insert_paragraphs` / `create_table` for multi-block creation (one version); compose style/formatting afterward.
+Table workflow: create_table (or inspect existing) → typed table mutation → immutable version → re-inspect.
 Semantic selectors (rowLabel/columnHeader/headerCells) are human-readable convenience.
 Opaque structural handles from inspect are exact artifact-local targets for blank/duplicate/awkward cells —
 never persist them; re-inspect after any version-changing edit before reuse.
 Capability does not guarantee every structure is writable (merged/complex may return `UNSUPPORTED_OPERATION`).
-Not exposed: delete row/column, create table, multi-column insert, legacy `insert_paragraph_after` model tool, generic `document.mutate`.
+Not exposed: table styling, merged cells, multi-column insert batch, lists/images, legacy `insert_paragraph_after` model tool, generic `document.mutate`.
 Blank DOCX create is application/API → engine-client `createBlankDocx` → Version 1 — outside AgentRunner.
 
 Persisted mutation results include `document` (new DocumentRef), `baseVersionId`, optional `change`

@@ -97,6 +97,26 @@ export interface DocumentInsertTableColumnInput {
   readonly cells: readonly string[];
 }
 
+export interface DocumentCreateTableInput {
+  readonly rows: readonly (readonly string[])[];
+  readonly placement: DocumentParagraphPlacementInput;
+}
+
+export interface DocumentDeleteTableInput {
+  readonly table: DocumentTableTarget;
+}
+
+export interface DocumentDeleteTableRowInput {
+  readonly table: DocumentTableTarget;
+  readonly row: DocumentTableRowAnchor;
+}
+
+export interface DocumentDeleteTableColumnInput {
+  readonly table: DocumentTableTarget;
+  readonly columnHeader?: string;
+  readonly columnHandle?: string;
+}
+
 export interface SlidesUpdateTextInput {
   readonly slideIndex: number;
   readonly existingText?: string;
@@ -1001,6 +1021,266 @@ export function createDocumentInsertTableColumnTool(): AgentTool<
               : {}),
             header: input.header,
             cells: input.cells,
+            signal: ctx.signal,
+            runId: ctx.runId,
+          }),
+        input,
+      ),
+  });
+}
+
+export function createDocumentCreateTableTool(): AgentTool<
+  DocumentCreateTableInput,
+  PersistedDocumentMutationToolResult
+> {
+  return defineDocumentTool({
+    name: DOCUMENT_TOOL_NAMES.createTable,
+    description:
+      "Create a new rectangular DOCX table with a complete initial cell matrix in one atomic mutation. " +
+      "Prefer this when the full initial contents are already known — do not create an empty table then fill cells. " +
+      "rows[0] is typically the header row; empty string cells are allowed. " +
+      "placement: start | end | before {handle} | after {handle} (body-block handles from inspect(body_blocks)). " +
+      "After success, re-inspect before reusing structural handles. " +
+      "Success means one immutable new document version was persisted.",
+    effect: "write",
+    executionMode: "sequential",
+    capability: DOCX_ENGINE_CAPS.createTable,
+    inputSchema: {
+      type: "object",
+      properties: {
+        rows: {
+          type: "array",
+          description:
+            "Ordered rectangular matrix of cell strings (include header row when known)",
+          items: {
+            type: "array",
+            items: { type: "string" },
+          },
+        },
+        placement: PARAGRAPH_PLACEMENT_SCHEMA,
+      },
+      required: ["rows", "placement"],
+      additionalProperties: false,
+    },
+    parseInput(raw) {
+      const obj = assertObject(raw, DOCUMENT_TOOL_NAMES.createTable);
+      if (!Array.isArray(obj.rows) || obj.rows.length === 0) {
+        invalidInput("document.create_table requires a non-empty rows matrix");
+      }
+      const rows: string[][] = [];
+      for (const row of obj.rows) {
+        if (!Array.isArray(row)) {
+          invalidInput("document.create_table each row must be a string array");
+        }
+        const cells: string[] = [];
+        for (const cell of row) {
+          if (typeof cell !== "string") {
+            invalidInput(
+              "document.create_table cells must be strings (empty string allowed)",
+            );
+          }
+          cells.push(cell);
+        }
+        rows.push(cells);
+      }
+      const placement = parseParagraphPlacement(
+        obj.placement,
+        DOCUMENT_TOOL_NAMES.createTable,
+      );
+      return { rows, placement };
+    },
+    execute: (input, ctx) =>
+      executePersistedMutation(
+        ctx,
+        DOCUMENT_TOOL_NAMES.createTable,
+        (document, mutations) =>
+          mutations.createTable({
+            document,
+            rows: input.rows,
+            placement: input.placement as DocumentParagraphPlacement,
+            signal: ctx.signal,
+            runId: ctx.runId,
+          }),
+        input,
+      ),
+  });
+}
+
+export function createDocumentDeleteTableTool(): AgentTool<
+  DocumentDeleteTableInput,
+  PersistedDocumentMutationToolResult
+> {
+  return defineDocumentTool({
+    name: DOCUMENT_TOOL_NAMES.deleteTable,
+    description:
+      "Delete an entire DOCX table. Inspect tables first; prefer opaque table.handle. " +
+      "Do not empty cells with replace_text. After success, re-inspect before reusing handles. " +
+      "Success means an immutable new document version was persisted.",
+    effect: "write",
+    executionMode: "sequential",
+    capability: DOCX_ENGINE_CAPS.deleteTable,
+    inputSchema: {
+      type: "object",
+      properties: {
+        table: tableTargetSchema({
+          description: "Table to delete (prefer handle from inspect)",
+        }),
+      },
+      required: ["table"],
+      additionalProperties: false,
+    },
+    parseInput(raw) {
+      const obj = assertObject(raw, DOCUMENT_TOOL_NAMES.deleteTable);
+      return {
+        table: parseTableTarget(obj.table, DOCUMENT_TOOL_NAMES.deleteTable),
+      };
+    },
+    execute: (input, ctx) =>
+      executePersistedMutation(
+        ctx,
+        DOCUMENT_TOOL_NAMES.deleteTable,
+        (document, mutations) =>
+          mutations.deleteTable({
+            document,
+            table: input.table,
+            signal: ctx.signal,
+            runId: ctx.runId,
+          }),
+        input,
+      ),
+  });
+}
+
+export function createDocumentDeleteTableRowTool(): AgentTool<
+  DocumentDeleteTableRowInput,
+  PersistedDocumentMutationToolResult
+> {
+  return defineDocumentTool({
+    name: DOCUMENT_TOOL_NAMES.deleteTableRow,
+    description:
+      "Delete one row from a DOCX table. Inspect tables first. " +
+      "Target the row with row.handle (preferred) or row.firstCellText. " +
+      "If reasonCode is LAST_TABLE_ROW, delete the whole table instead — do not retry blindly. " +
+      "After success, re-inspect before reusing structural handles. " +
+      "Success means an immutable new document version was persisted.",
+    effect: "write",
+    executionMode: "sequential",
+    capability: DOCX_ENGINE_CAPS.deleteTableRow,
+    inputSchema: {
+      type: "object",
+      properties: {
+        table: tableTargetSchema({
+          description: "Containing table (prefer handle from inspect)",
+        }),
+        row: ROW_ANCHOR_SCHEMA,
+      },
+      required: ["table", "row"],
+      additionalProperties: false,
+    },
+    parseInput(raw) {
+      const obj = assertObject(raw, DOCUMENT_TOOL_NAMES.deleteTableRow);
+      const table = parseTableTarget(
+        obj.table,
+        DOCUMENT_TOOL_NAMES.deleteTableRow,
+      );
+      if (!obj.row || typeof obj.row !== "object" || Array.isArray(obj.row)) {
+        invalidInput("document.delete_table_row requires a row target");
+      }
+      const row = parseRowAnchor(
+        obj.row as Record<string, unknown>,
+        DOCUMENT_TOOL_NAMES.deleteTableRow,
+      );
+      return { table, row };
+    },
+    execute: (input, ctx) =>
+      executePersistedMutation(
+        ctx,
+        DOCUMENT_TOOL_NAMES.deleteTableRow,
+        (document, mutations) =>
+          mutations.deleteTableRow({
+            document,
+            table: input.table,
+            row: input.row,
+            signal: ctx.signal,
+            runId: ctx.runId,
+          }),
+        input,
+      ),
+  });
+}
+
+export function createDocumentDeleteTableColumnTool(): AgentTool<
+  DocumentDeleteTableColumnInput,
+  PersistedDocumentMutationToolResult
+> {
+  return defineDocumentTool({
+    name: DOCUMENT_TOOL_NAMES.deleteTableColumn,
+    description:
+      "Delete one column from a DOCX table. Inspect tables first. " +
+      "Provide columnHandle (preferred) or columnHeader. " +
+      "If reasonCode is LAST_TABLE_COLUMN, delete the whole table instead — do not retry blindly. " +
+      "After success, re-inspect before reusing structural handles. " +
+      "Success means an immutable new document version was persisted.",
+    effect: "write",
+    executionMode: "sequential",
+    capability: DOCX_ENGINE_CAPS.deleteTableColumn,
+    inputSchema: {
+      type: "object",
+      properties: {
+        table: tableTargetSchema({
+          description: "Containing table (prefer handle from inspect)",
+        }),
+        columnHeader: {
+          type: "string",
+          description: "Semantic column header text to delete",
+        },
+        columnHandle: {
+          type: "string",
+          description: "Opaque column handle from inspect(tables)",
+        },
+      },
+      required: ["table"],
+      additionalProperties: false,
+    },
+    parseInput(raw) {
+      const obj = assertObject(raw, DOCUMENT_TOOL_NAMES.deleteTableColumn);
+      const table = parseTableTarget(
+        obj.table,
+        DOCUMENT_TOOL_NAMES.deleteTableColumn,
+      );
+      const columnHeader =
+        typeof obj.columnHeader === "string" && obj.columnHeader
+          ? obj.columnHeader
+          : undefined;
+      const columnHandle =
+        typeof obj.columnHandle === "string" && obj.columnHandle
+          ? obj.columnHandle
+          : undefined;
+      if (!columnHeader && !columnHandle) {
+        invalidInput(
+          "document.delete_table_column requires columnHeader or columnHandle",
+        );
+      }
+      return {
+        table,
+        ...(columnHeader !== undefined ? { columnHeader } : {}),
+        ...(columnHandle !== undefined ? { columnHandle } : {}),
+      };
+    },
+    execute: (input, ctx) =>
+      executePersistedMutation(
+        ctx,
+        DOCUMENT_TOOL_NAMES.deleteTableColumn,
+        (document, mutations) =>
+          mutations.deleteTableColumn({
+            document,
+            table: input.table,
+            ...(input.columnHeader !== undefined
+              ? { columnHeader: input.columnHeader }
+              : {}),
+            ...(input.columnHandle !== undefined
+              ? { columnHandle: input.columnHandle }
+              : {}),
             signal: ctx.signal,
             runId: ctx.runId,
           }),

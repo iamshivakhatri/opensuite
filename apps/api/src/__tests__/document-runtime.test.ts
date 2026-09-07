@@ -17,6 +17,10 @@ function unusedTableMutations(): Pick<
   | "executeDocxSetParagraphStyle"
   | "executeDocxSetParagraphFormatting"
   | "executeDocxSetTextFormatting"
+  | "executeDocxCreateTable"
+  | "executeDocxDeleteTable"
+  | "executeDocxDeleteTableRow"
+  | "executeDocxDeleteTableColumn"
 > {
   const fail = async () => ({
     result: {
@@ -42,6 +46,10 @@ function unusedTableMutations(): Pick<
     executeDocxSetParagraphStyle: fail,
     executeDocxSetParagraphFormatting: fail,
     executeDocxSetTextFormatting: fail,
+    executeDocxCreateTable: fail,
+    executeDocxDeleteTable: fail,
+    executeDocxDeleteTableRow: fail,
+    executeDocxDeleteTableColumn: fail,
   };
 }
 

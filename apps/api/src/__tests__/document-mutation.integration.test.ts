@@ -212,6 +212,70 @@ test(
             },
           };
         },
+        async executeDocxCreateTable() {
+          return {
+            result: {
+              ok: false,
+              status: "failed",
+              diagnostics: [
+                {
+                  code: "UNSUPPORTED_OPERATION",
+                  severity: "error",
+                  message: "unused",
+                },
+              ],
+              changes: [],
+            },
+          };
+        },
+        async executeDocxDeleteTable() {
+          return {
+            result: {
+              ok: false,
+              status: "failed",
+              diagnostics: [
+                {
+                  code: "UNSUPPORTED_OPERATION",
+                  severity: "error",
+                  message: "unused",
+                },
+              ],
+              changes: [],
+            },
+          };
+        },
+        async executeDocxDeleteTableRow() {
+          return {
+            result: {
+              ok: false,
+              status: "failed",
+              diagnostics: [
+                {
+                  code: "UNSUPPORTED_OPERATION",
+                  severity: "error",
+                  message: "unused",
+                },
+              ],
+              changes: [],
+            },
+          };
+        },
+        async executeDocxDeleteTableColumn() {
+          return {
+            result: {
+              ok: false,
+              status: "failed",
+              diagnostics: [
+                {
+                  code: "UNSUPPORTED_OPERATION",
+                  severity: "error",
+                  message: "unused",
+                },
+              ],
+              changes: [],
+            },
+          };
+        },
         async findDocxText(input, request) {
           const haystack = Buffer.from(input).toString("utf8");
           const found = haystack.includes(request.text);
@@ -775,6 +839,70 @@ test("unit-adjacent: real adapter + owned loader + mutation service without DB",
           };
         },
         async executeDocxSetTextFormatting() {
+          return {
+            result: {
+              ok: false,
+              status: "failed",
+              diagnostics: [
+                {
+                  code: "UNSUPPORTED_OPERATION",
+                  severity: "error",
+                  message: "unused",
+                },
+              ],
+              changes: [],
+            },
+          };
+        },
+        async executeDocxCreateTable() {
+          return {
+            result: {
+              ok: false,
+              status: "failed",
+              diagnostics: [
+                {
+                  code: "UNSUPPORTED_OPERATION",
+                  severity: "error",
+                  message: "unused",
+                },
+              ],
+              changes: [],
+            },
+          };
+        },
+        async executeDocxDeleteTable() {
+          return {
+            result: {
+              ok: false,
+              status: "failed",
+              diagnostics: [
+                {
+                  code: "UNSUPPORTED_OPERATION",
+                  severity: "error",
+                  message: "unused",
+                },
+              ],
+              changes: [],
+            },
+          };
+        },
+        async executeDocxDeleteTableRow() {
+          return {
+            result: {
+              ok: false,
+              status: "failed",
+              diagnostics: [
+                {
+                  code: "UNSUPPORTED_OPERATION",
+                  severity: "error",
+                  message: "unused",
+                },
+              ],
+              changes: [],
+            },
+          };
+        },
+        async executeDocxDeleteTableColumn() {
           return {
             result: {
               ok: false,

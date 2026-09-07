@@ -13,6 +13,10 @@ export const DOCUMENT_TOOL_NAMES = {
   setTableCellsText: "document.set_table_cells_text",
   insertTableRows: "document.insert_table_rows",
   insertTableColumn: "document.insert_table_column",
+  createTable: "document.create_table",
+  deleteTable: "document.delete_table",
+  deleteTableRow: "document.delete_table_row",
+  deleteTableColumn: "document.delete_table_column",
   updateSlideText: "slides.update_text",
   setCells: "workbook.set_cells",
 } as const;
@@ -29,6 +33,10 @@ export const DOCX_ENGINE_CAPS = {
   setTableCellsText: "set_table_cells_text",
   insertTableRows: "insert_table_rows",
   insertTableColumn: "insert_table_column",
+  createTable: "create_table",
+  deleteTable: "delete_table",
+  deleteTableRow: "delete_table_row",
+  deleteTableColumn: "delete_table_column",
 } as const;
 
 /**

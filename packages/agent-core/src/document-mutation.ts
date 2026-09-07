@@ -96,6 +96,38 @@ export interface DocumentInsertTableColumnMutationRequest {
   readonly runId?: string;
 }
 
+export interface DocumentCreateTableMutationRequest {
+  readonly document: DocumentRef;
+  readonly rows: readonly (readonly string[])[];
+  readonly placement: DocumentParagraphPlacement;
+  readonly signal?: AbortSignal;
+  readonly runId?: string;
+}
+
+export interface DocumentDeleteTableMutationRequest {
+  readonly document: DocumentRef;
+  readonly table: DocumentTableTarget;
+  readonly signal?: AbortSignal;
+  readonly runId?: string;
+}
+
+export interface DocumentDeleteTableRowMutationRequest {
+  readonly document: DocumentRef;
+  readonly table: DocumentTableTarget;
+  readonly row: DocumentTableRowAnchor;
+  readonly signal?: AbortSignal;
+  readonly runId?: string;
+}
+
+export interface DocumentDeleteTableColumnMutationRequest {
+  readonly document: DocumentRef;
+  readonly table: DocumentTableTarget;
+  readonly columnHeader?: string;
+  readonly columnHandle?: string;
+  readonly signal?: AbortSignal;
+  readonly runId?: string;
+}
+
 /** Placement for document.insert_paragraph (engine protocol). */
 export type DocumentParagraphPlacement =
   | { readonly kind: "start" }
@@ -210,6 +242,18 @@ export interface DocumentMutationExecutor {
   ): Promise<DocumentMutationResult>;
   insertTableColumn(
     input: DocumentInsertTableColumnMutationRequest,
+  ): Promise<DocumentMutationResult>;
+  createTable(
+    input: DocumentCreateTableMutationRequest,
+  ): Promise<DocumentMutationResult>;
+  deleteTable(
+    input: DocumentDeleteTableMutationRequest,
+  ): Promise<DocumentMutationResult>;
+  deleteTableRow(
+    input: DocumentDeleteTableRowMutationRequest,
+  ): Promise<DocumentMutationResult>;
+  deleteTableColumn(
+    input: DocumentDeleteTableColumnMutationRequest,
   ): Promise<DocumentMutationResult>;
 }
 
@@ -465,6 +509,60 @@ export function createInMemoryDocumentMutationExecutor(
             : {}),
           header: input.header,
           cells: input.cells,
+        },
+        input.signal,
+        input.runId,
+      );
+    },
+
+    async createTable(input) {
+      return executeOnce(
+        input.document,
+        "document.create_table",
+        {
+          rows: input.rows,
+          placement: input.placement,
+        },
+        input.signal,
+        input.runId,
+      );
+    },
+
+    async deleteTable(input) {
+      return executeOnce(
+        input.document,
+        "document.delete_table",
+        { table: input.table },
+        input.signal,
+        input.runId,
+      );
+    },
+
+    async deleteTableRow(input) {
+      return executeOnce(
+        input.document,
+        "document.delete_table_row",
+        {
+          table: input.table,
+          row: input.row,
+        },
+        input.signal,
+        input.runId,
+      );
+    },
+
+    async deleteTableColumn(input) {
+      return executeOnce(
+        input.document,
+        "document.delete_table_column",
+        {
+          table: input.table,
+          ...(input.columnHeader !== undefined
+            ? { columnHeader: input.columnHeader }
+            : {}),
+          ...(input.columnHandle !== undefined
+            ? { columnHandle: input.columnHandle }
+            : {}),
         },
         input.signal,
         input.runId,

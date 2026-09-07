@@ -14,7 +14,8 @@ Application code must never manipulate Office internals as a shortcut around the
 AgentRunner
   → AgentTool (replace_text | insert_paragraph | insert_paragraphs | delete_paragraph
                | set_paragraph_style | set_paragraph_formatting | set_text_formatting
-               | set_table_cells_text | insert_table_rows | insert_table_column)
+               | create_table | set_table_cells_text | insert_table_rows | insert_table_column
+               | delete_table | delete_table_row | delete_table_column)
   → DocumentMutationExecutor (injected by apps/api)
   → apply* (shared authorize → execute → appendDocumentVersion)
   → DocumentRuntime.execute (once)
@@ -67,9 +68,13 @@ exact immutable version N
     | executeDocxSetParagraphStyle
     | executeDocxSetParagraphFormatting
     | executeDocxSetTextFormatting
+    | executeDocxCreateTable
     | executeDocxSetTableCellsText
     | executeDocxInsertTableRows
     | executeDocxInsertTableColumn
+    | executeDocxDeleteTable
+    | executeDocxDeleteTableRow
+    | executeDocxDeleteTableColumn
   → verified artifactBytes
   → appendDocumentVersion → N+1
   → find/inspect N+1 independently
@@ -163,8 +168,8 @@ These types are plain, JSON-shaped TypeScript (no classes, enums-as-objects, or 
 `packages/engine-client` is the concrete implementation of the boundary described above. It is built around:
 
 * **`EngineTransport` / `EngineClient` / `MockEngineTransport`** — existing contracts inspect seam (still mock-backed).
-* **`DocxEngineBinding`** — hides N-API (`getDocxCapabilities`, `createBlankDocx`, `findDocxText`, `inspectDocx`, `executeDocxReplaceText`, `executeDocxInsertParagraph`, `executeDocxInsertParagraphs`, `executeDocxDeleteParagraph`, `executeDocxSetParagraphStyle`, `executeDocxSetParagraphFormatting`, `executeDocxSetTextFormatting`, `executeDocxSetTableCellsText`, `executeDocxInsertTableRows`, `executeDocxInsertTableColumn`).
-* **`OpenSuiteEngineAdapter`** — real DOCX `DocumentRuntime` (caps/find/inspect/replace + paragraph authoring + table mutations).
+* **`DocxEngineBinding`** — hides N-API (caps, blank, find, inspect, replace, paragraph authoring, create/delete table + row/column, set cells, insert rows/column).
+* **`OpenSuiteEngineAdapter`** — real DOCX `DocumentRuntime`.
 * **`DocumentArtifactLoader`** — injected exact-version byte loader (application storage owns resolution).
 
 Swapping N-API for a future remote engine service only requires a new `DocxEngineBinding` — AgentRunner and AgentTools do not change.
