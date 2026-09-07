@@ -191,10 +191,22 @@ export interface DocxInspectTableColumn {
   readonly text: string;
 }
 
+/** Engine-authored affordance on an inspected DOCX object (transport only). */
+export interface DocxInspectAffordance {
+  readonly capability: string;
+  readonly supported: boolean;
+  readonly reason?: string;
+}
+
 export interface DocxInspectTableRow {
   readonly handle: string;
   readonly cells: readonly string[];
   readonly cellHandles: readonly string[];
+  /**
+   * Parallel to `cells` / `cellHandles` when the engine provides target-level
+   * affordances. Omit entirely when the binding does not supply them.
+   */
+  readonly cellAffordances?: readonly (readonly DocxInspectAffordance[])[];
 }
 
 export interface DocxInspectTableItem {
@@ -202,6 +214,7 @@ export interface DocxInspectTableItem {
   readonly handle: string;
   readonly rowCount: number;
   readonly isRectangular: boolean;
+  readonly affordances?: readonly DocxInspectAffordance[];
   readonly columns: readonly DocxInspectTableColumn[];
   readonly rows: readonly DocxInspectTableRow[];
 }
@@ -323,6 +336,11 @@ type NativeEngineModule = {
         handle: string;
         rowCount: number;
         isRectangular: boolean;
+        affordances?: Array<{
+          capability: string;
+          supported: boolean;
+          reason?: string;
+        }>;
         columns: Array<{
           occurrence: number;
           handle: string;
@@ -332,6 +350,13 @@ type NativeEngineModule = {
           handle: string;
           cells: string[];
           cellHandles: string[];
+          cellAffordances?: Array<
+            Array<{
+              capability: string;
+              supported: boolean;
+              reason?: string;
+            }>
+          >;
         }>;
       }>;
     };

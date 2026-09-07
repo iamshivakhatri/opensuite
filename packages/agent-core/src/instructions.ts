@@ -43,6 +43,14 @@ export function buildDocumentAgentSystemPrompt(
         "Page with offset/limit (default 20, max 100). " +
         "PPTX/XLSX mock runtimes still support slides/sheets/range.",
     );
+    parts.push(
+      "Global capabilities tell you which document operations exist in this runtime. " +
+        "When inspection results include object affordances, those tell you whether an " +
+        "implemented operation is safe on that exact inspected target. " +
+        "If an affordance has supported:false, do not blindly call that operation on that target — " +
+        "choose another available primitive if appropriate, or explain the limit. " +
+        "Absence of affordances does not mean supported or unsupported.",
+    );
   }
   if (canFind) {
     parts.push(

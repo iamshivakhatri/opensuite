@@ -30,6 +30,7 @@ import type {
   DocxEngineDiagnostic,
   DocxInsertTableColumnOperation,
   DocxInsertTableRowsOperation,
+  DocxInspectAffordance,
   DocxInspectFocus,
   DocxInspectResult,
   DocxMutationBindingResult,
@@ -590,7 +591,12 @@ function mapInspectPayload(
                   "Engine table inspection returned cells without matching cellHandles",
                 );
               }
-              return { handle, text };
+              const cellAffordances = row.cellAffordances?.[index];
+              return {
+                handle,
+                text,
+                ...optionalAffordances(cellAffordances),
+              };
             }),
           }));
           return {
@@ -599,6 +605,7 @@ function mapInspectPayload(
             rowCount: item.rowCount,
             cols,
             isRectangular: item.isRectangular,
+            ...optionalAffordances(item.affordances),
             columns: item.columns.map((column) => ({
               handle: column.handle,
               text: column.text,
@@ -661,6 +668,35 @@ function mapPage(page: {
     returned: page.returned,
     hasMore: page.hasMore,
   };
+}
+
+/**
+ * Transport-only: pass engine affordances through unchanged.
+ * Absence (undefined) is preserved — do not invent supported/unsupported.
+ */
+function optionalAffordances(
+  values: readonly DocxInspectAffordance[] | undefined,
+): { readonly affordances: ReturnType<typeof mapAffordances> } | Record<string, never> {
+  if (values === undefined) {
+    return {};
+  }
+  return { affordances: mapAffordances(values) };
+}
+
+function mapAffordances(
+  values: readonly DocxInspectAffordance[],
+): readonly {
+  readonly capability: string;
+  readonly supported: boolean;
+  readonly reason?: string;
+}[] {
+  return values.map((item) => ({
+    capability: item.capability,
+    supported: item.supported,
+    ...(typeof item.reason === "string" && item.reason
+      ? { reason: item.reason }
+      : {}),
+  }));
 }
 
 /** Exported for unit tests — application DTO → binding DTO only. */

@@ -1,6 +1,7 @@
 import type {
   CapabilityId,
   Diagnostic,
+  DocumentAffordance,
   DocumentFormat,
   DocumentRef,
   NonEmptyDiagnostics,
@@ -8,6 +9,15 @@ import type {
   SemanticTarget,
 } from "./types.js";
 import { createCapabilities, hasCapability } from "./types.js";
+
+/**
+ * Optional carrier for artifact-level affordances on any inspected object.
+ * Absence means the runtime did not provide target-level data — not supported
+ * and not unsupported. Do not invent affordances in TypeScript.
+ */
+export interface InspectedArtifactAffordances {
+  readonly affordances?: readonly DocumentAffordance[];
+}
 
 /**
  * Minimal format-aware inspection summary.
@@ -50,25 +60,25 @@ export interface InspectionPageInfo {
 }
 
 /** Opaque inspected table cell — handle is artifact-local, not durable identity. */
-export interface InspectedTableCell {
+export interface InspectedTableCell extends InspectedArtifactAffordances {
   readonly handle: string;
   readonly text: string;
 }
 
 /** Opaque inspected table column (header text + handle). */
-export interface InspectedTableColumn {
+export interface InspectedTableColumn extends InspectedArtifactAffordances {
   readonly handle: string;
   readonly text: string;
   readonly occurrence?: number;
 }
 
 /** Opaque inspected table row with per-cell handles. */
-export interface InspectedTableRow {
+export interface InspectedTableRow extends InspectedArtifactAffordances {
   readonly handle: string;
   readonly cells: readonly InspectedTableCell[];
 }
 
-export interface InspectedTable {
+export interface InspectedTable extends InspectedArtifactAffordances {
   readonly handle: string;
   /** Version-local occurrence when provided by the engine (not durable identity). */
   readonly occurrence?: number;

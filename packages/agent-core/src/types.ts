@@ -69,6 +69,20 @@ export interface RuntimeCapabilities {
   readonly ids: ReadonlySet<CapabilityId>;
 }
 
+/**
+ * Format-neutral artifact-level affordance from the engine/runtime.
+ * Global capabilities answer "is this primitive implemented?";
+ * affordances answer "is it safe on this exact inspected target?".
+ *
+ * `reason` is an opaque machine-readable engine string (pass through).
+ * TypeScript must not interpret or recompute editability from it.
+ */
+export interface DocumentAffordance {
+  readonly capability: CapabilityId;
+  readonly supported: boolean;
+  readonly reason?: string;
+}
+
 export function createCapabilities(
   ...ids: readonly CapabilityId[]
 ): RuntimeCapabilities {

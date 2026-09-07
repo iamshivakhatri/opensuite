@@ -12,11 +12,14 @@ test("system prompt is task-oriented and read-only aware", () => {
   const prompt = buildDocumentAgentSystemPrompt(readOnlyDocumentCapabilities());
   assert.match(prompt, /OpenSuite/);
   assert.match(prompt, /inspect before editing/i);
+  assert.match(prompt, /object affordances/i);
+  assert.match(prompt, /supported:false/i);
   assert.match(prompt, /mutations are currently unavailable/i);
   assert.match(prompt, /never invent names/i);
   assert.match(prompt, /chain-of-thought/i);
   assert.doesNotMatch(prompt, /Advertised runtime capabilities/);
   assert.doesNotMatch(prompt, /Call only listed tools such as/);
+  assert.doesNotMatch(prompt, /MULTIPLE_PARAGRAPHS/);
 });
 
 test("system prompt omits inspect guidance when capability missing", () => {

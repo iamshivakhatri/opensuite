@@ -85,7 +85,9 @@ export function createDocumentInspectTool(): AgentTool<
       "tables (rows/cells with opaque artifact-local handles), context (nearby content around exact text). " +
       "Prefer overview first when structure is unknown; headings to navigate sections; " +
       "tables for tabular work — returned table/row/column/cell handles can be passed to table mutation tools " +
-      "for the same artifact version; paragraphs for body prose; context after locating exact text. " +
+      "for the same artifact version; when present, object affordances indicate whether an operation is safe " +
+      "on that exact target (supported:false → do not blindly call that op on that target); " +
+      "paragraphs for body prose; context after locating exact text. " +
       "Use offset/limit paging (default limit 20, max 100) — do not request huge dumps. " +
       "PPTX/XLSX mock runtimes also support slides/sheets/range.",
     executionMode: "parallel-safe",

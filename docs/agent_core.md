@@ -54,7 +54,8 @@ primary DocumentRef
 **Read**
 
 * `document.capabilities` — list runtime caps for the primary document
-* `document.inspect` — DOCX: `overview` / `headings` / `paragraphs` / `tables` / `context` (paged); PPTX/XLSX mock: slides/sheets/range
+* `document.inspect` — DOCX: `overview` / `headings` / `paragraphs` / `tables` / `context` (paged); PPTX/XLSX mock: slides/sheets/range.
+  Inspected objects may optionally carry format-neutral `affordances[]` (engine-authored; absence ≠ supported/unsupported).
 * `document.find` — text or semantic matches
 
 **Safe writes**

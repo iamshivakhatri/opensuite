@@ -17,52 +17,50 @@ _Read this before starting any work. Keep it a concise current-state handoff, no
   `replace_text`, `set_table_cells_text`, `insert_table_rows`, `insert_table_column`.
 * Agent chat: Cursor-style work toggle (“Thought for Xs”), single wall-clock timer, Stop square in composer.
 * Optional semantic `occurrence`: omit / null / "" / **0 → omitted**; explicit values stay **1-based**.
-* **Document tools are declarative descriptors** under `packages/agent-core/src/document-tools/`
-  (`defineDocumentTool`, shared selectors/schemas, shared `executePersistedMutation`).
-* **Capability-driven tool discovery at run bootstrap:** primary DocumentRef →
-  `DocumentRuntime.capabilities` → filter catalog by `requireCapability` → first model call.
-  No format-hardcoded tool switches; PPTX/XLSX mock caps advertise their own mutation ids.
+* **Document tools are declarative descriptors** under `packages/agent-core/src/document-tools/`.
+* **Capability-driven tool discovery at run bootstrap** (global: which functions exist).
+* **Artifact affordances on inspect** (format-neutral `DocumentAffordance`): engine → binding → adapter →
+  `document.inspect` → model. DOCX tables/cells are the first populated objects; TS does not recompute editability.
 
 ## Just Completed
 
-* Milestone: capability-driven document tool discovery (runtime caps decide model tool set).
-* Prior: document tool boundary refactor; Dev API plain logs; stop abandoned-run GET flood.
+* Milestone: format-neutral artifact affordances on inspect (DOCX table/cell transport).
+* Prior: capability-driven document tool discovery.
 
 ## Current Decisions
 
 * Soft-delete only; latest = max `version_number`.
 * Optimistic concurrency: `baseVersionId` + row lock.
-* Rust is capability / semantic-mutation source of truth; app owns versions/storage.
+* Rust is capability / affordance / semantic-mutation source of truth; app owns versions/storage.
+* Global capabilities ≠ target affordances; both layers stay distinct.
+* Affordance absence means “not provided” — never invent supported/unsupported in TS.
 * Inspect occurrence/order is version-local — never durable semantic identity.
 * Structural table handles are opaque, artifact-local, short-lived — never persisted; re-inspect after version-changing edits.
-* Semantic selectors = human-readable convenience; handles = exact inspected-artifact targeting (blank/duplicate rows).
 * Real DOCX never falls back to mock inspect semantics.
 * Capability advertised ≠ every table structure is safe (merged/complex → `UNSUPPORTED_OPERATION`).
 * Separate tool calls = separate immutable versions; within one engine op, updates are atomic.
 * `pnpm dev:api` rebuilds agent-core first — restart after agent-core changes.
-* TypeScript validates request shape/routing only — no blank-row / one-paragraph / OOXML safety rules in app.
 * Discovery failure → `CAPABILITY_DISCOVERY_FAILED` (never expose all document tools).
 
 ## Verification Status
 
 | Check | Status |
 |---|---|
-| `pnpm --filter @opensuite/agent-core test` | **Pass** (85) |
+| `pnpm --filter @opensuite/agent-core test` | **Pass** (90) |
+| `pnpm --filter @opensuite/engine-client test` | **Pass** (37) |
 | `pnpm --filter @opensuite/api test` | **Pass** (88+17 skip) |
-| `pnpm --filter @opensuite/agent-core typecheck` | **Pass** |
-| `pnpm --filter @opensuite/api typecheck` | **Pass** |
+| Google Docs fixture native affordances | **Pass** (mixed Name/Year/OpenSuite/2026) |
 
 ## Intentionally Deferred
 
-* Structural-handle browser scenario / richer handle-first UX milestone (next)
-* Engine-provided tool manifest / Rust-generated JSON schemas
-* Target-level affordances/editability; version-bound handles; structured diagnostics
-* Engine: harden `insert_table_column` verify so empty `headerCells` returns a structured error instead of panicking
+* Stale-handle enforcement; structured diagnostics; engine tool manifest
+* Affordance-driven agent recovery policies / reason-specific fallbacks
+* Affordances on paragraphs, pictures, slides, sheets, ranges, etc.
+* Engine: harden `insert_table_column` verify for empty `headerCells`
 * Delete rows/columns / create_table / multi-column insert
-* Persist full per-turn timeline in DB
 * PPTX/XLSX engine runtimes; HTTP mutation endpoint
 * Review/revert UI; automatic rebase; app-level multi-tool transactions
 
 ## Recommended Next Step
 
-Structural-handle milestone: browser/agent flow for exact artifact-local table targeting on real DOCX (no semantic mock fallback).
+Milestone 3 / structural-handle UX: richer handle-first browser flow on real DOCX, or stale-handle enforcement — pick one focused concern.

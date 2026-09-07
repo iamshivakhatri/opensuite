@@ -63,6 +63,8 @@ exact immutable version N
 * Occurrence/order from inspect is VERSION-LOCAL — never persist as durable identity.
 * Table inspect returns opaque artifact-local handles (table/column/row/cell). Mutations accept those
   handles alongside semantic selectors. Prefer handles for blank/duplicate targets; re-inspect after N→N+1.
+* Table/cell inspect may include format-neutral `affordances[]` from Rust (capability + supported + optional reason).
+  Adapter transport only — TypeScript does not recompute editability. Absence ≠ supported/unsupported.
 * Proven blank-row path: inspect(tables) → cell handles → one atomic `set_table_cells_text` → persist N+1.
 * Table workflow: inspect(tables) → set cells / insert rows / insert one column → re-inspect.
 * Current engine verify for column insert still needs `headerCells` even with handles —
