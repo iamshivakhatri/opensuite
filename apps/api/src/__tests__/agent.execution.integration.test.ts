@@ -109,7 +109,7 @@ async function seedDocument(
 
 function createOwnedDocumentResolver(db: Db): Pick<
   DocumentService,
-  "getOwnedDocument" | "appendDocumentVersion"
+  "getOwnedDocument" | "appendDocumentVersion" | "createBlankDocxDocument"
 > {
   return {
     async getOwnedDocument(input: {
@@ -179,12 +179,20 @@ function createOwnedDocumentResolver(db: Db): Pick<
         "appendDocumentVersion not implemented in agent execution test resolver",
       );
     },
+    async createBlankDocxDocument() {
+      throw new Error(
+        "createBlankDocxDocument not implemented in agent execution test resolver",
+      );
+    },
   };
 }
 
 function createService(
   persistence: AgentPersistenceService,
-  documents: Pick<DocumentService, "getOwnedDocument" | "appendDocumentVersion">,
+  documents: Pick<
+    DocumentService,
+    "getOwnedDocument" | "appendDocumentVersion" | "createBlankDocxDocument"
+  >,
   overrides: Partial<AgentExecutionServiceDeps> & { model: AgentModel },
 ) {
   return createAgentExecutionService({

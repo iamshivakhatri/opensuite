@@ -13,6 +13,10 @@ import {
   setDocumentStarred,
   type ListedDocument,
 } from "@/lib/api";
+import {
+  encodeDocumentDragPayload,
+  OPENSUITE_DOCUMENT_DRAG_MIME,
+} from "@/lib/document-drag";
 import { formatLabel, userFacingError } from "@/components/files/format";
 import {
   ConfirmDialog,
@@ -273,10 +277,26 @@ export function DocumentNavigationPanel({
         {files.map((file) => {
           const active = file.id === activeDocumentId;
           return (
-            <div key={file.id} className="group relative">
+            <div
+              key={file.id}
+              className="group relative"
+              draggable
+              onDragStart={(event) => {
+                event.dataTransfer.setData(
+                  OPENSUITE_DOCUMENT_DRAG_MIME,
+                  encodeDocumentDragPayload({
+                    id: file.id,
+                    name: file.name,
+                    format: file.format,
+                    workspaceId,
+                  }),
+                );
+                event.dataTransfer.effectAllowed = "copy";
+              }}
+            >
               <Link
                 href={documentPath(workspaceId, file.id)}
-                title={file.name}
+                title={`${file.name} — drag into chat to tag`}
                 prefetch
                 onClick={(event) => {
                   const href = documentPath(workspaceId, file.id);

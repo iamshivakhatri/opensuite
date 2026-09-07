@@ -84,16 +84,19 @@ export function WorkspaceIde({
   React.useEffect(() => {
     setActiveDocument(document);
     setStarred(Boolean(document?.starred));
-    if (!document || document.format !== "docx") {
-      setEditorStatus({
-        dirty: false,
-        saving: false,
-        conflict: false,
-        loadedVersionId: null,
-        latestVersionId: null,
-      });
-    }
   }, [document]);
+
+  // Reset editor chrome only when the open file identity changes — not on
+  // every latestVersion bump (agent writes), which caused header flicker.
+  React.useEffect(() => {
+    setEditorStatus({
+      dirty: false,
+      saving: false,
+      conflict: false,
+      loadedVersionId: null,
+      latestVersionId: document?.latestVersion.id ?? null,
+    });
+  }, [document?.id]);
 
   React.useEffect(() => {
     writeIdePanelPrefs({
@@ -436,6 +439,7 @@ export function WorkspaceIde({
           />
         ) : null}
         <DocumentAgentPanel
+          workspaceId={workspaceId}
           documentId={activeDocument?.id ?? null}
           documentName={activeDocument?.name}
           collapsed={agentCollapsed}
@@ -443,6 +447,10 @@ export function WorkspaceIde({
           onToggle={() => setAgentCollapsed((value) => !value)}
           onDocumentUpdated={(updated) => {
             setActiveDocument(updated);
+          }}
+          onDocumentCreated={(created) => {
+            setRefreshKey((value) => value + 1);
+            setActiveDocument(created);
           }}
         />
       </div>

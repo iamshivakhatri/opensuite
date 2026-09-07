@@ -31,6 +31,10 @@ const DocumentIdParams = z.object({
   documentId: z.uuid("documentId must be a UUID"),
 });
 
+const WorkspaceIdParams = z.object({
+  workspaceId: z.uuid("workspaceId must be a UUID"),
+});
+
 const ThreadIdParams = z.object({
   threadId: z.uuid("threadId must be a UUID"),
 });
@@ -54,6 +58,10 @@ const CreateRunBody = z.object({
     .trim()
     .min(1, "Instruction is required")
     .max(20_000, "Instruction must be at most 20000 characters"),
+  documentIds: z
+    .array(z.uuid("documentIds must be UUIDs"))
+    .max(20, "At most 20 tagged documents")
+    .optional(),
 });
 
 const SSE_HEARTBEAT_MS = 15_000;
@@ -85,7 +93,7 @@ const TERMINAL_RUN_STATUSES = new Set([
 ]);
 
 /**
- * Document-scoped agent thread + async run + SSE surface.
+ * Workspace-scoped agent threads + document-scoped legacy routes + async run + SSE.
  * POST /runs returns 202 quickly; progress via SSE; recovery via GET /runs.
  */
 export function registerAgentRoutes(
@@ -93,6 +101,86 @@ export function registerAgentRoutes(
   deps: AgentRouteDeps,
 ): void {
   const { auth, documents, persistence, runManager, webOrigin } = deps;
+
+  app.get(
+    "/api/workspaces/:workspaceId/agent/threads",
+    async (request, reply) => {
+      const user = await getRequestUser(auth, request);
+      if (!user) {
+        return reply.status(401).send(unauthenticated());
+      }
+
+      const params = WorkspaceIdParams.safeParse(request.params);
+      if (!params.success) {
+        return reply.status(400).send({
+          error: {
+            statusCode: 400,
+            message: params.error.issues[0]?.message ?? "Invalid workspace id",
+            code: "INVALID_WORKSPACE_ID",
+          },
+        });
+      }
+
+      try {
+        const threads = await persistence.listThreadsForWorkspace({
+          workspaceId: params.data.workspaceId,
+          ownerUserId: user.id,
+          documentId: null,
+          includeArchived: false,
+        });
+        return reply.send({
+          threads: threads.map(toAgentThreadDto),
+        });
+      } catch (error) {
+        return mapPersistenceError(reply, error);
+      }
+    },
+  );
+
+  app.post(
+    "/api/workspaces/:workspaceId/agent/threads",
+    async (request, reply) => {
+      const user = await getRequestUser(auth, request);
+      if (!user) {
+        return reply.status(401).send(unauthenticated());
+      }
+
+      const params = WorkspaceIdParams.safeParse(request.params);
+      if (!params.success) {
+        return reply.status(400).send({
+          error: {
+            statusCode: 400,
+            message: params.error.issues[0]?.message ?? "Invalid workspace id",
+            code: "INVALID_WORKSPACE_ID",
+          },
+        });
+      }
+
+      const body = CreateThreadBody.safeParse(request.body ?? {});
+      if (!body.success) {
+        return reply.status(400).send({
+          error: {
+            statusCode: 400,
+            message: body.error.issues[0]?.message ?? "Invalid thread title",
+            code: "INVALID_AGENT_THREAD_TITLE",
+          },
+        });
+      }
+
+      try {
+        const thread = await persistence.createThread({
+          workspaceId: params.data.workspaceId,
+          ownerUserId: user.id,
+          documentId: null,
+          createdByUserId: user.id,
+          title: body.data.title,
+        });
+        return reply.status(201).send({ thread: toAgentThreadDto(thread) });
+      } catch (error) {
+        return mapPersistenceError(reply, error);
+      }
+    },
+  );
 
   app.get(
     "/api/documents/:documentId/agent/threads",
@@ -314,6 +402,9 @@ export function registerAgentRoutes(
         userId: user.id,
         threadId: params.data.threadId,
         instruction: body.data.instruction,
+        ...(body.data.documentIds !== undefined
+          ? { documentIds: body.data.documentIds }
+          : {}),
       });
       return reply.status(202).send({
         run: toAgentRunDto(started.run),

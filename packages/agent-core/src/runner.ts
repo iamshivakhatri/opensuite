@@ -183,11 +183,41 @@ export class AgentRunner {
           toolOutcomes: [...toolOutcomes],
         };
       }
-      const activeTools = bootstrapped.tools;
-      const runCapabilities = bootstrapped.capabilities;
+      let activeTools = bootstrapped.tools;
+      let runCapabilities = bootstrapped.capabilities;
+      let bootstrappedPrimaryId = documentState.primary?.documentId ?? null;
 
       for (let turn = 0; turn < this.maxTurns; turn += 1) {
         this.throwIfAborted(signal);
+
+        // Re-discover document tools when primary document identity changes
+        // (e.g. workspace.create_blank_docx → edit the new file in-run).
+        const currentPrimaryId = documentState.primary?.documentId ?? null;
+        if (currentPrimaryId !== bootstrappedPrimaryId) {
+          const refreshed = await this.bootstrapTools(
+            documentState.primary,
+            signal,
+          );
+          if (refreshed.status === "failed") {
+            diagnostics.push(refreshed.diagnostic);
+            await this.emit({
+              type: "agent.failed",
+              runId: request.runId,
+              diagnostic: refreshed.diagnostic,
+              at: this.timestamp(),
+            });
+            return {
+              status: "failed",
+              summary: refreshed.diagnostic.message,
+              diagnostics,
+              toolOutcomes: [...toolOutcomes],
+            };
+          }
+          activeTools = refreshed.tools;
+          runCapabilities = refreshed.capabilities;
+          bootstrappedPrimaryId = currentPrimaryId;
+        }
+
         this.applySteering(transcript);
 
         const turnId = this.createId();

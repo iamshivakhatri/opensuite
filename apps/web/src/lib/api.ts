@@ -666,6 +666,43 @@ export async function createDocumentAgentThread(
   return body.thread;
 }
 
+/** Workspace-scoped agent threads (Cursor-style chat, not bound to one file). */
+export async function listWorkspaceAgentThreads(
+  workspaceId: string,
+): Promise<AgentThread[]> {
+  const response = await apiFetch(
+    `/api/workspaces/${workspaceId}/agent/threads`,
+  );
+  if (!response.ok) {
+    throw await parseError(response);
+  }
+  const body = (await response.json()) as { threads: AgentThread[] };
+  return body.threads;
+}
+
+export async function createWorkspaceAgentThread(
+  workspaceId: string,
+  title?: string | null,
+): Promise<AgentThread> {
+  const response = await apiFetch(
+    `/api/workspaces/${workspaceId}/agent/threads`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(
+        title === undefined || title === null || title === ""
+          ? {}
+          : { title },
+      ),
+    },
+  );
+  if (!response.ok) {
+    throw await parseError(response);
+  }
+  const body = (await response.json()) as { thread: AgentThread };
+  return body.thread;
+}
+
 export async function getAgentMessages(threadId: string): Promise<{
   messages: AgentMessage[];
   latestRun: AgentRun | null;
@@ -689,11 +726,17 @@ export async function getAgentMessages(threadId: string): Promise<{
 export async function startAgentRun(
   threadId: string,
   instruction: string,
+  options?: { documentIds?: readonly string[] },
 ): Promise<AgentRun> {
   const response = await apiFetch(`/api/agent/threads/${threadId}/runs`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ instruction }),
+    body: JSON.stringify({
+      instruction,
+      ...(options?.documentIds && options.documentIds.length > 0
+        ? { documentIds: [...options.documentIds] }
+        : {}),
+    }),
   });
   if (!response.ok) {
     throw await parseError(response);

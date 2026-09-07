@@ -15,6 +15,8 @@ _Read this before starting any work. Keep it a concise current-state handoff, no
 * Table inspect exposes opaque artifact-local handles; mutations accept handle or semantic selectors.
 * **Blank DOCX creation:** API → engine-client `createBlankDocx` → Rust bytes → storage + Version 1 (`source: user`). Not a DocumentRuntime mutation.
 * **New Document** UI (palette + explorer) creates blank DOCX and opens the editor (no upload).
+* **Workspace agent chat** (not document-forced): `@` tag / drag files from explorer; optional open file used as primary when untagged.
+* **`workspace.create_blank_docx`** agent tool creates blank DOCX and promotes it as run primary (re-discovers document tools).
 * **`document.insert_paragraph`** capability-gated; placements start|end|before|after body-block handles.
 * **Agent DOCX mutations persist immutable N+1 and advance run DocumentRef.**
 * Agent chat: Cursor-style work toggle (“Thought for Xs”), single wall-clock timer, Stop square in composer.
@@ -32,8 +34,9 @@ _Read this before starting any work. Keep it a concise current-state handoff, no
 
 ## Just Completed
 
-* Milestone 5B: blank DOCX product create + body_blocks inspect + insert_paragraph through existing mutation/version/SSE path.
-* Prior: Milestone 4B structured diagnostics; version-bound handles; affordances; capability discovery.
+* Perplexity-style agent progress: compact “Finished N steps · Xs ›”, grouped repeats (not 13× Inserted paragraph).
+* Agent guidance: human multi-sentence paragraphs; fewer insert_paragraph calls (app/model, not Rust).
+* Prior: Thought stay-visible; editor conflict/dirty race; header flicker; workspace chat + blank tool.
 
 ## Current Decisions
 
@@ -54,7 +57,7 @@ _Read this before starting any work. Keep it a concise current-state handoff, no
 |---|---|
 | `pnpm --filter @opensuite/agent-core test` | **Pass** (111) |
 | `pnpm --filter @opensuite/engine-client test` | **Pass** (50) |
-| `pnpm --filter @opensuite/api test` | **Pass** (94+17 skip) |
+| `pnpm --filter @opensuite/api test` | **Pass** (95+17 skip) |
 | `pnpm --filter @opensuite/web test` | **Pass** (15) |
 | `pnpm --filter @opensuite/{agent-core,engine-client,api,web} typecheck` | **Pass** |
 | Native blank + body_blocks + insert_paragraph | **Pass** |
@@ -74,4 +77,4 @@ _Read this before starting any work. Keep it a concise current-state handoff, no
 
 ## Recommended Next Step
 
-Milestone 6 candidates: N-API for paragraph style/delete, or create_table — decide after product acceptance of blank + insert_paragraph.
+Restart API (`pnpm dev:api`) and verify: workspace chat without open file, `@` tag / drag file, “create a blank doc” via agent.

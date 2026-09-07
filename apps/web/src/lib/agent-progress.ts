@@ -49,6 +49,14 @@ const TOOL_LABELS: Record<string, { active: string; done: string }> = {
     active: "Inserting table column…",
     done: "Inserted table column",
   },
+  "document.insert_paragraph": {
+    active: "Inserting paragraph…",
+    done: "Inserted paragraph",
+  },
+  "workspace.create_blank_docx": {
+    active: "Creating blank document…",
+    done: "Created blank document",
+  },
   "slides.update_text": {
     active: "Updating slide text…",
     done: "Updated slide text",
@@ -396,11 +404,147 @@ export function reduceAgentProgress(
 export function thoughtForLabel(
   durationMs: number,
   outcome: AgentTurnProgress["outcome"] = "completed",
+  stepCount?: number,
 ): string {
   const elapsed = formatProgressElapsed(durationMs);
   if (outcome === "cancelled") return `Stopped after ${elapsed}`;
   if (outcome === "failed") return `Failed after ${elapsed}`;
+  if (stepCount !== undefined && stepCount > 0) {
+    const steps = stepCount === 1 ? "1 step" : `${stepCount} steps`;
+    return `Finished ${steps} · ${elapsed}`;
+  }
   return `Thought for ${elapsed}`;
+}
+
+/**
+ * Group consecutive same-label steps (Perplexity-style) so 13× "Inserted
+ * paragraph" becomes one row: "Inserted paragraphs · 13".
+ */
+export interface ProgressGroup {
+  readonly key: string;
+  readonly label: string;
+  readonly count: number;
+  readonly status: ProgressLineStatus;
+  readonly startedAt?: number;
+  readonly endedAt?: number;
+}
+
+function normalizeGroupLabel(label: string, count: number): string {
+  if (count <= 1) return label;
+  // Prefer plural forms for common tool completions.
+  if (label === "Inserted paragraph") return "Inserted paragraphs";
+  if (label === "Inserting paragraph…") return "Inserting paragraphs…";
+  if (label === "Inspected document") return "Inspected document";
+  if (label === "Updated table cells") return "Updated table cells";
+  if (label.endsWith("…")) {
+    return label.replace(/…$/, "s…");
+  }
+  if (!label.endsWith("s")) return `${label}s`;
+  return label;
+}
+
+export function groupProgressLines(
+  lines: readonly AgentProgressLine[],
+): ProgressGroup[] {
+  const groups: ProgressGroup[] = [];
+  for (const line of lines) {
+    // Skip transient "Generating…" noise in the expanded list — it is the
+    // between-tools filler, not a meaningful user-facing step.
+    if (line.id === "writing" || line.id === "thinking") continue;
+
+    const baseLabel = line.label
+      .replace(/…$/, "")
+      .replace(/^Inserting /, "Inserted ")
+      .replace(/^Inspecting /, "Inspected ")
+      .replace(/^Updating /, "Updated ")
+      .replace(/^Replacing /, "Replaced ")
+      .replace(/^Searching /, "Searched ")
+      .replace(/^Creating /, "Created ")
+      .trim();
+
+    const last = groups[groups.length - 1];
+    if (
+      last &&
+      last.key === baseLabel &&
+      last.status !== "active" &&
+      line.status !== "active"
+    ) {
+      groups[groups.length - 1] = {
+        ...last,
+        count: last.count + 1,
+        label: normalizeGroupLabel(baseLabel, last.count + 1),
+        status: line.status === "error" ? "error" : last.status,
+        endedAt: line.endedAt ?? last.endedAt,
+      };
+      continue;
+    }
+
+    groups.push({
+      key: baseLabel,
+      label:
+        line.status === "active"
+          ? line.label
+          : normalizeGroupLabel(baseLabel, 1),
+      count: 1,
+      status: line.status,
+      ...(line.startedAt !== undefined ? { startedAt: line.startedAt } : {}),
+      ...(line.endedAt !== undefined ? { endedAt: line.endedAt } : {}),
+    });
+  }
+  return groups;
+}
+
+/** Compact Perplexity-style headline for live or finished progress. */
+export function progressSummaryLabel(
+  lines: readonly AgentProgressLine[],
+  options?: {
+    readonly live?: boolean;
+    readonly durationMs?: number | null;
+    readonly outcome?: AgentTurnProgress["outcome"];
+  },
+): string {
+  const visible = visibleAgentProgress(lines);
+  const groups = groupProgressLines(visible);
+  const doneCount = groups.reduce(
+    (sum, group) => sum + (group.status === "active" ? 0 : group.count),
+    0,
+  );
+  const active = [...groups].reverse().find((group) => group.status === "active");
+
+  if (options?.live) {
+    if (active) {
+      const completed =
+        doneCount > 0 ? ` · ${doneCount} completed` : "";
+      return `${active.label.replace(/…$/, "")}${completed}`;
+    }
+    if (doneCount > 0) {
+      return `Working · ${doneCount} completed`;
+    }
+    return "Working";
+  }
+
+  const outcome = options?.outcome ?? "completed";
+  const durationMs = options?.durationMs ?? null;
+  if (outcome === "cancelled") {
+    return durationMs != null
+      ? `Stopped after ${formatProgressElapsed(durationMs)}`
+      : "Stopped";
+  }
+  if (outcome === "failed") {
+    return durationMs != null
+      ? `Failed after ${formatProgressElapsed(durationMs)}`
+      : "Failed";
+  }
+  if (doneCount > 0 && durationMs != null) {
+    const steps = doneCount === 1 ? "1 step" : `${doneCount} steps`;
+    return `Finished ${steps} · ${formatProgressElapsed(durationMs)}`;
+  }
+  if (durationMs != null) {
+    return thoughtForLabel(durationMs, outcome);
+  }
+  return doneCount > 0
+    ? `Finished ${doneCount === 1 ? "1 step" : `${doneCount} steps`}`
+    : "Finished";
 }
 
 /** Show done + active + error (completed tools stay visible during the run). */

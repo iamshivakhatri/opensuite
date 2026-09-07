@@ -4,9 +4,11 @@ import { test } from "node:test";
 import {
   agentRunDurationMs,
   formatProgressElapsed,
+  groupProgressLines,
   latestProgressHeadline,
   progressElapsedLabel,
   progressMarker,
+  progressSummaryLabel,
   reduceAgentProgress,
   thoughtForLabel,
   visibleAgentProgress,
@@ -254,6 +256,48 @@ test("formatProgressElapsed, progressElapsedLabel, agentRunDurationMs, thoughtFo
   );
   assert.equal(thoughtForLabel(12_000), "Thought for 12s");
   assert.equal(thoughtForLabel(12_000, "cancelled"), "Stopped after 12s");
+  assert.equal(
+    thoughtForLabel(12_000, "completed", 15),
+    "Finished 15 steps · 12s",
+  );
+});
+
+test("groupProgressLines collapses repeated inserts", () => {
+  const lines: AgentProgressLine[] = [
+    { id: "t1", label: "Inspected document", status: "done", startedAt: 1, endedAt: 2 },
+    { id: "t2", label: "Inspected document", status: "done", startedAt: 3, endedAt: 4 },
+    { id: "t3", label: "Inserted paragraph", status: "done", startedAt: 5, endedAt: 6 },
+    { id: "t4", label: "Inserted paragraph", status: "done", startedAt: 7, endedAt: 8 },
+    { id: "t5", label: "Inserted paragraph", status: "done", startedAt: 9, endedAt: 10 },
+    { id: "writing", label: "Generating…", status: "active", startedAt: 11 },
+  ];
+  const groups = groupProgressLines(lines);
+  assert.deepEqual(
+    groups.map((g) => ({ label: g.label, count: g.count })),
+    [
+      { label: "Inspected document", count: 2 },
+      { label: "Inserted paragraphs", count: 3 },
+    ],
+  );
+  assert.equal(
+    progressSummaryLabel(lines, { durationMs: 29_000, outcome: "completed" }),
+    "Finished 5 steps · 29s",
+  );
+  assert.match(
+    progressSummaryLabel(
+      [
+        ...lines.filter((l) => l.id !== "writing"),
+        {
+          id: "t6",
+          label: "Inserting paragraph…",
+          status: "active",
+          startedAt: 12,
+        },
+      ],
+      { live: true },
+    ),
+    /Inserting paragraph/,
+  );
 });
 
 test("shouldAcceptSubmit blocks empty and in-flight submits", () => {

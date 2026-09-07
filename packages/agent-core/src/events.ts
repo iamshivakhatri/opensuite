@@ -99,6 +99,19 @@ export type AgentEvent =
       readonly at: string;
     }
   | {
+      /**
+       * Application-owned: a new document was created in the workspace
+       * (e.g. blank DOCX). UI may open it / refresh the explorer.
+       */
+      readonly type: "document.created";
+      readonly runId: string;
+      readonly documentId: string;
+      readonly versionId: string;
+      readonly name: string;
+      readonly format: string;
+      readonly at: string;
+    }
+  | {
       readonly type: "agent.completed";
       readonly runId: string;
       readonly at: string;

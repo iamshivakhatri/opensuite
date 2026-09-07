@@ -164,6 +164,18 @@ function toLiveAgentEvent(
             : {}),
         },
       };
+    case "document.created":
+      return {
+        runId: event.runId,
+        type: event.type,
+        at: event.at,
+        data: {
+          documentId: event.documentId,
+          versionId: event.versionId,
+          name: event.name,
+          format: event.format,
+        },
+      };
     case "turn.started":
     case "turn.completed":
       return null;
@@ -244,6 +256,7 @@ export function createAgentRunManager(deps: AgentRunManagerDeps) {
     userId: string;
     threadId: string;
     instruction: string;
+    documentIds?: readonly string[];
   }): Promise<StartedLiveRun> {
     const abort = new AbortController();
     const hub = createEventHub();
@@ -258,6 +271,9 @@ export function createAgentRunManager(deps: AgentRunManagerDeps) {
       userId: input.userId,
       threadId: input.threadId,
       instruction: input.instruction,
+      ...(input.documentIds !== undefined
+        ? { documentIds: input.documentIds }
+        : {}),
       signal: abort.signal,
       liveEvents,
     });

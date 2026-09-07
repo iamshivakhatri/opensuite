@@ -64,6 +64,9 @@ export function DocxSurface({
   const selectionRef = React.useRef<unknown>(null);
   const savingRef = React.useRef(false);
   const lastSaveRequestId = React.useRef(0);
+  /** Ignore Casual dirty=true churn right after remount/agent reload. */
+  const suppressDirtyRef = React.useRef(false);
+  const suppressDirtyTimerRef = React.useRef<number | null>(null);
 
   const [phase, setPhase] = React.useState<LoadPhase>("loading");
   const [loadError, setLoadError] = React.useState<string | null>(null);
@@ -79,6 +82,25 @@ export function DocxSurface({
   const [saving, setSaving] = React.useState(false);
   const [conflict, setConflict] = React.useState(false);
   const [reloadOpen, setReloadOpen] = React.useState(false);
+
+  const beginSuppressDirty = React.useCallback(() => {
+    suppressDirtyRef.current = true;
+    if (suppressDirtyTimerRef.current !== null) {
+      window.clearTimeout(suppressDirtyTimerRef.current);
+    }
+    suppressDirtyTimerRef.current = window.setTimeout(() => {
+      suppressDirtyRef.current = false;
+      suppressDirtyTimerRef.current = null;
+    }, 1200);
+  }, []);
+
+  React.useEffect(() => {
+    return () => {
+      if (suppressDirtyTimerRef.current !== null) {
+        window.clearTimeout(suppressDirtyTimerRef.current);
+      }
+    };
+  }, []);
 
   const newerAvailable =
     loadedVersionId != null &&
@@ -104,6 +126,7 @@ export function DocxSurface({
 
   const loadVersion = React.useCallback(
     async (versionId: string) => {
+      beginSuppressDirty();
       setPhase("loading");
       setLoadError(null);
       setConflict(false);
@@ -123,6 +146,7 @@ export function DocxSurface({
         setLoadedVersionId(versionId);
         setEditorKey((value) => value + 1);
         setPhase("ready");
+        beginSuppressDirty();
       } catch (error) {
         setPhase("error");
         setLoadError(
@@ -130,7 +154,7 @@ export function DocxSurface({
         );
       }
     },
-    [document.id],
+    [beginSuppressDirty, document.id],
   );
 
   // Load exact version when opening a document (not on every latestVersion bump).
@@ -171,13 +195,24 @@ export function DocxSurface({
     };
   }, [document.id, onDocumentUpdated]);
 
-  // Auto-reload when a newer version appears and the editor is clean.
-  // Debounce so multi-step agent mutations coalesce into one remount.
+  // Auto-reload when a newer version appears.
+  // Prefer agent/server versions over Casual remount dirty-noise: if suppress
+  // window is active, clear dirty and adopt the latest. Real user edits
+  // (dirty after suppress ends) keep the banner and require Reload.
   React.useEffect(() => {
-    if (!newerAvailable || dirty || conflict || saving || phase !== "ready") {
+    if (!newerAvailable || conflict || saving || phase !== "ready") {
       return;
     }
     if (!latestVersionId) return;
+
+    if (dirty && !suppressDirtyRef.current) {
+      return;
+    }
+
+    if (dirty && suppressDirtyRef.current) {
+      setDirty(false);
+    }
+
     const target = latestVersionId;
     const timer = window.setTimeout(() => {
       void loadVersion(target);
@@ -403,7 +438,12 @@ export function DocxSurface({
           documentBuffer={buffer}
           documentName={document.name}
           resolvedTheme={resolvedTheme}
-          onDirtyChange={setDirty}
+          onDirtyChange={(next) => {
+            if (suppressDirtyRef.current && next) {
+              return;
+            }
+            setDirty(next);
+          }}
           onError={(error) => {
             toast({
               tone: "error",
@@ -415,9 +455,10 @@ export function DocxSurface({
             // Groundwork only — stay local to DocxSurface.
             selectionRef.current = selection;
           }}
-          onSaveRequest={(bytes) => {
-            void persistBytes(bytes);
-          }}
+          // Do not wire Casual's onSave → persistBytes.
+          // Casual can fire save on remount / internal autosave while the agent
+          // advances versions, which races baseVersionId → VERSION_CONFLICT.
+          // OpenSuite Save / ⌘S is the only persist path (window keydown + header).
         />
       </div>
 

@@ -89,7 +89,7 @@ export function DocumentHeader({
         {document && document.format === "docx" ? (
           <span
             className={
-              "hidden truncate font-mono text-[10px] sm:inline " +
+              "hidden min-w-[7.5rem] truncate font-mono text-[10px] sm:inline " +
               (conflict
                 ? "text-danger"
                 : dirty
@@ -100,7 +100,9 @@ export function DocumentHeader({
           >
             {saveLabel}
           </span>
-        ) : null}
+        ) : (
+          <span className="hidden min-w-[7.5rem] sm:inline" aria-hidden />
+        )}
       </div>
 
       {document ? (

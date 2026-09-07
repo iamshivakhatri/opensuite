@@ -1,12 +1,13 @@
 import {
   AgentRunner,
+  ToolRegistry,
   listDocumentToolDescriptors,
   shapeDiagnosticForToolResult,
-  ToolRegistry,
   type AgentEvent,
   type AgentEventSink,
   type AgentModel,
   type AgentRequest,
+  type AgentResource,
   type AgentResult,
   type ConfirmationGate,
   type DocumentMutationExecutor,
@@ -32,6 +33,7 @@ import {
   type AgentStepStatus,
   type AgentThread,
 } from "./persistence.js";
+import { createWorkspaceCreateBlankDocxTool } from "./workspace-tools.js";
 import { devLog } from "../dev-log.js";
 
 export type AgentExecutionErrorCode =
@@ -54,6 +56,12 @@ export interface AgentExecutionInput {
   readonly userId: string;
   readonly threadId: string;
   readonly instruction: string;
+  /**
+   * Tagged workspace documents for this run (Cursor-style @ attachments).
+   * First id becomes primary; remaining become contextualResources.
+   * When omitted/empty, falls back to thread.documentId (legacy document chat).
+   */
+  readonly documentIds?: readonly string[];
   readonly signal?: AbortSignal;
   /**
    * Optional live sink (SSE hub). Non-terminal events fan out after the
@@ -88,7 +96,9 @@ export interface AgentExecutionServiceDeps {
    */
   readonly documents: Pick<
     DocumentService,
-    "getOwnedDocument" | "appendDocumentVersion"
+    | "getOwnedDocument"
+    | "appendDocumentVersion"
+    | "createBlankDocxDocument"
   >;
   readonly model: AgentModel;
   /**
@@ -145,11 +155,14 @@ export function createAgentExecutionService(deps: AgentExecutionServiceDeps) {
       throw new AgentExecutionError("THREAD_NOT_FOUND", "Agent thread not found");
     }
 
-    const primaryDocument = await resolvePrimaryDocument(
+    const resolved = await resolveRunDocuments(
       documents,
       thread,
       input.userId,
+      input.documentIds,
     );
+    const primaryDocument = resolved.primary;
+    const contextualResources = resolved.contextualResources;
 
     let userMessage: AgentMessage;
     let run: AgentRun;
@@ -190,8 +203,12 @@ export function createAgentExecutionService(deps: AgentExecutionServiceDeps) {
       userMessage,
       run,
       ownerUserId: input.userId,
-      instruction: input.instruction,
+      instruction: enrichInstructionWithWorkingSet(
+        input.instruction,
+        resolved.workingSetLabels,
+      ),
       primaryDocument,
+      contextualResources,
       signal: input.signal,
       liveEvents: input.liveEvents,
     });
@@ -220,6 +237,7 @@ async function continueExecution(input: {
   ownerUserId: string;
   instruction: string;
   primaryDocument: DocumentRef | null;
+  contextualResources: readonly AgentResource[];
   signal?: AbortSignal;
   liveEvents?: AgentEventSink;
 }): Promise<AgentExecutionResult> {
@@ -232,6 +250,7 @@ async function continueExecution(input: {
     ownerUserId,
     instruction,
     primaryDocument,
+    contextualResources,
     signal,
     liveEvents,
   } = input;
@@ -254,6 +273,7 @@ async function continueExecution(input: {
     runId: run.id,
     priorMessages,
     primaryDocument,
+    contextualResources,
   };
 
   const bridge = createRunEventBridge({
@@ -300,15 +320,16 @@ async function continueExecution(input: {
         },
       };
 
+  // Prefer DOCX engine when no primary yet so blank-create → edit works in-run.
   const runtime =
     deps.resolveRuntime?.({
-      format: primaryDocument?.format,
+      format: primaryDocument?.format ?? "docx",
       ownerUserId,
     }) ?? deps.runtime;
 
   const mutations =
     deps.mutations ??
-    (runtime && primaryDocument?.format === "docx"
+    (runtime
       ? createAgentDocumentMutationExecutor({
           documents: deps.documents,
           ownerUserId,
@@ -316,11 +337,19 @@ async function continueExecution(input: {
         })
       : undefined);
 
+  const workspaceTools = ToolRegistry.create([
+    createWorkspaceCreateBlankDocxTool({
+      workspaceId: thread.workspaceId,
+      ownerUserId,
+      documents: deps.documents,
+    }),
+  ]);
+
   const runner = new AgentRunner({
     model: deps.model,
-    // Fixed tools (tests) bypass discovery. Otherwise empty base + catalog
-    // → DocumentRuntime.capabilities once before first model call.
-    tools: deps.tools ?? ToolRegistry.create([]),
+    // Fixed tools (tests) bypass discovery. Otherwise workspace base tools +
+    // catalog → DocumentRuntime.capabilities once before first model call.
+    tools: deps.tools ?? workspaceTools,
     ...(deps.tools
       ? {}
       : { documentToolCatalog: listDocumentToolDescriptors() }),
@@ -527,6 +556,11 @@ function logAgentTurn(shortRun: string, event: AgentEvent): void {
         `agent ${shortRun} version → #${event.versionNumber ?? "?"} (${event.versionId.slice(0, 8)})`,
       );
       return;
+    case "document.created":
+      devLog(
+        `agent ${shortRun} created ${event.name} (${event.documentId.slice(0, 8)})`,
+      );
+      return;
     case "agent.completed":
       devLog(`agent ${shortRun} completed`);
       return;
@@ -547,37 +581,91 @@ export type AgentExecutionService = ReturnType<
   typeof createAgentExecutionService
 >;
 
-async function resolvePrimaryDocument(
+async function resolveRunDocuments(
   documents: Pick<DocumentService, "getOwnedDocument">,
   thread: AgentThread,
   ownerUserId: string,
-): Promise<DocumentRef | null> {
-  if (!thread.documentId) {
-    return null;
+  documentIds: readonly string[] | undefined,
+): Promise<{
+  primary: DocumentRef | null;
+  contextualResources: readonly AgentResource[];
+  workingSetLabels: readonly string[];
+}> {
+  const tagged = [...new Set((documentIds ?? []).filter(Boolean))];
+  const ids =
+    tagged.length > 0
+      ? tagged
+      : thread.documentId
+        ? [thread.documentId]
+        : [];
+
+  if (ids.length === 0) {
+    return {
+      primary: null,
+      contextualResources: [],
+      workingSetLabels: [],
+    };
   }
 
-  try {
-    const document = await documents.getOwnedDocument({
-      documentId: thread.documentId,
-      ownerUserId,
-    });
-    return {
-      documentId: document.id,
-      versionId: document.latestVersion.id,
-      format: document.format,
-    };
-  } catch (error) {
-    if (
-      error instanceof DocumentAccessError &&
-      error.code === "DOCUMENT_NOT_FOUND"
-    ) {
-      throw new AgentExecutionError(
-        "DOCUMENT_NOT_FOUND",
-        "Document not found for agent thread",
-      );
+  const loaded: Array<{ ref: DocumentRef; name: string }> = [];
+  for (const documentId of ids) {
+    try {
+      const document = await documents.getOwnedDocument({
+        documentId,
+        ownerUserId,
+      });
+      if (document.workspaceId !== thread.workspaceId) {
+        throw new AgentExecutionError(
+          "DOCUMENT_NOT_FOUND",
+          "Document is not in this workspace",
+        );
+      }
+      loaded.push({
+        ref: {
+          documentId: document.id,
+          versionId: document.latestVersion.id,
+          format: document.format,
+        },
+        name: document.name,
+      });
+    } catch (error) {
+      if (
+        error instanceof DocumentAccessError &&
+        error.code === "DOCUMENT_NOT_FOUND"
+      ) {
+        throw new AgentExecutionError(
+          "DOCUMENT_NOT_FOUND",
+          "Document not found for agent run",
+        );
+      }
+      throw error;
     }
-    throw error;
   }
+
+  const [primaryEntry, ...rest] = loaded;
+  return {
+    primary: primaryEntry?.ref ?? null,
+    contextualResources: rest.map((entry) => ({
+      kind: "document" as const,
+      document: entry.ref,
+      role: "context" as const,
+    })),
+    workingSetLabels: loaded.map((entry, index) =>
+      index === 0 ? `${entry.name} (primary)` : entry.name,
+    ),
+  };
+}
+
+function enrichInstructionWithWorkingSet(
+  instruction: string,
+  labels: readonly string[],
+): string {
+  if (labels.length === 0) {
+    return instruction;
+  }
+  return `Attached documents for this turn:\n${labels
+    .map((label) => `- ${label}`)
+    .join("\n")}\n\n${instruction}`;
 }
 
 function mapStartPersistenceError(error: unknown): AgentExecutionError {
@@ -851,6 +939,8 @@ function createRunEventBridge(input: {
       case "document.version.advanced":
         // Version advance is also captured on tool.completed output
         // (baseVersionId / resulting document). No separate step row.
+        return;
+      case "document.created":
         return;
       case "agent.cancelled":
       case "agent.completed":

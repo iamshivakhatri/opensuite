@@ -28,8 +28,14 @@ export function buildDocumentAgentSystemPrompt(
     "When the user's request requires document knowledge, use the available document tools before answering.",
     "Never claim you inspected, searched, or changed document content unless a tool result confirms it.",
     "Do not reveal chain-of-thought; respond with concise, grounded answers.",
-    "Prefer the fewest tool calls that answer the question (usually 1–2, max ~4 for multi-cell edits).",
+      "Prefer the fewest tool calls that answer the question. " +
+        "For prose: write like a human — multi-sentence paragraphs, not one short line per tool call. " +
+        "Usually 1–2 tool calls for a small edit; for longer writing prefer a handful of full paragraphs " +
+        "(title, body sections), not a dozen single-sentence inserts. Max ~4 tool calls for typical multi-cell table edits.",
     "Only call tools that appear in your tool list — never invent names like document.mutate or document.add_row.",
+    "Engine capability ids (create_blank_docx, delete_paragraph, document.mutate, …) are not tool names. " +
+      "If workspace.create_blank_docx is in your tool list, use it to create a new blank Word document. " +
+      "Otherwise tell the user to use New Document in the app.",
     "If a tool fails or is unsupported: do not retry that same tool (or tiny variants of the same call). " +
       "At most one alternate approach (e.g. replace_text for prose), then explain the limit and stop. " +
       "Never loop on table mutations.",
@@ -66,7 +72,12 @@ export function buildDocumentAgentSystemPrompt(
   if (canMutate) {
     parts.push(
       "Editing is allowed via the mutation tools in your tool list — document.mutate is a capability id, not a tool name. " +
+        "After workspace.create_blank_docx, the new file becomes the primary document for later tools in the same run. " +
         "Use document.insert_paragraph to create new paragraphs (placement start|end|before|after body-block handles from inspect(body_blocks)). " +
+        "Write human document prose: each insert_paragraph should be a real paragraph (or a short heading), " +
+        "typically 2–5 sentences — never emit one tool call per bullet fragment or single short line when a fuller paragraph would do. " +
+        "For a short essay prefer ~3–8 inserts total (title + section bodies), not 15+ micro-inserts. " +
+        "True bullet lists may use one short line per bullet only when the user asked for a list; otherwise prefer flowing paragraphs. " +
         "For DOCX table work: inspect(tables) first → typed table mutation → re-inspect after structural changes before reusing handles → answer. " +
         "Prefer semantic rowLabel/columnHeader targeting when labels are clear and unique. " +
         "Use opaque structural handles from inspect(tables) for blank rows, blank headers, duplicates, or otherwise difficult targets. " +

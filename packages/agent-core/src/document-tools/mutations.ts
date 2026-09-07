@@ -157,6 +157,9 @@ export function createDocumentInsertParagraphTool(): AgentTool<
     name: DOCUMENT_TOOL_NAMES.insertParagraph,
     description:
       "Insert a new paragraph into the active DOCX document. " +
+      "Pass a full human paragraph (usually multiple sentences) or a short heading — " +
+      "do not call this once per short line or bullet fragment when composing prose. " +
+      "Prefer fewer inserts with richer text over many micro-inserts. " +
       "Use inspect(body_blocks) first when placement relative to existing content matters. " +
       "placement: start | end | before {handle} | after {handle} (body-block handles from inspect). " +
       "After a structural mutation, re-inspect before reusing handles. " +
@@ -169,7 +172,8 @@ export function createDocumentInsertParagraphTool(): AgentTool<
       properties: {
         text: {
           type: "string",
-          description: "Paragraph text to insert",
+          description:
+            "Full paragraph or heading text (prefer multi-sentence prose; avoid one short line per call)",
         },
         placement: {
           type: "object",
