@@ -65,6 +65,10 @@ const TOOL_LABELS: Record<string, { active: string; done: string }> = {
     active: "Deleting table column…",
     done: "Deleted table column",
   },
+  "document.set_table_formatting": {
+    active: "Formatting table…",
+    done: "Formatted table",
+  },
   "document.insert_paragraph": {
     active: "Inserting paragraph…",
     done: "Inserted paragraph",

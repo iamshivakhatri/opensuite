@@ -253,5 +253,32 @@ export function createAgentDocumentMutationExecutor(input: {
       });
       return toExecutorResult(applied, request.document.versionId);
     },
+
+    async setTableFormatting(request): Promise<DocumentMutationResult> {
+      const applied = await mutations.applySetTableFormatting({
+        documentId: request.document.documentId,
+        ownerUserId: input.ownerUserId,
+        baseVersionId: request.document.versionId,
+        table: request.table,
+        ...(request.alignment !== undefined
+          ? { alignment: request.alignment }
+          : {}),
+        ...(request.borders !== undefined ? { borders: request.borders } : {}),
+        ...(request.cellMarginTopTwips !== undefined
+          ? { cellMarginTopTwips: request.cellMarginTopTwips }
+          : {}),
+        ...(request.cellMarginRightTwips !== undefined
+          ? { cellMarginRightTwips: request.cellMarginRightTwips }
+          : {}),
+        ...(request.cellMarginBottomTwips !== undefined
+          ? { cellMarginBottomTwips: request.cellMarginBottomTwips }
+          : {}),
+        ...(request.cellMarginLeftTwips !== undefined
+          ? { cellMarginLeftTwips: request.cellMarginLeftTwips }
+          : {}),
+        runtime: input.runtime,
+      });
+      return toExecutorResult(applied, request.document.versionId);
+    },
   };
 }

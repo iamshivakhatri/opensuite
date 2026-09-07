@@ -128,6 +128,20 @@ export interface DocxDeleteTableColumnOperation {
   readonly baseRevision?: string;
 }
 
+export type DocxTableAlignment = "left" | "center" | "right" | "clear";
+export type DocxTableBorders = "grid" | "none" | "clear";
+
+export interface DocxSetTableFormattingOperation {
+  readonly table: DocxTableTarget;
+  readonly alignment?: DocxTableAlignment;
+  readonly cellMarginTopTwips?: number;
+  readonly cellMarginRightTwips?: number;
+  readonly cellMarginBottomTwips?: number;
+  readonly cellMarginLeftTwips?: number;
+  readonly borders?: DocxTableBorders;
+  readonly baseRevision?: string;
+}
+
 /** Placement for insert_paragraph — engine protocol shape. */
 export type DocxParagraphPlacement =
   | { readonly kind: "start" }
@@ -423,6 +437,10 @@ export interface DocxEngineBinding {
     input: Uint8Array,
     operation: DocxDeleteTableColumnOperation,
   ): Promise<DocxMutationBindingResult>;
+  executeDocxSetTableFormatting(
+    input: Uint8Array,
+    operation: DocxSetTableFormattingOperation,
+  ): Promise<DocxMutationBindingResult>;
 }
 
 type NativeEngineModule = {
@@ -564,6 +582,13 @@ type NativeEngineModule = {
     result: DocxEngineOperationResult;
     output?: Buffer;
   }>;
+  executeDocxSetTableFormatting: (
+    input: Buffer,
+    operation: Record<string, unknown>,
+  ) => Promise<{
+    result: DocxEngineOperationResult;
+    output?: Buffer;
+  }>;
 };
 
 function toNativeInspectFocus(focus: DocxInspectFocus): Record<string, unknown> {
@@ -631,10 +656,11 @@ export async function createNapiDocxEngineBinding(): Promise<DocxEngineBinding> 
     "executeDocxDeleteTable",
     "executeDocxDeleteTableRow",
     "executeDocxDeleteTableColumn",
+    "executeDocxSetTableFormatting",
   ] as const) {
     if (typeof native[name] !== "function") {
       throw new Error(
-        `@opensuite/engine is missing ${name} — rebuild opensuite-engine/crates/opensuite-node for Milestone 5C-B/6A APIs`,
+        `@opensuite/engine is missing ${name} — rebuild opensuite-engine/crates/opensuite-node for Milestone 5C-B/6A/6C APIs`,
       );
     }
   }
@@ -876,6 +902,37 @@ export async function createNapiDocxEngineBinding(): Promise<DocxEngineBinding> 
             : {}),
           ...(operation.columnHandle !== undefined
             ? { columnHandle: operation.columnHandle }
+            : {}),
+          ...(operation.baseRevision !== undefined
+            ? { baseRevision: operation.baseRevision }
+            : {}),
+        },
+      );
+      return mapMutationBindingResponse(response);
+    },
+
+    async executeDocxSetTableFormatting(input, operation) {
+      const response = await native.executeDocxSetTableFormatting(
+        Buffer.from(input),
+        {
+          table: toNativeTableTarget(operation.table),
+          ...(operation.alignment !== undefined
+            ? { alignment: operation.alignment }
+            : {}),
+          ...(operation.cellMarginTopTwips !== undefined
+            ? { cellMarginTopTwips: operation.cellMarginTopTwips }
+            : {}),
+          ...(operation.cellMarginRightTwips !== undefined
+            ? { cellMarginRightTwips: operation.cellMarginRightTwips }
+            : {}),
+          ...(operation.cellMarginBottomTwips !== undefined
+            ? { cellMarginBottomTwips: operation.cellMarginBottomTwips }
+            : {}),
+          ...(operation.cellMarginLeftTwips !== undefined
+            ? { cellMarginLeftTwips: operation.cellMarginLeftTwips }
+            : {}),
+          ...(operation.borders !== undefined
+            ? { borders: operation.borders }
             : {}),
           ...(operation.baseRevision !== undefined
             ? { baseRevision: operation.baseRevision }

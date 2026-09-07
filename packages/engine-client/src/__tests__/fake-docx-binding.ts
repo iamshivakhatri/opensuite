@@ -19,6 +19,7 @@ import type {
   DocxSetParagraphFormattingOperation,
   DocxSetParagraphStyleOperation,
   DocxSetTableCellsTextOperation,
+  DocxSetTableFormattingOperation,
   DocxSetTextFormattingOperation,
 } from "../docx-engine-binding.js";
 
@@ -49,6 +50,7 @@ const DEFAULT_CAPS: DocxRuntimeCapabilities = {
         "delete_table",
         "delete_table_row",
         "delete_table_column",
+        "set_table_formatting",
       ],
     },
   ],
@@ -140,6 +142,10 @@ export function createFakeDocxEngineBinding(
       input: Uint8Array,
       operation: DocxDeleteTableColumnOperation,
     ) => DocxMutationBindingResult | Promise<DocxMutationBindingResult>;
+    executeDocxSetTableFormatting?: (
+      input: Uint8Array,
+      operation: DocxSetTableFormattingOperation,
+    ) => DocxMutationBindingResult | Promise<DocxMutationBindingResult>;
   } = {},
 ): DocxEngineBinding & {
   readonly replaceCalls: Array<{
@@ -206,6 +212,10 @@ export function createFakeDocxEngineBinding(
     input: Uint8Array;
     operation: DocxDeleteTableColumnOperation;
   }>;
+  readonly setTableFormattingCalls: Array<{
+    input: Uint8Array;
+    operation: DocxSetTableFormattingOperation;
+  }>;
 } {
   const replaceCalls: Array<{
     input: Uint8Array;
@@ -271,6 +281,10 @@ export function createFakeDocxEngineBinding(
     input: Uint8Array;
     operation: DocxDeleteTableColumnOperation;
   }> = [];
+  const setTableFormattingCalls: Array<{
+    input: Uint8Array;
+    operation: DocxSetTableFormattingOperation;
+  }> = [];
 
   return {
     replaceCalls,
@@ -289,6 +303,7 @@ export function createFakeDocxEngineBinding(
     deleteTableCalls,
     deleteTableRowCalls,
     deleteTableColumnCalls,
+    setTableFormattingCalls,
     getDocxCapabilities:
       overrides.getDocxCapabilities ?? (() => DEFAULT_CAPS),
     createBlankDocx:
@@ -462,6 +477,13 @@ export function createFakeDocxEngineBinding(
       deleteTableColumnCalls.push({ input, operation });
       if (overrides.executeDocxDeleteTableColumn) {
         return overrides.executeDocxDeleteTableColumn(input, operation);
+      }
+      return notStubbed();
+    },
+    async executeDocxSetTableFormatting(input, operation) {
+      setTableFormattingCalls.push({ input, operation });
+      if (overrides.executeDocxSetTableFormatting) {
+        return overrides.executeDocxSetTableFormatting(input, operation);
       }
       return notStubbed();
     },

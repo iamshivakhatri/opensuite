@@ -17,6 +17,7 @@ export const DOCUMENT_TOOL_NAMES = {
   deleteTable: "document.delete_table",
   deleteTableRow: "document.delete_table_row",
   deleteTableColumn: "document.delete_table_column",
+  setTableFormatting: "document.set_table_formatting",
   updateSlideText: "slides.update_text",
   setCells: "workbook.set_cells",
 } as const;
@@ -37,6 +38,7 @@ export const DOCX_ENGINE_CAPS = {
   deleteTable: "delete_table",
   deleteTableRow: "delete_table_row",
   deleteTableColumn: "delete_table_column",
+  setTableFormatting: "set_table_formatting",
 } as const;
 
 /**

@@ -47,6 +47,7 @@ import {
   createDocumentSetParagraphFormattingTool,
   createDocumentSetParagraphStyleTool,
   createDocumentSetTableCellsTextTool,
+  createDocumentSetTableFormattingTool,
   createDocumentSetTextFormattingTool,
   createSlidesUpdateTextTool,
   createWorkbookSetCellsTool,
@@ -77,6 +78,7 @@ export {
   createDocumentSetParagraphFormattingTool,
   createDocumentSetParagraphStyleTool,
   createDocumentSetTableCellsTextTool,
+  createDocumentSetTableFormattingTool,
   createDocumentSetTextFormattingTool,
   createSlidesUpdateTextTool,
   createWorkbookSetCellsTool,
@@ -95,6 +97,7 @@ export type {
   DocumentSetParagraphFormattingInput,
   DocumentSetParagraphStyleInput,
   DocumentSetTableCellsTextInput,
+  DocumentSetTableFormattingInput,
   DocumentSetTextFormattingInput,
   SlidesUpdateTextInput,
   WorkbookSetCellsInput,
@@ -126,6 +129,7 @@ export function listDocumentToolDescriptors(): readonly AgentTool[] {
     createDocumentDeleteTableTool(),
     createDocumentDeleteTableRowTool(),
     createDocumentDeleteTableColumnTool(),
+    createDocumentSetTableFormattingTool(),
     createSlidesUpdateTextTool(),
     createWorkbookSetCellsTool(),
   ];
@@ -264,5 +268,6 @@ export function mutableDocumentCapabilities(): RuntimeCapabilities {
     DOCX_ENGINE_CAPS.deleteTable,
     DOCX_ENGINE_CAPS.deleteTableRow,
     DOCX_ENGINE_CAPS.deleteTableColumn,
+    DOCX_ENGINE_CAPS.setTableFormatting,
   );
 }

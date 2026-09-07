@@ -117,6 +117,19 @@ export interface DocumentDeleteTableColumnInput {
   readonly columnHandle?: string;
 }
 
+export type DocumentTableAlignment = "left" | "center" | "right" | "clear";
+export type DocumentTableBorders = "grid" | "none" | "clear";
+
+export interface DocumentSetTableFormattingInput {
+  readonly table: DocumentTableTarget;
+  readonly alignment?: DocumentTableAlignment;
+  readonly cellMarginTopTwips?: number;
+  readonly cellMarginRightTwips?: number;
+  readonly cellMarginBottomTwips?: number;
+  readonly cellMarginLeftTwips?: number;
+  readonly borders?: DocumentTableBorders;
+}
+
 export interface SlidesUpdateTextInput {
   readonly slideIndex: number;
   readonly existingText?: string;
@@ -1280,6 +1293,182 @@ export function createDocumentDeleteTableColumnTool(): AgentTool<
               : {}),
             ...(input.columnHandle !== undefined
               ? { columnHandle: input.columnHandle }
+              : {}),
+            signal: ctx.signal,
+            runId: ctx.runId,
+          }),
+        input,
+      ),
+  });
+}
+
+export function createDocumentSetTableFormattingTool(): AgentTool<
+  DocumentSetTableFormattingInput,
+  PersistedDocumentMutationToolResult
+> {
+  return defineDocumentTool({
+    name: DOCUMENT_TOOL_NAMES.setTableFormatting,
+    description:
+      "Apply basic table-level formatting on a supported DOCX table: alignment " +
+      "(left|center|right|clear), simple borders (grid|none|clear), and optional " +
+      "cell padding via all four cellMargin*Twips together. " +
+      "Use only when the user asks for table presentation changes — not for every table. " +
+      "Inspect tables first; prefer opaque table.handle. Check set_table_formatting affordance when present. " +
+      "After success, re-inspect before reusing handles. " +
+      "Success means an immutable new document version was persisted.",
+    effect: "write",
+    executionMode: "sequential",
+    capability: DOCX_ENGINE_CAPS.setTableFormatting,
+    inputSchema: {
+      type: "object",
+      properties: {
+        table: tableTargetSchema({
+          description: "Table to format (prefer handle from inspect)",
+        }),
+        alignment: {
+          type: "string",
+          enum: ["left", "center", "right", "clear"],
+          description: "Table alignment; clear restores default",
+        },
+        borders: {
+          type: "string",
+          enum: ["grid", "none", "clear"],
+          description: "Simple border mode; grid shows lines, none hides, clear restores default",
+        },
+        cellMarginTopTwips: {
+          type: "number",
+          description: "Top cell padding (provide all four margins together)",
+        },
+        cellMarginRightTwips: {
+          type: "number",
+          description: "Right cell padding (provide all four margins together)",
+        },
+        cellMarginBottomTwips: {
+          type: "number",
+          description: "Bottom cell padding (provide all four margins together)",
+        },
+        cellMarginLeftTwips: {
+          type: "number",
+          description: "Left cell padding (provide all four margins together)",
+        },
+      },
+      required: ["table"],
+      additionalProperties: false,
+    },
+    parseInput(raw) {
+      const obj = assertObject(
+        raw,
+        DOCUMENT_TOOL_NAMES.setTableFormatting,
+      );
+      const table = parseTableTarget(
+        obj.table,
+        DOCUMENT_TOOL_NAMES.setTableFormatting,
+      );
+      let alignment: DocumentTableAlignment | undefined;
+      if (obj.alignment !== undefined) {
+        if (
+          obj.alignment !== "left" &&
+          obj.alignment !== "center" &&
+          obj.alignment !== "right" &&
+          obj.alignment !== "clear"
+        ) {
+          invalidInput(
+            "document.set_table_formatting alignment must be left|center|right|clear",
+          );
+        }
+        alignment = obj.alignment;
+      }
+      let borders: DocumentTableBorders | undefined;
+      if (obj.borders !== undefined) {
+        if (
+          obj.borders !== "grid" &&
+          obj.borders !== "none" &&
+          obj.borders !== "clear"
+        ) {
+          invalidInput(
+            "document.set_table_formatting borders must be grid|none|clear",
+          );
+        }
+        borders = obj.borders;
+      }
+      const cellMarginTopTwips = parseOptionalIntField(
+        obj.cellMarginTopTwips,
+        "document.set_table_formatting cellMarginTopTwips",
+      );
+      const cellMarginRightTwips = parseOptionalIntField(
+        obj.cellMarginRightTwips,
+        "document.set_table_formatting cellMarginRightTwips",
+      );
+      const cellMarginBottomTwips = parseOptionalIntField(
+        obj.cellMarginBottomTwips,
+        "document.set_table_formatting cellMarginBottomTwips",
+      );
+      const cellMarginLeftTwips = parseOptionalIntField(
+        obj.cellMarginLeftTwips,
+        "document.set_table_formatting cellMarginLeftTwips",
+      );
+      const marginParts = [
+        cellMarginTopTwips,
+        cellMarginRightTwips,
+        cellMarginBottomTwips,
+        cellMarginLeftTwips,
+      ];
+      const marginCount = marginParts.filter((v) => v !== undefined).length;
+      if (marginCount > 0 && marginCount < 4) {
+        invalidInput(
+          "document.set_table_formatting requires all four cellMargin*Twips together",
+        );
+      }
+      if (
+        alignment === undefined &&
+        borders === undefined &&
+        marginCount === 0
+      ) {
+        invalidInput(
+          "document.set_table_formatting requires alignment, borders, and/or all four cell margins",
+        );
+      }
+      return {
+        table,
+        ...(alignment !== undefined ? { alignment } : {}),
+        ...(borders !== undefined ? { borders } : {}),
+        ...(cellMarginTopTwips !== undefined
+          ? { cellMarginTopTwips }
+          : {}),
+        ...(cellMarginRightTwips !== undefined
+          ? { cellMarginRightTwips }
+          : {}),
+        ...(cellMarginBottomTwips !== undefined
+          ? { cellMarginBottomTwips }
+          : {}),
+        ...(cellMarginLeftTwips !== undefined
+          ? { cellMarginLeftTwips }
+          : {}),
+      };
+    },
+    execute: (input, ctx) =>
+      executePersistedMutation(
+        ctx,
+        DOCUMENT_TOOL_NAMES.setTableFormatting,
+        (document, mutations) =>
+          mutations.setTableFormatting({
+            document,
+            table: input.table,
+            ...(input.alignment !== undefined
+              ? { alignment: input.alignment }
+              : {}),
+            ...(input.borders !== undefined ? { borders: input.borders } : {}),
+            ...(input.cellMarginTopTwips !== undefined
+              ? { cellMarginTopTwips: input.cellMarginTopTwips }
+              : {}),
+            ...(input.cellMarginRightTwips !== undefined
+              ? { cellMarginRightTwips: input.cellMarginRightTwips }
+              : {}),
+            ...(input.cellMarginBottomTwips !== undefined
+              ? { cellMarginBottomTwips: input.cellMarginBottomTwips }
+              : {}),
+            ...(input.cellMarginLeftTwips !== undefined
+              ? { cellMarginLeftTwips: input.cellMarginLeftTwips }
               : {}),
             signal: ctx.signal,
             runId: ctx.runId,

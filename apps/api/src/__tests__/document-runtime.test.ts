@@ -21,6 +21,7 @@ function unusedTableMutations(): Pick<
   | "executeDocxDeleteTable"
   | "executeDocxDeleteTableRow"
   | "executeDocxDeleteTableColumn"
+  | "executeDocxSetTableFormatting"
 > {
   const fail = async () => ({
     result: {
@@ -50,6 +51,7 @@ function unusedTableMutations(): Pick<
     executeDocxDeleteTable: fail,
     executeDocxDeleteTableRow: fail,
     executeDocxDeleteTableColumn: fail,
+    executeDocxSetTableFormatting: fail,
   };
 }
 

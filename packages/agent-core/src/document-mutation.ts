@@ -128,6 +128,22 @@ export interface DocumentDeleteTableColumnMutationRequest {
   readonly runId?: string;
 }
 
+export type DocumentTableAlignment = "left" | "center" | "right" | "clear";
+export type DocumentTableBorders = "grid" | "none" | "clear";
+
+export interface DocumentSetTableFormattingMutationRequest {
+  readonly document: DocumentRef;
+  readonly table: DocumentTableTarget;
+  readonly alignment?: DocumentTableAlignment;
+  readonly cellMarginTopTwips?: number;
+  readonly cellMarginRightTwips?: number;
+  readonly cellMarginBottomTwips?: number;
+  readonly cellMarginLeftTwips?: number;
+  readonly borders?: DocumentTableBorders;
+  readonly signal?: AbortSignal;
+  readonly runId?: string;
+}
+
 /** Placement for document.insert_paragraph (engine protocol). */
 export type DocumentParagraphPlacement =
   | { readonly kind: "start" }
@@ -254,6 +270,9 @@ export interface DocumentMutationExecutor {
   ): Promise<DocumentMutationResult>;
   deleteTableColumn(
     input: DocumentDeleteTableColumnMutationRequest,
+  ): Promise<DocumentMutationResult>;
+  setTableFormatting(
+    input: DocumentSetTableFormattingMutationRequest,
   ): Promise<DocumentMutationResult>;
 }
 
@@ -562,6 +581,34 @@ export function createInMemoryDocumentMutationExecutor(
             : {}),
           ...(input.columnHandle !== undefined
             ? { columnHandle: input.columnHandle }
+            : {}),
+        },
+        input.signal,
+        input.runId,
+      );
+    },
+
+    async setTableFormatting(input) {
+      return executeOnce(
+        input.document,
+        "document.set_table_formatting",
+        {
+          table: input.table,
+          ...(input.alignment !== undefined
+            ? { alignment: input.alignment }
+            : {}),
+          ...(input.borders !== undefined ? { borders: input.borders } : {}),
+          ...(input.cellMarginTopTwips !== undefined
+            ? { cellMarginTopTwips: input.cellMarginTopTwips }
+            : {}),
+          ...(input.cellMarginRightTwips !== undefined
+            ? { cellMarginRightTwips: input.cellMarginRightTwips }
+            : {}),
+          ...(input.cellMarginBottomTwips !== undefined
+            ? { cellMarginBottomTwips: input.cellMarginBottomTwips }
+            : {}),
+          ...(input.cellMarginLeftTwips !== undefined
+            ? { cellMarginLeftTwips: input.cellMarginLeftTwips }
             : {}),
         },
         input.signal,

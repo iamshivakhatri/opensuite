@@ -48,7 +48,10 @@ import type {
   DocxSetParagraphFormattingOperation,
   DocxSetParagraphStyleOperation,
   DocxSetTableCellsTextOperation,
+  DocxSetTableFormattingOperation,
   DocxSetTextFormattingOperation,
+  DocxTableAlignment,
+  DocxTableBorders,
   DocxTableCellTarget,
   DocxTableRowAnchor,
   DocxTableTarget,
@@ -82,6 +85,7 @@ const DOCX_MUTATION_TYPES = new Set([
   "document.delete_table",
   "document.delete_table_row",
   "document.delete_table_column",
+  "document.set_table_formatting",
 ]);
 export interface OpenSuiteEngineAdapterOptions {
   readonly artifactLoader: DocumentArtifactLoader;
@@ -400,11 +404,23 @@ export function createOpenSuiteEngineAdapter(
         return mapEngineMutationResult(engineResponse, operation.type);
       }
 
-      const mapped = mapDeleteTableColumnOperation(operation);
+      if (operation.type === "document.delete_table_column") {
+        const mapped = mapDeleteTableColumnOperation(operation);
+        if (!mapped.ok) {
+          return mapped.error;
+        }
+        const engineResponse = await binding.executeDocxDeleteTableColumn(
+          inputBytes,
+          mapped.operation,
+        );
+        return mapEngineMutationResult(engineResponse, operation.type);
+      }
+
+      const mapped = mapSetTableFormattingOperation(operation);
       if (!mapped.ok) {
         return mapped.error;
       }
-      const engineResponse = await binding.executeDocxDeleteTableColumn(
+      const engineResponse = await binding.executeDocxSetTableFormatting(
         inputBytes,
         mapped.operation,
       );
@@ -448,6 +464,7 @@ export function mapRustCapabilitiesToRuntime(
     rustIds.includes("delete_table") ||
     rustIds.includes("delete_table_row") ||
     rustIds.includes("delete_table_column") ||
+    rustIds.includes("set_table_formatting") ||
     rustIds.includes("set_table_cell_text") ||
     rustIds.includes("insert_table_row")
   ) {
@@ -1717,6 +1734,142 @@ export function mapDeleteTableColumnOperation(
       table: table.value,
       ...(columnHeader !== null ? { columnHeader } : {}),
       ...(columnHandle !== null ? { columnHandle } : {}),
+      baseRevision: operation.baseVersionId,
+    },
+  };
+}
+
+export function mapSetTableFormattingOperation(
+  operation: DocumentOperation,
+):
+  | { readonly ok: true; readonly operation: DocxSetTableFormattingOperation }
+  | { readonly ok: false; readonly error: OperationResult } {
+  const table = mapTableTarget(
+    operation.payload.table,
+    "document.set_table_formatting",
+  );
+  if (!table.ok) return table;
+
+  let alignment: DocxTableAlignment | undefined;
+  if (operation.payload.alignment !== undefined) {
+    const value = readString(operation.payload.alignment);
+    if (
+      value !== "left" &&
+      value !== "center" &&
+      value !== "right" &&
+      value !== "clear"
+    ) {
+      return {
+        ok: false,
+        error: operationError(
+          "VALIDATION_FAILED",
+          "document.set_table_formatting alignment must be left|center|right|clear",
+        ),
+      };
+    }
+    alignment = value;
+  }
+
+  let borders: DocxTableBorders | undefined;
+  if (operation.payload.borders !== undefined) {
+    const value = readString(operation.payload.borders);
+    if (value !== "grid" && value !== "none" && value !== "clear") {
+      return {
+        ok: false,
+        error: operationError(
+          "VALIDATION_FAILED",
+          "document.set_table_formatting borders must be grid|none|clear",
+        ),
+      };
+    }
+    borders = value;
+  }
+
+  const top = readOptionalInt(
+    operation.payload.cellMarginTopTwips,
+    "document.set_table_formatting cellMarginTopTwips",
+  );
+  if (top === "invalid") {
+    return {
+      ok: false,
+      error: operationError(
+        "VALIDATION_FAILED",
+        "document.set_table_formatting cellMarginTopTwips must be an integer",
+      ),
+    };
+  }
+  const right = readOptionalInt(
+    operation.payload.cellMarginRightTwips,
+    "document.set_table_formatting cellMarginRightTwips",
+  );
+  if (right === "invalid") {
+    return {
+      ok: false,
+      error: operationError(
+        "VALIDATION_FAILED",
+        "document.set_table_formatting cellMarginRightTwips must be an integer",
+      ),
+    };
+  }
+  const bottom = readOptionalInt(
+    operation.payload.cellMarginBottomTwips,
+    "document.set_table_formatting cellMarginBottomTwips",
+  );
+  if (bottom === "invalid") {
+    return {
+      ok: false,
+      error: operationError(
+        "VALIDATION_FAILED",
+        "document.set_table_formatting cellMarginBottomTwips must be an integer",
+      ),
+    };
+  }
+  const left = readOptionalInt(
+    operation.payload.cellMarginLeftTwips,
+    "document.set_table_formatting cellMarginLeftTwips",
+  );
+  if (left === "invalid") {
+    return {
+      ok: false,
+      error: operationError(
+        "VALIDATION_FAILED",
+        "document.set_table_formatting cellMarginLeftTwips must be an integer",
+      ),
+    };
+  }
+
+  const marginParts = [top, right, bottom, left];
+  const marginCount = marginParts.filter((v) => v !== undefined).length;
+  if (marginCount > 0 && marginCount < 4) {
+    return {
+      ok: false,
+      error: operationError(
+        "VALIDATION_FAILED",
+        "document.set_table_formatting requires all four cellMargin*Twips together",
+      ),
+    };
+  }
+
+  if (alignment === undefined && borders === undefined && marginCount === 0) {
+    return {
+      ok: false,
+      error: operationError(
+        "VALIDATION_FAILED",
+        "document.set_table_formatting requires alignment, borders, and/or all four cell margins",
+      ),
+    };
+  }
+
+  return {
+    ok: true,
+    operation: {
+      table: table.value,
+      ...(alignment !== undefined ? { alignment } : {}),
+      ...(borders !== undefined ? { borders } : {}),
+      ...(top !== undefined ? { cellMarginTopTwips: top } : {}),
+      ...(right !== undefined ? { cellMarginRightTwips: right } : {}),
+      ...(bottom !== undefined ? { cellMarginBottomTwips: bottom } : {}),
+      ...(left !== undefined ? { cellMarginLeftTwips: left } : {}),
       baseRevision: operation.baseVersionId,
     },
   };

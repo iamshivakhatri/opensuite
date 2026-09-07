@@ -113,6 +113,9 @@ test("failed document mutation exposes structured diagnostic to the model", asyn
     async deleteTableColumn() {
       throw new Error("unused");
     },
+    async setTableFormatting() {
+      throw new Error("unused");
+    },
   };
 
   const seenDiagnostics: Diagnostic[] = [];
@@ -268,6 +271,9 @@ test("affordance reason and mutation reasonCode stay the same identifier", async
       throw new Error("unused");
     },
     async deleteTableColumn() {
+      throw new Error("unused");
+    },
+    async setTableFormatting() {
       throw new Error("unused");
     },
   };

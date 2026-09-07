@@ -157,6 +157,20 @@ export interface ApplyDeleteTableColumnInput {
   readonly runtime: DocumentRuntime;
 }
 
+export interface ApplySetTableFormattingInput {
+  readonly documentId: string;
+  readonly ownerUserId: string;
+  readonly baseVersionId: string;
+  readonly table: DocumentTableTargetInput;
+  readonly alignment?: "left" | "center" | "right" | "clear";
+  readonly cellMarginTopTwips?: number;
+  readonly cellMarginRightTwips?: number;
+  readonly cellMarginBottomTwips?: number;
+  readonly cellMarginLeftTwips?: number;
+  readonly borders?: "grid" | "none" | "clear";
+  readonly runtime: DocumentRuntime;
+}
+
 export interface ApplyInsertParagraphInput {
   readonly documentId: string;
   readonly ownerUserId: string;
@@ -674,6 +688,38 @@ export function createDocumentMutationService(
             : {}),
         },
         formatErrorLabel: "applyDeleteTableColumn",
+      });
+    },
+
+    async applySetTableFormatting(
+      input: ApplySetTableFormattingInput,
+    ): Promise<ApplyDocumentMutationResult> {
+      return authorizeAndPersist({
+        documentId: input.documentId,
+        ownerUserId: input.ownerUserId,
+        baseVersionId: input.baseVersionId,
+        runtime: input.runtime,
+        operationType: "document.set_table_formatting",
+        payload: {
+          table: input.table,
+          ...(input.alignment !== undefined
+            ? { alignment: input.alignment }
+            : {}),
+          ...(input.borders !== undefined ? { borders: input.borders } : {}),
+          ...(input.cellMarginTopTwips !== undefined
+            ? { cellMarginTopTwips: input.cellMarginTopTwips }
+            : {}),
+          ...(input.cellMarginRightTwips !== undefined
+            ? { cellMarginRightTwips: input.cellMarginRightTwips }
+            : {}),
+          ...(input.cellMarginBottomTwips !== undefined
+            ? { cellMarginBottomTwips: input.cellMarginBottomTwips }
+            : {}),
+          ...(input.cellMarginLeftTwips !== undefined
+            ? { cellMarginLeftTwips: input.cellMarginLeftTwips }
+            : {}),
+        },
+        formatErrorLabel: "applySetTableFormatting",
       });
     },
   };

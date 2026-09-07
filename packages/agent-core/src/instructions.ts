@@ -82,6 +82,8 @@ export function buildDocumentAgentSystemPrompt(
         "When creating a table whose initial contents are known, prefer one document.create_table with the full cell matrix " +
         "(header row included) rather than empty-table + per-cell fills. " +
         "Use insert_table_rows / insert_table_column / delete_table_row / delete_table_column / delete_table for later structural edits after inspect(tables). " +
+        "Use set_table_formatting only when the user explicitly asks for basic table presentation (center the table, adjust cell padding, show/remove simple borders). " +
+        "Do not call set_table_formatting merely because a table exists — created tables already use sensible defaults. " +
         "Inspect when exact placement or targeting matters. After structural mutation, re-inspect before reusing handles. " +
         "For DOCX table work: inspect(tables) first → typed table mutation → re-inspect after structural changes before reusing handles → answer. " +
         "Prefer semantic rowLabel/columnHeader targeting when labels are clear and unique. " +

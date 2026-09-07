@@ -15,7 +15,7 @@ AgentRunner
   → AgentTool (replace_text | insert_paragraph | insert_paragraphs | delete_paragraph
                | set_paragraph_style | set_paragraph_formatting | set_text_formatting
                | create_table | set_table_cells_text | insert_table_rows | insert_table_column
-               | delete_table | delete_table_row | delete_table_column)
+               | delete_table | delete_table_row | delete_table_column | set_table_formatting)
   → DocumentMutationExecutor (injected by apps/api)
   → apply* (shared authorize → execute → appendDocumentVersion)
   → DocumentRuntime.execute (once)
@@ -75,6 +75,7 @@ exact immutable version N
     | executeDocxDeleteTable
     | executeDocxDeleteTableRow
     | executeDocxDeleteTableColumn
+    | executeDocxSetTableFormatting
   → verified artifactBytes
   → appendDocumentVersion → N+1
   → find/inspect N+1 independently
