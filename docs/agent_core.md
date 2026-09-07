@@ -119,6 +119,8 @@ provider turns (id/name/pairing preserved). When an assistant response includes 
 Done confirmation **plus** successful document writes, AgentRunner may terminalize without
 a third final-answer-only model call (read-only / failed / confirmation batches never do).
 `model.turn.metrics` / `tool.execution.metrics` provide lightweight run observability.
+Developer benchmark: `pnpm agent:bench` (PROVIDER/MODEL/SCENARIO overrides) aggregates those
+events into `.agent-bench/*.json` — not a product analytics platform.
 Never claim an edit succeeded without a successful mutation tool result.
 
 * Safe tools execute immediately; write tools default sequential

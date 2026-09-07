@@ -1304,3 +1304,149 @@ test("v2 context compaction: large create_table args compacted for model, canoni
   assert.ok(original && original.role === "assistant");
   assert.deepEqual(original.toolCalls?.[0]?.input, giantInput);
 });
+
+test("architecture: greenfield create alone — no ritual inspect co-batched", async () => {
+  const createTool = createFakeTool({
+    name: "workspace.create_blank_docx",
+    effect: "write",
+    executionMode: "sequential",
+    execute: async (_input, ctx) => {
+      ctx.advancePrimaryDocument?.({
+        documentId: "new-doc",
+        versionId: "v1",
+        format: "docx",
+      });
+      return {
+        document: {
+          documentId: "new-doc",
+          versionId: "v1",
+          format: "docx" as const,
+          name: "N.docx",
+          versionNumber: 1,
+        },
+      };
+    },
+  });
+
+  const runtime: DocumentRuntime = {
+    async capabilities() {
+      return mutableDocumentCapabilities();
+    },
+    async inspect() {
+      throw new Error("must not ritual-inspect blank before authoring");
+    },
+    async execute() {
+      return {
+        status: "success",
+        diagnostics: [],
+        artifactBytes: new Uint8Array([1]),
+      };
+    },
+  };
+
+  let postCreateTools: string[] = [];
+  const runner = new AgentRunner({
+    model: createScriptedAgentModel([
+      () =>
+        toolCallResponse("", [
+          {
+            id: "c1",
+            name: "workspace.create_blank_docx",
+            input: { name: "N.docx" },
+          },
+        ]),
+      (request) => {
+        postCreateTools = request.tools.map((t) => t.name);
+        // Author without inspect — architecture allows blank append.
+        return toolCallResponse("Done — authored without inspection.", [
+          {
+            id: "w1",
+            name: DOCUMENT_TOOL_NAMES.insertParagraphs,
+            input: {
+              texts: ["Title", "Body."],
+              placement: { kind: "end" },
+            },
+          },
+        ]);
+      },
+    ]),
+    tools: ToolRegistry.create([createTool]),
+    documentToolCatalog: listDocumentToolDescriptors(),
+    runtime,
+    mutations: createInMemoryDocumentMutationExecutor(runtime),
+  });
+
+  const result = await runner.run({
+    instruction: "create a short note",
+    threadId: "t1",
+    runId: "r-no-ritual-inspect",
+  });
+
+  assert.equal(result.status, "completed", result.summary);
+  assert.ok(!postCreateTools.includes(DOCUMENT_TOOL_NAMES.capabilities));
+  assert.ok(
+    !result.toolOutcomes.some((o) => o.toolName === DOCUMENT_TOOL_NAMES.inspect),
+  );
+  assert.equal(result.toolOutcomes.length, 2);
+});
+
+test("architecture: sequential writes in one turn advance version between calls", async () => {
+  const seenBaseVersions: string[] = [];
+  const runtime: DocumentRuntime = {
+    async capabilities() {
+      return mutableDocumentCapabilities();
+    },
+    async inspect() {
+      throw new Error("unused");
+    },
+    async execute(document) {
+      seenBaseVersions.push(document.versionId);
+      return {
+        status: "success",
+        diagnostics: [],
+        artifactBytes: new Uint8Array([1]),
+      };
+    },
+  };
+
+  const runner = new AgentRunner({
+    model: createScriptedAgentModel([
+      () =>
+        toolCallResponse("Done — two writes.", [
+          {
+            id: "w1",
+            name: DOCUMENT_TOOL_NAMES.insertParagraphs,
+            input: {
+              texts: ["One"],
+              placement: { kind: "end" },
+            },
+          },
+          {
+            id: "w2",
+            name: DOCUMENT_TOOL_NAMES.insertParagraphs,
+            input: {
+              texts: ["Two"],
+              placement: { kind: "end" },
+            },
+          },
+        ]),
+    ]),
+    tools: ToolRegistry.create([]),
+    documentToolCatalog: listDocumentToolDescriptors(),
+    runtime,
+    mutations: createInMemoryDocumentMutationExecutor(runtime),
+  });
+
+  const result = await runner.run({
+    instruction: "add two paragraphs",
+    threadId: "t1",
+    runId: "r-seq-versions",
+    primaryDocument: docxRef,
+  });
+
+  assert.equal(result.status, "completed");
+  assert.equal(seenBaseVersions.length, 2);
+  assert.equal(seenBaseVersions[0], "ver-1");
+  assert.notEqual(seenBaseVersions[1], seenBaseVersions[0]);
+  assert.ok(String(seenBaseVersions[1]).startsWith("ver-1"));
+});

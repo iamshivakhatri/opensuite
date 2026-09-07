@@ -26,6 +26,9 @@ coverage/
 # local office samples
 *.docx
 
+# developer agent benchmark JSON output
+.agent-bench/
+
 # generated WASM copy for Turbopack (@schnsrw/core)
 apps/web/vendor/s1engine_wasm_bg.wasm
 

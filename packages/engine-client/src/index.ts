@@ -5,7 +5,9 @@ export * from "./document-artifact-loader.js";
 export * from "./docx-engine-binding.js";
 export * from "./opensuite-engine-adapter.js";
 export {
+  buildDocxBody,
   buildExecutiveAccessTableDocx,
   buildMinimalDocx,
   buildNameRoleTableDocx,
 } from "./__fixtures__/minimal-docx.js";
+export type { DocxBodyBlock } from "./__fixtures__/minimal-docx.js";

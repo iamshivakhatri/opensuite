@@ -88,6 +88,18 @@ export {
   measureToolCatalogBytes,
 } from "./telemetry.js";
 
+export {
+  buildBenchmarkRecord,
+  formatBenchmarkSummaryRow,
+} from "./benchmark.js";
+export type {
+  BenchmarkAggregate,
+  BenchmarkModelTurn,
+  BenchmarkRunRecord,
+  BenchmarkToolCall,
+  BuildBenchmarkRecordInput,
+} from "./benchmark.js";
+
 export { ToolRegistry } from "./tools.js";
 
 export type { AgentEvent, AgentEventSink } from "./events.js";

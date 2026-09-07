@@ -79,11 +79,32 @@ function packDocumentXml(bodyInner: string): Buffer {
 
 /** Build a tiny valid DOCX Buffer containing the given body paragraph texts. */
 export function buildMinimalDocx(paragraphTexts: readonly string[]): Buffer {
-  const body = paragraphTexts
-    .map(
-      (text) =>
-        `<w:p><w:r><w:t>${escapeXml(text)}</w:t></w:r></w:p>`,
-    )
+  return buildDocxBody(
+    paragraphTexts.map((text) => ({ kind: "paragraph" as const, text })),
+  );
+}
+
+export type DocxBodyBlock =
+  | { readonly kind: "paragraph"; readonly text: string }
+  | {
+      readonly kind: "table";
+      readonly rows: readonly (readonly (string | null)[])[];
+    };
+
+/** Build a DOCX with mixed paragraphs and tables (bench fixtures / smoke). */
+export function buildDocxBody(blocks: readonly DocxBodyBlock[]): Buffer {
+  const body = blocks
+    .map((block) => {
+      if (block.kind === "paragraph") {
+        return `<w:p><w:r><w:t>${escapeXml(block.text)}</w:t></w:r></w:p>`;
+      }
+      return `<w:tbl>${block.rows
+        .map(
+          (row) =>
+            `<w:tr>${row.map((cell) => cellXml(cell)).join("")}</w:tr>`,
+        )
+        .join("")}</w:tbl>`;
+    })
     .join("");
   return packDocumentXml(body);
 }
