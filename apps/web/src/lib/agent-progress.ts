@@ -74,18 +74,30 @@ function withoutThinking(
   return lines.filter((line) => line.id !== "thinking");
 }
 
-function withThinking(
+function withoutTransient(
+  lines: readonly AgentProgressLine[],
+): AgentProgressLine[] {
+  return lines.filter(
+    (line) => line.id !== "thinking" && line.id !== "writing",
+  );
+}
+
+/** Model is working between tools — never re-introduce initial "Thinking…". */
+function withGenerating(
   lines: readonly AgentProgressLine[],
   now: number,
 ): AgentProgressLine[] {
-  const base = withoutThinking(lines);
+  const base = withoutTransient(lines);
+  const existing = lines.find(
+    (line) => line.id === "writing" && line.status === "active",
+  );
   return [
     ...base,
     {
-      id: "thinking",
-      label: "Thinking…",
+      id: "writing",
+      label: "Generating…",
       status: "active",
-      startedAt: now,
+      startedAt: existing?.startedAt ?? now,
     },
   ];
 }
@@ -108,6 +120,32 @@ function freezeActive(
 function failedToolLabel(toolName: string, code: string | undefined): string {
   if (code === "UNKNOWN_TOOL" || toolName === "document.mutate") {
     return "Tool not available";
+  }
+  if (code === "INVALID_TOOL_INPUT") {
+    return "Invalid tool input";
+  }
+  if (code === "UNSUPPORTED_OPERATION" || code === "UNSUPPORTED_CAPABILITY") {
+    if (toolName === "document.inspect") {
+      return "Inspect unsupported (use Search)";
+    }
+    if (toolName.startsWith("document.insert_table")) {
+      return "Table structure unsupported";
+    }
+    if (toolName === "document.set_table_cells_text") {
+      return "Table cell update unsupported";
+    }
+  }
+  if (code === "TARGET_NOT_FOUND" || code === "TARGET_AMBIGUOUS") {
+    if (toolName === "document.insert_table_rows") {
+      return code === "TARGET_AMBIGUOUS"
+        ? "Table row target ambiguous"
+        : "Table row target not found";
+    }
+    if (toolName === "document.set_table_cells_text") {
+      return code === "TARGET_AMBIGUOUS"
+        ? "Table cell target ambiguous"
+        : "Table cell target not found";
+    }
   }
   if (
     toolName === "document.inspect" &&
@@ -212,7 +250,11 @@ export function reduceAgentProgress(
       ];
     }
     case "message.started":
-      return [...lines];
+      // Between tools / before tokens: show Generating, not Thinking.
+      if (lines.some((line) => line.id === "thinking" && line.status === "active")) {
+        return [...lines];
+      }
+      return withGenerating(lines, nowMs);
     case "message.delta": {
       // Seamless handoff: swap Thinking → Writing without clearing history.
       const hasDelta =
@@ -226,7 +268,7 @@ export function reduceAgentProgress(
           return [...lines];
         }
         return [
-          ...freezeActive(withoutThinking(lines), nowMs),
+          ...freezeActive(withoutTransient(lines), nowMs),
           {
             id: "writing",
             label: "Generating…",
@@ -246,12 +288,12 @@ export function reduceAgentProgress(
       );
     }
     case "message.completed":
-      return freezeActive(withoutThinking(lines), nowMs);
+      return freezeActive(withoutTransient(lines), nowMs);
     case "tool.started": {
       const toolCallId = String(event.data.toolCallId ?? "tool");
       const toolName = String(event.data.toolName ?? "tool");
       const labels = toolLabels(toolName);
-      const kept = withoutThinking(lines).filter(
+      const kept = withoutTransient(lines).filter(
         (line) => line.id !== `tool:${toolCallId}`,
       );
       return [
@@ -270,8 +312,8 @@ export function reduceAgentProgress(
       const labels = toolLabels(toolName);
       const id = `tool:${toolCallId}`;
       const previous = lines.find((line) => line.id === id);
-      const withoutActive = withoutThinking(lines).filter((line) => line.id !== id);
-      return withThinking(
+      const withoutActive = withoutTransient(lines).filter((line) => line.id !== id);
+      return withGenerating(
         [
           ...withoutActive,
           {
@@ -292,8 +334,8 @@ export function reduceAgentProgress(
         typeof event.data.code === "string" ? event.data.code : undefined;
       const id = `tool:${toolCallId}`;
       const previous = lines.find((line) => line.id === id);
-      const withoutActive = withoutThinking(lines).filter((line) => line.id !== id);
-      return withThinking(
+      const withoutActive = withoutTransient(lines).filter((line) => line.id !== id);
+      return withGenerating(
         [
           ...withoutActive,
           {
@@ -310,7 +352,7 @@ export function reduceAgentProgress(
     case "confirmation.required": {
       const toolCallId = String(event.data.toolCallId ?? "confirm");
       return [
-        ...freezeActive(withoutThinking(lines), nowMs).filter(
+        ...freezeActive(withoutTransient(lines), nowMs).filter(
           (line) => line.status === "done" || line.status === "error",
         ),
         {
@@ -322,10 +364,10 @@ export function reduceAgentProgress(
       ];
     }
     case "agent.completed":
-      return freezeActive(withoutThinking(lines), nowMs);
+      return freezeActive(withoutTransient(lines), nowMs);
     case "agent.failed":
       return [
-        ...freezeActive(withoutThinking(lines), nowMs),
+        ...freezeActive(withoutTransient(lines), nowMs),
         {
           id: "failed",
           label: "Something went wrong",
@@ -336,7 +378,7 @@ export function reduceAgentProgress(
       ];
     case "agent.cancelled":
       return [
-        ...freezeActive(withoutThinking(lines), nowMs),
+        ...freezeActive(withoutTransient(lines), nowMs),
         {
           id: "cancelled",
           label: "Stopped",

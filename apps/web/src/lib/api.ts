@@ -651,22 +651,29 @@ export async function getAgentRun(runId: string): Promise<{
 
 /**
  * Poll durable run snapshot until terminal (or timeout).
- * Used after SSE terminal/disconnect so we don't race DB finalize.
+ * Prefer SSE for live progress — this is a short recovery helper only.
+ * Uses backoff so a stuck non-terminal run cannot flood GET /runs.
  */
 export async function waitForAgentRunTerminal(
   runId: string,
-  options?: { timeoutMs?: number; intervalMs?: number },
+  options?: { timeoutMs?: number; intervalMs?: number; signal?: AbortSignal },
 ): Promise<{ run: AgentRun; steps: AgentStep[] }> {
-  const timeoutMs = options?.timeoutMs ?? 60_000;
-  const intervalMs = options?.intervalMs ?? 200;
+  const timeoutMs = options?.timeoutMs ?? 15_000;
+  const baseIntervalMs = options?.intervalMs ?? 500;
   const started = Date.now();
   let last = await getAgentRun(runId);
+  let attempt = 0;
 
   while (isActiveAgentRunStatus(last.run.status)) {
+    if (options?.signal?.aborted) {
+      return last;
+    }
     if (Date.now() - started >= timeoutMs) {
       return last;
     }
-    await new Promise((resolve) => setTimeout(resolve, intervalMs));
+    const delay = Math.min(5_000, baseIntervalMs * 2 ** attempt);
+    attempt += 1;
+    await new Promise((resolve) => setTimeout(resolve, delay));
     last = await getAgentRun(runId);
   }
 

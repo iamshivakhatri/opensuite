@@ -13,22 +13,47 @@ import type {
  * appendDocumentVersion). Success means an immutable version was written.
  */
 
+/**
+ * Table selector: semantic header cells and/or opaque table handle from inspect.
+ * Prefer handle when targeting one of several identical tables.
+ */
 export interface DocumentTableTarget {
-  readonly headerCells: readonly string[];
+  readonly headerCells?: readonly string[];
   readonly occurrence?: number;
+  /** Opaque artifact-local table handle from document.inspect(tables). */
+  readonly handle?: string;
 }
 
+/**
+ * Row insertion anchor: semantic first-cell text and/or opaque row handle.
+ */
 export interface DocumentTableRowAnchor {
-  readonly firstCellText: string;
+  readonly firstCellText?: string;
   readonly occurrence?: number;
+  /** Opaque artifact-local row handle from document.inspect(tables). */
+  readonly handle?: string;
 }
 
-export interface DocumentTableCellUpdate {
+/** Semantic cell selector (row label × column header). */
+export interface DocumentTableCellSemanticTarget {
   readonly rowLabel: string;
   readonly columnHeader: string;
+  readonly occurrence?: number;
+}
+
+/** Opaque cell handle from document.inspect(tables). */
+export interface DocumentTableCellHandleTarget {
+  readonly handle: string;
+}
+
+export type DocumentTableCellTarget =
+  | DocumentTableCellHandleTarget
+  | DocumentTableCellSemanticTarget;
+
+export interface DocumentTableCellUpdate {
+  readonly target: DocumentTableCellTarget;
   readonly expectedCurrentText: string;
   readonly replacement: string;
-  readonly occurrence?: number;
 }
 
 export interface DocumentReplaceTextMutationRequest {
@@ -61,7 +86,10 @@ export interface DocumentInsertTableRowsMutationRequest {
 export interface DocumentInsertTableColumnMutationRequest {
   readonly document: DocumentRef;
   readonly table: DocumentTableTarget;
-  readonly afterColumnHeader: string;
+  /** Semantic column header to insert after (when not using afterColumnHandle). */
+  readonly afterColumnHeader?: string;
+  /** Opaque column handle from inspect(tables) — preferred for blank/duplicate headers. */
+  readonly afterColumnHandle?: string;
   readonly header: string;
   readonly cells: readonly string[];
   readonly signal?: AbortSignal;
@@ -253,7 +281,12 @@ export function createInMemoryDocumentMutationExecutor(
         "document.insert_table_column",
         {
           table: input.table,
-          afterColumnHeader: input.afterColumnHeader,
+          ...(input.afterColumnHeader !== undefined
+            ? { afterColumnHeader: input.afterColumnHeader }
+            : {}),
+          ...(input.afterColumnHandle !== undefined
+            ? { afterColumnHandle: input.afterColumnHandle }
+            : {}),
           header: input.header,
           cells: input.cells,
         },

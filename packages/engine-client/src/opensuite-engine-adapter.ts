@@ -36,6 +36,8 @@ import type {
   DocxReplaceTextOperation,
   DocxRuntimeCapabilities,
   DocxSetTableCellsTextOperation,
+  DocxTableCellTarget,
+  DocxTableRowAnchor,
   DocxTableTarget,
 } from "./docx-engine-binding.js";
 
@@ -574,18 +576,36 @@ function mapInspectPayload(
         },
         page: mapPage(response.tables.page),
         tables: response.tables.items.map((item) => {
-          const cells = item.rows.map((row) => row.cells);
-          const cols = cells.reduce(
+          const textGrid = item.rows.map((row) => row.cells);
+          const cols = textGrid.reduce(
             (max, row) => Math.max(max, row.length),
             0,
           );
+          const rows = item.rows.map((row) => ({
+            handle: row.handle,
+            cells: row.cells.map((text, index) => {
+              const handle = row.cellHandles[index];
+              if (typeof handle !== "string" || !handle) {
+                throw new Error(
+                  "Engine table inspection returned cells without matching cellHandles",
+                );
+              }
+              return { handle, text };
+            }),
+          }));
           return {
-            handle: `docx:table:${item.occurrence}`,
+            handle: item.handle,
             occurrence: item.occurrence,
-            rows: item.rowCount,
+            rowCount: item.rowCount,
             cols,
             isRectangular: item.isRectangular,
-            cells,
+            columns: item.columns.map((column) => ({
+              handle: column.handle,
+              text: column.text,
+              occurrence: column.occurrence,
+            })),
+            rows,
+            cells: textGrid,
           };
         }),
       };
@@ -742,44 +762,24 @@ export function mapSetTableCellsTextOperation(
         ),
       };
     }
-    const targetSource = isRecord(item.target) ? item.target : item;
-    const rowLabel = readNonEmptyString(targetSource.rowLabel);
-    const columnHeader = readNonEmptyString(targetSource.columnHeader);
     const expectedCurrentText = readString(item.expectedCurrentText);
     const replacement = readString(item.replacement);
-    if (
-      rowLabel === null ||
-      columnHeader === null ||
-      expectedCurrentText === null ||
-      replacement === null
-    ) {
+    if (expectedCurrentText === null || replacement === null) {
       return {
         ok: false,
         error: operationError(
           "VALIDATION_FAILED",
-          "document.set_table_cells_text updates require rowLabel, columnHeader, expectedCurrentText, and replacement",
+          "document.set_table_cells_text updates require expectedCurrentText and replacement",
         ),
       };
     }
-    const occurrence = readOptionalPositiveInt(
-      targetSource.occurrence,
-      "document.set_table_cells_text update occurrence",
+    const mappedTarget = mapCellTarget(
+      item,
+      "document.set_table_cells_text",
     );
-    if (occurrence === "invalid") {
-      return {
-        ok: false,
-        error: operationError(
-          "VALIDATION_FAILED",
-          "document.set_table_cells_text update occurrence must be a positive integer when provided",
-        ),
-      };
-    }
+    if (!mappedTarget.ok) return mappedTarget;
     updates.push({
-      target: {
-        rowLabel,
-        columnHeader,
-        ...(occurrence !== undefined ? { occurrence } : {}),
-      },
+      target: mappedTarget.value,
       expectedCurrentText,
       replacement,
     });
@@ -816,31 +816,11 @@ export function mapInsertTableRowsOperation(
       ),
     };
   }
-  const firstCellText = readNonEmptyString(
-    operation.payload.after.firstCellText,
+  const after = mapRowAnchor(
+    operation.payload.after,
+    "document.insert_table_rows",
   );
-  if (firstCellText === null) {
-    return {
-      ok: false,
-      error: operationError(
-        "VALIDATION_FAILED",
-        "document.insert_table_rows after.firstCellText must be a non-empty string",
-      ),
-    };
-  }
-  const afterOccurrence = readOptionalPositiveInt(
-    operation.payload.after.occurrence,
-    "document.insert_table_rows after.occurrence",
-  );
-  if (afterOccurrence === "invalid") {
-    return {
-      ok: false,
-      error: operationError(
-        "VALIDATION_FAILED",
-        "document.insert_table_rows after.occurrence must be a positive integer when provided",
-      ),
-    };
-  }
+  if (!after.ok) return after;
 
   const rowsRaw = operation.payload.rows;
   if (!Array.isArray(rowsRaw) || rowsRaw.length === 0) {
@@ -883,12 +863,7 @@ export function mapInsertTableRowsOperation(
     ok: true,
     operation: {
       table: table.value,
-      after: {
-        firstCellText,
-        ...(afterOccurrence !== undefined
-          ? { occurrence: afterOccurrence }
-          : {}),
-      },
+      after: after.value,
       rows,
       baseRevision: operation.baseVersionId,
     },
@@ -906,17 +881,40 @@ export function mapInsertTableColumnOperation(
     "document.insert_table_column",
   );
   if (!table.ok) return table;
-
-  const afterColumnHeader = readNonEmptyString(
-    operation.payload.afterColumnHeader,
-  );
-  const header = readNonEmptyString(operation.payload.header);
-  if (afterColumnHeader === null || header === null) {
+  // Engine column-insert verify currently panics when headerCells is empty
+  // (even with a table handle). Reject in-process before calling N-API.
+  if (!table.value.headerCells || table.value.headerCells.length === 0) {
     return {
       ok: false,
       error: operationError(
         "VALIDATION_FAILED",
-        "document.insert_table_column requires afterColumnHeader and header strings",
+        "document.insert_table_column requires non-empty table.headerCells (from inspect); handle alone is not enough for column insert",
+      ),
+    };
+  }
+
+  const afterColumnHeader = readNonEmptyString(
+    operation.payload.afterColumnHeader,
+  );
+  const afterColumnHandle = readNonEmptyString(
+    operation.payload.afterColumnHandle,
+  );
+  const header = readNonEmptyString(operation.payload.header);
+  if (header === null) {
+    return {
+      ok: false,
+      error: operationError(
+        "VALIDATION_FAILED",
+        "document.insert_table_column requires a header string",
+      ),
+    };
+  }
+  if (afterColumnHeader === null && afterColumnHandle === null) {
+    return {
+      ok: false,
+      error: operationError(
+        "VALIDATION_FAILED",
+        "document.insert_table_column requires afterColumnHeader or afterColumnHandle",
       ),
     };
   }
@@ -949,7 +947,12 @@ export function mapInsertTableColumnOperation(
     ok: true,
     operation: {
       table: table.value,
-      afterColumnHeader,
+      ...(afterColumnHeader !== null
+        ? { afterColumnHeader }
+        : {}),
+      ...(afterColumnHandle !== null
+        ? { afterColumnHandle }
+        : {}),
       header,
       cells,
       baseRevision: operation.baseVersionId,
@@ -972,27 +975,33 @@ function mapTableTarget(
       ),
     };
   }
-  if (!Array.isArray(raw.headerCells) || raw.headerCells.length === 0) {
+  const handle = readNonEmptyString(raw.handle);
+  const headerCellsRaw = Array.isArray(raw.headerCells)
+    ? raw.headerCells
+    : null;
+  if (handle === null && (!headerCellsRaw || headerCellsRaw.length === 0)) {
     return {
       ok: false,
       error: operationError(
         "VALIDATION_FAILED",
-        `${operationLabel} table.headerCells must be a non-empty string array`,
+        `${operationLabel} table requires handle or non-empty headerCells`,
       ),
     };
   }
   const headerCells: string[] = [];
-  for (const cell of raw.headerCells) {
-    if (typeof cell !== "string") {
-      return {
-        ok: false,
-        error: operationError(
-          "VALIDATION_FAILED",
-          `${operationLabel} table.headerCells must be strings`,
-        ),
-      };
+  if (headerCellsRaw) {
+    for (const cell of headerCellsRaw) {
+      if (typeof cell !== "string") {
+        return {
+          ok: false,
+          error: operationError(
+            "VALIDATION_FAILED",
+            `${operationLabel} table.headerCells must be strings`,
+          ),
+        };
+      }
+      headerCells.push(cell);
     }
-    headerCells.push(cell);
   }
   const occurrence = readOptionalPositiveInt(
     raw.occurrence,
@@ -1010,7 +1019,93 @@ function mapTableTarget(
   return {
     ok: true,
     value: {
-      headerCells,
+      ...(headerCells.length > 0 ? { headerCells } : {}),
+      ...(occurrence !== undefined ? { occurrence } : {}),
+      ...(handle !== null ? { handle } : {}),
+    },
+  };
+}
+
+function mapRowAnchor(
+  raw: Record<string, unknown>,
+  operationLabel: string,
+):
+  | { readonly ok: true; readonly value: DocxTableRowAnchor }
+  | { readonly ok: false; readonly error: OperationResult } {
+  const handle = readNonEmptyString(raw.handle);
+  const firstCellText = readNonEmptyString(raw.firstCellText);
+  if (handle === null && firstCellText === null) {
+    return {
+      ok: false,
+      error: operationError(
+        "VALIDATION_FAILED",
+        `${operationLabel} after requires handle or non-empty firstCellText`,
+      ),
+    };
+  }
+  const occurrence = readOptionalPositiveInt(
+    raw.occurrence,
+    `${operationLabel} after.occurrence`,
+  );
+  if (occurrence === "invalid") {
+    return {
+      ok: false,
+      error: operationError(
+        "VALIDATION_FAILED",
+        `${operationLabel} after.occurrence must be a positive integer when provided`,
+      ),
+    };
+  }
+  return {
+    ok: true,
+    value: {
+      ...(firstCellText !== null ? { firstCellText } : {}),
+      ...(occurrence !== undefined ? { occurrence } : {}),
+      ...(handle !== null ? { handle } : {}),
+    },
+  };
+}
+
+function mapCellTarget(
+  item: Record<string, unknown>,
+  operationLabel: string,
+):
+  | { readonly ok: true; readonly value: DocxTableCellTarget }
+  | { readonly ok: false; readonly error: OperationResult } {
+  const targetSource = isRecord(item.target) ? item.target : item;
+  const handle = readNonEmptyString(targetSource.handle);
+  if (handle !== null) {
+    return { ok: true, value: { handle } };
+  }
+  const rowLabel = readNonEmptyString(targetSource.rowLabel);
+  const columnHeader = readNonEmptyString(targetSource.columnHeader);
+  if (rowLabel === null || columnHeader === null) {
+    return {
+      ok: false,
+      error: operationError(
+        "VALIDATION_FAILED",
+        `${operationLabel} updates require target.handle or rowLabel+columnHeader`,
+      ),
+    };
+  }
+  const occurrence = readOptionalPositiveInt(
+    targetSource.occurrence,
+    `${operationLabel} update occurrence`,
+  );
+  if (occurrence === "invalid") {
+    return {
+      ok: false,
+      error: operationError(
+        "VALIDATION_FAILED",
+        `${operationLabel} update occurrence must be a positive integer when provided`,
+      ),
+    };
+  }
+  return {
+    ok: true,
+    value: {
+      rowLabel,
+      columnHeader,
       ...(occurrence !== undefined ? { occurrence } : {}),
     },
   };
@@ -1020,7 +1115,13 @@ function readOptionalPositiveInt(
   value: unknown,
   _label: string,
 ): number | undefined | "invalid" {
-  if (value === undefined) return undefined;
+  // Match agent-core occurrence semantics: 0 / null / "" mean omit.
+  if (value === undefined || value === null || value === "") {
+    return undefined;
+  }
+  if (typeof value === "number" && Number.isInteger(value) && value === 0) {
+    return undefined;
+  }
   if (typeof value !== "number" || !Number.isInteger(value) || value < 1) {
     return "invalid";
   }

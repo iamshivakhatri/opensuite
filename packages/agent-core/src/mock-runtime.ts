@@ -49,7 +49,7 @@ interface DocxFixture {
   readonly paragraphs: readonly { text: string; handle: string }[];
   readonly tables: readonly {
     handle: string;
-    rows: number;
+    rowCount: number;
     cols: number;
     preview: readonly (readonly string[])[];
   }[];
@@ -88,7 +88,7 @@ interface WorkingDocx {
   paragraphs: { text: string; handle: string }[];
   tables: {
     handle: string;
-    rows: number;
+    rowCount: number;
     cols: number;
     preview: string[][];
   }[];
@@ -155,7 +155,7 @@ const DOCX_BASE: DocxFixture = {
   tables: [
     {
       handle: "docx:t:1",
-      rows: 3,
+      rowCount: 3,
       cols: 3,
       preview: [
         ["Metric", "2024", "2025"],
@@ -471,7 +471,7 @@ function buildDocxPayload(
     case "tables": {
       const all = docx.tables.map((t) => ({
         handle: t.handle,
-        rows: t.rows,
+        rowCount: t.rowCount,
         cols: t.cols,
         preview: t.preview,
         cells: t.preview,

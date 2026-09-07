@@ -13,7 +13,7 @@ import {
   executeRuntimeMutation,
   invalidInput,
 } from "./define-tool.js";
-import { DOCUMENT_TOOL_NAMES } from "./names.js";
+import { DOCUMENT_TOOL_NAMES, DOCX_ENGINE_CAPS, MOCK_FORMAT_CAPS } from "./names.js";
 import {
   OCCURRENCE_PROPERTY,
   ROW_ANCHOR_SCHEMA,
@@ -77,6 +77,7 @@ export function createDocumentReplaceTextTool(): AgentTool<
       "For table cell updates prefer document.set_table_cells_text after inspect(tables).",
     effect: "write",
     executionMode: "sequential",
+    capability: DOCX_ENGINE_CAPS.replaceText,
     inputSchema: {
       type: "object",
       properties: {
@@ -153,6 +154,7 @@ export function createDocumentSetTableCellsTextTool(): AgentTool<
       "Success = immutable version persisted. Capability does not guarantee every table shape is mutable.",
     effect: "write",
     executionMode: "sequential",
+    capability: DOCX_ENGINE_CAPS.setTableCellsText,
     inputSchema: {
       type: "object",
       properties: {
@@ -288,6 +290,7 @@ export function createDocumentInsertTableRowsTool(): AgentTool<
       "Capability does not guarantee complex/merged/messy tables are writable. Success = immutable version persisted.",
     effect: "write",
     executionMode: "sequential",
+    capability: DOCX_ENGINE_CAPS.insertTableRows,
     inputSchema: {
       type: "object",
       properties: {
@@ -394,6 +397,7 @@ export function createDocumentInsertTableColumnTool(): AgentTool<
       "Success = immutable version persisted.",
     effect: "write",
     executionMode: "sequential",
+    capability: DOCX_ENGINE_CAPS.insertTableColumn,
     inputSchema: {
       type: "object",
       properties: {
@@ -505,6 +509,7 @@ export function createSlidesUpdateTextTool(): AgentTool<
       "Verify with document.inspect afterward.",
     effect: "write",
     executionMode: "sequential",
+    capability: MOCK_FORMAT_CAPS.updateSlideText,
     inputSchema: {
       type: "object",
       properties: {
@@ -594,6 +599,7 @@ export function createWorkbookSetCellsTool(): AgentTool<
       "Provide sheet name and cells[{address,value}]. Verify with document.inspect afterward.",
     effect: "write",
     executionMode: "sequential",
+    capability: MOCK_FORMAT_CAPS.setCells,
     inputSchema: {
       type: "object",
       properties: {

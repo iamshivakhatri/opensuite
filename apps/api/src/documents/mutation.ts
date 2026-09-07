@@ -62,21 +62,26 @@ export interface ApplyReplaceTextInput {
 }
 
 export interface DocumentTableTargetInput {
-  readonly headerCells: readonly string[];
+  readonly headerCells?: readonly string[];
   readonly occurrence?: number;
+  readonly handle?: string;
 }
 
 export interface DocumentTableRowAnchorInput {
-  readonly firstCellText: string;
+  readonly firstCellText?: string;
   readonly occurrence?: number;
+  readonly handle?: string;
 }
 
 export interface DocumentTableCellUpdateInput {
-  readonly rowLabel: string;
-  readonly columnHeader: string;
+  readonly target: {
+    readonly handle?: string;
+    readonly rowLabel?: string;
+    readonly columnHeader?: string;
+    readonly occurrence?: number;
+  };
   readonly expectedCurrentText: string;
   readonly replacement: string;
-  readonly occurrence?: number;
 }
 
 export interface ApplySetTableCellsTextInput {
@@ -103,7 +108,8 @@ export interface ApplyInsertTableColumnInput {
   readonly ownerUserId: string;
   readonly baseVersionId: string;
   readonly table: DocumentTableTargetInput;
-  readonly afterColumnHeader: string;
+  readonly afterColumnHeader?: string;
+  readonly afterColumnHandle?: string;
   readonly header: string;
   readonly cells: readonly string[];
   readonly runtime: DocumentRuntime;
@@ -361,7 +367,12 @@ export function createDocumentMutationService(
         operationType: "document.insert_table_column",
         payload: {
           table: input.table,
-          afterColumnHeader: input.afterColumnHeader,
+          ...(input.afterColumnHeader !== undefined
+            ? { afterColumnHeader: input.afterColumnHeader }
+            : {}),
+          ...(input.afterColumnHandle !== undefined
+            ? { afterColumnHandle: input.afterColumnHandle }
+            : {}),
           header: input.header,
           cells: input.cells,
         },

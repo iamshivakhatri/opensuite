@@ -643,3 +643,47 @@ function createFakeAgentModelAlwaysTool(toolName: string) {
     ),
   );
 }
+
+test("LIMITS: repeated same-tool failures force answer-only turn", async () => {
+  const sink = createRecordingEventSink();
+  let executeCount = 0;
+  const tool = createFakeTool({
+    name: "document.set_table_cells_text",
+    async execute() {
+      executeCount += 1;
+      throw new AgentCoreError("TOOL_FAILURE", "empty row label", {
+        diagnostic: {
+          code: "TARGET_NOT_FOUND",
+          severity: "error",
+          message: "empty row label",
+        },
+      });
+    },
+  });
+  const model = createScriptedAgentModel([
+    toolCallResponse("try1", [
+      { id: "c1", name: tool.name, input: {} },
+    ]),
+    toolCallResponse("try2", [
+      { id: "c2", name: tool.name, input: {} },
+    ]),
+    // Circuit breaker strips tools; this response's toolCalls are ignored.
+    toolCallResponse("ignored-tools", [
+      { id: "c3", name: tool.name, input: {} },
+    ]),
+  ]);
+  const runner = new AgentRunner({
+    model,
+    tools: ToolRegistry.create([tool]),
+    events: sink,
+  });
+
+  const result = await runner.run(baseRequest());
+  assert.equal(result.status, "completed");
+  assert.equal(executeCount, 2);
+  assert.equal(
+    result.toolOutcomes.filter((o) => o.status === "failed").length,
+    2,
+  );
+  assert.equal(result.summary, "ignored-tools");
+});

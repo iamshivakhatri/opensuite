@@ -136,6 +136,12 @@ export interface AgentTool<TInput = unknown, TResult = unknown> {
   readonly effect?: ToolEffect;
   /** Defaults to `sequential` when omitted (and for write effects). */
   readonly executionMode?: ToolExecutionMode;
+  /**
+   * Runtime capability id required for model-facing discovery.
+   * When set, bootstrap filters this tool against DocumentRuntime.capabilities.
+   * Omitted → always eligible (e.g. document.capabilities introspection).
+   */
+  readonly requireCapability?: string;
   readonly inputSchema: ToolInputSchema;
   /**
    * Validate/coerce raw model input into typed input.

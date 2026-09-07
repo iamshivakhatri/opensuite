@@ -19,11 +19,14 @@ _Read this before starting any work. Keep it a concise current-state handoff, no
 * Optional semantic `occurrence`: omit / null / "" / **0 → omitted**; explicit values stay **1-based**.
 * **Document tools are declarative descriptors** under `packages/agent-core/src/document-tools/`
   (`defineDocumentTool`, shared selectors/schemas, shared `executePersistedMutation`).
+* **Capability-driven tool discovery at run bootstrap:** primary DocumentRef →
+  `DocumentRuntime.capabilities` → filter catalog by `requireCapability` → first model call.
+  No format-hardcoded tool switches; PPTX/XLSX mock caps advertise their own mutation ids.
 
 ## Just Completed
 
-* Refactor: document tool boundary — shared define/capability/mutation plumbing; no new caps; behavior preserved.
-* Prior: Dev API plain logs; stop abandoned-run GET flood; `insert_table_column` empty `headerCells` app guard; version-local table handles.
+* Milestone: capability-driven document tool discovery (runtime caps decide model tool set).
+* Prior: document tool boundary refactor; Dev API plain logs; stop abandoned-run GET flood.
 
 ## Current Decisions
 
@@ -38,21 +41,22 @@ _Read this before starting any work. Keep it a concise current-state handoff, no
 * Separate tool calls = separate immutable versions; within one engine op, updates are atomic.
 * `pnpm dev:api` rebuilds agent-core first — restart after agent-core changes.
 * TypeScript validates request shape/routing only — no blank-row / one-paragraph / OOXML safety rules in app.
+* Discovery failure → `CAPABILITY_DISCOVERY_FAILED` (never expose all document tools).
 
 ## Verification Status
 
 | Check | Status |
 |---|---|
-| `pnpm --filter @opensuite/agent-core test` | **Pass** (77) |
-| `pnpm --filter @opensuite/engine-client test` | **Pass** (34) |
+| `pnpm --filter @opensuite/agent-core test` | **Pass** (85) |
 | `pnpm --filter @opensuite/api test` | **Pass** (88+17 skip) |
-| `pnpm --filter @opensuite/web test` | **Pass** (15) |
 | `pnpm --filter @opensuite/agent-core typecheck` | **Pass** |
-| `git diff --check` | **Pass** |
+| `pnpm --filter @opensuite/api typecheck` | **Pass** |
 
 ## Intentionally Deferred
 
 * Structural-handle browser scenario / richer handle-first UX milestone (next)
+* Engine-provided tool manifest / Rust-generated JSON schemas
+* Target-level affordances/editability; version-bound handles; structured diagnostics
 * Engine: harden `insert_table_column` verify so empty `headerCells` returns a structured error instead of panicking
 * Delete rows/columns / create_table / multi-column insert
 * Persist full per-turn timeline in DB

@@ -29,7 +29,7 @@ function event(
   };
 }
 
-test("reduceAgentProgress keeps completed tools with Thinking", () => {
+test("reduceAgentProgress keeps completed tools then Generating (not Thinking)", () => {
   const t0 = 1_000;
   let lines: AgentProgressLine[] = [];
   lines = reduceAgentProgress(lines, event("agent.started"), t0);
@@ -61,11 +61,15 @@ test("reduceAgentProgress keeps completed tools with Thinking", () => {
     lines.map((line) => ({ status: line.status, label: line.label })),
     [
       { status: "done", label: "Inspected document" },
-      { status: "active", label: "Thinking…" },
+      { status: "active", label: "Generating…" },
     ],
   );
   assert.equal(lines[0]?.startedAt, t0 + 100);
   assert.equal(lines[0]?.endedAt, t0 + 500);
+  assert.equal(
+    lines.some((line) => line.label === "Thinking…" && line.status === "active"),
+    false,
+  );
 
   lines = reduceAgentProgress(
     lines,
@@ -89,13 +93,17 @@ test("reduceAgentProgress keeps completed tools with Thinking", () => {
     t0 + 900,
   );
   assert.ok(lines.some((line) => line.label === "Search complete" && line.status === "done"));
-  assert.ok(lines.some((line) => line.label === "Thinking…" && line.status === "active"));
+  assert.ok(lines.some((line) => line.label === "Generating…" && line.status === "active"));
+  assert.equal(
+    lines.some((line) => line.label === "Thinking…"),
+    false,
+  );
 
   lines = reduceAgentProgress(lines, event("message.started"), t0 + 1000);
-  assert.ok(lines.some((line) => line.label === "Thinking…" && line.status === "active"));
+  assert.ok(lines.some((line) => line.label === "Generating…" && line.status === "active"));
 });
 
-test("reduceAgentProgress keeps Thinking on empty delta / message.started", () => {
+test("reduceAgentProgress keeps Thinking on empty delta / message.started before tools", () => {
   let lines = reduceAgentProgress([], event("agent.started"), 1);
   lines = reduceAgentProgress(lines, event("message.started"), 2);
   assert.equal(lines[0]?.label, "Thinking…");
@@ -180,6 +188,24 @@ test("reduceAgentProgress preserves history on failed and cancelled", () => {
   lines = reduceAgentProgress(lines, event("agent.cancelled"), 6);
   assert.ok(lines.some((line) => line.label === "Stopped"));
   assert.ok(lines.some((line) => line.label === "Search complete"));
+});
+
+test("INVALID_TOOL_INPUT uses distinct progress label", () => {
+  let lines = reduceAgentProgress(
+    [],
+    event("tool.failed", {
+      toolCallId: "t1",
+      toolName: "document.insert_table_rows",
+      code: "INVALID_TOOL_INPUT",
+    }),
+    10,
+  );
+  assert.ok(
+    lines.some(
+      (line) =>
+        line.status === "error" && line.label === "Invalid tool input",
+    ),
+  );
 });
 
 test("unsupported inspect failure uses friendly label", () => {

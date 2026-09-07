@@ -89,7 +89,7 @@ export function createDocumentInspectTool(): AgentTool<
       "Use offset/limit paging (default limit 20, max 100) — do not request huge dumps. " +
       "PPTX/XLSX mock runtimes also support slides/sheets/range.",
     executionMode: "parallel-safe",
-    requireCapability: Capabilities.DocumentInspect,
+    capability: Capabilities.DocumentInspect,
     inputSchema: {
       type: "object",
       properties: {
@@ -177,6 +177,7 @@ export function createDocumentFindTool(): AgentTool<
       "Find text or semantic matches in the active Office document. " +
       "Use when the user asks to locate mentions, keywords, or related content.",
     executionMode: "parallel-safe",
+    capability: Capabilities.DocumentFind,
     inputSchema: {
       type: "object",
       properties: {
@@ -218,8 +219,7 @@ export function createDocumentFindTool(): AgentTool<
     },
     async execute(input, ctx) {
       const { document, runtime } = requireDocumentRuntime(ctx);
-      const caps = await runtime.capabilities(document);
-      if (!hasCapability(caps, Capabilities.DocumentFind) || !runtime.find) {
+      if (!runtime.find) {
         throw diagnosticError(
           unsupportedCapabilityFind(Capabilities.DocumentFind).diagnostics[0]!,
         );

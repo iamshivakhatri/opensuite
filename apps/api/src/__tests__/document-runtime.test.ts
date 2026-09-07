@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { mutableDocumentCapabilities } from "@opensuite/agent-core";
+import { mockCapabilitiesForFormat } from "@opensuite/agent-core";
 import type { DocxEngineBinding } from "@opensuite/engine-client";
 
 import { createDocumentRuntimeResolver } from "../documents/runtime.js";
@@ -111,11 +111,11 @@ test("resolver uses engine adapter for docx and mock for pptx", async () => {
   const resolve = createDocumentRuntimeResolver({
     documents,
     binding: fakeBinding(),
-    mockCapabilities: mutableDocumentCapabilities(),
   });
 
   const docxRuntime = resolve({ format: "docx", ownerUserId: "user-1" });
   const pptxRuntime = resolve({ format: "pptx", ownerUserId: "user-1" });
+  const xlsxRuntime = resolve({ format: "xlsx", ownerUserId: "user-1" });
 
   const docxOverview = await docxRuntime.inspect(
     { documentId: "d", versionId: "v", format: "docx" },
@@ -131,4 +131,23 @@ test("resolver uses engine adapter for docx and mock for pptx", async () => {
     { focus: { kind: "overview" } },
   );
   assert.equal(pptxOverview.status, "success");
+
+  const pptxCaps = await pptxRuntime.capabilities({
+    documentId: "d",
+    versionId: "v",
+    format: "pptx",
+  });
+  assert.deepEqual(
+    [...pptxCaps.ids].sort(),
+    [...mockCapabilitiesForFormat("pptx").ids].sort(),
+  );
+  assert.ok(!pptxCaps.ids.has("replace_text"));
+
+  const xlsxCaps = await xlsxRuntime.capabilities({
+    documentId: "d",
+    versionId: "v",
+    format: "xlsx",
+  });
+  assert.ok(xlsxCaps.ids.has("workbook.set_cells"));
+  assert.ok(!xlsxCaps.ids.has("replace_text"));
 });

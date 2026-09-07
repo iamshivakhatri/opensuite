@@ -12,6 +12,7 @@ import {
   createScriptedAgentModel,
   mockBaseHeadingText,
   mutableDocumentCapabilities,
+  mockCapabilitiesForFormat,
   toolExecutionMode,
   assistantOnlyResponse,
   toolCallResponse,
@@ -147,10 +148,8 @@ test("XLSX set cells then inspect sees changed range", async () => {
   }
 });
 
-test("write tools are sequential and format-gated in the registry", () => {
-  const docxTools = createDocumentToolRegistry(mutableDocumentCapabilities(), {
-    format: "docx",
-  });
+test("write tools are sequential and capability-gated in the registry", () => {
+  const docxTools = createDocumentToolRegistry(mutableDocumentCapabilities());
   assert.ok(docxTools.get(DOCUMENT_TOOL_NAMES.replaceText));
   assert.equal(docxTools.get(DOCUMENT_TOOL_NAMES.updateSlideText), undefined);
   assert.equal(docxTools.get(DOCUMENT_TOOL_NAMES.setCells), undefined);
@@ -159,15 +158,11 @@ test("write tools are sequential and format-gated in the registry", () => {
     "sequential",
   );
 
-  const pptxTools = createDocumentToolRegistry(mutableDocumentCapabilities(), {
-    format: "pptx",
-  });
+  const pptxTools = createDocumentToolRegistry(mockCapabilitiesForFormat("pptx"));
   assert.ok(pptxTools.get(DOCUMENT_TOOL_NAMES.updateSlideText));
   assert.equal(pptxTools.get(DOCUMENT_TOOL_NAMES.replaceText), undefined);
 
-  const xlsxTools = createDocumentToolRegistry(mutableDocumentCapabilities(), {
-    format: "xlsx",
-  });
+  const xlsxTools = createDocumentToolRegistry(mockCapabilitiesForFormat("xlsx"));
   assert.ok(xlsxTools.get(DOCUMENT_TOOL_NAMES.setCells));
   assert.equal(xlsxTools.get(DOCUMENT_TOOL_NAMES.replaceText), undefined);
 });
@@ -284,9 +279,7 @@ test("AgentRunner can mutate then inspect then finish", async () => {
   const runtime = createMockDocumentRuntime({
     capabilities: mutableDocumentCapabilities(),
   });
-  const tools = createDocumentToolRegistry(mutableDocumentCapabilities(), {
-    format: "docx",
-  });
+  const tools = createDocumentToolRegistry(mutableDocumentCapabilities());
   const model = createScriptedAgentModel([
     toolCallResponse("ok", [
       {

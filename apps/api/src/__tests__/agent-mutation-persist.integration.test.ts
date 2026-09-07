@@ -329,9 +329,7 @@ test(
       persistence,
       documents,
       model,
-      tools: createDocumentToolRegistry(mutableDocumentCapabilities(), {
-        format: "docx",
-      }),
+      tools: createDocumentToolRegistry(mutableDocumentCapabilities()),
       runtime,
       capabilities: mutableDocumentCapabilities(),
     });

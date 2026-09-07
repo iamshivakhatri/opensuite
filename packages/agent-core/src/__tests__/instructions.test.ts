@@ -11,23 +11,22 @@ import {
 test("system prompt is task-oriented and read-only aware", () => {
   const prompt = buildDocumentAgentSystemPrompt(readOnlyDocumentCapabilities());
   assert.match(prompt, /OpenSuite/);
-  assert.match(prompt, /document\.inspect/);
-  assert.match(prompt, /overview first/i);
-  assert.match(prompt, /document\.find/);
+  assert.match(prompt, /inspect before editing/i);
   assert.match(prompt, /mutations are currently unavailable/i);
   assert.match(prompt, /never invent names/i);
   assert.match(prompt, /chain-of-thought/i);
-  assert.doesNotMatch(prompt, /Capability document\.mutate/);
+  assert.doesNotMatch(prompt, /Advertised runtime capabilities/);
+  assert.doesNotMatch(prompt, /Call only listed tools such as/);
 });
 
 test("system prompt omits inspect guidance when capability missing", () => {
   const prompt = buildDocumentAgentSystemPrompt(createCapabilities());
   assert.match(prompt, /unavailable/i);
-  assert.doesNotMatch(prompt, /overview first/i);
-  assert.doesNotMatch(prompt, /Use document\.find/);
+  assert.doesNotMatch(prompt, /inspect before editing/i);
+  assert.doesNotMatch(prompt, /Use find with mode text/);
 });
 
-test("system prompt mentions mutate only when advertised", () => {
+test("system prompt mentions mutate behavior without listing every tool", () => {
   const prompt = buildDocumentAgentSystemPrompt(
     createCapabilities(
       Capabilities.DocumentMutate,
@@ -37,11 +36,14 @@ test("system prompt mentions mutate only when advertised", () => {
     ),
   );
   assert.doesNotMatch(prompt, /mutations are currently unavailable/i);
-  assert.match(prompt, /document\.replace_text/);
-  assert.match(prompt, /document\.set_table_cells_text/);
-  assert.match(prompt, /document\.insert_table_rows/);
-  assert.match(prompt, /document\.insert_table_column/);
+  assert.match(prompt, /mutation tools in your tool list/i);
   assert.match(prompt, /NOT a tool name/i);
   assert.match(prompt, /Never claim an edit succeeded/i);
-  assert.doesNotMatch(prompt, /cannot insert\/delete rows/i);
+  assert.match(prompt, /structural handles/i);
+  assert.match(prompt, /re-inspect after structural changes/i);
+  assert.match(prompt, /do not retry that same tool/i);
+  // Catalog communicates availability — prompt must not enumerate ops.
+  assert.doesNotMatch(prompt, /document\.set_table_cells_text/);
+  assert.doesNotMatch(prompt, /document\.insert_table_column/);
+  assert.doesNotMatch(prompt, /Advertised runtime capabilities/);
 });

@@ -8,17 +8,25 @@
  *   selectors       — table/cell/row/inspect focus parsers
  *   inspect         — capabilities / inspect / find
  *   mutations       — DOCX persisted writes + PPTX/XLSX mock writes
+ *
+ * Discovery path (run bootstrap):
+ *   DocumentRuntime.capabilities(DocumentRef)
+ *     → filterDocumentToolsByCapabilities(catalog, caps)
+ *     → model-facing tool list
  */
 
 import type { AgentTool } from "../model.js";
+import type { DocumentRuntime } from "../runtime.js";
 import { ToolRegistry } from "../tools.js";
 import {
   Capabilities,
   createCapabilities,
   hasCapability,
   type DocumentFormat,
+  type DocumentRef,
   type RuntimeCapabilities,
 } from "../types.js";
+import { AgentCoreError } from "../errors.js";
 import { MOCK_DOCUMENT_CAPABILITIES } from "../mock-runtime.js";
 import {
   createDocumentCapabilitiesTool,
@@ -33,9 +41,9 @@ import {
   createSlidesUpdateTextTool,
   createWorkbookSetCellsTool,
 } from "./mutations.js";
-import { DOCX_ENGINE_CAPS } from "./names.js";
+import { DOCX_ENGINE_CAPS, MOCK_FORMAT_CAPS } from "./names.js";
 
-export { DOCX_ENGINE_CAPS, DOCUMENT_TOOL_NAMES } from "./names.js";
+export { DOCX_ENGINE_CAPS, DOCUMENT_TOOL_NAMES, MOCK_FORMAT_CAPS } from "./names.js";
 export {
   createDocumentCapabilitiesTool,
   createDocumentFindTool,
@@ -66,58 +74,127 @@ export type { DocumentToolDefinition } from "./define-tool.js";
 export type { StructuralHandle } from "./selectors.js";
 
 /**
- * Build a ToolRegistry of document tools filtered by advertised caps and
- * optional document format (DOCX never gets workbook tools, etc.).
+ * Full model-facing document tool catalog (unfiltered).
+ * Bootstrap filters this against runtime-advertised capability ids.
+ */
+export function listDocumentToolDescriptors(): readonly AgentTool[] {
+  return [
+    createDocumentCapabilitiesTool(),
+    createDocumentInspectTool(),
+    createDocumentFindTool(),
+    createDocumentReplaceTextTool(),
+    createDocumentSetTableCellsTextTool(),
+    createDocumentInsertTableRowsTool(),
+    createDocumentInsertTableColumnTool(),
+    createSlidesUpdateTextTool(),
+    createWorkbookSetCellsTool(),
+  ];
+}
+
+/**
+ * Keep tools whose requireCapability is present (or that declare none).
+ * Runtime capability response is the sole availability source — no format switch.
+ */
+export function filterDocumentToolsByCapabilities(
+  tools: readonly AgentTool[],
+  capabilities: RuntimeCapabilities,
+): AgentTool[] {
+  return tools.filter((tool) => {
+    if (tool.requireCapability === undefined) {
+      return true;
+    }
+    return hasCapability(capabilities, tool.requireCapability);
+  });
+}
+
+/**
+ * Build a ToolRegistry of document tools filtered by advertised capabilities.
+ * Prefer discoverDocumentToolsFromRuntime at run bootstrap so the runtime
+ * (not a static app list) decides availability.
  */
 export function createDocumentToolRegistry(
   capabilities: RuntimeCapabilities = MOCK_DOCUMENT_CAPABILITIES,
-  options: { readonly format?: DocumentFormat } = {},
 ): ToolRegistry {
-  const tools: AgentTool[] = [createDocumentCapabilitiesTool()];
-  if (hasCapability(capabilities, Capabilities.DocumentInspect)) {
-    tools.push(createDocumentInspectTool());
-  }
-  if (hasCapability(capabilities, Capabilities.DocumentFind)) {
-    tools.push(createDocumentFindTool());
-  }
-  if (hasCapability(capabilities, Capabilities.DocumentMutate)) {
-    const format = options.format;
-    if (!format || format === "docx") {
-      if (
-        hasCapability(capabilities, DOCX_ENGINE_CAPS.replaceText) ||
-        !hasAnyDocxEngineMutationCap(capabilities)
-      ) {
-        tools.push(createDocumentReplaceTextTool());
-      }
-      if (hasCapability(capabilities, DOCX_ENGINE_CAPS.setTableCellsText)) {
-        tools.push(createDocumentSetTableCellsTextTool());
-      }
-      if (hasCapability(capabilities, DOCX_ENGINE_CAPS.insertTableRows)) {
-        tools.push(createDocumentInsertTableRowsTool());
-      }
-      if (hasCapability(capabilities, DOCX_ENGINE_CAPS.insertTableColumn)) {
-        tools.push(createDocumentInsertTableColumnTool());
-      }
-    }
-    if (!format || format === "pptx") {
-      tools.push(createSlidesUpdateTextTool());
-    }
-    if (!format || format === "xlsx") {
-      tools.push(createWorkbookSetCellsTool());
-    }
-  }
-  return ToolRegistry.create(tools);
+  return ToolRegistry.create(
+    filterDocumentToolsByCapabilities(
+      listDocumentToolDescriptors(),
+      capabilities,
+    ),
+  );
 }
 
-function hasAnyDocxEngineMutationCap(
-  capabilities: RuntimeCapabilities,
-): boolean {
-  return (
-    hasCapability(capabilities, DOCX_ENGINE_CAPS.replaceText) ||
-    hasCapability(capabilities, DOCX_ENGINE_CAPS.setTableCellsText) ||
-    hasCapability(capabilities, DOCX_ENGINE_CAPS.insertTableRows) ||
-    hasCapability(capabilities, DOCX_ENGINE_CAPS.insertTableColumn)
+/**
+ * One-shot discovery: DocumentRef → runtime.capabilities → filtered tools.
+ * Throws AgentCoreError on failure — callers must not fall back to "all tools"
+ * or mock DOCX caps.
+ */
+export async function discoverDocumentToolsFromRuntime(
+  runtime: DocumentRuntime,
+  document: DocumentRef,
+): Promise<{
+  readonly capabilities: RuntimeCapabilities;
+  readonly tools: readonly AgentTool[];
+  readonly registry: ToolRegistry;
+}> {
+  let capabilities: RuntimeCapabilities;
+  try {
+    capabilities = await runtime.capabilities(document);
+  } catch (cause) {
+    throw new AgentCoreError(
+      "RUNTIME_FAILURE",
+      "Failed to discover document runtime capabilities",
+      {
+        diagnostic: {
+          code: "CAPABILITY_DISCOVERY_FAILED",
+          severity: "error",
+          message: "Failed to discover document runtime capabilities",
+          details: {
+            documentId: document.documentId,
+            versionId: document.versionId,
+            format: document.format,
+          },
+        },
+        cause,
+      },
+    );
+  }
+
+  const tools = filterDocumentToolsByCapabilities(
+    listDocumentToolDescriptors(),
+    capabilities,
   );
+  return {
+    capabilities,
+    tools,
+    registry: ToolRegistry.create(tools),
+  };
+}
+
+/**
+ * Mock PPTX/XLSX capability sets for format-aware mock runtimes.
+ * Product DOCX must use the engine adapter — never these mock sets.
+ */
+export function mockCapabilitiesForFormat(
+  format: DocumentFormat | undefined,
+): RuntimeCapabilities {
+  if (format === "pptx") {
+    return createCapabilities(
+      Capabilities.DocumentInspect,
+      Capabilities.DocumentFind,
+      Capabilities.DocumentMutate,
+      MOCK_FORMAT_CAPS.updateSlideText,
+    );
+  }
+  if (format === "xlsx") {
+    return createCapabilities(
+      Capabilities.DocumentInspect,
+      Capabilities.DocumentFind,
+      Capabilities.DocumentMutate,
+      MOCK_FORMAT_CAPS.setCells,
+    );
+  }
+  // Unknown / unset: read-only mock surface (no DOCX mutation fallback).
+  return readOnlyDocumentCapabilities();
 }
 
 export function readOnlyDocumentCapabilities(): RuntimeCapabilities {
@@ -127,7 +204,7 @@ export function readOnlyDocumentCapabilities(): RuntimeCapabilities {
   );
 }
 
-/** Inspect + find + safe mock mutations (includes Rust DOCX mutation ids). */
+/** Inspect + find + DOCX mutation ids (engine-shaped; for tests / DOCX mock). */
 export function mutableDocumentCapabilities(): RuntimeCapabilities {
   return createCapabilities(
     Capabilities.DocumentInspect,

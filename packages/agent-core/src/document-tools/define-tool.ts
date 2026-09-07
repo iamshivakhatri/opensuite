@@ -30,9 +30,12 @@ export interface DocumentToolDefinition<TInput, TResult> {
   readonly effect?: ToolEffect;
   readonly executionMode?: ToolExecutionMode;
   /**
-   * When set, execute is gated once on this runtime capability id
-   * (Rust remains source of truth for what the id means).
+   * Runtime capability id this tool requires for discovery + execute gating.
+   * Prefer the short alias `capability` when declaring descriptors.
+   * (Rust/runtime remains source of truth for what the id means.)
    */
+  readonly capability?: string;
+  /** @deprecated Prefer `capability` — same meaning. */
   readonly requireCapability?: string;
   readonly inputSchema: ToolInputSchema;
   parseInput(raw: unknown): TInput;
@@ -42,6 +45,7 @@ export interface DocumentToolDefinition<TInput, TResult> {
 export function defineDocumentTool<TInput, TResult>(
   def: DocumentToolDefinition<TInput, TResult>,
 ): AgentTool<TInput, TResult> {
+  const requireCapability = def.capability ?? def.requireCapability;
   return {
     name: def.name,
     description: def.description,
@@ -50,11 +54,12 @@ export function defineDocumentTool<TInput, TResult>(
     ...(def.executionMode !== undefined
       ? { executionMode: def.executionMode }
       : {}),
+    ...(requireCapability !== undefined ? { requireCapability } : {}),
     inputSchema: def.inputSchema,
     parseInput: def.parseInput,
     async execute(input, ctx) {
-      if (def.requireCapability !== undefined) {
-        await requireRuntimeCapability(ctx, def.requireCapability);
+      if (requireCapability !== undefined) {
+        await requireRuntimeCapability(ctx, requireCapability);
       }
       return def.execute(input, ctx);
     },

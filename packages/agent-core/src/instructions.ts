@@ -1,14 +1,15 @@
 import {
   Capabilities,
   hasCapability,
-  listCapabilities,
   type RuntimeCapabilities,
 } from "./types.js";
-import { DOCX_ENGINE_CAPS } from "./document-tools.js";
 
 /**
  * Provider-neutral OpenSuite document-agent system instruction.
  * Adapters inject this string — do not fork per provider.
+ *
+ * Tool availability is communicated by the model function catalog
+ * (capability-filtered at run bootstrap). Do not duplicate capability lists here.
  */
 export function buildDocumentAgentSystemPrompt(
   capabilities?: RuntimeCapabilities,
@@ -21,15 +22,6 @@ export function buildDocumentAgentSystemPrompt(
   const canMutate = caps
     ? hasCapability(caps, Capabilities.DocumentMutate)
     : false;
-  const canSetTableCells = caps
-    ? hasCapability(caps, DOCX_ENGINE_CAPS.setTableCellsText)
-    : canMutate;
-  const canInsertTableRows = caps
-    ? hasCapability(caps, DOCX_ENGINE_CAPS.insertTableRows)
-    : canMutate;
-  const canInsertTableColumn = caps
-    ? hasCapability(caps, DOCX_ENGINE_CAPS.insertTableColumn)
-    : canMutate;
 
   const parts: string[] = [
     "You are OpenSuite, a task-oriented Office document agent.",
@@ -38,59 +30,41 @@ export function buildDocumentAgentSystemPrompt(
     "Do not reveal chain-of-thought; respond with concise, grounded answers.",
     "Prefer the fewest tool calls that answer the question (usually 1–2, max ~4 for multi-cell edits).",
     "Only call tools that appear in your tool list — never invent names like document.mutate or document.add_row.",
-    "If a tool fails or is unsupported, do not retry the same kind of call in a loop; explain the limit and ask the user how to proceed.",
-    "Use document.capabilities when you need to know what this runtime supports.",
+    "If a tool fails or is unsupported: do not retry that same tool (or tiny variants of the same call). " +
+      "At most one alternate approach (e.g. replace_text for prose), then explain the limit and stop. " +
+      "Never loop on table mutations.",
   ];
 
   if (canInspect) {
     parts.push(
-      "For DOCX inspection: use document.inspect overview first when structure is unknown; " +
-        "headings for section navigation; tables when the task involves tabular content; " +
+      "When structure is unknown, inspect before editing. " +
+        "For DOCX: prefer overview first; headings for section navigation; tables for tabular work; " +
         "paragraphs for body prose; context after locating exact text. " +
-        "Page with offset/limit (default 20, max 100) — do not request huge dumps. " +
+        "Page with offset/limit (default 20, max 100). " +
         "PPTX/XLSX mock runtimes still support slides/sheets/range.",
     );
   }
   if (canFind) {
     parts.push(
-      "Use document.find with mode text for DOCX (semantic is unsupported on the engine). " +
-        "Prefer document.inspect(tables/overview) for table/structure questions; use find for exact string location. " +
+      "Use find with mode text for DOCX (semantic is unsupported on the engine). " +
+        "Prefer inspect(tables/overview) for table/structure questions; use find for exact string location. " +
         "Do not probe many single letters or fire repeated finds.",
     );
   }
   if (canMutate) {
-    const mutateTools: string[] = [
-      "document.replace_text (DOCX prose/headings)",
-      "slides.update_text (PPTX)",
-      "workbook.set_cells (XLSX)",
-    ];
-    if (canSetTableCells) {
-      mutateTools.push("document.set_table_cells_text (atomic multi-cell)");
-    }
-    if (canInsertTableRows) {
-      mutateTools.push("document.insert_table_rows");
-    }
-    if (canInsertTableColumn) {
-      mutateTools.push("document.insert_table_column (one column)");
-    }
-
     parts.push(
-      "Capability document.mutate means editing is allowed — it is NOT a tool name. " +
-        `Call only listed tools such as: ${mutateTools.join("; ")}. ` +
-        "For DOCX table work: inspect(tables) first → use the typed table mutation tool → optionally re-inspect → answer. " +
-        "Prefer set_table_cells_text over replace_text when changing existing table cells. " +
+      "Editing is allowed via the mutation tools in your tool list — document.mutate is a capability id, not a tool name. " +
+        "For DOCX table work: inspect(tables) first → typed table mutation → re-inspect after structural changes before reusing handles → answer. " +
+        "Prefer semantic rowLabel/columnHeader targeting when labels are clear and unique. " +
+        "Use opaque structural handles from inspect(tables) for blank rows, blank headers, duplicates, or otherwise difficult targets. " +
         "A capability being advertised does not guarantee every table structure is safe — " +
-        "merged/complex tables may return UNSUPPORTED_OPERATION; explain that and stop. " +
+        "merged/complex/messy tables may return UNSUPPORTED_OPERATION, TARGET_NOT_FOUND, or PRECONDITION_FAILED; explain that and stop. " +
         "Never claim an edit succeeded without a successful mutation tool result.",
     );
-  } else {
+  } else if (caps) {
     parts.push(
       "Editing and other mutations are currently unavailable. If asked to edit, say that clearly and offer inspect/find help instead.",
     );
-  }
-
-  if (caps && caps.ids.size > 0) {
-    parts.push(`Advertised runtime capabilities: ${listCapabilities(caps).join(", ")}.`);
   }
 
   return parts.join(" ");

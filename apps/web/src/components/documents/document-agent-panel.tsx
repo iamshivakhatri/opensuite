@@ -27,7 +27,6 @@ import {
   listDocumentAgentThreads,
   startAgentRun,
   subscribeAgentRunEvents,
-  waitForAgentRunTerminal,
   type AgentMessage,
   type AgentRun,
   type AgentRunStatus,
@@ -227,13 +226,11 @@ export function DocumentAgentPanel({
   }, []);
 
   const finalizeFromSnapshot = React.useCallback(
-    async (runId: string, thread: string, waitForTerminal = false) => {
+    async (runId: string, thread: string) => {
       if (runIdRef.current !== runId) {
         return null;
       }
-      const snapshot = waitForTerminal
-        ? await waitForAgentRunTerminal(runId)
-        : await getAgentRun(runId);
+      const snapshot = await getAgentRun(runId);
       if (runIdRef.current !== runId) {
         return null;
       }
@@ -250,6 +247,32 @@ export function DocumentAgentPanel({
       return snapshot.run;
     },
     [applyTerminalRunStatus, refreshMessages],
+  );
+
+  /** Clear busy UI when SSE dies and the run is no longer live (abandoned). */
+  const abandonLiveRun = React.useCallback(
+    async (runId: string, thread: string, message: string) => {
+      stopSse();
+      try {
+        await cancelAgentRun(runId);
+      } catch {
+        // Best-effort — run may already be gone or not cancellable.
+      }
+      if (runIdRef.current !== runId) {
+        return;
+      }
+      setRunError(message);
+      setRunNotice(null);
+      setActiveRun(null);
+      runIdRef.current = null;
+      reconnectAttemptsRef.current = 0;
+      runStartedAtRef.current = null;
+      setProgress([]);
+      setLiveDraft(null);
+      setTimelineOpen(false);
+      await refreshMessages(thread).catch(() => undefined);
+    },
+    [refreshMessages, stopSse],
   );
 
   const attachRunRef = React.useRef<(
@@ -339,7 +362,7 @@ export function DocumentAgentPanel({
           ) {
             flushDocumentVersionRefresh();
             stopSse();
-            void finalizeFromSnapshot(run.id, thread, false);
+            void finalizeFromSnapshot(run.id, thread);
           }
         },
         onDisconnect: () => {
@@ -350,25 +373,35 @@ export function DocumentAgentPanel({
               if (!isCurrent()) return;
               setActiveRun(snapshot.run);
               if (!isActiveAgentRunStatus(snapshot.run.status)) {
-                await finalizeFromSnapshot(run.id, thread, false);
+                await finalizeFromSnapshot(run.id, thread);
                 return;
               }
-              // Stream dropped while run is still live — re-subscribe instead of
-              // immediately polling (polling was racing a healthy SSE and wiping drafts).
+              // Stream dropped while durable status is still live — retry SSE a
+              // couple of times with backoff. Never tight-poll GET /runs (that
+              // floods logs when the run was abandoned after a process crash).
               reconnectAttemptsRef.current += 1;
               if (reconnectAttemptsRef.current <= 2) {
-                attachRunRef.current(snapshot.run, thread, {
-                  preserveDraft: true,
-                });
+                const attempt = reconnectAttemptsRef.current;
+                window.setTimeout(() => {
+                  if (!isCurrent()) return;
+                  attachRunRef.current(snapshot.run, thread, {
+                    preserveDraft: true,
+                  });
+                }, attempt * 400);
                 return;
               }
-              await finalizeFromSnapshot(run.id, thread, true);
+              await abandonLiveRun(
+                run.id,
+                thread,
+                "Lost connection to the agent run. It was interrupted — try again.",
+              );
             } catch {
               if (!isCurrent()) return;
-              await finalizeFromSnapshot(run.id, thread, true).catch(() => {
-                setRunError("Lost connection to the agent run. Refreshing…");
-                void refreshMessages(thread);
-              });
+              await abandonLiveRun(
+                run.id,
+                thread,
+                "Lost connection to the agent run. Refresh and try again.",
+              );
             }
           })();
         },
@@ -382,17 +415,30 @@ export function DocumentAgentPanel({
               if (isActiveAgentRunStatus(snapshot.run.status)) {
                 reconnectAttemptsRef.current += 1;
                 if (reconnectAttemptsRef.current <= 2) {
-                  attachRunRef.current(snapshot.run, thread, {
-                    preserveDraft: true,
-                  });
+                  const attempt = reconnectAttemptsRef.current;
+                  window.setTimeout(() => {
+                    if (!isCurrent()) return;
+                    attachRunRef.current(snapshot.run, thread, {
+                      preserveDraft: true,
+                    });
+                  }, attempt * 400);
                   return;
                 }
+                await abandonLiveRun(
+                  run.id,
+                  thread,
+                  "Lost connection to the agent run. It was interrupted — try again.",
+                );
+                return;
               }
-              await finalizeFromSnapshot(run.id, thread, true);
+              await finalizeFromSnapshot(run.id, thread);
             } catch {
               if (!isCurrent()) return;
-              setRunError("Lost connection to the agent run. Refreshing…");
-              void refreshMessages(thread);
+              await abandonLiveRun(
+                run.id,
+                thread,
+                "Lost connection to the agent run. Refresh and try again.",
+              );
             }
           })();
         },
@@ -400,6 +446,7 @@ export function DocumentAgentPanel({
       sseAbortRef.current = sub.abort;
     },
     [
+      abandonLiveRun,
       documentId,
       finalizeFromSnapshot,
       flushDocumentVersionRefresh,
@@ -710,10 +757,14 @@ export function DocumentAgentPanel({
       setMessages([]);
       setActiveRun(null);
       setProgress([]);
+      setLastTurn(null);
+      setTimelineOpen(false);
+      setRunTotalMs(null);
       setLiveDraft(null);
       setDraft("");
       runIdRef.current = null;
       reconnectAttemptsRef.current = 0;
+      runStartedAtRef.current = null;
     } catch (error) {
       setRunError(
         userFacingError(error, "Could not start a new chat. Try again."),
@@ -990,6 +1041,7 @@ export function DocumentAgentPanel({
               {/* Finished turn with no assistant text yet (cancel / fail). */}
               {!isLiveTurn &&
               lastTurn &&
+              messages.length > 0 &&
               lastMessage?.role !== "assistant" ? (
                 <AgentThoughtToggle
                   label={thoughtForLabel(lastTurn.durationMs, lastTurn.outcome)}

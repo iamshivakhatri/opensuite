@@ -558,15 +558,49 @@ export function registerAgentRoutes(
     }
 
     if (sub.status === "not_live") {
-      // Live hub gone. Only emit a terminal event when the durable run is
-      // already terminal — never fake-fail an in-flight run (that made the UI
-      // poll GET /runs while the model was still working).
+      // Live hub gone (API restart / process crash). If durable status is still
+      // non-terminal, mark the run failed and emit a terminal event so the UI
+      // stops reconnecting / polling.
       if (
         run.status !== "completed" &&
         run.status !== "failed" &&
         run.status !== "cancelled"
       ) {
-        reply.raw.write(formatSseComment("not_live"));
+        let durable = run;
+        try {
+          durable = await persistence.updateRunStatus({
+            runId: run.id,
+            ownerUserId: user.id,
+            status: "failed",
+            errorCode: "RUN_ABANDONED",
+            errorMessage:
+              "Agent run is no longer live (process exit or restart)",
+          });
+        } catch {
+          const refreshed = await persistence.getRun({
+            runId: run.id,
+            ownerUserId: user.id,
+          });
+          if (refreshed) {
+            durable = refreshed;
+          }
+        }
+        reply.raw.write(
+          formatSseEvent({
+            id: 0,
+            runId: durable.id,
+            type: "agent.failed",
+            at: new Date().toISOString(),
+            data: {
+              status: durable.status,
+              live: false,
+              code: durable.errorCode ?? "RUN_ABANDONED",
+              message:
+                durable.errorMessage ??
+                "Agent run is no longer live (process exit or restart)",
+            },
+          }),
+        );
         cleanup();
         return;
       }

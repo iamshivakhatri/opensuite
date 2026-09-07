@@ -48,6 +48,7 @@ import { registerTrashRoutes } from "./routes/trash.js";
 import { registerWorkspaceRoutes } from "./routes/workspaces.js";
 import type { ObjectStorage } from "./storage/types.js";
 import { createWorkspaceService } from "./workspaces/service.js";
+import { isDevConsole, requestPath } from "./dev-log.js";
 
 /**
  * Optional agent stack overrides for tests / future provider wiring.
@@ -97,12 +98,13 @@ export async function buildApp(
       done();
       return;
     }
-    request.log.info(
-      `${request.method} ${request.url} ${reply.statusCode} ${Math.round(reply.elapsedTime)}ms`,
-    );
-    // Blank line between request logs — much easier to scan in a local terminal.
-    if (process.stdout.isTTY) {
-      process.stdout.write("\n");
+    const line = `${request.method} ${requestPath(request.url)} ${reply.statusCode} ${Math.round(reply.elapsedTime)}ms`;
+    if (isDevConsole()) {
+      // Plain one-liner — no pino level/time/pid/hostname/reqId wrapper.
+      console.log(line);
+      console.log();
+    } else {
+      request.log.info(line);
     }
     done();
   });
@@ -167,8 +169,8 @@ export async function buildApp(
     deps.agent?.persistence ?? createAgentPersistenceService(deps.db);
   const documentCapabilities =
     deps.agent?.capabilities ?? mutableDocumentCapabilities();
-  // Prefer per-run format-filtered registry in AgentExecutionService when
-  // tools are not explicitly injected (tests may still pass a fixed registry).
+  // Prefer per-run capability discovery in AgentRunner when tools are not
+  // explicitly injected (tests may still pass a fixed registry).
   const documentTools = deps.agent?.tools;
 
   // Production: DOCX → real Rust engine; PPTX/XLSX stay on mock until wired.
@@ -180,7 +182,6 @@ export async function buildApp(
     resolveRuntime = createDocumentRuntimeResolver({
       documents,
       binding,
-      mockCapabilities: documentCapabilities,
     });
   }
 

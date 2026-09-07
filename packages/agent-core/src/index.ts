@@ -84,6 +84,9 @@ export type {
   InspectedSheet,
   InspectedSlide,
   InspectedTable,
+  InspectedTableCell,
+  InspectedTableColumn,
+  InspectedTableRow,
   InspectedTextContext,
   InspectedTextContextUnit,
   InspectionPageInfo,
@@ -108,6 +111,9 @@ export type {
   DocumentMutationResult,
   DocumentReplaceTextMutationRequest,
   DocumentSetTableCellsTextMutationRequest,
+  DocumentTableCellHandleTarget,
+  DocumentTableCellSemanticTarget,
+  DocumentTableCellTarget,
   DocumentTableCellUpdate,
   DocumentTableRowAnchor,
   DocumentTableTarget,
@@ -121,6 +127,11 @@ export {
 } from "./document-mutation.js";
 
 export {
+  normalizeOptionalOccurrence,
+  parseOptionalOccurrence,
+} from "./occurrence.js";
+
+export {
   MOCK_DOCUMENT_CAPABILITIES,
   MOCK_MUTABLE_DOCUMENT_CAPABILITIES,
   createMockDocumentRuntime,
@@ -132,6 +143,7 @@ export type { MockDocumentRuntimeOptions } from "./mock-runtime.js";
 export {
   DOCX_ENGINE_CAPS,
   DOCUMENT_TOOL_NAMES,
+  MOCK_FORMAT_CAPS,
   createDocumentCapabilitiesTool,
   createDocumentFindTool,
   createDocumentInspectTool,
@@ -142,6 +154,10 @@ export {
   createDocumentToolRegistry,
   createSlidesUpdateTextTool,
   createWorkbookSetCellsTool,
+  discoverDocumentToolsFromRuntime,
+  filterDocumentToolsByCapabilities,
+  listDocumentToolDescriptors,
+  mockCapabilitiesForFormat,
   mutableDocumentCapabilities,
   readOnlyDocumentCapabilities,
 } from "./document-tools.js";

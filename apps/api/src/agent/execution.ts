@@ -1,6 +1,7 @@
 import {
   AgentRunner,
-  createDocumentToolRegistry,
+  listDocumentToolDescriptors,
+  ToolRegistry,
   type AgentEvent,
   type AgentEventSink,
   type AgentModel,
@@ -12,7 +13,6 @@ import {
   type DocumentRuntime,
   type RuntimeCapabilities,
   type SteeringSource,
-  type ToolRegistry,
 } from "@opensuite/agent-core";
 
 import {
@@ -31,6 +31,7 @@ import {
   type AgentStepStatus,
   type AgentThread,
 } from "./persistence.js";
+import { devLog } from "../dev-log.js";
 
 export type AgentExecutionErrorCode =
   | "THREAD_NOT_FOUND"
@@ -90,8 +91,8 @@ export interface AgentExecutionServiceDeps {
   >;
   readonly model: AgentModel;
   /**
-   * Optional fixed tool registry (tests). When omitted, a format-filtered
-   * document tool registry is built per run from capabilities + primaryDocument.
+   * Optional fixed tool registry (tests). When omitted, the runner discovers
+   * document tools once from DocumentRuntime.capabilities(primaryDocument).
    */
   readonly tools?: ToolRegistry;
   /**
@@ -265,9 +266,11 @@ async function continueExecution(input: {
   // drop the SSE subscription, and stick on "Working…".
   // Stream tokens to the hub before the persistence queue so DB latency cannot
   // batch message.delta behind unrelated step writes.
+  const shortRun = run.id.slice(0, 8);
   const events: AgentEventSink = liveEvents
     ? {
         async emit(event) {
+          logAgentTurn(shortRun, event);
           if (
             event.type === "agent.completed" ||
             event.type === "agent.failed" ||
@@ -289,7 +292,12 @@ async function continueExecution(input: {
           await liveEvents.emit(event);
         },
       }
-    : bridge;
+    : {
+        async emit(event) {
+          logAgentTurn(shortRun, event);
+          await bridge.emit(event);
+        },
+      };
 
   const runtime =
     deps.resolveRuntime?.({
@@ -309,11 +317,12 @@ async function continueExecution(input: {
 
   const runner = new AgentRunner({
     model: deps.model,
-    tools:
-      deps.tools ??
-      createDocumentToolRegistry(deps.capabilities ?? { ids: new Set() }, {
-        format: primaryDocument?.format,
-      }),
+    // Fixed tools (tests) bypass discovery. Otherwise empty base + catalog
+    // → DocumentRuntime.capabilities once before first model call.
+    tools: deps.tools ?? ToolRegistry.create([]),
+    ...(deps.tools
+      ? {}
+      : { documentToolCatalog: listDocumentToolDescriptors() }),
     events,
     runtime,
     mutations,
@@ -488,6 +497,49 @@ async function emitTerminalLive(
     return;
   }
   await liveEvents.emit(event);
+}
+
+/** Dev one-liners for agent turns — skip token spam (message.delta). */
+function logAgentTurn(shortRun: string, event: AgentEvent): void {
+  switch (event.type) {
+    case "agent.started":
+      devLog(`agent ${shortRun} started`);
+      return;
+    case "turn.started":
+      devLog(`agent ${shortRun} turn ${event.turnId.slice(0, 8)}`);
+      return;
+    case "tool.started":
+      devLog(`agent ${shortRun} → ${event.toolName}`);
+      return;
+    case "tool.completed": {
+      const note = event.summary ? ` — ${event.summary}` : "";
+      devLog(`agent ${shortRun} ✓ ${event.toolName}${note}`);
+      return;
+    }
+    case "tool.failed":
+      devLog(
+        `agent ${shortRun} ✗ ${event.toolName} ${event.diagnostic.code}: ${event.diagnostic.message}`,
+      );
+      return;
+    case "document.version.advanced":
+      devLog(
+        `agent ${shortRun} version → #${event.versionNumber ?? "?"} (${event.versionId.slice(0, 8)})`,
+      );
+      return;
+    case "agent.completed":
+      devLog(`agent ${shortRun} completed`);
+      return;
+    case "agent.failed":
+      devLog(
+        `agent ${shortRun} failed ${event.diagnostic.code}: ${event.diagnostic.message}`,
+      );
+      return;
+    case "agent.cancelled":
+      devLog(`agent ${shortRun} cancelled`);
+      return;
+    default:
+      return;
+  }
 }
 
 export type AgentExecutionService = ReturnType<

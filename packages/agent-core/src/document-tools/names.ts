@@ -18,3 +18,12 @@ export const DOCX_ENGINE_CAPS = {
   insertTableRows: "insert_table_rows",
   insertTableColumn: "insert_table_column",
 } as const;
+
+/**
+ * Mock PPTX/XLSX mutation capability ids.
+ * Advertised by format-specific mock runtimes — not format-hardcoded in the registry.
+ */
+export const MOCK_FORMAT_CAPS = {
+  updateSlideText: "slides.update_text",
+  setCells: "workbook.set_cells",
+} as const;

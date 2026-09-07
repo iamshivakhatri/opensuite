@@ -49,16 +49,43 @@ export interface InspectionPageInfo {
   readonly hasMore: boolean;
 }
 
+/** Opaque inspected table cell — handle is artifact-local, not durable identity. */
+export interface InspectedTableCell {
+  readonly handle: string;
+  readonly text: string;
+}
+
+/** Opaque inspected table column (header text + handle). */
+export interface InspectedTableColumn {
+  readonly handle: string;
+  readonly text: string;
+  readonly occurrence?: number;
+}
+
+/** Opaque inspected table row with per-cell handles. */
+export interface InspectedTableRow {
+  readonly handle: string;
+  readonly cells: readonly InspectedTableCell[];
+}
+
 export interface InspectedTable {
   readonly handle: string;
   /** Version-local occurrence when provided by the engine (not durable identity). */
   readonly occurrence?: number;
-  readonly rows: number;
+  /** Engine row count (includes header row). */
+  readonly rowCount: number;
   readonly cols: number;
   readonly isRectangular?: boolean;
+  /** Header columns with opaque handles when the engine provides them. */
+  readonly columns?: readonly InspectedTableColumn[];
   /**
-   * Structured cell text by row when provided by the engine.
-   * Uneven rows are preserved as-is — do not invent rectangular padding.
+   * Structured rows with opaque cell handles from the inspected artifact.
+   * Prefer these handles for blank/duplicate/awkward targets.
+   */
+  readonly rows?: readonly InspectedTableRow[];
+  /**
+   * Text-only convenience grid (same order as `rows`). Prefer `rows` when
+   * mutating — handles are not included here.
    */
   readonly cells?: readonly (readonly string[])[];
   /** Small preview grid when available (mock / compact views). */

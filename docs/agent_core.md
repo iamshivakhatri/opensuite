@@ -34,6 +34,23 @@ Implementation lives in `packages/agent-core/src/document-tools/`:
 `selectors`, `inspect`, `mutations`. Individual typed tools stay model-visible;
 DOCX writes share `executePersistedMutation` (immutable N→N+1, no advance on failure).
 
+**Capability-driven discovery (run bootstrap, before first model call)**
+
+```text
+primary DocumentRef
+  → DocumentRuntime.capabilities(...)
+  → filter documentToolCatalog by requireCapability
+  → merge with non-document tools
+  → first model.complete
+```
+
+* Each document tool declares `capability` / `requireCapability` on its descriptor.
+* Runtime capability ids are the sole availability source — no `if (format === "docx")` tool switches.
+* Discovery runs once per AgentRunner run when `documentToolCatalog` is set; N→N+1 does not re-discover.
+* Discovery failure → run fails with `CAPABILITY_DISCOVERY_FAILED` (does not expose all tools / mock DOCX caps).
+* `document.capabilities` remains model-facing for explicit inspection; it is not required for bootstrap.
+* PPTX/XLSX mock runtimes advertise format-specific caps (`slides.update_text`, `workbook.set_cells`).
+
 **Read**
 
 * `document.capabilities` — list runtime caps for the primary document
@@ -59,7 +76,6 @@ Emits `document.version.advanced` for SSE/UI refresh. Raw `artifactBytes` alone
 is **not** tool success.
 
 Write tools use `effect: "write"` and `executionMode: "sequential"`.
-Format-filtered registration: DOCX runs do not receive workbook/slide tools (and vice versa).
 Table tools are gated on Rust capability ids (`set_table_cells_text`, `insert_table_rows`, `insert_table_column`).
 
 Default product stack: `createMockDocumentRuntime({ capabilities: mutableDocumentCapabilities() })`.
@@ -77,9 +93,8 @@ Not exposed: delete row/column, create table, multi-column insert, generic `docu
 Persisted mutation results include `document` (new DocumentRef), `baseVersionId`, optional `change`
 summary — never storage keys or engine source identities.
 
-System instruction: `buildDocumentAgentSystemPrompt` — capability-driven:
-mutate advertised → may edit with listed tools + must verify; otherwise say edits unavailable.
-Never claim an edit succeeded without a successful mutation tool result.
+System instruction: `buildDocumentAgentSystemPrompt` — behavioral only (inspect-before-edit, no retry loops);
+the filtered tool catalog communicates which ops exist. Never claim an edit succeeded without a successful mutation tool result.
 
 * Safe tools execute immediately; write tools default sequential
 * Destructive + `ConfirmationGate` → ask gate; **no gate → deny**
@@ -103,7 +118,7 @@ start(user instruction)
   → verify owned thread
   → tx: append user message + create run(queued)
   → return handle immediately
-  → (async) format-filtered tools + AgentRunner + event→step bridge + finalize
+  → (async) capability-discover document tools + AgentRunner + event→step bridge + finalize
 ```
 
 * `execute()` = `start()` then await `handle.result` (tests / sync callers)
@@ -111,6 +126,7 @@ start(user instruction)
 * Parallel tools: per-run in-memory sequence counter; start-order sequences
 * Tool step failure ≠ run failure; runner `completed` → run `completed`
 * Cancel → `cancelled`; model failure → `failed` + safe error fields
+* When `tools` omitted: `documentToolCatalog` → `runtime.capabilities(primary)` once → filtered tools
 
 ## Live runs (`AgentRunManager` + HTTP)
 

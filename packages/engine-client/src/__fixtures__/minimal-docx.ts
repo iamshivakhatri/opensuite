@@ -77,18 +77,6 @@ function packDocumentXml(bodyInner: string): Buffer {
   ]);
 }
 
-function cellXml(text: string, widthDxa?: number): string {
-  const tcPr =
-    widthDxa !== undefined
-      ? `<w:tcPr><w:tcW w:w="${widthDxa}" w:type="dxa"/></w:tcPr>`
-      : "";
-  return `<w:tc>${tcPr}<w:p><w:r><w:t>${escapeXml(text)}</w:t></w:r></w:p></w:tc>`;
-}
-
-function rowXml(cells: readonly string[]): string {
-  return `<w:tr>${cells.map((cell) => cellXml(cell)).join("")}</w:tr>`;
-}
-
 /** Build a tiny valid DOCX Buffer containing the given body paragraph texts. */
 export function buildMinimalDocx(paragraphTexts: readonly string[]): Buffer {
   const body = paragraphTexts
@@ -112,20 +100,69 @@ export function buildNameRoleTableDocx(
     ["Alice", "CEO"],
     ["Bob", "CTO"],
   ];
+  return buildTableDocx(rows, options);
+}
+
+/**
+ * Executive Role / Meeting Access Level table with a blank trailing row —
+ * used for artifact-local cell-handle mutation proofs.
+ */
+export function buildExecutiveAccessTableDocx(
+  options: { readonly withGrid?: boolean } = {},
+): Buffer {
+  const rows: readonly (readonly (string | null)[])[] = [
+    ["Executive Role", "Meeting Access Level"],
+    ["CFO", "Full access"],
+    ["CTO", "Full access"],
+    ["COO", "Limited"],
+    ["CISO", "Limited"],
+    ["General Counsel", "Full access"],
+    ["CHRO", "Limited"],
+    [null, null],
+  ];
+  return buildTableDocx(rows, options);
+}
+
+function buildTableDocx(
+  rows: readonly (readonly (string | null)[])[],
+  options: { readonly withGrid?: boolean } = {},
+): Buffer {
+  const width = rows.reduce((max, row) => Math.max(max, row.length), 0);
+  const colWidth = 2400;
   if (options.withGrid) {
-    const grid =
-      '<w:tblGrid><w:gridCol w:w="2400"/><w:gridCol w:w="3600"/></w:tblGrid>';
+    const grid = `<w:tblGrid>${Array.from(
+      { length: width },
+      () => `<w:gridCol w:w="${colWidth}"/>`,
+    ).join("")}</w:tblGrid>`;
     const table = `<w:tbl>${grid}${rows
       .map(
         (row) =>
           `<w:tr>${row
-            .map((cell, index) => cellXml(cell, index === 0 ? 2400 : 3600))
+            .map((cell) => cellXml(cell, colWidth))
             .join("")}</w:tr>`,
       )
       .join("")}</w:tbl>`;
     return packDocumentXml(table);
   }
-  return packDocumentXml(`<w:tbl>${rows.map((row) => rowXml(row)).join("")}</w:tbl>`);
+  return packDocumentXml(
+    `<w:tbl>${rows
+      .map(
+        (row) =>
+          `<w:tr>${row.map((cell) => cellXml(cell)).join("")}</w:tr>`,
+      )
+      .join("")}</w:tbl>`,
+  );
+}
+
+function cellXml(text: string | null, widthDxa?: number): string {
+  const tcPr =
+    widthDxa !== undefined
+      ? `<w:tcPr><w:tcW w:w="${widthDxa}" w:type="dxa"/></w:tcPr>`
+      : "";
+  if (text === null || text === "") {
+    return `<w:tc>${tcPr}<w:p/></w:tc>`;
+  }
+  return `<w:tc>${tcPr}<w:p><w:r><w:t>${escapeXml(text)}</w:t></w:r></w:p></w:tc>`;
 }
 
 function escapeXml(value: string): string {

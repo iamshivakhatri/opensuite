@@ -309,12 +309,29 @@ test("inspect maps overview/headings/paragraphs/tables/context without mock fall
             items: [
               {
                 occurrence: 0,
+                handle: "t0",
                 rowCount: 3,
                 isRectangular: false,
+                columns: [
+                  { occurrence: 0, handle: "t0:c0", text: "Name" },
+                  { occurrence: 1, handle: "t0:c1", text: "Role" },
+                ],
                 rows: [
-                  { cells: ["Name", "Role"] },
-                  { cells: ["Alice", "CEO"] },
-                  { cells: ["Bob", "CTO", "extra"] },
+                  {
+                    handle: "t0:r0",
+                    cells: ["Name", "Role"],
+                    cellHandles: ["t0:r0:c0", "t0:r0:c1"],
+                  },
+                  {
+                    handle: "t0:r1",
+                    cells: ["Alice", "CEO"],
+                    cellHandles: ["t0:r1:c0", "t0:r1:c1"],
+                  },
+                  {
+                    handle: "t0:r2",
+                    cells: ["Bob", "CTO", "extra"],
+                    cellHandles: ["t0:r2:c0", "t0:r2:c1", "t0:r2:c2"],
+                  },
                 ],
               },
             ],
@@ -396,7 +413,9 @@ test("inspect maps overview/headings/paragraphs/tables/context without mock fall
       ["Alice", "CEO"],
       ["Bob", "CTO", "extra"],
     ]);
-    assert.equal(table.rows, 3);
+    assert.equal(table.rowCount, 3);
+    assert.equal(table.handle, "t0");
+    assert.equal(table.rows?.[2]?.cells[2]?.handle, "t0:r2:c2");
     assert.equal(table.cols, 3);
     assert.equal(tables.payload.page?.returned, 1);
     assertNoEngineSourceIdentities(tables);
@@ -511,9 +530,23 @@ test("inspect after mutation uses advanced DocumentRef version bytes", async () 
           items: [
             {
               occurrence: 0,
+              handle: "t0",
               rowCount: 1,
               isRectangular: true,
-              rows: [{ cells: [isV2 ? "CFO" : "CEO"] }],
+              columns: [
+                {
+                  occurrence: 0,
+                  handle: "t0:c0",
+                  text: isV2 ? "CFO" : "CEO",
+                },
+              ],
+              rows: [
+                {
+                  handle: "t0:r0",
+                  cells: [isV2 ? "CFO" : "CEO"],
+                  cellHandles: ["t0:r0:c0"],
+                },
+              ],
             },
           ],
         },
@@ -583,12 +616,29 @@ test("document.inspect AgentTool returns structured tables from DocumentRuntime"
             items: [
               {
                 occurrence: 0,
+                handle: "t0",
                 rowCount: 3,
                 isRectangular: true,
+                columns: [
+                  { occurrence: 0, handle: "t0:c0", text: "Name" },
+                  { occurrence: 1, handle: "t0:c1", text: "Role" },
+                ],
                 rows: [
-                  { cells: ["Name", "Role"] },
-                  { cells: ["Alice", "CEO"] },
-                  { cells: ["Bob", "CTO"] },
+                  {
+                    handle: "t0:r0",
+                    cells: ["Name", "Role"],
+                    cellHandles: ["t0:r0:c0", "t0:r0:c1"],
+                  },
+                  {
+                    handle: "t0:r1",
+                    cells: ["Alice", "CEO"],
+                    cellHandles: ["t0:r1:c0", "t0:r1:c1"],
+                  },
+                  {
+                    handle: "t0:r2",
+                    cells: ["Bob", "CTO"],
+                    cellHandles: ["t0:r2:c0", "t0:r2:c1"],
+                  },
                 ],
               },
             ],
@@ -859,6 +909,27 @@ test("maps table mutation payloads to binding DTOs", () => {
     columnHeader: "Role",
   });
 
+  const byHandle = mapSetTableCellsTextOperation({
+    type: "document.set_table_cells_text",
+    baseVersionId: "ver-1",
+    payload: {
+      table: { handle: "t0" },
+      updates: [
+        {
+          target: { handle: "t0:r4:c0" },
+          expectedCurrentText: "",
+          replacement: "Guest Panelist",
+        },
+      ],
+    },
+  });
+  assert.equal(byHandle.ok, true);
+  if (!byHandle.ok) return;
+  assert.deepEqual(byHandle.operation.table, { handle: "t0" });
+  assert.deepEqual(byHandle.operation.updates[0]?.target, {
+    handle: "t0:r4:c0",
+  });
+
   const rows = mapInsertTableRowsOperation({
     type: "document.insert_table_rows",
     baseVersionId: "ver-1",
@@ -875,6 +946,19 @@ test("maps table mutation payloads to binding DTOs", () => {
   if (!rows.ok) return;
   assert.equal(rows.operation.rows.length, 2);
 
+  const rowsByHandle = mapInsertTableRowsOperation({
+    type: "document.insert_table_rows",
+    baseVersionId: "ver-1",
+    payload: {
+      table: { handle: "t0" },
+      after: { handle: "t0:r2" },
+      rows: [["Charlie", "CFO"]],
+    },
+  });
+  assert.equal(rowsByHandle.ok, true);
+  if (!rowsByHandle.ok) return;
+  assert.deepEqual(rowsByHandle.operation.after, { handle: "t0:r2" });
+
   const column = mapInsertTableColumnOperation({
     type: "document.insert_table_column",
     baseVersionId: "ver-1",
@@ -888,6 +972,39 @@ test("maps table mutation payloads to binding DTOs", () => {
   assert.equal(column.ok, true);
   if (!column.ok) return;
   assert.equal(column.operation.header, "Location");
+
+  const columnByHandle = mapInsertTableColumnOperation({
+    type: "document.insert_table_column",
+    baseVersionId: "ver-1",
+    payload: {
+      table: { headerCells: ["Name", "Role"], handle: "t0" },
+      afterColumnHandle: "t0:c1",
+      header: "Location",
+      cells: ["New York", "Seattle"],
+    },
+  });
+  assert.equal(columnByHandle.ok, true);
+  if (!columnByHandle.ok) return;
+  assert.equal(columnByHandle.operation.afterColumnHandle, "t0:c1");
+  assert.deepEqual(columnByHandle.operation.table.headerCells, [
+    "Name",
+    "Role",
+  ]);
+
+  const columnHandleOnlyRejected = mapInsertTableColumnOperation({
+    type: "document.insert_table_column",
+    baseVersionId: "ver-1",
+    payload: {
+      table: { handle: "t0" },
+      afterColumnHandle: "t0:c1",
+      header: "Location",
+      cells: ["New York", "Seattle"],
+    },
+  });
+  assert.equal(columnHandleOnlyRejected.ok, false);
+  if (columnHandleOnlyRejected.ok) return;
+  assert.equal(columnHandleOnlyRejected.error.status, "error");
+  assert.equal(columnHandleOnlyRejected.error.code, "VALIDATION_FAILED");
 });
 
 test("execute set_table_cells_text returns verified artifact once", async () => {
@@ -985,4 +1102,107 @@ test("execute insert_table_rows and insert_table_column map to binding", async (
   });
   assert.equal(column.status, "success");
   assert.equal(binding.insertColumnCalls.length, 1);
+});
+
+test("adapter maps occurrence 0/null to omitted for table mutations", () => {
+  const rows = mapInsertTableRowsOperation({
+    type: "document.insert_table_rows",
+    baseVersionId: "ver-1",
+    payload: {
+      table: { headerCells: ["Name", "Role"], occurrence: 0 },
+      after: { firstCellText: "Bob", occurrence: null },
+      rows: [["Charlie", "CFO"]],
+    },
+  });
+  assert.equal(rows.ok, true);
+  if (!rows.ok) return;
+  assert.equal(Object.hasOwn(rows.operation.table, "occurrence"), false);
+  assert.equal(Object.hasOwn(rows.operation.after, "occurrence"), false);
+
+  const cells = mapSetTableCellsTextOperation({
+    type: "document.set_table_cells_text",
+    baseVersionId: "ver-1",
+    payload: {
+      table: { headerCells: ["Name", "Role"], occurrence: "" },
+      updates: [
+        {
+          rowLabel: "Alice",
+          columnHeader: "Role",
+          expectedCurrentText: "CEO",
+          replacement: "Founder",
+          occurrence: 0,
+        },
+      ],
+    },
+  });
+  assert.equal(cells.ok, true);
+  if (!cells.ok) return;
+  assert.equal(Object.hasOwn(cells.operation.table, "occurrence"), false);
+  assert.equal(
+    Object.hasOwn(cells.operation.updates[0]!.target, "occurrence"),
+    false,
+  );
+});
+
+test("adapter keeps occurrence 1/2 and rejects -1", () => {
+  const ok = mapInsertTableRowsOperation({
+    type: "document.insert_table_rows",
+    baseVersionId: "ver-1",
+    payload: {
+      table: { headerCells: ["Name", "Role"], occurrence: 2 },
+      after: { firstCellText: "Bob", occurrence: 1 },
+      rows: [["Charlie", "CFO"]],
+    },
+  });
+  assert.equal(ok.ok, true);
+  if (!ok.ok) return;
+  assert.equal(ok.operation.table.occurrence, 2);
+  assert.equal(ok.operation.after.occurrence, 1);
+
+  const bad = mapInsertTableRowsOperation({
+    type: "document.insert_table_rows",
+    baseVersionId: "ver-1",
+    payload: {
+      table: { headerCells: ["Name", "Role"], occurrence: -1 },
+      after: { firstCellText: "Bob" },
+      rows: [["Charlie", "CFO"]],
+    },
+  });
+  assert.equal(bad.ok, false);
+});
+
+test("execute insert_table_rows with occurrence 0 reaches binding once without occurrence", async () => {
+  const outputBytes = buildMinimalDocx(["rows"]);
+  const binding = createFakeDocxEngineBinding({
+    executeDocxInsertTableRows: (_input, operation) => {
+      assert.equal(Object.hasOwn(operation.table, "occurrence"), false);
+      assert.equal(Object.hasOwn(operation.after, "occurrence"), false);
+      return {
+        result: {
+          ok: true,
+          status: "applied",
+          diagnostics: [],
+          changes: [{ kind: "table_rows", before: "", after: "Charlie" }],
+        },
+        output: outputBytes,
+      };
+    },
+  });
+  const runtime = createOpenSuiteEngineAdapter({
+    artifactLoader: createMemoryArtifactLoader({
+      "ver-1": buildMinimalDocx(["x"]),
+    }),
+    binding,
+  });
+  const result = await runtime.execute!(docRef, {
+    type: "document.insert_table_rows",
+    baseVersionId: "ver-1",
+    payload: {
+      table: { headerCells: ["Name", "Role"], occurrence: 0 },
+      after: { firstCellText: "Bob", occurrence: 0 },
+      rows: [["Charlie", "CFO"]],
+    },
+  });
+  assert.equal(result.status, "success");
+  assert.equal(binding.insertRowsCalls.length, 1);
 });

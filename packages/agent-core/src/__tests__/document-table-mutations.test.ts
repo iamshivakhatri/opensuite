@@ -55,6 +55,37 @@ test("tool schemas represent multi-cell, multi-row, and column ops", () => {
   );
 
   assert.deepEqual(
+    setCells.parseInput({
+      table: { handle: "t0" },
+      updates: [
+        {
+          target: { handle: "opaque-engine-handle" },
+          expectedCurrentText: "",
+          replacement: "Guest Panelist",
+        },
+      ],
+    }).updates[0],
+    {
+      target: { handle: "opaque-engine-handle" },
+      expectedCurrentText: "",
+      replacement: "Guest Panelist",
+    },
+  );
+
+  // Semantic branch still requires labels when no handle.
+  assert.throws(() =>
+    setCells.parseInput({
+      table: TABLE,
+      updates: [
+        {
+          expectedCurrentText: "CEO",
+          replacement: "Founder",
+        },
+      ],
+    }),
+  );
+
+  assert.deepEqual(
     insertRows.parseInput({
       table: TABLE,
       after: { firstCellText: "Bob" },
@@ -84,15 +115,23 @@ test("tool schemas represent multi-cell, multi-row, and column ops", () => {
     },
   );
 
+  assert.throws(
+    () =>
+      insertColumn.parseInput({
+        table: { handle: "t0" },
+        afterColumnHandle: "t0:c1",
+        header: "Location",
+        cells: ["New York", "Seattle"],
+      }),
+  );
+
   assert.match(setCells.description, /atomic/i);
   assert.match(insertRows.description, /exactly one string per column/i);
   assert.match(insertColumn.description, /one column/i);
 });
 
 test("registry exposes table mutation tools when Rust caps are advertised", () => {
-  const names = createDocumentToolRegistry(mutableDocumentCapabilities(), {
-    format: "docx",
-  })
+  const names = createDocumentToolRegistry(mutableDocumentCapabilities())
     .list()
     .map((tool) => tool.name);
   assert.ok(names.includes(DOCUMENT_TOOL_NAMES.setTableCellsText));
@@ -138,7 +177,7 @@ test("set_table_cells_text persists once, advances DocumentRef, re-inspect sees 
             {
               handle: "t1",
               occurrence: 1,
-              rows: rows.length,
+              rowCount: rows.length,
               cols: 2,
               isRectangular: true,
               cells: rows,
@@ -207,9 +246,7 @@ test("set_table_cells_text persists once, advances DocumentRef, re-inspect sees 
       ]),
       assistantOnlyResponse("Updated roles"),
     ]),
-    tools: createDocumentToolRegistry(mutableDocumentCapabilities(), {
-      format: "docx",
-    }),
+    tools: createDocumentToolRegistry(mutableDocumentCapabilities()),
     runtime,
     mutations: createInMemoryDocumentMutationExecutor(runtime),
     events,
@@ -366,9 +403,7 @@ test("table mutation precondition failure does not advance DocumentRef", async (
       ]),
       assistantOnlyResponse("failed"),
     ]),
-    tools: createDocumentToolRegistry(mutableDocumentCapabilities(), {
-      format: "docx",
-    }),
+    tools: createDocumentToolRegistry(mutableDocumentCapabilities()),
     runtime,
     mutations: createInMemoryDocumentMutationExecutor(runtime),
     events,
@@ -429,9 +464,7 @@ test("UNSUPPORTED_OPERATION for column insert does not advance", async () => {
       ]),
       assistantOnlyResponse("unsupported"),
     ]),
-    tools: createDocumentToolRegistry(mutableDocumentCapabilities(), {
-      format: "docx",
-    }),
+    tools: createDocumentToolRegistry(mutableDocumentCapabilities()),
     runtime,
     mutations: createInMemoryDocumentMutationExecutor(runtime),
     events,

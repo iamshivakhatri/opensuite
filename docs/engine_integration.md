@@ -61,7 +61,12 @@ exact immutable version N
 * Rust is capability / semantic source of truth.
 * Inspect focuses: overview, headings, paragraphs, tables, context — paged collections use offset/limit (default 20, max 100).
 * Occurrence/order from inspect is VERSION-LOCAL — never persist as durable identity.
+* Table inspect returns opaque artifact-local handles (table/column/row/cell). Mutations accept those
+  handles alongside semantic selectors. Prefer handles for blank/duplicate targets; re-inspect after N→N+1.
+* Proven blank-row path: inspect(tables) → cell handles → one atomic `set_table_cells_text` → persist N+1.
 * Table workflow: inspect(tables) → set cells / insert rows / insert one column → re-inspect.
+* Current engine verify for column insert still needs `headerCells` even with handles —
+  app rejects handle-only column insert as `VALIDATION_FAILED` before N-API (avoids process abort).
 * Limits: simple top-level rectangular tables; column insert needs explicit `w:tblGrid`; merged/nested/complex → `UNSUPPORTED_OPERATION`.
 * Find `mode: "semantic"` is unsupported on the real adapter (use `text`).
 * `MockDocumentRuntime` remains for isolated tests; API DOCX default is OpenSuiteEngineAdapter; PPTX/XLSX remain mock.

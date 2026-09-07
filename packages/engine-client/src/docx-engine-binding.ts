@@ -45,23 +45,33 @@ export interface DocxReplaceTextBindingResult {
 /** Alias — all mutate bindings share the same verified-artifact result shape. */
 export type DocxMutationBindingResult = DocxReplaceTextBindingResult;
 
-/** Semantic table target (header cells + optional version-local occurrence). */
+/** Semantic or handle-based table target. */
 export interface DocxTableTarget {
-  readonly headerCells: readonly string[];
+  readonly headerCells?: readonly string[];
   readonly occurrence?: number;
+  /** Opaque artifact-local table handle from inspect. */
+  readonly handle?: string;
 }
 
 export interface DocxTableRowAnchor {
-  readonly firstCellText: string;
+  readonly firstCellText?: string;
   readonly occurrence?: number;
+  /** Opaque artifact-local row handle from inspect. */
+  readonly handle?: string;
 }
 
+export type DocxTableCellTarget =
+  | {
+      readonly handle: string;
+    }
+  | {
+      readonly rowLabel: string;
+      readonly columnHeader: string;
+      readonly occurrence?: number;
+    };
+
 export interface DocxTableCellUpdate {
-  readonly target: {
-    readonly rowLabel: string;
-    readonly columnHeader: string;
-    readonly occurrence?: number;
-  };
+  readonly target: DocxTableCellTarget;
   readonly expectedCurrentText: string;
   readonly replacement: string;
 }
@@ -81,7 +91,8 @@ export interface DocxInsertTableRowsOperation {
 
 export interface DocxInsertTableColumnOperation {
   readonly table: DocxTableTarget;
-  readonly afterColumnHeader: string;
+  readonly afterColumnHeader?: string;
+  readonly afterColumnHandle?: string;
   readonly header: string;
   readonly cells: readonly string[];
   readonly baseRevision?: string;
@@ -174,11 +185,25 @@ export interface DocxInspectParagraphItem {
   readonly styleName?: string;
 }
 
+export interface DocxInspectTableColumn {
+  readonly occurrence: number;
+  readonly handle: string;
+  readonly text: string;
+}
+
+export interface DocxInspectTableRow {
+  readonly handle: string;
+  readonly cells: readonly string[];
+  readonly cellHandles: readonly string[];
+}
+
 export interface DocxInspectTableItem {
   readonly occurrence: number;
+  readonly handle: string;
   readonly rowCount: number;
   readonly isRectangular: boolean;
-  readonly rows: readonly { readonly cells: readonly string[] }[];
+  readonly columns: readonly DocxInspectTableColumn[];
+  readonly rows: readonly DocxInspectTableRow[];
 }
 
 export interface DocxInspectContextUnit {
@@ -295,9 +320,19 @@ type NativeEngineModule = {
       page: DocxInspectionPageMeta;
       items: Array<{
         occurrence: number;
+        handle: string;
         rowCount: number;
         isRectangular: boolean;
-        rows: Array<{ cells: string[] }>;
+        columns: Array<{
+          occurrence: number;
+          handle: string;
+          text: string;
+        }>;
+        rows: Array<{
+          handle: string;
+          cells: string[];
+          cellHandles: string[];
+        }>;
       }>;
     };
     context?: {
@@ -431,20 +466,9 @@ export async function createNapiDocxEngineBinding(): Promise<DocxEngineBinding> 
       const response = await native.executeDocxSetTableCellsText(
         Buffer.from(input),
         {
-          table: {
-            headerCells: [...operation.table.headerCells],
-            ...(operation.table.occurrence !== undefined
-              ? { occurrence: operation.table.occurrence }
-              : {}),
-          },
+          table: toNativeTableTarget(operation.table),
           updates: operation.updates.map((update) => ({
-            target: {
-              rowLabel: update.target.rowLabel,
-              columnHeader: update.target.columnHeader,
-              ...(update.target.occurrence !== undefined
-                ? { occurrence: update.target.occurrence }
-                : {}),
-            },
+            target: toNativeCellTarget(update.target),
             expectedCurrentText: update.expectedCurrentText,
             replacement: update.replacement,
           })),
@@ -460,18 +484,8 @@ export async function createNapiDocxEngineBinding(): Promise<DocxEngineBinding> 
       const response = await native.executeDocxInsertTableRows(
         Buffer.from(input),
         {
-          table: {
-            headerCells: [...operation.table.headerCells],
-            ...(operation.table.occurrence !== undefined
-              ? { occurrence: operation.table.occurrence }
-              : {}),
-          },
-          after: {
-            firstCellText: operation.after.firstCellText,
-            ...(operation.after.occurrence !== undefined
-              ? { occurrence: operation.after.occurrence }
-              : {}),
-          },
+          table: toNativeTableTarget(operation.table),
+          after: toNativeRowAnchor(operation.after),
           rows: operation.rows.map((row) => [...row]),
           ...(operation.baseRevision !== undefined
             ? { baseRevision: operation.baseRevision }
@@ -485,13 +499,13 @@ export async function createNapiDocxEngineBinding(): Promise<DocxEngineBinding> 
       const response = await native.executeDocxInsertTableColumn(
         Buffer.from(input),
         {
-          table: {
-            headerCells: [...operation.table.headerCells],
-            ...(operation.table.occurrence !== undefined
-              ? { occurrence: operation.table.occurrence }
-              : {}),
-          },
-          afterColumnHeader: operation.afterColumnHeader,
+          table: toNativeTableTarget(operation.table),
+          ...(operation.afterColumnHeader !== undefined
+            ? { afterColumnHeader: operation.afterColumnHeader }
+            : {}),
+          ...(operation.afterColumnHandle !== undefined
+            ? { afterColumnHandle: operation.afterColumnHandle }
+            : {}),
           header: operation.header,
           cells: [...operation.cells],
           ...(operation.baseRevision !== undefined
@@ -501,6 +515,37 @@ export async function createNapiDocxEngineBinding(): Promise<DocxEngineBinding> 
       );
       return mapMutationBindingResponse(response);
     },
+  };
+}
+
+function toNativeTableTarget(table: DocxTableTarget): Record<string, unknown> {
+  return {
+    ...(table.headerCells !== undefined
+      ? { headerCells: [...table.headerCells] }
+      : {}),
+    ...(table.occurrence !== undefined ? { occurrence: table.occurrence } : {}),
+    ...(table.handle !== undefined ? { handle: table.handle } : {}),
+  };
+}
+
+function toNativeRowAnchor(after: DocxTableRowAnchor): Record<string, unknown> {
+  return {
+    ...(after.firstCellText !== undefined
+      ? { firstCellText: after.firstCellText }
+      : {}),
+    ...(after.occurrence !== undefined ? { occurrence: after.occurrence } : {}),
+    ...(after.handle !== undefined ? { handle: after.handle } : {}),
+  };
+}
+
+function toNativeCellTarget(target: DocxTableCellTarget): Record<string, unknown> {
+  if ("handle" in target) {
+    return { handle: target.handle };
+  }
+  return {
+    rowLabel: target.rowLabel,
+    columnHeader: target.columnHeader,
+    ...(target.occurrence !== undefined ? { occurrence: target.occurrence } : {}),
   };
 }
 

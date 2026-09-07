@@ -1,5 +1,6 @@
 import {
   createMockDocumentRuntime,
+  mockCapabilitiesForFormat,
   type DocumentRuntime,
   type RuntimeCapabilities,
 } from "@opensuite/agent-core";
@@ -23,20 +24,23 @@ export type DocumentRuntimeResolver = (input: {
  *   PPTX/XLSX/unknown → mock runtime (engine not wired yet)
  *
  * DOCX never falls back to mock fixture content.
+ * Mock formats advertise their own capability ids (not DOCX mutation caps).
  */
 export function createDocumentRuntimeResolver(input: {
   readonly documents: Pick<DocumentService, "readExactVersionBytes">;
   readonly binding: DocxEngineBinding;
-  readonly mockCapabilities: RuntimeCapabilities;
+  /** @deprecated Ignored for mock formats — use format-specific mock caps. */
+  readonly mockCapabilities?: RuntimeCapabilities;
 }): DocumentRuntimeResolver {
-  const { documents, binding, mockCapabilities } = input;
-  const mockRuntime = createMockDocumentRuntime({
-    capabilities: mockCapabilities,
-  });
+  const { documents, binding } = input;
 
   return ({ format, ownerUserId }) => {
     if (format !== "docx") {
-      return mockRuntime;
+      const mockFormat =
+        format === "pptx" || format === "xlsx" ? format : undefined;
+      return createMockDocumentRuntime({
+        capabilities: mockCapabilitiesForFormat(mockFormat),
+      });
     }
 
     return createOpenSuiteEngineAdapter({

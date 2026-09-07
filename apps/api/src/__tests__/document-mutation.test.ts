@@ -408,8 +408,10 @@ test("applySetTableCellsText reuses persist lifecycle once", async () => {
     table: { headerCells: ["Name", "Role"] },
     updates: [
       {
-        rowLabel: "Alice",
-        columnHeader: "Role",
+        target: {
+          rowLabel: "Alice",
+          columnHeader: "Role",
+        },
         expectedCurrentText: "CEO",
         replacement: "Founder & CEO",
       },

@@ -103,7 +103,12 @@ export function createAgentDocumentMutationExecutor(input: {
         ownerUserId: input.ownerUserId,
         baseVersionId: request.document.versionId,
         table: request.table,
-        afterColumnHeader: request.afterColumnHeader,
+        ...(request.afterColumnHeader !== undefined
+          ? { afterColumnHeader: request.afterColumnHeader }
+          : {}),
+        ...(request.afterColumnHandle !== undefined
+          ? { afterColumnHandle: request.afterColumnHandle }
+          : {}),
         header: request.header,
         cells: request.cells,
         runtime: input.runtime,
