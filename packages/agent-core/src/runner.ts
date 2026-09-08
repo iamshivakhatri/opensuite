@@ -10,7 +10,6 @@ import {
   type AgentEvent,
   type AgentEventSink,
 } from "./events.js";
-import { transformContext } from "./model-context.js";
 import {
   requiresConfirmation,
   toolExecutionMode,
@@ -66,6 +65,22 @@ export interface ModelTimeoutContext {
   readonly toolOutcomes: readonly ToolOutcome[];
 }
 
+/**
+ * Canonical transcript → model-facing messages. AgentRunner owns *when*
+ * this runs; the injected function owns *what* projection occurs.
+ * Must not mutate the input transcript.
+ */
+export type TransformAgentContext = (
+  transcript: readonly ModelMessage[],
+) => ModelMessage[];
+
+/** Generic default: pass transcript through unchanged (shallow copy). */
+export function identityTransformContext(
+  transcript: readonly ModelMessage[],
+): ModelMessage[] {
+  return [...transcript];
+}
+
 export interface AgentRunnerOptions {
   readonly model: AgentModel;
   /** Tool registry used when `selectTurnTools` is omitted (fixed every turn). */
@@ -85,6 +100,12 @@ export interface AgentRunnerOptions {
    * Omit for tools that need no execution context beyond runId/signal/events.
    */
   readonly createToolContext?: CreateToolExecutionContext;
+  /**
+   * Injected canonical-transcript → model-facing projection. AgentRunner calls
+   * this immediately before each `model.complete`; it never interprets the
+   * projection. Omit for identity (tests / non-document runs).
+   */
+  readonly transformContext?: TransformAgentContext;
   /** Decide whether assistant content plus this completed tool batch may finish the run. */
   readonly shouldTerminalizeToolBatch?: (context: ToolBatchContext) => boolean;
   /** Return a user message to retry one timed-out model turn, or nothing to fail. */
@@ -123,6 +144,7 @@ export class AgentRunner {
   private readonly tools: ToolRegistry;
   private readonly selectTurnTools: TurnToolSelector;
   private readonly createToolContext: CreateToolExecutionContext;
+  private readonly transformContext: TransformAgentContext;
   private readonly shouldTerminalizeToolBatch:
     | ((context: ToolBatchContext) => boolean)
     | undefined;
@@ -150,6 +172,8 @@ export class AgentRunner {
       options.selectTurnTools ??
       createFixedTurnToolSelector(this.tools, this.capabilities);
     this.createToolContext = options.createToolContext ?? ((base) => base);
+    this.transformContext =
+      options.transformContext ?? identityTransformContext;
     this.shouldTerminalizeToolBatch = options.shouldTerminalizeToolBatch;
     this.getModelTimeoutRetryMessage = options.getModelTimeoutRetryMessage;
     this.requiredToolsNudgeMessage =
@@ -253,7 +277,7 @@ export class AgentRunner {
             at: this.timestamp(),
           });
 
-          const modelMessages = transformContext(transcript);
+          const modelMessages = this.transformContext(transcript);
           const toolsForModel = forceAnswerOnly ? [] : selection.toolsForModel;
           const toolChoice = forceAnswerOnly ? undefined : selection.toolChoice;
           turnToolChoice = toolChoice;

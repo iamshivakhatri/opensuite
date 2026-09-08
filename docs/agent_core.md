@@ -27,7 +27,7 @@ AgentRequest
   → AgentResult
 ```
 
-### OpenSuite policy boundaries (AgentRunner v2 Steps 3–4)
+### OpenSuite policy boundaries (AgentRunner v2 Steps 3–5B)
 
 `AgentRunner` is domain-agnostic for tools and document state:
 
@@ -35,18 +35,23 @@ AgentRequest
   is only `{ toolOutcomes, signal }` (no `DocumentRef`).
 * Calls injected `CreateToolExecutionContext` once **per tool execution** —
   does not construct or interpret document fields on the context.
+* Calls injected `TransformAgentContext` immediately before each
+  `model.complete` — owns *when* model context is prepared; does not own
+  OpenSuite/document projection policy. Default is identity.
 * Does **not** own document run state, runtime/mutation services, tool names,
-  write detection, terminalization rules, or authoring timeout guidance.
+  write detection, terminalization rules, authoring timeout guidance, or
+  model-context projection.
 * Calls an injected generic tool-batch predicate after execution; OpenSuite
   decides whether successful writes plus assistant content may finish the run.
 * On model timeout, an injected policy may supply one retry message; the runner
   owns the timer and one-retry limit but does not interpret authoring state.
 
 OpenSuite document runs wire these via `createDocumentAgentRunnerOptions` /
-`createDocumentRunState` + `createDocumentTurnToolSelector` +
-`createDocumentToolContext` (`document-tools/`). The selector closes over
-`state.primary` for capability discovery; the context factory reads the same
-state fresh each call so sequential writes observe N→N+1→N+2.
+`createDocumentAgentRunnerPolicyOptions` (selector + per-tool context +
+`transformContext` from `model-context.ts` + terminalization/timeout
+nudges). The selector closes over `state.primary` for capability discovery;
+the context factory reads the same state fresh each call so sequential
+writes observe N→N+1→N+2.
 
 ### Document tools
 

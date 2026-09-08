@@ -273,8 +273,9 @@ export type {
   AgentRunnerOptions,
   ModelTimeoutContext,
   ToolBatchContext,
+  TransformAgentContext,
 } from "./runner.js";
-export { AgentRunner } from "./runner.js";
+export { AgentRunner, identityTransformContext } from "./runner.js";
 
 export type {
   TurnToolSelection,

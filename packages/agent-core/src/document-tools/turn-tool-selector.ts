@@ -21,9 +21,11 @@ import type {
 } from "../model.js";
 import { toolEffect } from "../model.js";
 import type { ToolOutcome } from "../request.js";
+import { transformContext } from "../model-context.js";
 import type {
   ModelTimeoutContext,
   ToolBatchContext,
+  TransformAgentContext,
 } from "../runner.js";
 import type { DocumentRuntime } from "../runtime.js";
 import { ToolRegistry } from "../tools.js";
@@ -231,6 +233,7 @@ export function createDocumentAgentRunnerOptions(
   readonly tools: ToolRegistry;
   readonly selectTurnTools: TurnToolSelector;
   readonly createToolContext: CreateToolExecutionContext;
+  readonly transformContext: TransformAgentContext;
   readonly shouldTerminalizeToolBatch: (context: ToolBatchContext) => boolean;
   readonly getModelTimeoutRetryMessage: (
     context: ModelTimeoutContext,
@@ -257,6 +260,7 @@ export function createDocumentAgentRunnerOptions(
 
 export function createDocumentAgentRunnerPolicyOptions() {
   return {
+    transformContext,
     shouldTerminalizeToolBatch: shouldTerminalizeDocumentToolBatch,
     getModelTimeoutRetryMessage: getDocumentModelTimeoutRetryMessage,
     requiredToolsNudgeMessage: USE_DOCUMENT_TOOLS_NUDGE_MESSAGE,

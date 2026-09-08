@@ -1164,3 +1164,132 @@ test("STEP5A: successful-path event ordering is unchanged", async () => {
     ],
   );
 });
+
+test("STEP5B: default transformContext is identity (no OpenSuite projection)", async () => {
+  const seen: ModelMessage[][] = [];
+  const tool = createFakeTool({
+    name: "generic.echo",
+    async execute() {
+      return {
+        status: "success",
+        richPayload: "CANONICAL_RICH_OUTPUT",
+        diagnostics: [],
+      };
+    },
+  });
+
+  const runner = new AgentRunner({
+    model: createScriptedAgentModel([
+      toolCallResponse("", [
+        { id: "c1", name: "generic.echo", input: { q: "hi" } },
+      ]),
+      (request: ModelRequest) => {
+        seen.push(request.messages.map((m) => structuredClone(m)));
+        return assistantOnlyResponse("done");
+      },
+    ]),
+    tools: ToolRegistry.create([tool]),
+  });
+
+  const result = await runner.run(baseRequest());
+  assert.equal(result.status, "completed");
+  assert.equal(seen.length, 1);
+
+  const toolMsg = seen[0]!.find((m) => m.role === "tool");
+  assert.ok(toolMsg && toolMsg.role === "tool");
+  assert.equal(toolMsg.toolCallId, "c1");
+  assert.deepEqual(toolMsg.output, {
+    status: "success",
+    richPayload: "CANONICAL_RICH_OUTPUT",
+    diagnostics: [],
+  });
+});
+
+test("STEP5B: injected transformContext shapes model messages; transcript stays canonical", async () => {
+  const transformCalls: ModelMessage[][] = [];
+  const modelSeen: ModelMessage[][] = [];
+  let transformSawCanonical = false;
+
+  const tool = createFakeTool({
+    name: "generic.echo",
+    async execute() {
+      return { status: "success", secret: "KEEP_IN_TRANSCRIPT", diagnostics: [] };
+    },
+  });
+
+  const runner = new AgentRunner({
+    model: createScriptedAgentModel([
+      toolCallResponse("calling", [
+        { id: "call-1", name: "generic.echo", input: { n: 1 } },
+      ]),
+      (request: ModelRequest) => {
+        modelSeen.push(request.messages.map((m) => structuredClone(m)));
+        return assistantOnlyResponse("ok");
+      },
+    ]),
+    tools: ToolRegistry.create([tool]),
+    transformContext(transcript) {
+      transformCalls.push(transcript.map((m) => structuredClone(m)));
+      const toolMsg = transcript.find((m) => m.role === "tool");
+      if (
+        toolMsg &&
+        toolMsg.role === "tool" &&
+        toolMsg.output &&
+        typeof toolMsg.output === "object" &&
+        "secret" in (toolMsg.output as object)
+      ) {
+        transformSawCanonical = true;
+      }
+      return transcript.map((message) => {
+        if (message.role !== "tool") return message;
+        return {
+          ...message,
+          output: { projected: true, toolCallId: message.toolCallId },
+          summary: "PROJECTED",
+        };
+      });
+    },
+  });
+
+  const result = await runner.run(baseRequest());
+  assert.equal(result.status, "completed");
+
+  // Transformer ran before the second model.complete (after the tool turn).
+  assert.ok(transformCalls.length >= 2);
+  assert.equal(modelSeen.length, 1);
+  assert.equal(transformSawCanonical, true);
+
+  const modelTool = modelSeen[0]!.find((m) => m.role === "tool");
+  assert.ok(modelTool && modelTool.role === "tool");
+  assert.equal(modelTool.toolCallId, "call-1");
+  assert.equal(modelTool.summary, "PROJECTED");
+  assert.deepEqual(modelTool.output, {
+    projected: true,
+    toolCallId: "call-1",
+  });
+
+  // Pairing preserved for the provider.
+  const assistantWithCall = modelSeen[0]!.find(
+    (m) => m.role === "assistant" && m.toolCalls?.length,
+  );
+  assert.ok(assistantWithCall && assistantWithCall.role === "assistant");
+  assert.equal(assistantWithCall.toolCalls?.[0]?.id, "call-1");
+
+  // Canonical tool outcome (and thus transcript source of truth) unchanged.
+  assert.equal(result.toolOutcomes.length, 1);
+  assert.deepEqual(result.toolOutcomes[0]?.output, {
+    status: "success",
+    secret: "KEEP_IN_TRANSCRIPT",
+    diagnostics: [],
+  });
+
+  // Input to the transformer still had the rich canonical tool result.
+  const lastTransformInput = transformCalls[transformCalls.length - 1]!;
+  const canonicalTool = lastTransformInput.find((m) => m.role === "tool");
+  assert.ok(canonicalTool && canonicalTool.role === "tool");
+  assert.deepEqual(canonicalTool.output, {
+    status: "success",
+    secret: "KEEP_IN_TRANSCRIPT",
+    diagnostics: [],
+  });
+});
