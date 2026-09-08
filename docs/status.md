@@ -5,54 +5,40 @@ _Read this before starting any work. Keep it a concise current-state handoff, no
 ## What Exists
 
 * Workspace shell, Casual Docs DOCX, engine-backed inspect/mutate, blank create, workspace agent.
-* **Agent Efficiency v1–v3:** projection, timeouts, force-tools, write-batch terminalization, arg compaction, create-force Q&A fix, `pnpm agent:bench`.
-* **Agent Efficiency v4:** leaner tool descriptions/schemas + system prompt; slimmer model-facing inspect/mutation projection; fixture styles for Heading 1; semantic-cell guidance for batched writes.
+* **Agent Efficiency v1–v4:** projection, timeouts, force-tools, write-batch terminalization, arg compaction, lean model surface.
+* **AgentCore v2 Step 1:** removed dead `AgentRunContext`; `document.version.advanced` now emitted from `executePersistedMutation` (not AgentRunner).
+* **AgentCore v2 Step 2:** `AgentRunner` delegates turn tool-surface/tool-choice to one injected `TurnToolSelector` hook (see `docs/agent_core.md`).
 
 ## Just Completed
 
-* v4 lean model surface + failure root-causes (style fixture; stale handles on batched cell writes). Re-benched vs `deepseek/deepseek-v4-flash-0731`.
+* AgentCore v2 milestone 2 — extracted turn-tool selection. `AgentRunner` calls `selectTurnTools` once per turn instead of owning capability bootstrap/re-discovery, post-create narrowing, and create/write force-tools policy. That policy (moved verbatim) now lives in `createDocumentTurnToolSelector` (`document-tools/turn-tool-selector.ts`); `AgentRunnerOptions.documentToolCatalog` is a thin back-compat convenience that builds it. The "nudge to use tools" check is now generic (`toolChoice === "required"`) — no document tool names in that path. Behavior-preserving; all existing tests pass unchanged; bench 5/5.
 
 ## Current Decisions
 
 * Soft-delete; optimistic concurrency; Rust SoT; `pnpm dev:api` rebuilds agent-core first.
 * Terminalize on Done (≥12 chars) + successful writes; canonical transcript stays rich.
 * Bench stays developer-local (`.agent-bench/`).
+* AgentCore v2 migration continues incrementally; next is `RunDocumentState`/handle ownership + terminalization extraction (not started).
 
 ## Verification Status
 
 | Check | Status |
 |---|---|
-| `pnpm --filter @opensuite/agent-core test` | **Pass** (163) |
+| `pnpm --filter @opensuite/agent-core test` | **Pass** (165) |
 | `pnpm --filter @opensuite/api test` | **Pass** (100+17 skip) |
+| `pnpm typecheck` | **Pass** |
 | `pnpm agent:bench` | **Pass** (5/5) |
 | `git diff --check` | **Pass** |
 
-## Benchmark (same model) BEFORE v3 → AFTER v4
+## Benchmark (post Step 2)
 
-Provider/model: `openrouter` / `deepseek/deepseek-v4-flash-0731`
-
-| Scenario | Turns B→A | Fail B→A | Total B→A | Schema B→A |
-|---|---|---|---|---|
-| simple-read | 2→2 | 0→0 | 4.4s→4.4s | 23.0→16.6KB |
-| simple-edit | 4→4 | 1→0 | 27.8s→5.8s | 23.0→16.6KB |
-| greenfield-small | 4→3 | 0→1* | 6.9s→20.3s | 7.4→5.4KB post-create |
-| greenfield-large | 4→5 | 0→0 | 28.3s→18.7s | (same pattern) |
-| reason-mutate | 6→4 | 1→0 | 19.2s→13.5s | 23.0→16.6KB |
-
-\*one `create_table` invalid input then retry — model-side, not engine contract.
-
-* Catalog ~**22592→16301** bytes; system prompt ~**4055→2410** bytes.
-* Suite model time ~**86.6s→62.7s**; engine/persist still ~0.
-* simple-edit style now succeeds (fixtures include styles.xml).
-* reason-mutate: no cell-write retry (semantic targeting / guidance).
-* Greenfield still not reliably 2 turns (model splits authoring) — guidance tightened; not AgentRunner rewrite.
-
-**Largest remaining bottleneck:** model/provider latency + model turn-splitting on greenfield — not engine/persistence.
+Provider/model: `openrouter` / `deepseek/deepseek-v4-flash-0731` — all 5 scenarios `ok`, turn counts unchanged (2/4/3/4/3). Latency noise vs prior runs; invariants hold (success, turns in expected band, version events intact).
 
 ## Intentionally Deferred
 
-* Planner/DAG/sub-agents; AgentRunner redesign; model bakeoff; production analytics
+* AgentCore v2 Steps 3+: `RunDocumentState`/`ArtifactHandleRegistry` ownership move, terminalization + authoring-timeout-retry extraction (still reference `CREATE_BLANK_TOOL`/`document.*` in `runner.ts`), context-hook injection
+* Planner/DAG/sub-agents; model bakeoff; production analytics
 
 ## Recommended Next Step
 
-Optional: further slim large `inspect(tables)` affordance payloads, or nudge post-create narrow catalog to keep style+table+Done in one forced-tools turn — still without rewriting AgentRunner.
+AgentCore v2 Step 3: move `RunDocumentState` / `ArtifactHandleRegistry` ownership and write-batch terminalization (+ authoring-timeout-retry, which still hardcodes `workspace.create_blank_docx`/`document.*`) out of `AgentRunner`.

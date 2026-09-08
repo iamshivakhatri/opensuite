@@ -46,9 +46,6 @@ export type {
   ToolOutcome,
 } from "./request.js";
 
-export type { AgentRunContext } from "./context.js";
-export { createAgentRunContext } from "./context.js";
-
 export type {
   AgentModel,
   AgentTool,
@@ -217,6 +214,7 @@ export {
   createDocumentSetTableFormattingTool,
   createDocumentSetTextFormattingTool,
   createDocumentToolRegistry,
+  createDocumentTurnToolSelector,
   createSlidesUpdateTextTool,
   createWorkbookSetCellsTool,
   discoverDocumentToolsFromRuntime,
@@ -244,6 +242,7 @@ export type {
   DocumentSetTableCellsTextInput,
   DocumentSetTableFormattingInput,
   DocumentSetTextFormattingInput,
+  DocumentTurnToolSelectorOptions,
   SlidesUpdateTextInput,
   WorkbookSetCellsInput,
 } from "./document-tools.js";
@@ -263,6 +262,13 @@ export { InMemorySteeringQueue } from "./steering.js";
 
 export type { AgentRunOptions, AgentRunnerOptions } from "./runner.js";
 export { AgentRunner } from "./runner.js";
+
+export type {
+  TurnToolSelection,
+  TurnToolSelector,
+  TurnToolSelectorContext,
+  TurnToolSelectorResult,
+} from "./turn-tools.js";
 
 export {
   assistantOnlyResponse,

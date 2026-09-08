@@ -139,8 +139,9 @@ export function requireMutations(
 
 /**
  * Shared DOCX persisted-mutation path:
- * validate handles → mutations executor → immutable N+1 → advance RunDocumentState.
- * Does not advance on error. Does not call Rust when handles are stale/unknown.
+ * validate handles → mutations executor → immutable N+1 → advance RunDocumentState
+ * → emit document.version.advanced.
+ * Does not advance or emit on error. Does not call Rust when handles are stale/unknown.
  */
 export async function executePersistedMutation(
   ctx: ToolExecutionContext,
@@ -163,6 +164,19 @@ export async function executePersistedMutation(
     throw diagnosticError(result.diagnostics[0]!);
   }
   ctx.advancePrimaryDocument?.(result.document);
+  // Domain event: emit here so AgentRunner stays mutation-result-agnostic.
+  // Order relative to runner emits: tool.started → this → tool.completed.
+  await ctx.events.emit({
+    type: "document.version.advanced",
+    runId: ctx.runId,
+    documentId: result.document.documentId,
+    versionId: result.document.versionId,
+    ...(result.versionNumber !== undefined
+      ? { versionNumber: result.versionNumber }
+      : {}),
+    baseVersionId: result.baseVersionId,
+    at: new Date().toISOString(),
+  });
   return {
     status: "success",
     diagnostics: result.diagnostics,

@@ -688,3 +688,67 @@ test("LIMITS: repeated same-tool failures force answer-only turn", async () => {
   );
   assert.equal(result.summary, "ignored-tools");
 });
+
+test("GENERIC SELECTOR: AgentRunner defers entirely to an injected selectTurnTools with no document tool names", async () => {
+  // Fake tool surface unrelated to documents — proves AgentRunner has no
+  // baked-in knowledge of document/OpenSuite tool names for turn selection.
+  const searchTool = createFakeTool({
+    name: "widgets.search",
+    async execute() {
+      return { found: true };
+    },
+  });
+  const buyTool = createFakeTool({
+    name: "widgets.buy",
+    async execute() {
+      return { purchased: true };
+    },
+  });
+  const registry = ToolRegistry.create([searchTool, buyTool]);
+
+  const seenToolChoices: Array<"auto" | "required" | undefined> = [];
+  let selectorCalls = 0;
+  const selectTurnTools = async (context: {
+    toolOutcomes: readonly { toolName: string; status: string }[];
+  }) => {
+    selectorCalls += 1;
+    const bought = context.toolOutcomes.some(
+      (o) => o.toolName === "widgets.buy" && o.status === "succeeded",
+    );
+    const toolChoice = bought ? undefined : ("required" as const);
+    seenToolChoices.push(toolChoice);
+    return {
+      status: "ok" as const,
+      registry,
+      toolsForModel: registry.definitions(),
+      toolChoice,
+      capabilities: { ids: new Set<string>() },
+    };
+  };
+
+  const model = createScriptedAgentModel([
+    toolCallResponse("searching", [
+      { id: "c1", name: searchTool.name, input: {} },
+    ]),
+    toolCallResponse("buying", [
+      { id: "c2", name: buyTool.name, input: {} },
+    ]),
+    assistantOnlyResponse("All done shopping."),
+  ]);
+
+  const runner = new AgentRunner({
+    model,
+    tools: ToolRegistry.create([]),
+    selectTurnTools,
+  });
+
+  const result = await runner.run(baseRequest());
+  assert.equal(result.status, "completed");
+  assert.equal(result.summary, "All done shopping.");
+  assert.equal(selectorCalls, 3);
+  assert.deepEqual(seenToolChoices, ["required", "required", undefined]);
+  assert.deepEqual(
+    result.toolOutcomes.map((o) => o.toolName),
+    ["widgets.search", "widgets.buy"],
+  );
+});

@@ -67,11 +67,16 @@ describe("document tool shared abstractions", () => {
       format: "docx",
     };
     let advanced: DocumentRef | undefined;
+    const emitted: string[] = [];
     const ctx: ToolExecutionContext = {
       runId: "run",
       primaryDocument: doc,
       signal: new AbortController().signal,
-      events: { emit() {} },
+      events: {
+        emit(event) {
+          emitted.push(event.type);
+        },
+      },
       runtime,
       mutations,
       advancePrimaryDocument: (next) => {
@@ -89,8 +94,10 @@ describe("document tool shared abstractions", () => {
     assert.equal(ok.status, "success");
     assert.ok(advanced);
     assert.notEqual(advanced!.versionId, doc.versionId);
+    assert.deepEqual(emitted, ["document.version.advanced"]);
 
     advanced = undefined;
+    emitted.length = 0;
     await assert.rejects(
       () =>
         executePersistedMutation(ctx, "document.replace_text", async () => ({
@@ -108,5 +115,6 @@ describe("document tool shared abstractions", () => {
         error instanceof AgentCoreError && error.code === "TOOL_FAILURE",
     );
     assert.equal(advanced, undefined);
+    assert.deepEqual(emitted, []);
   });
 });

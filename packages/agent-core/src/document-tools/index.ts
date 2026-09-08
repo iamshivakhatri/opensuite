@@ -105,6 +105,8 @@ export type {
 export { defineDocumentTool } from "./define-tool.js";
 export type { DocumentToolDefinition } from "./define-tool.js";
 export type { StructuralHandle } from "./selectors.js";
+export { createDocumentTurnToolSelector } from "./turn-tool-selector.js";
+export type { DocumentTurnToolSelectorOptions } from "./turn-tool-selector.js";
 
 /**
  * Full model-facing document tool catalog (unfiltered).

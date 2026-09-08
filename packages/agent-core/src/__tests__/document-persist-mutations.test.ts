@@ -114,14 +114,141 @@ test("same-run read-after-write: replace advances primaryDocument for next find"
   );
   assert.equal(advanced.length, 1);
   if (advanced[0]?.type === "document.version.advanced") {
+    assert.equal(advanced[0].runId, "run-raw");
+    assert.equal(advanced[0].documentId, "doc-docx");
     assert.equal(advanced[0].baseVersionId, "ver-1");
     assert.equal(advanced[0].versionId, "ver-1+1");
+    assert.equal(advanced[0].versionNumber, 2);
   }
+
+  // Ordering: tool.started → document.version.advanced → tool.completed (per write).
+  const replaceIdx = events.events.findIndex(
+    (e) =>
+      e.type === "tool.started" &&
+      e.toolName === DOCUMENT_TOOL_NAMES.replaceText,
+  );
+  const advancedIdx = events.events.findIndex(
+    (e) => e.type === "document.version.advanced",
+  );
+  const completedIdx = events.events.findIndex(
+    (e) =>
+      e.type === "tool.completed" &&
+      e.toolName === DOCUMENT_TOOL_NAMES.replaceText,
+  );
+  assert.ok(replaceIdx >= 0);
+  assert.ok(advancedIdx > replaceIdx);
+  assert.ok(completedIdx > advancedIdx);
 
   const replaceOutcome = result.toolOutcomes.find(
     (o) => o.toolName === DOCUMENT_TOOL_NAMES.replaceText,
   );
   assert.equal(replaceOutcome?.status, "succeeded");
+});
+
+test("sequential writes in one model response: one version event each, ordered", async () => {
+  const events = createRecordingEventSink();
+  const runtime = createFakeDocumentRuntime({
+    capabilities: mutableDocumentCapabilities(),
+    async execute() {
+      return {
+        status: "success",
+        diagnostics: [],
+        change: {
+          operation: "document.replace_text",
+          area: "paragraph",
+          before: "a",
+          after: "b",
+        },
+        artifactBytes: new Uint8Array([1]),
+      };
+    },
+  });
+
+  const runner = new AgentRunner({
+    model: createScriptedAgentModel([
+      toolCallResponse("Applied three edits.", [
+        {
+          id: "r1",
+          name: DOCUMENT_TOOL_NAMES.replaceText,
+          input: { find: "A", replace: "B" },
+        },
+        {
+          id: "r2",
+          name: DOCUMENT_TOOL_NAMES.replaceText,
+          input: { find: "C", replace: "D" },
+        },
+        {
+          id: "r3",
+          name: DOCUMENT_TOOL_NAMES.replaceText,
+          input: { find: "E", replace: "F" },
+        },
+      ]),
+    ]),
+    tools: createDocumentToolRegistry(mutableDocumentCapabilities()),
+    runtime,
+    mutations: createInMemoryDocumentMutationExecutor(runtime),
+    events,
+    capabilities: mutableDocumentCapabilities(),
+  });
+
+  const result = await runner.run({
+    instruction: "Three replacements in one turn",
+    threadId: "t1",
+    runId: "run-seq-batch",
+    primaryDocument: docxRef,
+  });
+
+  assert.equal(result.status, "completed");
+  assert.equal(result.toolOutcomes.length, 3);
+  assert.deepEqual(
+    result.toolOutcomes.map((o) => o.status),
+    ["succeeded", "succeeded", "succeeded"],
+  );
+
+  const advanced = events.events.filter(
+    (e) => e.type === "document.version.advanced",
+  );
+  assert.equal(advanced.length, 3);
+  assert.deepEqual(
+    advanced.map((e) =>
+      e.type === "document.version.advanced" ? e.versionId : null,
+    ),
+    ["ver-1+1", "ver-1+1+2", "ver-1+1+2+3"],
+  );
+  assert.deepEqual(
+    advanced.map((e) =>
+      e.type === "document.version.advanced" ? e.baseVersionId : null,
+    ),
+    ["ver-1", "ver-1+1", "ver-1+1+2"],
+  );
+  assert.deepEqual(
+    advanced.map((e) =>
+      e.type === "document.version.advanced" ? e.versionNumber : null,
+    ),
+    [2, 3, 4],
+  );
+
+  // Per write: started → version.advanced → completed, and writes are sequential.
+  const relevant = events.events
+    .filter((e) => {
+      if (e.type === "document.version.advanced") return true;
+      return (
+        (e.type === "tool.started" || e.type === "tool.completed") &&
+        e.toolName === DOCUMENT_TOOL_NAMES.replaceText
+      );
+    })
+    .map((e) => e.type);
+  assert.deepEqual(relevant, [
+    "tool.started",
+    "document.version.advanced",
+    "tool.completed",
+    "tool.started",
+    "document.version.advanced",
+    "tool.completed",
+    "tool.started",
+    "document.version.advanced",
+    "tool.completed",
+  ]);
 });
 
 test("multi-mutation run advances N → N+1 → N+2", async () => {

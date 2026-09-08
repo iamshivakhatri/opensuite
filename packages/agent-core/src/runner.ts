@@ -11,11 +11,8 @@ import {
   type AgentEventSink,
 } from "./events.js";
 import type { DocumentMutationExecutor } from "./document-mutation.js";
-import { isPersistedDocumentMutationToolResult } from "./document-mutation.js";
 import { ArtifactHandleRegistry } from "./artifact-handles.js";
-import {
-  filterDocumentToolsByCapabilities,
-} from "./document-tools.js";
+import { createDocumentTurnToolSelector } from "./document-tools/turn-tool-selector.js";
 import { transformContext } from "./model-context.js";
 import {
   requiresConfirmation,
@@ -35,6 +32,7 @@ import type {
 } from "./request.js";
 import type { DocumentRuntime } from "./runtime.js";
 import type { SteeringSource } from "./steering.js";
+import type { TurnToolSelector } from "./turn-tools.js";
 import {
   elapsedMs,
   measureJsonBytes,
@@ -74,20 +72,14 @@ const AUTHORING_TIMEOUT_RETRY_MESSAGE =
   "and one document.create_table with at most 6–8 rows. " +
   "Do not generate a giant single payload.";
 
-const CREATE_BLANK_TOOL = "workspace.create_blank_docx";
-
 /**
- * After blank create, only advertise core authoring tools until the first write
- * lands. A full catalog + tool_choice=required can hang slow models for minutes
- * while they stall before the first token.
+ * Blank-document creation tool name. Still referenced here only for the
+ * authoring-timeout retry heuristic and write-batch terminalization — both
+ * are deferred to a later AgentCore v2 step (not turn-tool selection).
+ * Active-tool/tool-choice selection policy (including this same constant)
+ * has moved to `document-tools/turn-tool-selector.ts`.
  */
-const POST_CREATE_AUTHORING_TOOL_NAMES = new Set<string>([
-  "document.insert_paragraph",
-  "document.insert_paragraphs",
-  "document.create_table",
-  "document.set_table_cells_text",
-  "document.set_paragraph_style",
-]);
+const CREATE_BLANK_TOOL = "workspace.create_blank_docx";
 
 
 /** Run-scoped mutable pointer to the active primary document version. */
@@ -103,9 +95,18 @@ export interface AgentRunnerOptions {
    */
   readonly tools: ToolRegistry;
   /**
-   * When set, filtered once at run bootstrap via DocumentRuntime.capabilities
-   * against the primary DocumentRef, then merged with `tools`.
-   * Omit when `tools` already contains the document tools to expose.
+   * Injected per-turn tool-selection hook (see `./turn-tools.ts`). AgentRunner
+   * calls this once per model turn and sends the returned tools/toolChoice to
+   * the model — it does not otherwise know why the tool surface changed.
+   * Omit for a fixed `tools` registry every turn (tests / non-document runs).
+   */
+  readonly selectTurnTools?: TurnToolSelector;
+  /**
+   * Convenience: when set (and `selectTurnTools` is omitted), the runner
+   * builds a document-aware default selector (capability discovery against
+   * the primary DocumentRef, merged with `tools`, post-create narrowing,
+   * create/write force-tools policy — see `createDocumentTurnToolSelector`).
+   * Prefer passing `selectTurnTools` directly for non-OpenSuite consumers.
    */
   readonly documentToolCatalog?: readonly AgentTool[];
   readonly events?: AgentEventSink;
@@ -142,7 +143,7 @@ export interface AgentRunOptions {
 export class AgentRunner {
   private readonly model: AgentModel;
   private readonly tools: ToolRegistry;
-  private readonly documentToolCatalog: readonly AgentTool[] | undefined;
+  private readonly selectTurnTools: TurnToolSelector;
   private readonly events: AgentEventSink;
   private readonly runtime: DocumentRuntime | undefined;
   private readonly mutations: DocumentMutationExecutor | undefined;
@@ -157,13 +158,21 @@ export class AgentRunner {
   constructor(options: AgentRunnerOptions) {
     this.model = options.model;
     this.tools = options.tools;
-    this.documentToolCatalog = options.documentToolCatalog;
     this.events = options.events ?? noopEventSink;
     this.runtime = options.runtime;
     this.mutations = options.mutations;
     this.confirmation = options.confirmation ?? denyAllConfirmationGate;
     this.steering = options.steering;
     this.capabilities = options.capabilities ?? createCapabilities();
+    this.selectTurnTools =
+      options.selectTurnTools ??
+      (options.documentToolCatalog
+        ? createDocumentTurnToolSelector({
+            baseTools: this.tools,
+            documentToolCatalog: options.documentToolCatalog,
+            runtime: options.runtime,
+          })
+        : createFixedTurnToolSelector(this.tools, this.capabilities));
     this.maxTurns = options.maxTurns ?? DEFAULT_MAX_TURNS;
     this.modelTurnTimeoutMs =
       options.modelTurnTimeoutMs ?? DEFAULT_MODEL_TURN_TIMEOUT_MS;
@@ -191,8 +200,6 @@ export class AgentRunner {
     const documentState: RunDocumentState = {
       primary: request.primaryDocument ?? null,
     };
-    /** True when the run began with an open primary (Q&A/edit vs blank workspace). */
-    const startedWithPrimary = request.primaryDocument != null;
     /** Opaque handle → inspected versionId for this run only. */
     const handleRegistry = new ArtifactHandleRegistry();
     /** Failures per tool name in this run (circuit breaker). */
@@ -211,60 +218,38 @@ export class AgentRunner {
     try {
       this.throwIfAborted(signal);
 
-      // Capability-driven document tool discovery — once before first model call.
-      const bootstrapped = await this.bootstrapTools(
-        documentState.primary,
-        signal,
-      );
-      if (bootstrapped.status === "failed") {
-        diagnostics.push(bootstrapped.diagnostic);
-        await this.emit({
-          type: "agent.failed",
-          runId: request.runId,
-          diagnostic: bootstrapped.diagnostic,
-          at: this.timestamp(),
-        });
-        return {
-          status: "failed",
-          summary: bootstrapped.diagnostic.message,
-          diagnostics,
-          toolOutcomes: [...toolOutcomes],
-        };
-      }
-      let activeTools = bootstrapped.tools;
-      let runCapabilities = bootstrapped.capabilities;
-      let bootstrappedPrimaryId = documentState.primary?.documentId ?? null;
+      let activeTools = this.tools;
+      let runCapabilities = this.capabilities;
 
       for (let turn = 0; turn < this.maxTurns; turn += 1) {
         this.throwIfAborted(signal);
 
-        // Re-discover document tools when primary document identity changes
-        // (e.g. workspace.create_blank_docx → edit the new file in-run).
-        const currentPrimaryId = documentState.primary?.documentId ?? null;
-        if (currentPrimaryId !== bootstrappedPrimaryId) {
-          const refreshed = await this.bootstrapTools(
-            documentState.primary,
-            signal,
-          );
-          if (refreshed.status === "failed") {
-            diagnostics.push(refreshed.diagnostic);
-            await this.emit({
-              type: "agent.failed",
-              runId: request.runId,
-              diagnostic: refreshed.diagnostic,
-              at: this.timestamp(),
-            });
-            return {
-              status: "failed",
-              summary: refreshed.diagnostic.message,
-              diagnostics,
-              toolOutcomes: [...toolOutcomes],
-            };
-          }
-          activeTools = refreshed.tools;
-          runCapabilities = refreshed.capabilities;
-          bootstrappedPrimaryId = currentPrimaryId;
+        // Ask the injected selector for this turn's tool surface every turn.
+        // AgentRunner does not know why/whether it changed (e.g. capability
+        // re-discovery after primary document identity changes) — that is
+        // the selector's responsibility (it may memoize internally).
+        const selection = await this.selectTurnTools({
+          primaryDocument: documentState.primary,
+          toolOutcomes,
+          signal,
+        });
+        if (selection.status === "failed") {
+          diagnostics.push(selection.diagnostic);
+          await this.emit({
+            type: "agent.failed",
+            runId: request.runId,
+            diagnostic: selection.diagnostic,
+            at: this.timestamp(),
+          });
+          return {
+            status: "failed",
+            summary: selection.diagnostic.message,
+            diagnostics,
+            toolOutcomes: [...toolOutcomes],
+          };
         }
+        activeTools = selection.registry;
+        runCapabilities = selection.capabilities;
 
         this.applySteering(transcript);
 
@@ -277,6 +262,7 @@ export class AgentRunner {
         });
 
         let response;
+        let turnToolChoice: "auto" | "required" | undefined;
         const messageId = this.createId();
         try {
           await this.emit({
@@ -288,15 +274,9 @@ export class AgentRunner {
           });
 
           const modelMessages = transformContext(transcript);
-          const toolsForModel = forceAnswerOnly
-            ? []
-            : selectToolsForModel(activeTools, toolOutcomes);
-          const toolChoice = resolveToolChoice(
-            forceAnswerOnly,
-            activeTools,
-            toolOutcomes,
-            startedWithPrimary,
-          );
+          const toolsForModel = forceAnswerOnly ? [] : selection.toolsForModel;
+          const toolChoice = forceAnswerOnly ? undefined : selection.toolChoice;
+          turnToolChoice = toolChoice;
           const contextMessageBytes = measureMessagesBytes(modelMessages);
           const toolCatalogBytes = measureToolCatalogBytes(toolsForModel);
           const modelStartedAt = Date.now();
@@ -463,16 +443,14 @@ export class AgentRunner {
           toolCalls: toolCalls.length > 0 ? toolCalls : undefined,
         });
 
+        // The selector's toolChoice already encodes "tools are required this
+        // turn" (see `TurnToolSelection`) — AgentRunner reuses that same
+        // signal to decide whether an empty tool-call response needs a nudge,
+        // without knowing why tools were required.
+        const toolsWereRequired = !forceAnswerOnly && turnToolChoice === "required";
+
         if (toolCalls.length === 0) {
-          if (
-            !forceAnswerOnly &&
-            !useToolsNudgeSent &&
-            shouldNudgeToUseTools(
-              activeTools,
-              toolOutcomes,
-              startedWithPrimary,
-            )
-          ) {
+          if (!useToolsNudgeSent && toolsWereRequired) {
             useToolsNudgeSent = true;
             transcript.push({
               role: "user",
@@ -487,14 +465,7 @@ export class AgentRunner {
             continue;
           }
 
-          if (
-            !forceAnswerOnly &&
-            shouldNudgeToUseTools(
-              activeTools,
-              toolOutcomes,
-              startedWithPrimary,
-            )
-          ) {
+          if (toolsWereRequired) {
             const diagnostic: Diagnostic = {
               code: "MODEL_FAILURE",
               severity: "error",
@@ -645,94 +616,6 @@ export class AgentRunner {
         toolOutcomes: [...toolOutcomes],
       };
     }
-  }
-
-  /**
-   * Resolve model-facing tools once per run.
-   * With a documentToolCatalog: DocumentRuntime.capabilities → filter.
-   * Without: use injected tools + optional static capabilities as-is.
-   */
-  private async bootstrapTools(
-    primary: DocumentRef | null,
-    signal: AbortSignal,
-  ): Promise<
-    | {
-        readonly status: "ok";
-        readonly tools: ToolRegistry;
-        readonly capabilities: RuntimeCapabilities;
-      }
-    | { readonly status: "failed"; readonly diagnostic: Diagnostic }
-  > {
-    this.throwIfAborted(signal);
-
-    if (!this.documentToolCatalog) {
-      return {
-        status: "ok",
-        tools: this.tools,
-        capabilities: this.capabilities,
-      };
-    }
-
-    if (!primary) {
-      // No primary document → only tools that need no capability (e.g. none of the catalog).
-      const filtered = filterDocumentToolsByCapabilities(
-        this.documentToolCatalog,
-        createCapabilities(),
-      );
-      return {
-        status: "ok",
-        tools: ToolRegistry.create([...this.tools.list(), ...filtered]),
-        capabilities: createCapabilities(),
-      };
-    }
-
-    if (!this.runtime) {
-      return {
-        status: "failed",
-        diagnostic: {
-          code: "CAPABILITY_DISCOVERY_FAILED",
-          severity: "error",
-          message:
-            "DocumentRuntime is required to discover document tools for this run",
-          details: {
-            documentId: primary.documentId,
-            versionId: primary.versionId,
-            format: primary.format,
-          },
-        },
-      };
-    }
-
-    let capabilities: RuntimeCapabilities;
-    try {
-      capabilities = await this.runtime.capabilities(primary);
-    } catch (error) {
-      return {
-        status: "failed",
-        diagnostic: {
-          code: "CAPABILITY_DISCOVERY_FAILED",
-          severity: "error",
-          message: "Failed to discover document runtime capabilities",
-          details: {
-            documentId: primary.documentId,
-            versionId: primary.versionId,
-            format: primary.format,
-            cause:
-              error instanceof Error ? error.message : "unknown discovery error",
-          },
-        },
-      };
-    }
-
-    const documentTools = filterDocumentToolsByCapabilities(
-      this.documentToolCatalog,
-      capabilities,
-    );
-    return {
-      status: "ok",
-      tools: ToolRegistry.create([...this.tools.list(), ...documentTools]),
-      capabilities,
-    };
   }
 
   private applySteering(transcript: ModelMessage[]): void {
@@ -1030,20 +913,6 @@ export class AgentRunner {
       this.throwIfAborted(signal);
       const output = await tool.execute(input, ctx);
       const wallMs = elapsedMs(toolStartedAt);
-      if (isPersistedDocumentMutationToolResult(output)) {
-        documentState.primary = output.document;
-        await this.emit({
-          type: "document.version.advanced",
-          runId: request.runId,
-          documentId: output.document.documentId,
-          versionId: output.document.versionId,
-          ...(output.versionNumber !== undefined
-            ? { versionNumber: output.versionNumber }
-            : {}),
-          baseVersionId: output.baseVersionId,
-          at: this.timestamp(),
-        });
-      }
       const summary = summarizeOutput(output);
       await this.emit({
         type: "tool.completed",
@@ -1232,85 +1101,6 @@ function hasSuccessfulMutation(
   );
 }
 
-function hasSuccessfulDocumentRead(
-  outcomes: readonly ToolOutcome[],
-): boolean {
-  return outcomes.some(
-    (o) =>
-      o.status === "succeeded" &&
-      (o.toolName === "document.inspect" || o.toolName === "document.find"),
-  );
-}
-
-function resolveToolChoice(
-  forceAnswerOnly: boolean,
-  tools: ToolRegistry,
-  outcomes: readonly ToolOutcome[],
-  startedWithPrimary: boolean,
-): "auto" | "required" | undefined {
-  if (forceAnswerOnly || tools.definitions().length === 0) {
-    return undefined;
-  }
-  const hasCreate = tools.get(CREATE_BLANK_TOOL) !== undefined;
-  const created = hasSuccessfulCreate(outcomes);
-  const mutated = hasSuccessfulMutation(outcomes);
-  // Post-create authoring: force tools until first document write.
-  if (created && !mutated) {
-    return "required";
-  }
-  // Open-doc Q&A/edit: after inspect/find, allow a normal text answer.
-  // Do not keep forcing create — that falsely fails "what does paragraph 2 say?".
-  if (
-    startedWithPrimary &&
-    hasSuccessfulDocumentRead(outcomes) &&
-    !created
-  ) {
-    return "auto";
-  }
-  // Greenfield: force tools until create or any write.
-  if (hasCreate && !created && !mutated) {
-    return "required";
-  }
-  return "auto";
-}
-
-function selectToolsForModel(
-  tools: ToolRegistry,
-  outcomes: readonly ToolOutcome[],
-): ReturnType<ToolRegistry["definitions"]> {
-  const defs = tools.definitions();
-  const created = hasSuccessfulCreate(outcomes);
-  const mutated = hasSuccessfulMutation(outcomes);
-  // Narrow only the first post-create authoring turn (create done, no write yet).
-  if (created && !mutated) {
-    const narrowed = defs.filter((tool) =>
-      POST_CREATE_AUTHORING_TOOL_NAMES.has(tool.name),
-    );
-    return narrowed.length > 0 ? narrowed : defs;
-  }
-  return defs;
-}
-
-function shouldNudgeToUseTools(
-  tools: ToolRegistry,
-  outcomes: readonly ToolOutcome[],
-  startedWithPrimary: boolean,
-): boolean {
-  const hasCreate = tools.get(CREATE_BLANK_TOOL) !== undefined;
-  const created = hasSuccessfulCreate(outcomes);
-  const mutated = hasSuccessfulMutation(outcomes);
-  if (created && !mutated) return true;
-  if (
-    startedWithPrimary &&
-    hasSuccessfulDocumentRead(outcomes) &&
-    !created
-  ) {
-    return false;
-  }
-  if (hasCreate && !created && !mutated) return true;
-  return false;
-}
-
 /**
  * Finish the run when the model already supplied a short confirmation alongside
  * a fully successful document-write batch (no extra final-answer model turn).
@@ -1354,6 +1144,25 @@ function canTerminalizeSuccessfulWriteBatch(
     }
   }
   return hasDocumentWrite;
+}
+
+/**
+ * Generic default `TurnToolSelector` used when neither `selectTurnTools` nor
+ * `documentToolCatalog` is supplied: the same fixed tool registry and
+ * capabilities every turn, no tool-choice constraint. Contains no
+ * document/OpenSuite-specific knowledge.
+ */
+function createFixedTurnToolSelector(
+  tools: ToolRegistry,
+  capabilities: RuntimeCapabilities,
+): TurnToolSelector {
+  return async () => ({
+    status: "ok",
+    registry: tools,
+    toolsForModel: tools.definitions(),
+    toolChoice: undefined,
+    capabilities,
+  });
 }
 
 function createTimeoutSignal(

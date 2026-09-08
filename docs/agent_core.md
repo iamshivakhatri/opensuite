@@ -27,6 +27,27 @@ AgentRequest
   → AgentResult
 ```
 
+### Turn tool selection (AgentRunner v2 Step 2)
+
+`AgentRunner` does not itself decide which tools/tool-choice to advertise per
+turn. It calls one injected `TurnToolSelector` (`turn-tools.ts`) each turn and
+sends the returned `{ registry, toolsForModel, toolChoice, capabilities }` to
+the model. AgentRunner still owns the `forceAnswerOnly` circuit-breaker
+(empties `toolsForModel`/`toolChoice`) and reuses `toolChoice === "required"`
+generically to decide whether an empty tool-call response needs a
+use-tools nudge — it does not know *why* tools were required.
+
+* `AgentRunnerOptions.selectTurnTools` — inject directly (generic consumers).
+* `AgentRunnerOptions.documentToolCatalog` — back-compat convenience: builds
+  `createDocumentTurnToolSelector` (`document-tools/turn-tool-selector.ts`),
+  which owns capability discovery/re-discovery, post-create authoring
+  narrowing, and create/write force-tools policy (moved verbatim from the
+  prior in-Runner implementation).
+* Still inside `AgentRunner` (deferred to a later step): `RunDocumentState`,
+  `ArtifactHandleRegistry`, write-batch terminalization, and the
+  authoring-timeout retry heuristic — the latter two still reference
+  `workspace.create_blank_docx` / `document.*` directly.
+
 ### Document tools
 
 Implementation lives in `packages/agent-core/src/document-tools/`:
@@ -85,8 +106,8 @@ Agent-core does **not** own DB/storage; apps/api injects `apply*` including para
 
 After a persisted mutation, the run advances its active `DocumentRef` N → N+1
 (run-local only). Subsequent find/inspect/mutate in the **same run** read N+1.
-Emits `document.version.advanced` for SSE/UI refresh. Raw `artifactBytes` alone
-is **not** tool success.
+`executePersistedMutation` emits `document.version.advanced` for SSE/UI refresh.
+Raw `artifactBytes` alone is **not** tool success.
 
 Write tools use `effect: "write"` and `executionMode: "sequential"`.
 Table/paragraph tools are gated on Rust capability ids.
