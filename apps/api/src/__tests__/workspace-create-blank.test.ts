@@ -5,6 +5,7 @@ import {
   AgentRunner,
   ToolRegistry,
   assistantOnlyResponse,
+  createDocumentAgentRunnerOptions,
   createInMemoryDocumentMutationExecutor,
   createScriptedAgentModel,
   listDocumentToolDescriptors,
@@ -102,10 +103,12 @@ test("workspace.create_blank_docx creates Version 1 and advances primary", async
       ]),
       assistantOnlyResponse("Created blank document."),
     ]),
-    tools: ToolRegistry.create([tool]),
-    documentToolCatalog: listDocumentToolDescriptors(),
-    runtime,
-    mutations: createInMemoryDocumentMutationExecutor(runtime),
+    ...createDocumentAgentRunnerOptions({
+      tools: ToolRegistry.create([tool]),
+      documentToolCatalog: listDocumentToolDescriptors(),
+      runtime,
+      mutations: createInMemoryDocumentMutationExecutor(runtime),
+    }),
     events: {
       async emit(event) {
         events.push(event.type);

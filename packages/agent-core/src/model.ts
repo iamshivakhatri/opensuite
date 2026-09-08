@@ -122,7 +122,12 @@ export interface AgentModel {
  */
 export interface ToolExecutionContext {
   readonly runId: string;
-  readonly primaryDocument: DocumentRef | null;
+  /**
+   * Present when a caller-owned document run state supplies one (see
+   * `CreateToolExecutionContext`). Absent/null are both "no primary" —
+   * AgentRunner itself never sets this field.
+   */
+  readonly primaryDocument?: DocumentRef | null;
   readonly signal: AbortSignal;
   readonly events: AgentEventSink;
   /** Present when the tool needs document inspect/mutate capabilities. */
@@ -143,6 +148,22 @@ export interface ToolExecutionContext {
    */
   readonly handles?: ArtifactHandleRegistry;
 }
+
+/**
+ * Per-tool-execution context boundary. `AgentRunner` calls this once before
+ * each tool `execute` and passes the result through unchanged — it does not
+ * construct `ToolExecutionContext` itself and does not interpret any of its
+ * fields. The caller (e.g. OpenSuite's document run state) closes over
+ * whatever run-local state (primary document, handle registry, runtime,
+ * mutation executor, …) it needs to resolve `primaryDocument`/`handles`/etc.
+ * fresh on every call, so sequential writes within one turn observe the
+ * latest state. Omit for runs with no such state (generic tools only).
+ */
+export type CreateToolExecutionContext = (base: {
+  readonly runId: string;
+  readonly signal: AbortSignal;
+  readonly events: AgentEventSink;
+}) => ToolExecutionContext;
 
 /**
  * Execution risk for confirmation policy. Destructive tools require

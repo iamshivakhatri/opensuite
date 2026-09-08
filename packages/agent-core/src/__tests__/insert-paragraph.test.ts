@@ -11,6 +11,7 @@ import {
   ToolRegistry,
   assistantOnlyResponse,
   createCapabilities,
+  createDocumentAgentRunnerOptions,
   createDocumentInsertParagraphTool,
   createDocumentInspectTool,
   createFakeToolExecutionContext,
@@ -134,10 +135,13 @@ test("AgentRunner advances DocumentRef and emits version event on insert_paragra
       ]),
       assistantOnlyResponse("done"),
     ]),
-    tools: ToolRegistry.create([]),
-    documentToolCatalog: listDocumentToolDescriptors(),
-    runtime,
-    mutations: createInMemoryDocumentMutationExecutor(runtime),
+    ...createDocumentAgentRunnerOptions({
+      tools: ToolRegistry.create([]),
+      documentToolCatalog: listDocumentToolDescriptors(),
+      runtime,
+      mutations: createInMemoryDocumentMutationExecutor(runtime),
+      primaryDocument: docxRef,
+    }),
     capabilities: mutableDocumentCapabilities(),
     events: {
       async emit(event) {

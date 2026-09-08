@@ -9,6 +9,7 @@ import {
   ToolRegistry,
   assistantOnlyResponse,
   collectOpaqueHandles,
+  createDocumentAgentRunnerOptions,
   createDocumentInsertParagraphTool,
   createDocumentInspectTool,
   createFakeToolExecutionContext,
@@ -184,10 +185,13 @@ test("insert_paragraph persists via executor and advances DocumentRef", async ()
       ]),
       assistantOnlyResponse("inserted"),
     ]),
-    tools: ToolRegistry.create([]),
-    documentToolCatalog: listDocumentToolDescriptors(),
-    runtime,
-    mutations: createInMemoryDocumentMutationExecutor(runtime),
+    ...createDocumentAgentRunnerOptions({
+      tools: ToolRegistry.create([]),
+      documentToolCatalog: listDocumentToolDescriptors(),
+      runtime,
+      mutations: createInMemoryDocumentMutationExecutor(runtime),
+      primaryDocument: docRef,
+    }),
     capabilities: mutableDocumentCapabilities(),
     events: {
       async emit(event) {

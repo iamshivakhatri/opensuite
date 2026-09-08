@@ -5,7 +5,9 @@ import {
   DOCUMENT_TOOL_NAMES,
   createDocumentInsertTableColumnTool,
   createDocumentInsertTableRowsTool,
+  createDocumentRunState,
   createDocumentSetTableCellsTextTool,
+  createDocumentToolContext,
   createDocumentToolRegistry,
   createFakeDocumentRuntime,
   createFakeToolExecutionContext,
@@ -247,8 +249,11 @@ test("set_table_cells_text persists once, advances DocumentRef, re-inspect sees 
       assistantOnlyResponse("Updated roles"),
     ]),
     tools: createDocumentToolRegistry(mutableDocumentCapabilities()),
-    runtime,
-    mutations: createInMemoryDocumentMutationExecutor(runtime),
+    createToolContext: createDocumentToolContext({
+      state: createDocumentRunState(docxRef),
+      runtime,
+      mutations: createInMemoryDocumentMutationExecutor(runtime),
+    }),
     events,
     capabilities: mutableDocumentCapabilities(),
   });
@@ -404,8 +409,11 @@ test("table mutation precondition failure does not advance DocumentRef", async (
       assistantOnlyResponse("failed"),
     ]),
     tools: createDocumentToolRegistry(mutableDocumentCapabilities()),
-    runtime,
-    mutations: createInMemoryDocumentMutationExecutor(runtime),
+    createToolContext: createDocumentToolContext({
+      state: createDocumentRunState(docxRef),
+      runtime,
+      mutations: createInMemoryDocumentMutationExecutor(runtime),
+    }),
     events,
     capabilities: mutableDocumentCapabilities(),
   });
@@ -465,8 +473,11 @@ test("UNSUPPORTED_OPERATION for column insert does not advance", async () => {
       assistantOnlyResponse("unsupported"),
     ]),
     tools: createDocumentToolRegistry(mutableDocumentCapabilities()),
-    runtime,
-    mutations: createInMemoryDocumentMutationExecutor(runtime),
+    createToolContext: createDocumentToolContext({
+      state: createDocumentRunState(docxRef),
+      runtime,
+      mutations: createInMemoryDocumentMutationExecutor(runtime),
+    }),
     events,
     capabilities: mutableDocumentCapabilities(),
   });

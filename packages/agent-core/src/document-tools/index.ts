@@ -105,8 +105,16 @@ export type {
 export { defineDocumentTool } from "./define-tool.js";
 export type { DocumentToolDefinition } from "./define-tool.js";
 export type { StructuralHandle } from "./selectors.js";
-export { createDocumentTurnToolSelector } from "./turn-tool-selector.js";
-export type { DocumentTurnToolSelectorOptions } from "./turn-tool-selector.js";
+export {
+  createDocumentAgentRunnerOptions,
+  createDocumentTurnToolSelector,
+} from "./turn-tool-selector.js";
+export type {
+  DocumentAgentRunnerOptionsInput,
+  DocumentTurnToolSelectorOptions,
+} from "./turn-tool-selector.js";
+export { createDocumentRunState, createDocumentToolContext } from "./run-state.js";
+export type { DocumentRunState, DocumentToolContextOptions } from "./run-state.js";
 
 /**
  * Full model-facing document tool catalog (unfiltered).

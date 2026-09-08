@@ -1,0 +1,232 @@
+import assert from "node:assert/strict";
+import { test } from "node:test";
+
+import {
+  AgentCoreError,
+  AgentRunner,
+  DOCUMENT_TOOL_NAMES,
+  ToolRegistry,
+  createDocumentAgentRunnerOptions,
+  createDocumentRunState,
+  createDocumentToolContext,
+  createFakeTool,
+  createInMemoryDocumentMutationExecutor,
+  createMockDocumentRuntime,
+  createScriptedAgentModel,
+  listDocumentToolDescriptors,
+  mutableDocumentCapabilities,
+  requireCurrentArtifactHandles,
+  toolCallResponse,
+  type DocumentRef,
+  type DocumentRuntime,
+} from "../index.js";
+
+const docxRef: DocumentRef = {
+  documentId: "doc-docx",
+  versionId: "ver-1",
+  format: "docx",
+};
+
+test("run-state: sequential writes observe N → N+1 → N+2 via createToolContext", async () => {
+  const seenBaseVersions: string[] = [];
+  const runtime: DocumentRuntime = {
+    async capabilities() {
+      return mutableDocumentCapabilities();
+    },
+    async inspect() {
+      throw new Error("unused");
+    },
+    async execute(document) {
+      seenBaseVersions.push(document.versionId);
+      return {
+        status: "success",
+        diagnostics: [],
+        artifactBytes: new Uint8Array([1]),
+      };
+    },
+  };
+
+  const runner = new AgentRunner({
+    model: createScriptedAgentModel([
+      toolCallResponse("Done — three writes.", [
+        {
+          id: "w1",
+          name: DOCUMENT_TOOL_NAMES.insertParagraphs,
+          input: { texts: ["A"], placement: { kind: "end" } },
+        },
+        {
+          id: "w2",
+          name: DOCUMENT_TOOL_NAMES.insertParagraphs,
+          input: { texts: ["B"], placement: { kind: "end" } },
+        },
+        {
+          id: "w3",
+          name: DOCUMENT_TOOL_NAMES.insertParagraphs,
+          input: { texts: ["C"], placement: { kind: "end" } },
+        },
+      ]),
+    ]),
+    ...createDocumentAgentRunnerOptions({
+      tools: ToolRegistry.create([]),
+      documentToolCatalog: listDocumentToolDescriptors(),
+      runtime,
+      mutations: createInMemoryDocumentMutationExecutor(runtime),
+      primaryDocument: docxRef,
+    }),
+  });
+
+  const result = await runner.run({
+    instruction: "write three paragraphs",
+    threadId: "t1",
+    runId: "r-seq-abc",
+    primaryDocument: docxRef,
+  });
+
+  assert.equal(result.status, "completed");
+  assert.equal(seenBaseVersions.length, 3);
+  assert.equal(seenBaseVersions[0], "ver-1");
+  assert.notEqual(seenBaseVersions[1], seenBaseVersions[0]);
+  assert.notEqual(seenBaseVersions[2], seenBaseVersions[1]);
+});
+
+test("run-state: handles stay valid across mutation; old handles go stale; reinspect restores", async () => {
+  const state = createDocumentRunState(docxRef);
+  const runtime = createMockDocumentRuntime({
+    capabilities: mutableDocumentCapabilities(),
+  });
+  const mutations = createInMemoryDocumentMutationExecutor(runtime);
+  const ctxFactory = createDocumentToolContext({ state, runtime, mutations });
+
+  // Seed a handle as inspect would — registry is OpenSuite-owned run state.
+  state.handles.register("h-seed", docxRef.versionId);
+  assert.equal(state.handles.origin("h-seed"), "ver-1");
+
+  requireCurrentArtifactHandles(
+    ctxFactory({
+      runId: "r-handles",
+      signal: new AbortController().signal,
+      events: { emit() {} },
+    }),
+    { handle: "h-seed" },
+  );
+
+  // Advance primary (as a mutation would) — old handle becomes stale.
+  state.primary = {
+    documentId: docxRef.documentId,
+    versionId: "ver-2",
+    format: "docx",
+  };
+  assert.throws(
+    () =>
+      requireCurrentArtifactHandles(
+        ctxFactory({
+          runId: "r-handles",
+          signal: new AbortController().signal,
+          events: { emit() {} },
+        }),
+        { handle: "h-seed" },
+      ),
+    (error: unknown) =>
+      error instanceof AgentCoreError && error.code === "STALE_HANDLE",
+  );
+
+  // Re-register for new version (reinspect path).
+  state.handles.register("h-seed", "ver-2");
+  requireCurrentArtifactHandles(
+    ctxFactory({
+      runId: "r-handles",
+      signal: new AbortController().signal,
+      events: { emit() {} },
+    }),
+    { handle: "h-seed" },
+  );
+
+  // Sequential write context factory does not reset the registry.
+  const beforeSize = state.handles.size;
+  ctxFactory({
+    runId: "r-handles",
+    signal: new AbortController().signal,
+    events: { emit() {} },
+  });
+  assert.equal(state.handles.size, beforeSize);
+});
+
+test("run-state: create_blank advances primary; next selector turn exposes DOCX tools", async () => {
+  const createTool = createFakeTool({
+    name: "workspace.create_blank_docx",
+    effect: "write",
+    executionMode: "sequential",
+    execute: async (_input, ctx) => {
+      const document = {
+        documentId: "new-doc",
+        versionId: "v1",
+        format: "docx" as const,
+      };
+      ctx.advancePrimaryDocument?.(document);
+      return {
+        document: { ...document, name: "N.docx", versionNumber: 1 },
+      };
+    },
+  });
+
+  const runtime: DocumentRuntime = {
+    async capabilities() {
+      return mutableDocumentCapabilities();
+    },
+    async inspect() {
+      throw new Error("unused");
+    },
+    async execute() {
+      return {
+        status: "success",
+        diagnostics: [],
+        artifactBytes: new Uint8Array([1]),
+      };
+    },
+  };
+
+  let postCreateTools: string[] = [];
+  const runner = new AgentRunner({
+    model: createScriptedAgentModel([
+      () =>
+        toolCallResponse("", [
+          {
+            id: "c1",
+            name: "workspace.create_blank_docx",
+            input: { name: "N.docx" },
+          },
+        ]),
+      (request) => {
+        postCreateTools = request.tools.map((t) => t.name);
+        return toolCallResponse("Done — blank document ready.", [
+          {
+            id: "w1",
+            name: DOCUMENT_TOOL_NAMES.insertParagraphs,
+            input: {
+              texts: ["Title", "Body."],
+              placement: { kind: "end" },
+            },
+          },
+        ]);
+      },
+    ]),
+    ...createDocumentAgentRunnerOptions({
+      tools: ToolRegistry.create([createTool]),
+      documentToolCatalog: listDocumentToolDescriptors(),
+      runtime,
+      mutations: createInMemoryDocumentMutationExecutor(runtime),
+    }),
+  });
+
+  const result = await runner.run({
+    instruction: "create a blank note",
+    threadId: "t1",
+    runId: "r-create-next-turn",
+  });
+
+  assert.equal(result.status, "completed");
+  assert.ok(
+    postCreateTools.some((n) => n === DOCUMENT_TOOL_NAMES.insertParagraphs),
+    "DOCX authoring tools exposed after create advances primary",
+  );
+});

@@ -10,6 +10,7 @@ import {
   MOCK_FORMAT_CAPS,
   ToolRegistry,
   createCapabilities,
+  createDocumentAgentRunnerOptions,
   createDocumentInsertTableColumnTool,
   createDocumentToolRegistry,
   createFakeTool,
@@ -57,9 +58,12 @@ test("DOCX advertised caps → first model request gets exactly those document t
 
   const runner = new AgentRunner({
     model,
-    tools: ToolRegistry.create([systemTool]),
-    documentToolCatalog: listDocumentToolDescriptors(),
-    runtime,
+    ...createDocumentAgentRunnerOptions({
+      tools: ToolRegistry.create([systemTool]),
+      documentToolCatalog: listDocumentToolDescriptors(),
+      runtime,
+      primaryDocument: docxRef,
+    }),
   });
 
   const result = await runner.run({
@@ -93,9 +97,12 @@ test("inspect+find only → mutation tools absent from first model request", asy
         return assistantOnlyResponse("read-only");
       },
     ]),
-    tools: ToolRegistry.create([]),
-    documentToolCatalog: listDocumentToolDescriptors(),
-    runtime,
+    ...createDocumentAgentRunnerOptions({
+      tools: ToolRegistry.create([]),
+      documentToolCatalog: listDocumentToolDescriptors(),
+      runtime,
+      primaryDocument: docxRef,
+    }),
   });
 
   await runner.run({
@@ -148,9 +155,12 @@ test("capability discovery failure does not expose all document tools", async ()
         return assistantOnlyResponse("should not run");
       },
     ]),
-    tools: ToolRegistry.create([]),
-    documentToolCatalog: listDocumentToolDescriptors(),
-    runtime: failingRuntime,
+    ...createDocumentAgentRunnerOptions({
+      tools: ToolRegistry.create([]),
+      documentToolCatalog: listDocumentToolDescriptors(),
+      runtime: failingRuntime,
+      primaryDocument: docxRef,
+    }),
   });
 
   const result = await runner.run({
@@ -263,9 +273,12 @@ test("bootstrap discovery is once per run across model turns", async () => {
       },
       () => assistantOnlyResponse("ok"),
     ]),
-    tools: ToolRegistry.create([]),
-    documentToolCatalog: listDocumentToolDescriptors(),
-    runtime,
+    ...createDocumentAgentRunnerOptions({
+      tools: ToolRegistry.create([]),
+      documentToolCatalog: listDocumentToolDescriptors(),
+      runtime,
+      primaryDocument: docxRef,
+    }),
   });
 
   const result = await runner.run({

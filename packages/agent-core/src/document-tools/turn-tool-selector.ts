@@ -13,7 +13,12 @@
  * interpret capability ids or tool names itself.
  */
 
-import type { AgentTool, ModelToolDefinition } from "../model.js";
+import type { DocumentMutationExecutor } from "../document-mutation.js";
+import type {
+  AgentTool,
+  CreateToolExecutionContext,
+  ModelToolDefinition,
+} from "../model.js";
 import type { ToolOutcome } from "../request.js";
 import type { DocumentRuntime } from "../runtime.js";
 import { ToolRegistry } from "../tools.js";
@@ -28,6 +33,11 @@ import {
   type RuntimeCapabilities,
 } from "../types.js";
 import { filterDocumentToolsByCapabilities } from "./index.js";
+import {
+  createDocumentRunState,
+  createDocumentToolContext,
+  type DocumentRunState,
+} from "./run-state.js";
 
 /** Blank-document creation tool name (workspace-owned, not a document tool). */
 const CREATE_BLANK_TOOL = "workspace.create_blank_docx";
@@ -51,6 +61,14 @@ export interface DocumentTurnToolSelectorOptions {
   /** Full model-facing document tool catalog (unfiltered). */
   readonly documentToolCatalog: readonly AgentTool[];
   readonly runtime?: DocumentRuntime;
+  /**
+   * OpenSuite-owned run state (see `./run-state.js`). The selector reads
+   * `state.primary` itself on every call instead of receiving it from
+   * AgentRunner — this is what keeps `TurnToolSelectorContext` generic.
+   * A tool execution that calls `advancePrimaryDocument` mutates this same
+   * object, so the next turn's selector call observes the new primary.
+   */
+  readonly state: DocumentRunState;
 }
 
 /**
@@ -65,7 +83,7 @@ export interface DocumentTurnToolSelectorOptions {
 export function createDocumentTurnToolSelector(
   options: DocumentTurnToolSelectorOptions,
 ): TurnToolSelector {
-  const { baseTools, documentToolCatalog, runtime } = options;
+  const { baseTools, documentToolCatalog, runtime, state } = options;
 
   let bootstrappedPrimaryId: string | null | undefined = undefined;
   let cachedRegistry: ToolRegistry = baseTools;
@@ -141,15 +159,15 @@ export function createDocumentTurnToolSelector(
 
   return async (context): Promise<TurnToolSelectorResult> => {
     if (startedWithPrimary === null) {
-      startedWithPrimary = context.primaryDocument != null;
+      startedWithPrimary = state.primary != null;
     }
 
-    const currentPrimaryId = context.primaryDocument?.documentId ?? null;
+    const currentPrimaryId = state.primary?.documentId ?? null;
     if (
       bootstrappedPrimaryId === undefined ||
       currentPrimaryId !== bootstrappedPrimaryId
     ) {
-      const result = await bootstrap(context.primaryDocument);
+      const result = await bootstrap(state.primary);
       if (result.status === "failed") {
         return result;
       }
@@ -167,6 +185,49 @@ export function createDocumentTurnToolSelector(
       ),
       capabilities: cachedCapabilities,
     };
+  };
+}
+
+export interface DocumentAgentRunnerOptionsInput {
+  /** Non-document / always-on tools (e.g. workspace.create_blank_docx). */
+  readonly tools: ToolRegistry;
+  /** Full model-facing document tool catalog (unfiltered). */
+  readonly documentToolCatalog: readonly AgentTool[];
+  readonly runtime?: DocumentRuntime;
+  readonly mutations?: DocumentMutationExecutor;
+  /** Initial primary document for this run, if any. */
+  readonly primaryDocument?: DocumentRef | null;
+}
+
+/**
+ * Convenience: build the three document-aware `AgentRunnerOptions` fields
+ * (`tools`, `selectTurnTools`, `createToolContext`) from one call, wiring a
+ * single fresh `DocumentRunState` through both the turn selector and the
+ * per-tool-execution context factory. Equivalent to constructing
+ * `createDocumentRunState` + `createDocumentTurnToolSelector` +
+ * `createDocumentToolContext` by hand.
+ */
+export function createDocumentAgentRunnerOptions(
+  input: DocumentAgentRunnerOptionsInput,
+): {
+  readonly tools: ToolRegistry;
+  readonly selectTurnTools: TurnToolSelector;
+  readonly createToolContext: CreateToolExecutionContext;
+} {
+  const state = createDocumentRunState(input.primaryDocument ?? null);
+  return {
+    tools: input.tools,
+    selectTurnTools: createDocumentTurnToolSelector({
+      baseTools: input.tools,
+      documentToolCatalog: input.documentToolCatalog,
+      runtime: input.runtime,
+      state,
+    }),
+    createToolContext: createDocumentToolContext({
+      state,
+      runtime: input.runtime,
+      mutations: input.mutations,
+    }),
   };
 }
 

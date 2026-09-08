@@ -4,6 +4,8 @@ import { test } from "node:test";
 import {
   AgentRunner,
   DOCUMENT_TOOL_NAMES,
+  createDocumentRunState,
+  createDocumentToolContext,
   createDocumentToolRegistry,
   createFakeDocumentRuntime,
   createInMemoryDocumentMutationExecutor,
@@ -93,8 +95,11 @@ test("same-run read-after-write: replace advances primaryDocument for next find"
       assistantOnlyResponse("Done"),
     ]),
     tools: createDocumentToolRegistry(mutableDocumentCapabilities()),
-    runtime: findingRuntime,
-    mutations: createInMemoryDocumentMutationExecutor(findingRuntime),
+    createToolContext: createDocumentToolContext({
+      state: createDocumentRunState(docxRef),
+      runtime: findingRuntime,
+      mutations: createInMemoryDocumentMutationExecutor(findingRuntime),
+    }),
     events,
     capabilities: mutableDocumentCapabilities(),
   });
@@ -185,8 +190,11 @@ test("sequential writes in one model response: one version event each, ordered",
       ]),
     ]),
     tools: createDocumentToolRegistry(mutableDocumentCapabilities()),
-    runtime,
-    mutations: createInMemoryDocumentMutationExecutor(runtime),
+    createToolContext: createDocumentToolContext({
+      state: createDocumentRunState(docxRef),
+      runtime,
+      mutations: createInMemoryDocumentMutationExecutor(runtime),
+    }),
     events,
     capabilities: mutableDocumentCapabilities(),
   });
@@ -298,8 +306,11 @@ test("multi-mutation run advances N → N+1 → N+2", async () => {
       assistantOnlyResponse("Both edits applied"),
     ]),
     tools: createDocumentToolRegistry(mutableDocumentCapabilities()),
-    runtime,
-    mutations: trackingMutations,
+    createToolContext: createDocumentToolContext({
+      state: createDocumentRunState(docxRef),
+      runtime,
+      mutations: trackingMutations,
+    }),
     events,
     capabilities: mutableDocumentCapabilities(),
   });
@@ -351,8 +362,11 @@ test("TARGET_NOT_FOUND does not advance primaryDocument", async () => {
       assistantOnlyResponse("failed then found"),
     ]),
     tools: createDocumentToolRegistry(mutableDocumentCapabilities()),
-    runtime,
-    mutations: createInMemoryDocumentMutationExecutor(runtime),
+    createToolContext: createDocumentToolContext({
+      state: createDocumentRunState(docxRef),
+      runtime,
+      mutations: createInMemoryDocumentMutationExecutor(runtime),
+    }),
     events,
     capabilities: mutableDocumentCapabilities(),
   });
@@ -410,8 +424,11 @@ test("VERSION_CONFLICT does not advance active DocumentRef", async () => {
       assistantOnlyResponse("conflict"),
     ]),
     tools: createDocumentToolRegistry(mutableDocumentCapabilities()),
-    runtime,
-    mutations: conflictMutations,
+    createToolContext: createDocumentToolContext({
+      state: createDocumentRunState(docxRef),
+      runtime,
+      mutations: conflictMutations,
+    }),
     events,
     capabilities: mutableDocumentCapabilities(),
   });
@@ -470,8 +487,11 @@ test("persistence failure fails the tool without advancing", async () => {
       assistantOnlyResponse("persist failed"),
     ]),
     tools: createDocumentToolRegistry(mutableDocumentCapabilities()),
-    runtime,
-    mutations: failing,
+    createToolContext: createDocumentToolContext({
+      state: createDocumentRunState(docxRef),
+      runtime,
+      mutations: failing,
+    }),
     events,
     capabilities: mutableDocumentCapabilities(),
   });
@@ -527,8 +547,11 @@ test("one replace_text tool call executes engine once via mutations", async () =
       assistantOnlyResponse("ok"),
     ]),
     tools: createDocumentToolRegistry(mutableDocumentCapabilities()),
-    runtime,
-    mutations: createInMemoryDocumentMutationExecutor(runtime),
+    createToolContext: createDocumentToolContext({
+      state: createDocumentRunState(docxRef),
+      runtime,
+      mutations: createInMemoryDocumentMutationExecutor(runtime),
+    }),
     capabilities: mutableDocumentCapabilities(),
   });
 
@@ -558,7 +581,10 @@ test("replace_text without mutations configured fails", async () => {
       assistantOnlyResponse("no mutations"),
     ]),
     tools: createDocumentToolRegistry(mutableDocumentCapabilities()),
-    runtime,
+    createToolContext: createDocumentToolContext({
+      state: createDocumentRunState(docxRef),
+      runtime,
+    }),
     capabilities: mutableDocumentCapabilities(),
   });
 

@@ -62,6 +62,7 @@ export type {
   ToolInputSchema,
   ToolRisk,
 } from "./model.js";
+export type { CreateToolExecutionContext } from "./model.js";
 export {
   requiresConfirmation,
   toolEffect,
@@ -215,6 +216,9 @@ export {
   createDocumentSetTextFormattingTool,
   createDocumentToolRegistry,
   createDocumentTurnToolSelector,
+  createDocumentAgentRunnerOptions,
+  createDocumentRunState,
+  createDocumentToolContext,
   createSlidesUpdateTextTool,
   createWorkbookSetCellsTool,
   discoverDocumentToolsFromRuntime,
@@ -243,6 +247,9 @@ export type {
   DocumentSetTableFormattingInput,
   DocumentSetTextFormattingInput,
   DocumentTurnToolSelectorOptions,
+  DocumentAgentRunnerOptionsInput,
+  DocumentRunState,
+  DocumentToolContextOptions,
   SlidesUpdateTextInput,
   WorkbookSetCellsInput,
 } from "./document-tools.js";

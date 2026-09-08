@@ -8,6 +8,7 @@ import {
   DOCX_ENGINE_CAPS,
   ToolRegistry,
   createCapabilities,
+  createDocumentAgentRunnerOptions,
   createDocumentInspectTool,
   createFakeToolExecutionContext,
   createScriptedAgentModel,
@@ -198,9 +199,12 @@ test("document.inspect exposes engine-provided affordances to the model", async 
         return assistantOnlyResponse("ok");
       },
     ]),
-    tools: ToolRegistry.create([]),
-    documentToolCatalog: listDocumentToolDescriptors(),
-    runtime,
+    ...createDocumentAgentRunnerOptions({
+      tools: ToolRegistry.create([]),
+      documentToolCatalog: listDocumentToolDescriptors(),
+      runtime,
+      primaryDocument: docxRef,
+    }),
   });
 
   const result = await runner.run({

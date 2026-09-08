@@ -11,6 +11,7 @@ import {
   DOCUMENT_TOOL_NAMES,
   ToolRegistry,
   assistantOnlyResponse,
+  createDocumentAgentRunnerOptions,
   createDocumentInspectTool,
   createDocumentSetTableCellsTextTool,
   createFakeToolExecutionContext,
@@ -147,17 +148,20 @@ test("failed document mutation exposes structured diagnostic to the model", asyn
         return assistantOnlyResponse("cell unsupported");
       },
     ]),
-    tools: ToolRegistry.create([]),
-    documentToolCatalog: listDocumentToolDescriptors(),
-    runtime: {
-      async capabilities() {
-        return mutableDocumentCapabilities();
+    ...createDocumentAgentRunnerOptions({
+      tools: ToolRegistry.create([]),
+      documentToolCatalog: listDocumentToolDescriptors(),
+      runtime: {
+        async capabilities() {
+          return mutableDocumentCapabilities();
+        },
+        async inspect() {
+          throw new Error("inspect unused");
+        },
       },
-      async inspect() {
-        throw new Error("inspect unused");
-      },
-    },
-    mutations,
+      mutations,
+      primaryDocument: docxRef,
+    }),
     capabilities: mutableDocumentCapabilities(),
   });
 

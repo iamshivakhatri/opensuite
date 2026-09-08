@@ -10,7 +10,7 @@
 import type { ModelToolDefinition } from "./model.js";
 import type { ToolOutcome } from "./request.js";
 import type { ToolRegistry } from "./tools.js";
-import type { Diagnostic, DocumentRef, RuntimeCapabilities } from "./types.js";
+import type { Diagnostic, RuntimeCapabilities } from "./types.js";
 
 /** Tool surface + tool-choice policy resolved for one model turn. */
 export interface TurnToolSelection {
@@ -24,10 +24,14 @@ export interface TurnToolSelection {
   readonly capabilities: RuntimeCapabilities;
 }
 
-/** Inputs available to a selector when resolving this turn's tool surface. */
+/**
+ * Inputs available to a selector when resolving this turn's tool surface.
+ * Deliberately generic — no document/OpenSuite-specific fields (e.g. a
+ * primary document pointer). A selector that needs run-local domain state
+ * (like the current primary `DocumentRef`) must close over it itself (see
+ * `document-tools/turn-tool-selector.ts`) rather than receive it here.
+ */
 export interface TurnToolSelectorContext {
-  /** Run-local active primary document (may change turn to turn after writes). */
-  readonly primaryDocument: DocumentRef | null;
   /** All tool outcomes so far this run (across all turns). */
   readonly toolOutcomes: readonly ToolOutcome[];
   readonly signal: AbortSignal;

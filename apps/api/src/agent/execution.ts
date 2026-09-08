@@ -1,6 +1,9 @@
 import {
   AgentRunner,
   ToolRegistry,
+  createDocumentAgentRunnerOptions,
+  createDocumentRunState,
+  createDocumentToolContext,
   listDocumentToolDescriptors,
   shapeDiagnosticForToolResult,
   type AgentEvent,
@@ -345,17 +348,29 @@ async function continueExecution(input: {
     }),
   ]);
 
+  // Fixed tools (tests) skip capability discovery; still need OpenSuite-owned
+  // run state so primaryDocument / handles / mutations stay outside AgentRunner.
+  const documentRun = deps.tools
+    ? {
+        tools: deps.tools,
+        createToolContext: createDocumentToolContext({
+          state: createDocumentRunState(primaryDocument),
+          runtime,
+          mutations,
+        }),
+      }
+    : createDocumentAgentRunnerOptions({
+        tools: workspaceTools,
+        documentToolCatalog: listDocumentToolDescriptors(),
+        runtime,
+        mutations,
+        primaryDocument,
+      });
+
   const runner = new AgentRunner({
     model: deps.model,
-    // Fixed tools (tests) bypass discovery. Otherwise workspace base tools +
-    // catalog → DocumentRuntime.capabilities once before first model call.
-    tools: deps.tools ?? workspaceTools,
-    ...(deps.tools
-      ? {}
-      : { documentToolCatalog: listDocumentToolDescriptors() }),
+    ...documentRun,
     events,
-    runtime,
-    mutations,
     confirmation: deps.confirmation,
     steering: deps.steering,
     capabilities: deps.capabilities,

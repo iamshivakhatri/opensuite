@@ -11,6 +11,7 @@ import {
   ToolRegistry,
   assistantOnlyResponse,
   createCapabilities,
+  createDocumentAgentRunnerOptions,
   createDocumentDeleteParagraphTool,
   createDocumentInsertParagraphsTool,
   createDocumentInspectTool,
@@ -164,10 +165,13 @@ test("AgentRunner first model call receives all paragraph tools when caps presen
         return assistantOnlyResponse("ok");
       },
     },
-    tools: ToolRegistry.create([]),
-    documentToolCatalog: listDocumentToolDescriptors(),
-    runtime,
-    mutations: createInMemoryDocumentMutationExecutor(runtime),
+    ...createDocumentAgentRunnerOptions({
+      tools: ToolRegistry.create([]),
+      documentToolCatalog: listDocumentToolDescriptors(),
+      runtime,
+      mutations: createInMemoryDocumentMutationExecutor(runtime),
+      primaryDocument: docxRef,
+    }),
     capabilities: mutableDocumentCapabilities(),
   });
 
@@ -396,10 +400,13 @@ test("batch insert_paragraphs appears as one tool outcome in AgentRunner", async
       ]),
       assistantOnlyResponse("done"),
     ]),
-    tools: ToolRegistry.create([]),
-    documentToolCatalog: listDocumentToolDescriptors(),
-    runtime,
-    mutations: createInMemoryDocumentMutationExecutor(runtime),
+    ...createDocumentAgentRunnerOptions({
+      tools: ToolRegistry.create([]),
+      documentToolCatalog: listDocumentToolDescriptors(),
+      runtime,
+      mutations: createInMemoryDocumentMutationExecutor(runtime),
+      primaryDocument: docxRef,
+    }),
     capabilities: mutableDocumentCapabilities(),
     events: {
       async emit(event) {

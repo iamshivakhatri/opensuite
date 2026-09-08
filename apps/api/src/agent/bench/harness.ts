@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto";
 import {
   AgentRunner,
   ToolRegistry,
+  createDocumentAgentRunnerOptions,
   createFakeTool,
   createRecordingEventSink,
   elapsedMs,
@@ -447,11 +448,14 @@ export async function createBenchHarness(): Promise<BenchHarness> {
       const sink = createRecordingEventSink();
       const runner = new AgentRunner({
         model: input.model,
-        tools: ToolRegistry.create([createTool]),
-        documentToolCatalog: listDocumentToolDescriptors(),
+        ...createDocumentAgentRunnerOptions({
+          tools: ToolRegistry.create([createTool]),
+          documentToolCatalog: listDocumentToolDescriptors(),
+          runtime,
+          mutations,
+          primaryDocument: input.primaryDocument ?? null,
+        }),
         events: sink,
-        runtime,
-        mutations,
         maxTurns: input.maxTurns ?? 20,
       });
 

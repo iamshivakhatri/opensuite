@@ -9,6 +9,7 @@ import {
   assistantOnlyResponse,
   buildDocumentAgentSystemPrompt,
   createCapabilities,
+  createDocumentAgentRunnerOptions,
   createDocumentCapabilitiesTool,
   createFakeTool,
   createFakeToolExecutionContext,
@@ -55,9 +56,12 @@ test("DOCX run receives capability-gated tools without capabilities probe", asyn
         return assistantOnlyResponse("done");
       },
     ]),
-    tools: ToolRegistry.create([]),
-    documentToolCatalog: listDocumentToolDescriptors(),
-    runtime,
+    ...createDocumentAgentRunnerOptions({
+      tools: ToolRegistry.create([]),
+      documentToolCatalog: listDocumentToolDescriptors(),
+      runtime,
+      primaryDocument: docxRef,
+    }),
   });
 
   await runner.run({
@@ -161,10 +165,13 @@ test("greenfield post-create batching: insert + table + insert in one model turn
         return assistantOnlyResponse("Created the document.");
       },
     ]),
-    tools: ToolRegistry.create([]),
-    documentToolCatalog: listDocumentToolDescriptors(),
-    runtime,
-    mutations,
+    ...createDocumentAgentRunnerOptions({
+      tools: ToolRegistry.create([]),
+      documentToolCatalog: listDocumentToolDescriptors(),
+      runtime,
+      mutations,
+      primaryDocument: docxRef,
+    }),
     events: {
       async emit(event) {
         if (event.type === "document.version.advanced") {
@@ -353,10 +360,13 @@ test("AgentRunner sends transformed messages to the model", async () => {
         return assistantOnlyResponse("done");
       },
     ]),
-    tools: ToolRegistry.create([]),
-    documentToolCatalog: listDocumentToolDescriptors(),
-    runtime,
-    mutations: createInMemoryDocumentMutationExecutor(runtime),
+    ...createDocumentAgentRunnerOptions({
+      tools: ToolRegistry.create([]),
+      documentToolCatalog: listDocumentToolDescriptors(),
+      runtime,
+      mutations: createInMemoryDocumentMutationExecutor(runtime),
+      primaryDocument: docxRef,
+    }),
   });
 
   const result = await runner.run({
@@ -432,10 +442,13 @@ test("telemetry records model and tool metrics without changing outcomes", async
         },
       }),
     ]),
-    tools: ToolRegistry.create([]),
-    documentToolCatalog: listDocumentToolDescriptors(),
-    runtime,
-    mutations: createInMemoryDocumentMutationExecutor(runtime),
+    ...createDocumentAgentRunnerOptions({
+      tools: ToolRegistry.create([]),
+      documentToolCatalog: listDocumentToolDescriptors(),
+      runtime,
+      mutations: createInMemoryDocumentMutationExecutor(runtime),
+      primaryDocument: docxRef,
+    }),
     events: sink,
   });
 
@@ -647,10 +660,12 @@ test("greenfield: forces toolChoice required and nudges chat-only replies", asyn
 
   const runner = new AgentRunner({
     model,
-    tools: ToolRegistry.create([createTool]),
-    documentToolCatalog: listDocumentToolDescriptors(),
-    runtime,
-    mutations: createInMemoryDocumentMutationExecutor(runtime),
+    ...createDocumentAgentRunnerOptions({
+      tools: ToolRegistry.create([createTool]),
+      documentToolCatalog: listDocumentToolDescriptors(),
+      runtime,
+      mutations: createInMemoryDocumentMutationExecutor(runtime),
+    }),
   });
 
   const result = await runner.run({
@@ -799,10 +814,12 @@ test("post-create authoring timeout retries once then can finish", async () => {
 
   const runner = new AgentRunner({
     model,
-    tools: ToolRegistry.create([createTool]),
-    documentToolCatalog: listDocumentToolDescriptors(),
-    runtime,
-    mutations: createInMemoryDocumentMutationExecutor(runtime),
+    ...createDocumentAgentRunnerOptions({
+      tools: ToolRegistry.create([createTool]),
+      documentToolCatalog: listDocumentToolDescriptors(),
+      runtime,
+      mutations: createInMemoryDocumentMutationExecutor(runtime),
+    }),
     modelTurnTimeoutMs: 40,
   });
 
@@ -872,10 +889,13 @@ test("edit follow-up after mutation allows final chat without create nudge fail"
 
   const runner = new AgentRunner({
     model,
-    tools: ToolRegistry.create([createTool]),
-    documentToolCatalog: listDocumentToolDescriptors(),
-    runtime,
-    mutations: createInMemoryDocumentMutationExecutor(runtime),
+    ...createDocumentAgentRunnerOptions({
+      tools: ToolRegistry.create([createTool]),
+      documentToolCatalog: listDocumentToolDescriptors(),
+      runtime,
+      mutations: createInMemoryDocumentMutationExecutor(runtime),
+      primaryDocument: docxRef,
+    }),
   });
 
   const result = await runner.run({
@@ -928,9 +948,12 @@ test("open-doc Q&A: after inspect, text answer completes without create-nudge fa
         );
       },
     ]),
-    tools: ToolRegistry.create([createTool]),
-    documentToolCatalog: listDocumentToolDescriptors(),
-    runtime,
+    ...createDocumentAgentRunnerOptions({
+      tools: ToolRegistry.create([createTool]),
+      documentToolCatalog: listDocumentToolDescriptors(),
+      runtime,
+      primaryDocument: docxRef,
+    }),
   });
 
   const result = await runner.run({
@@ -1036,10 +1059,12 @@ test("v2 write-terminalization: content + successful writes finishes without thi
         return assistantOnlyResponse("should not run");
       },
     ]),
-    tools: ToolRegistry.create([createTool]),
-    documentToolCatalog: listDocumentToolDescriptors(),
-    runtime,
-    mutations: createInMemoryDocumentMutationExecutor(runtime),
+    ...createDocumentAgentRunnerOptions({
+      tools: ToolRegistry.create([createTool]),
+      documentToolCatalog: listDocumentToolDescriptors(),
+      runtime,
+      mutations: createInMemoryDocumentMutationExecutor(runtime),
+    }),
     events: {
       async emit(event) {
         if (event.type === "document.version.advanced") {
@@ -1142,10 +1167,13 @@ test("v2 write-terminalization failure: optimistic content not final; model cont
         return assistantOnlyResponse("Recovered after the failed write.");
       },
     ]),
-    tools: ToolRegistry.create([]),
-    documentToolCatalog: listDocumentToolDescriptors(),
-    runtime,
-    mutations: createInMemoryDocumentMutationExecutor(runtime),
+    ...createDocumentAgentRunnerOptions({
+      tools: ToolRegistry.create([]),
+      documentToolCatalog: listDocumentToolDescriptors(),
+      runtime,
+      mutations: createInMemoryDocumentMutationExecutor(runtime),
+      primaryDocument: docxRef,
+    }),
   });
 
   const result = await runner.run({
@@ -1186,9 +1214,12 @@ test("v2 read-only batch never terminalizes from pre-tool content", async () => 
         return assistantOnlyResponse("Overview: blank-ish document.");
       },
     ]),
-    tools: ToolRegistry.create([]),
-    documentToolCatalog: listDocumentToolDescriptors(),
-    runtime,
+    ...createDocumentAgentRunnerOptions({
+      tools: ToolRegistry.create([]),
+      documentToolCatalog: listDocumentToolDescriptors(),
+      runtime,
+      primaryDocument: docxRef,
+    }),
   });
 
   const result = await runner.run({
@@ -1379,10 +1410,12 @@ test("architecture: greenfield create alone — no ritual inspect co-batched", a
         ]);
       },
     ]),
-    tools: ToolRegistry.create([createTool]),
-    documentToolCatalog: listDocumentToolDescriptors(),
-    runtime,
-    mutations: createInMemoryDocumentMutationExecutor(runtime),
+    ...createDocumentAgentRunnerOptions({
+      tools: ToolRegistry.create([createTool]),
+      documentToolCatalog: listDocumentToolDescriptors(),
+      runtime,
+      mutations: createInMemoryDocumentMutationExecutor(runtime),
+    }),
   });
 
   const result = await runner.run({
@@ -1440,10 +1473,13 @@ test("architecture: sequential writes in one turn advance version between calls"
           },
         ]),
     ]),
-    tools: ToolRegistry.create([]),
-    documentToolCatalog: listDocumentToolDescriptors(),
-    runtime,
-    mutations: createInMemoryDocumentMutationExecutor(runtime),
+    ...createDocumentAgentRunnerOptions({
+      tools: ToolRegistry.create([]),
+      documentToolCatalog: listDocumentToolDescriptors(),
+      runtime,
+      mutations: createInMemoryDocumentMutationExecutor(runtime),
+      primaryDocument: docxRef,
+    }),
   });
 
   const result = await runner.run({

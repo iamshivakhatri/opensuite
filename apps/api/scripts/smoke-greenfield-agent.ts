@@ -10,6 +10,7 @@ import { resolve } from "node:path";
 import {
   AgentRunner,
   ToolRegistry,
+  createDocumentAgentRunnerOptions,
   createInMemoryDocumentMutationExecutor,
   listDocumentToolDescriptors,
   mutableDocumentCapabilities,
@@ -160,10 +161,12 @@ const wrappedModel = {
 
 const runner = new AgentRunner({
   model: wrappedModel,
-  tools: ToolRegistry.create([createTool]),
-  documentToolCatalog: listDocumentToolDescriptors(),
-  runtime,
-  mutations: createInMemoryDocumentMutationExecutor(runtime),
+  ...createDocumentAgentRunnerOptions({
+    tools: ToolRegistry.create([createTool]),
+    documentToolCatalog: listDocumentToolDescriptors(),
+    runtime,
+    mutations: createInMemoryDocumentMutationExecutor(runtime),
+  }),
   modelTurnTimeoutMs: 90_000,
   maxTurns: 20,
 });

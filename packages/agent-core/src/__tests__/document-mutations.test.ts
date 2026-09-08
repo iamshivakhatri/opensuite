@@ -6,6 +6,8 @@ import {
   Capabilities,
   DOCUMENT_TOOL_NAMES,
   createCapabilities,
+  createDocumentRunState,
+  createDocumentToolContext,
   createDocumentToolRegistry,
   createInMemoryDocumentMutationExecutor,
   createMockDocumentRuntime,
@@ -303,8 +305,11 @@ test("AgentRunner can mutate then inspect then finish", async () => {
   const runner = new AgentRunner({
     model,
     tools,
-    runtime,
-    mutations: createInMemoryDocumentMutationExecutor(runtime),
+    createToolContext: createDocumentToolContext({
+      state: createDocumentRunState(docxRef),
+      runtime,
+      mutations: createInMemoryDocumentMutationExecutor(runtime),
+    }),
     capabilities: mutableDocumentCapabilities(),
   });
 

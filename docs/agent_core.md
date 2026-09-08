@@ -27,38 +27,39 @@ AgentRequest
   → AgentResult
 ```
 
-### Turn tool selection (AgentRunner v2 Step 2)
+### Turn tool selection + run state (AgentRunner v2 Step 3)
 
-`AgentRunner` does not itself decide which tools/tool-choice to advertise per
-turn. It calls one injected `TurnToolSelector` (`turn-tools.ts`) each turn and
-sends the returned `{ registry, toolsForModel, toolChoice, capabilities }` to
-the model. AgentRunner still owns the `forceAnswerOnly` circuit-breaker
-(empties `toolsForModel`/`toolChoice`) and reuses `toolChoice === "required"`
-generically to decide whether an empty tool-call response needs a
-use-tools nudge — it does not know *why* tools were required.
+`AgentRunner` is domain-agnostic for tools and document state:
 
-* `AgentRunnerOptions.selectTurnTools` — inject directly (generic consumers).
-* `AgentRunnerOptions.documentToolCatalog` — back-compat convenience: builds
-  `createDocumentTurnToolSelector` (`document-tools/turn-tool-selector.ts`),
-  which owns capability discovery/re-discovery, post-create authoring
-  narrowing, and create/write force-tools policy (moved verbatim from the
-  prior in-Runner implementation).
-* Still inside `AgentRunner` (deferred to a later step): `RunDocumentState`,
-  `ArtifactHandleRegistry`, write-batch terminalization, and the
-  authoring-timeout retry heuristic — the latter two still reference
-  `workspace.create_blank_docx` / `document.*` directly.
+* Calls injected `TurnToolSelector` (`turn-tools.ts`) once per turn — context
+  is only `{ toolOutcomes, signal }` (no `DocumentRef`).
+* Calls injected `CreateToolExecutionContext` once **per tool execution** —
+  does not construct or interpret document fields on the context.
+* Does **not** own `RunDocumentState`, `ArtifactHandleRegistry`, `DocumentRuntime`,
+  `DocumentMutationExecutor`, or `documentToolCatalog`.
+
+OpenSuite document runs wire those via `createDocumentAgentRunnerOptions` /
+`createDocumentRunState` + `createDocumentTurnToolSelector` +
+`createDocumentToolContext` (`document-tools/`). The selector closes over
+`state.primary` for capability discovery; the context factory reads the same
+state fresh each call so sequential writes observe N→N+1→N+2.
+
+Still inside `AgentRunner` (deferred to Step 4): write-batch terminalization
+and the authoring-timeout retry heuristic — both still reference
+`workspace.create_blank_docx` / `document.*` directly.
 
 ### Document tools
 
 Implementation lives in `packages/agent-core/src/document-tools/`:
 `define-tool` (descriptor + capability/mutation plumbing), `shared-schema`,
-`selectors`, `inspect`, `mutations`. Individual typed tools stay model-visible;
-DOCX writes share `executePersistedMutation` (immutable N→N+1, no advance on failure).
+`selectors`, `inspect`, `mutations`, `run-state`, `turn-tool-selector`.
+Individual typed tools stay model-visible; DOCX writes share
+`executePersistedMutation` (immutable N→N+1, no advance on failure).
 
 **Capability-driven discovery (run bootstrap, before first model call)**
 
 ```text
-primary DocumentRef
+primary DocumentRef (OpenSuite run state)
   → DocumentRuntime.capabilities(...)
   → filter documentToolCatalog by requireCapability
   → merge with non-document tools
@@ -67,11 +68,11 @@ primary DocumentRef
 
 * Each document tool declares `capability` / `requireCapability` on its descriptor.
 * Runtime capability ids are the sole availability source — no `if (format === "docx")` tool switches.
-* Discovery runs once per AgentRunner run when `documentToolCatalog` is set; N→N+1 does not re-discover.
+* Discovery is memoized by primary `documentId` in `createDocumentTurnToolSelector`; N→N+1 does not re-discover; create that changes document identity does.
 * Discovery failure → run fails with `CAPABILITY_DISCOVERY_FAILED` (does not expose all tools / mock DOCX caps).
 * Model-facing catalog is capability-filtered only — `document.capabilities` is **not** model-facing (internal factory remains for tests).
 * PPTX/XLSX mock runtimes advertise format-specific caps (`slides.update_text`, `workbook.set_cells`).
-* **Version-bound handles:** `ArtifactHandleRegistry` (run-local, handle → versionId). `document.inspect`
+* **Version-bound handles:** `ArtifactHandleRegistry` lives on OpenSuite `DocumentRunState` (handle → versionId). `document.inspect`
   registers opaque `handle` strings from the payload; handle-bearing mutations validate via
   `requireCurrentArtifactHandles` before Rust. `STALE_HANDLE` / `UNKNOWN_HANDLE` — no version UUIDs to the model.
 
@@ -175,7 +176,7 @@ start(user instruction)
 * Parallel tools: per-run in-memory sequence counter; start-order sequences
 * Tool step failure ≠ run failure; runner `completed` → run `completed`
 * Cancel → `cancelled`; model failure → `failed` + safe error fields
-* When `tools` omitted: `documentToolCatalog` → `runtime.capabilities(primary)` once → filtered tools
+* When `tools` omitted: `createDocumentAgentRunnerOptions` (selector + per-tool context over OpenSuite run state)
 
 ## Live runs (`AgentRunManager` + HTTP)
 

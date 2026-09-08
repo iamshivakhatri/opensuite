@@ -10,19 +10,15 @@ import {
   type AgentEvent,
   type AgentEventSink,
 } from "./events.js";
-import type { DocumentMutationExecutor } from "./document-mutation.js";
-import { ArtifactHandleRegistry } from "./artifact-handles.js";
-import { createDocumentTurnToolSelector } from "./document-tools/turn-tool-selector.js";
 import { transformContext } from "./model-context.js";
 import {
   requiresConfirmation,
   toolEffect,
   toolExecutionMode,
   type AgentModel,
-  type AgentTool,
+  type CreateToolExecutionContext,
   type ModelMessage,
   type ModelToolCall,
-  type ToolExecutionContext,
 } from "./model.js";
 import type {
   AgentRequest,
@@ -30,7 +26,6 @@ import type {
   SteeringMessage,
   ToolOutcome,
 } from "./request.js";
-import type { DocumentRuntime } from "./runtime.js";
 import type { SteeringSource } from "./steering.js";
 import type { TurnToolSelector } from "./turn-tools.js";
 import {
@@ -44,7 +39,6 @@ import { ToolRegistry } from "./tools.js";
 import {
   createCapabilities,
   type Diagnostic,
-  type DocumentRef,
   type RuntimeCapabilities,
 } from "./types.js";
 
@@ -81,18 +75,9 @@ const AUTHORING_TIMEOUT_RETRY_MESSAGE =
  */
 const CREATE_BLANK_TOOL = "workspace.create_blank_docx";
 
-
-/** Run-scoped mutable pointer to the active primary document version. */
-interface RunDocumentState {
-  primary: DocumentRef | null;
-}
-
 export interface AgentRunnerOptions {
   readonly model: AgentModel;
-  /**
-   * Non-document / always-on tools, or a fully pre-built registry when
-   * `documentToolCatalog` is omitted (tests, fixed injection).
-   */
+  /** Tool registry used when `selectTurnTools` is omitted (fixed every turn). */
   readonly tools: ToolRegistry;
   /**
    * Injected per-turn tool-selection hook (see `./turn-tools.ts`). AgentRunner
@@ -102,20 +87,15 @@ export interface AgentRunnerOptions {
    */
   readonly selectTurnTools?: TurnToolSelector;
   /**
-   * Convenience: when set (and `selectTurnTools` is omitted), the runner
-   * builds a document-aware default selector (capability discovery against
-   * the primary DocumentRef, merged with `tools`, post-create narrowing,
-   * create/write force-tools policy — see `createDocumentTurnToolSelector`).
-   * Prefer passing `selectTurnTools` directly for non-OpenSuite consumers.
+   * Injected per-tool-execution context boundary (see `CreateToolExecutionContext`
+   * in `./model.ts`). AgentRunner calls this fresh before every tool `execute`
+   * and passes the result through unchanged — it owns no document/runtime
+   * state itself. OpenSuite builds this over its own run state (see
+   * `document-tools/run-state.ts` / `createDocumentAgentRunnerOptions`).
+   * Omit for tools that need no execution context beyond runId/signal/events.
    */
-  readonly documentToolCatalog?: readonly AgentTool[];
+  readonly createToolContext?: CreateToolExecutionContext;
   readonly events?: AgentEventSink;
-  readonly runtime?: DocumentRuntime;
-  /**
-   * Application-injected DOCX mutation persistence (engine + append version).
-   * Required for document.replace_text to succeed in production.
-   */
-  readonly mutations?: DocumentMutationExecutor;
   readonly confirmation?: ConfirmationGate;
   readonly steering?: SteeringSource;
   /** Advertised to context; overridden by bootstrap discovery when catalog is set. */
@@ -144,9 +124,8 @@ export class AgentRunner {
   private readonly model: AgentModel;
   private readonly tools: ToolRegistry;
   private readonly selectTurnTools: TurnToolSelector;
+  private readonly createToolContext: CreateToolExecutionContext;
   private readonly events: AgentEventSink;
-  private readonly runtime: DocumentRuntime | undefined;
-  private readonly mutations: DocumentMutationExecutor | undefined;
   private readonly confirmation: ConfirmationGate;
   private readonly steering: SteeringSource | undefined;
   private readonly capabilities: RuntimeCapabilities;
@@ -159,20 +138,13 @@ export class AgentRunner {
     this.model = options.model;
     this.tools = options.tools;
     this.events = options.events ?? noopEventSink;
-    this.runtime = options.runtime;
-    this.mutations = options.mutations;
     this.confirmation = options.confirmation ?? denyAllConfirmationGate;
     this.steering = options.steering;
     this.capabilities = options.capabilities ?? createCapabilities();
     this.selectTurnTools =
       options.selectTurnTools ??
-      (options.documentToolCatalog
-        ? createDocumentTurnToolSelector({
-            baseTools: this.tools,
-            documentToolCatalog: options.documentToolCatalog,
-            runtime: options.runtime,
-          })
-        : createFixedTurnToolSelector(this.tools, this.capabilities));
+      createFixedTurnToolSelector(this.tools, this.capabilities);
+    this.createToolContext = options.createToolContext ?? ((base) => base);
     this.maxTurns = options.maxTurns ?? DEFAULT_MAX_TURNS;
     this.modelTurnTimeoutMs =
       options.modelTurnTimeoutMs ?? DEFAULT_MODEL_TURN_TIMEOUT_MS;
@@ -195,13 +167,6 @@ export class AgentRunner {
       { role: "user", content: request.instruction },
     ];
 
-    // Run-local active document: advances N → N+1 after persisted mutations.
-    // Does not mutate durable historical DocumentRef records.
-    const documentState: RunDocumentState = {
-      primary: request.primaryDocument ?? null,
-    };
-    /** Opaque handle → inspected versionId for this run only. */
-    const handleRegistry = new ArtifactHandleRegistry();
     /** Failures per tool name in this run (circuit breaker). */
     const toolFailureCounts = new Map<string, number>();
     let forceAnswerOnly = false;
@@ -229,7 +194,6 @@ export class AgentRunner {
         // re-discovery after primary document identity changes) — that is
         // the selector's responsibility (it may memoize internally).
         const selection = await this.selectTurnTools({
-          primaryDocument: documentState.primary,
           toolOutcomes,
           signal,
         });
@@ -511,10 +475,8 @@ export class AgentRunner {
           toolCalls,
           request,
           signal,
-          documentState,
           toolFailureCounts,
           activeTools,
-          handleRegistry,
         );
         toolOutcomes.push(...turnOutcomes);
 
@@ -632,10 +594,8 @@ export class AgentRunner {
     toolCalls: readonly ModelToolCall[],
     request: AgentRequest,
     signal: AbortSignal,
-    documentState: RunDocumentState,
     toolFailureCounts: Map<string, number>,
     activeTools: ToolRegistry,
-    handleRegistry: ArtifactHandleRegistry,
   ): Promise<ToolOutcome[]> {
     const outcomes: ToolOutcome[] = new Array(toolCalls.length);
     let index = 0;
@@ -659,10 +619,8 @@ export class AgentRunner {
               item,
               request,
               signal,
-              documentState,
               toolFailureCounts,
               activeTools,
-              handleRegistry,
             ),
           ),
         );
@@ -677,10 +635,8 @@ export class AgentRunner {
         call,
         request,
         signal,
-        documentState,
         toolFailureCounts,
         activeTools,
-        handleRegistry,
       );
       index += 1;
     }
@@ -706,10 +662,8 @@ export class AgentRunner {
     call: ModelToolCall,
     request: AgentRequest,
     signal: AbortSignal,
-    documentState: RunDocumentState,
     toolFailureCounts: Map<string, number>,
     activeTools: ToolRegistry,
-    handleRegistry: ArtifactHandleRegistry,
   ): Promise<ToolOutcome> {
     this.throwIfAborted(signal);
 
@@ -893,18 +847,15 @@ export class AgentRunner {
       at: this.timestamp(),
     });
 
-    const ctx: ToolExecutionContext = {
+    // Resolved fresh for this one tool call — not frozen at run start — so
+    // sequential writes within one assistant response each observe the
+    // latest state (e.g. primary document version) left by the prior call.
+    // AgentRunner does not interpret the returned context's fields.
+    const ctx = this.createToolContext({
       runId: request.runId,
-      primaryDocument: documentState.primary,
       signal,
       events: this.events,
-      runtime: this.runtime,
-      mutations: this.mutations,
-      advancePrimaryDocument: (document) => {
-        documentState.primary = document;
-      },
-      handles: handleRegistry,
-    };
+    });
 
     const inputBytes = measureJsonBytes(input);
     const toolStartedAt = Date.now();
@@ -1147,10 +1098,9 @@ function canTerminalizeSuccessfulWriteBatch(
 }
 
 /**
- * Generic default `TurnToolSelector` used when neither `selectTurnTools` nor
- * `documentToolCatalog` is supplied: the same fixed tool registry and
- * capabilities every turn, no tool-choice constraint. Contains no
- * document/OpenSuite-specific knowledge.
+ * Generic default `TurnToolSelector` used when `selectTurnTools` is omitted:
+ * the same fixed tool registry and capabilities every turn, no tool-choice
+ * constraint. Contains no document/OpenSuite-specific knowledge.
  */
 function createFixedTurnToolSelector(
   tools: ToolRegistry,

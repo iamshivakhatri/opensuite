@@ -7,6 +7,8 @@ import {
   Capabilities,
   createCapabilities,
   createDocumentCapabilitiesTool,
+  createDocumentRunState,
+  createDocumentToolContext,
   createDocumentToolRegistry,
   createFakeToolExecutionContext,
   createMockDocumentRuntime,
@@ -179,7 +181,10 @@ test("AgentRunner loop: FakeAgentModel + document.inspect observation", async ()
       },
     ]),
     tools,
-    runtime,
+    createToolContext: createDocumentToolContext({
+      state: createDocumentRunState(docxRef),
+      runtime,
+    }),
     capabilities: readOnlyDocumentCapabilities(),
   });
 
@@ -223,7 +228,10 @@ test("AgentRunner loop: document.find then grounded reply", async () => {
       },
     ]),
     tools,
-    runtime,
+    createToolContext: createDocumentToolContext({
+      state: createDocumentRunState(docxRef),
+      runtime,
+    }),
   });
 
   const result = await runner.run({

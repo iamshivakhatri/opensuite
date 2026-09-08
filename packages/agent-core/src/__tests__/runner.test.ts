@@ -752,3 +752,53 @@ test("GENERIC SELECTOR: AgentRunner defers entirely to an injected selectTurnToo
     ["widgets.search", "widgets.buy"],
   );
 });
+
+test("GENERIC CONTEXT: createToolContext is resolved once per tool call (no document imports)", async () => {
+  // Pure generic AgentRunner: fake tools + selector + context provider.
+  // Proves context is not frozen at run start — each sequential tool gets a
+  // fresh createToolContext invocation and observes the latest closed-over state.
+  const seen: number[] = [];
+  let version = 0;
+  let contextCalls = 0;
+  const write = createFakeTool({
+    name: "counter.write",
+    effect: "write",
+    executionMode: "sequential",
+    async execute() {
+      seen.push(version);
+      version += 1;
+      return { wrote: version };
+    },
+  });
+  const registry = ToolRegistry.create([write]);
+  const selectTurnTools = async () => ({
+    status: "ok" as const,
+    registry,
+    toolsForModel: registry.definitions(),
+    toolChoice: undefined,
+    capabilities: { ids: new Set<string>() },
+  });
+
+  const runner = new AgentRunner({
+    model: createScriptedAgentModel([
+      toolCallResponse("", [
+        { id: "w1", name: "counter.write", input: {} },
+        { id: "w2", name: "counter.write", input: {} },
+        { id: "w3", name: "counter.write", input: {} },
+      ]),
+      assistantOnlyResponse("counted"),
+    ]),
+    tools: ToolRegistry.create([]),
+    selectTurnTools,
+    createToolContext: (base) => {
+      contextCalls += 1;
+      return base;
+    },
+  });
+
+  const result = await runner.run(baseRequest());
+  assert.equal(result.status, "completed");
+  assert.equal(contextCalls, 3);
+  assert.deepEqual(seen, [0, 1, 2]);
+  assert.equal(result.toolOutcomes.length, 3);
+});
