@@ -15,10 +15,37 @@ import {
   delay,
   denyAllConfirmationGate,
   toolCallResponse,
+  type AgentEvent,
+  type AgentEventSink,
   type AgentRequest,
   type ModelMessage,
   type ModelRequest,
 } from "../index.js";
+
+/**
+ * Recording sink that also fails on chosen event types (once each, or every
+ * time) — used to reproduce "tool succeeded, event/telemetry delivery
+ * failed" scenarios deterministically.
+ */
+function createFailingEventSink(options: {
+  failOn: (event: AgentEvent) => boolean;
+  /** Default true: only fail the first matching event, then behave normally. */
+  once?: boolean;
+}): AgentEventSink & { readonly events: AgentEvent[] } {
+  const events: AgentEvent[] = [];
+  let failed = false;
+  const once = options.once ?? true;
+  return {
+    events,
+    async emit(event) {
+      if (options.failOn(event) && (!once || !failed)) {
+        failed = true;
+        throw new Error(`event sink rejected: ${event.type}`);
+      }
+      events.push(event);
+    },
+  };
+}
 
 
 function baseRequest(overrides: Partial<AgentRequest> = {}): AgentRequest {
@@ -801,4 +828,339 @@ test("GENERIC CONTEXT: createToolContext is resolved once per tool call (no docu
   assert.equal(contextCalls, 3);
   assert.deepEqual(seen, [0, 1, 2]);
   assert.equal(result.toolOutcomes.length, 3);
+});
+
+test("GENERIC TERMINALIZATION: injected policy can finish after a successful tool batch", async () => {
+  const save = createFakeTool({
+    name: "notes.save",
+    effect: "write",
+    async execute() {
+      return { saved: true };
+    },
+  });
+  let modelCalls = 0;
+  const runner = new AgentRunner({
+    model: createScriptedAgentModel([
+      () => {
+        modelCalls += 1;
+        return toolCallResponse("Your note is saved.", [
+          { id: "save-1", name: save.name, input: {} },
+        ]);
+      },
+    ]),
+    tools: ToolRegistry.create([save]),
+    shouldTerminalizeToolBatch: ({ toolOutcomes }) =>
+      toolOutcomes.every((outcome) => outcome.status === "succeeded"),
+  });
+
+  const result = await runner.run(baseRequest());
+  assert.equal(result.status, "completed");
+  assert.equal(result.summary, "Your note is saved.");
+  assert.equal(modelCalls, 1);
+});
+
+test("GENERIC TERMINALIZATION: false policy continues to the next model turn", async () => {
+  const lookup = createFakeTool({
+    name: "catalog.lookup",
+    async execute() {
+      return { found: true };
+    },
+  });
+  let modelCalls = 0;
+  const runner = new AgentRunner({
+    model: createScriptedAgentModel([
+      () => {
+        modelCalls += 1;
+        return toolCallResponse("Looking that up now.", [
+          { id: "lookup-1", name: lookup.name, input: {} },
+        ]);
+      },
+      () => {
+        modelCalls += 1;
+        return assistantOnlyResponse("The catalog item is available.");
+      },
+    ]),
+    tools: ToolRegistry.create([lookup]),
+    shouldTerminalizeToolBatch: () => false,
+  });
+
+  const result = await runner.run(baseRequest());
+  assert.equal(result.status, "completed");
+  assert.equal(result.summary, "The catalog item is available.");
+  assert.equal(modelCalls, 2);
+});
+
+test("GENERIC TIMEOUT: injected policy can retry once with a recovery message", async () => {
+  let modelCalls = 0;
+  let policyCalls = 0;
+  const runner = new AgentRunner({
+    model: {
+      async complete(request: ModelRequest) {
+        modelCalls += 1;
+        if (modelCalls === 1) {
+          await new Promise<void>((resolve, reject) => {
+            const timer = setTimeout(resolve, 5_000);
+            request.signal?.addEventListener(
+              "abort",
+              () => {
+                clearTimeout(timer);
+                reject(new Error("aborted"));
+              },
+              { once: true },
+            );
+          });
+        }
+        assert.ok(
+          request.messages.some(
+            (message) =>
+              message.role === "user" && message.content === "Try once more.",
+          ),
+        );
+        return assistantOnlyResponse("Recovered.");
+      },
+    },
+    tools: ToolRegistry.create([]),
+    modelTurnTimeoutMs: 20,
+    getModelTimeoutRetryMessage: ({ toolOutcomes }) => {
+      policyCalls += 1;
+      assert.deepEqual(toolOutcomes, []);
+      return "Try once more.";
+    },
+  });
+
+  const result = await runner.run(baseRequest());
+  assert.equal(result.status, "completed");
+  assert.equal(result.summary, "Recovered.");
+  assert.equal(modelCalls, 2);
+  assert.equal(policyCalls, 1);
+});
+
+// --- AgentCore v2 Step 5A: tool success vs event-sink failure semantics ---
+
+test("STEP5A: successful tool + tool.completed sink rejection does not become a tool failure", async () => {
+  let executeCalls = 0;
+  const sideEffects: number[] = [];
+  const tool = createFakeTool({
+    name: "mutate.write",
+    effect: "write",
+    executionMode: "sequential",
+    async execute() {
+      executeCalls += 1;
+      // The side effect happens and completes before any event is emitted.
+      sideEffects.push(executeCalls);
+      return { wrote: true };
+    },
+  });
+  const sink = createFailingEventSink({
+    failOn: (event) => event.type === "tool.completed",
+  });
+
+  const runner = new AgentRunner({
+    model: createScriptedAgentModel([
+      toolCallResponse("", [{ id: "c1", name: "mutate.write", input: {} }]),
+      assistantOnlyResponse("done"),
+    ]),
+    tools: ToolRegistry.create([tool]),
+    events: sink,
+  });
+
+  const result = await runner.run(baseRequest());
+
+  // Side effect ran exactly once — no duplicate execution/retry.
+  assert.equal(executeCalls, 1);
+  assert.deepEqual(sideEffects, [1]);
+
+  // The tool outcome carried by the run must stay "succeeded" — event-sink
+  // failure must never rewrite it as a tool failure.
+  assert.equal(result.toolOutcomes.length, 1);
+  assert.equal(result.toolOutcomes[0]?.status, "succeeded");
+
+  // No tool.failed event was emitted claiming the execution itself failed.
+  assert.ok(!sink.events.some((event) => event.type === "tool.failed"));
+
+  // The model must not be handed a false tool-failure result — the
+  // transcript would have been built from the (successful) outcome above,
+  // but the run still fails at the infrastructure boundary rather than
+  // silently continuing as if nothing happened.
+  assert.equal(result.status, "failed");
+  assert.ok(
+    result.diagnostics.some((d) => d.code === "EVENT_SINK_FAILURE"),
+  );
+});
+
+test("STEP5A: successful tool + tool.execution.metrics sink rejection cannot convert success into failure", async () => {
+  let executeCalls = 0;
+  const tool = createFakeTool({
+    name: "mutate.write",
+    effect: "write",
+    executionMode: "sequential",
+    async execute() {
+      executeCalls += 1;
+      return { wrote: true };
+    },
+  });
+  const sink = createFailingEventSink({
+    failOn: (event) => event.type === "tool.execution.metrics",
+  });
+
+  const runner = new AgentRunner({
+    model: createScriptedAgentModel([
+      toolCallResponse("", [{ id: "c1", name: "mutate.write", input: {} }]),
+      assistantOnlyResponse("done"),
+    ]),
+    tools: ToolRegistry.create([tool]),
+    events: sink,
+  });
+
+  const result = await runner.run(baseRequest());
+
+  assert.equal(executeCalls, 1);
+  // Telemetry-only failure must not affect the run at all: tool succeeded,
+  // run completes normally, no tool.failed, no infrastructure diagnostic.
+  assert.equal(result.status, "completed");
+  assert.equal(result.toolOutcomes.length, 1);
+  assert.equal(result.toolOutcomes[0]?.status, "succeeded");
+  assert.ok(!sink.events.some((event) => event.type === "tool.failed"));
+  assert.deepEqual(result.diagnostics, []);
+});
+
+test("STEP5A: model.turn.metrics sink rejection cannot fail an otherwise-successful model turn", async () => {
+  const sink = createFailingEventSink({
+    failOn: (event) => event.type === "model.turn.metrics",
+    once: false,
+  });
+
+  const runner = new AgentRunner({
+    model: createScriptedAgentModel([assistantOnlyResponse("All done.")]),
+    tools: ToolRegistry.create([]),
+    events: sink,
+  });
+
+  const result = await runner.run(baseRequest());
+  assert.equal(result.status, "completed");
+  assert.equal(result.summary, "All done.");
+  assert.deepEqual(result.diagnostics, []);
+});
+
+test("STEP5A: actual tool failure keeps existing tool.failed / failed-outcome semantics", async () => {
+  const tool = createFakeTool({
+    name: "mutate.write",
+    effect: "write",
+    executionMode: "sequential",
+    async execute() {
+      throw new Error("boom: real execution failure");
+    },
+  });
+  const sink = createRecordingEventSink();
+
+  const runner = new AgentRunner({
+    model: createScriptedAgentModel([
+      toolCallResponse("", [{ id: "c1", name: "mutate.write", input: {} }]),
+      assistantOnlyResponse("Recovered."),
+    ]),
+    tools: ToolRegistry.create([tool]),
+    events: sink,
+  });
+
+  const result = await runner.run(baseRequest());
+
+  assert.equal(result.toolOutcomes.length, 1);
+  assert.equal(result.toolOutcomes[0]?.status, "failed");
+  assert.equal(result.toolOutcomes[0]?.diagnostic?.code, "TOOL_FAILURE");
+  assert.ok(sink.events.some((event) => event.type === "tool.failed"));
+  assert.equal(result.status, "completed");
+});
+
+test("STEP5A: mutation regression — version N+1 persists exactly once despite tool.completed sink failure", async () => {
+  // Minimal fake "document store": one successful write advances version by
+  // one. The tool applies the side effect first, then the runner's own
+  // tool.completed emission (not the tool) fails — reproducing the exact
+  // "version persisted, event sink fails" scenario without any DOCX-specific
+  // machinery.
+  let version = 0;
+  const applyCalls: number[] = [];
+  const tool = createFakeTool({
+    name: "document.mutate",
+    effect: "write",
+    executionMode: "sequential",
+    async execute() {
+      version += 1;
+      applyCalls.push(version);
+      return { versionNumber: version };
+    },
+  });
+  const sink = createFailingEventSink({
+    failOn: (event) => event.type === "tool.completed",
+  });
+
+  const runner = new AgentRunner({
+    model: createScriptedAgentModel([
+      toolCallResponse("", [{ id: "c1", name: "document.mutate", input: {} }]),
+      assistantOnlyResponse("done"),
+    ]),
+    tools: ToolRegistry.create([tool]),
+    events: sink,
+  });
+
+  const result = await runner.run(baseRequest());
+
+  // Version N+1 exists exactly once — the mutation was applied exactly once.
+  assert.equal(version, 1);
+  assert.deepEqual(applyCalls, [1]);
+
+  // The run stopped at the infrastructure boundary instead of continuing
+  // (which would otherwise let the model believe the write failed and
+  // attempt to retry it, producing version N+2).
+  assert.equal(result.status, "failed");
+  assert.equal(result.toolOutcomes.length, 1);
+  assert.equal(result.toolOutcomes[0]?.status, "succeeded");
+  assert.deepEqual(result.toolOutcomes[0]?.output, { versionNumber: 1 });
+});
+
+test("STEP5A: successful-path event ordering is unchanged", async () => {
+  const sink = createRecordingEventSink();
+  const tool = createFakeTool({
+    name: "document.mutate",
+    effect: "write",
+    executionMode: "sequential",
+    async execute() {
+      return { ok: true };
+    },
+  });
+
+  const runner = new AgentRunner({
+    model: createScriptedAgentModel([
+      toolCallResponse("Mutating…", [
+        { id: "c1", name: "document.mutate", input: {} },
+      ]),
+      assistantOnlyResponse("done"),
+    ]),
+    tools: ToolRegistry.create([tool]),
+    events: sink,
+  });
+
+  const result = await runner.run(baseRequest());
+  assert.equal(result.status, "completed");
+  assert.deepEqual(
+    sink.events.map((event) => event.type),
+    [
+      "agent.started",
+      "turn.started",
+      "message.started",
+      "message.delta",
+      "model.turn.metrics",
+      "message.completed",
+      "tool.started",
+      "tool.completed",
+      "tool.execution.metrics",
+      "turn.completed",
+      "turn.started",
+      "message.started",
+      "message.delta",
+      "model.turn.metrics",
+      "message.completed",
+      "turn.completed",
+      "agent.completed",
+    ],
+  );
 });

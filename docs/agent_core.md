@@ -27,7 +27,7 @@ AgentRequest
   → AgentResult
 ```
 
-### Turn tool selection + run state (AgentRunner v2 Step 3)
+### OpenSuite policy boundaries (AgentRunner v2 Steps 3–4)
 
 `AgentRunner` is domain-agnostic for tools and document state:
 
@@ -35,18 +35,18 @@ AgentRequest
   is only `{ toolOutcomes, signal }` (no `DocumentRef`).
 * Calls injected `CreateToolExecutionContext` once **per tool execution** —
   does not construct or interpret document fields on the context.
-* Does **not** own `RunDocumentState`, `ArtifactHandleRegistry`, `DocumentRuntime`,
-  `DocumentMutationExecutor`, or `documentToolCatalog`.
+* Does **not** own document run state, runtime/mutation services, tool names,
+  write detection, terminalization rules, or authoring timeout guidance.
+* Calls an injected generic tool-batch predicate after execution; OpenSuite
+  decides whether successful writes plus assistant content may finish the run.
+* On model timeout, an injected policy may supply one retry message; the runner
+  owns the timer and one-retry limit but does not interpret authoring state.
 
-OpenSuite document runs wire those via `createDocumentAgentRunnerOptions` /
+OpenSuite document runs wire these via `createDocumentAgentRunnerOptions` /
 `createDocumentRunState` + `createDocumentTurnToolSelector` +
 `createDocumentToolContext` (`document-tools/`). The selector closes over
 `state.primary` for capability discovery; the context factory reads the same
 state fresh each call so sequential writes observe N→N+1→N+2.
-
-Still inside `AgentRunner` (deferred to Step 4): write-batch terminalization
-and the authoring-timeout retry heuristic — both still reference
-`workspace.create_blank_docx` / `document.*` directly.
 
 ### Document tools
 
@@ -139,7 +139,7 @@ Canonical transcript stays rich; `transformContext` projects slim model-facing t
 (no echoed prose / version UUIDs; inspect drops empty caps/null summary/format duplication)
 and compacts large historical successful write tool arguments for later
 provider turns (id/name/pairing preserved). When an assistant response includes a short
-Done confirmation **plus** successful document writes, AgentRunner may terminalize without
+Done confirmation **plus** successful document writes, OpenSuite policy may terminalize without
 a third final-answer-only model call (read-only / failed / confirmation batches never do).
 `model.turn.metrics` / `tool.execution.metrics` provide lightweight run observability.
 Developer benchmark: `pnpm agent:bench` (PROVIDER/MODEL/SCENARIO overrides) aggregates those

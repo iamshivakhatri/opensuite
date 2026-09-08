@@ -2,6 +2,7 @@ import {
   AgentRunner,
   ToolRegistry,
   createDocumentAgentRunnerOptions,
+  createDocumentAgentRunnerPolicyOptions,
   createDocumentRunState,
   createDocumentToolContext,
   listDocumentToolDescriptors,
@@ -353,6 +354,7 @@ async function continueExecution(input: {
   const documentRun = deps.tools
     ? {
         tools: deps.tools,
+        ...createDocumentAgentRunnerPolicyOptions(),
         createToolContext: createDocumentToolContext({
           state: createDocumentRunState(primaryDocument),
           runtime,

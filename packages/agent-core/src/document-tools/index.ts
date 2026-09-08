@@ -107,6 +107,7 @@ export type { DocumentToolDefinition } from "./define-tool.js";
 export type { StructuralHandle } from "./selectors.js";
 export {
   createDocumentAgentRunnerOptions,
+  createDocumentAgentRunnerPolicyOptions,
   createDocumentTurnToolSelector,
 } from "./turn-tool-selector.js";
 export type {

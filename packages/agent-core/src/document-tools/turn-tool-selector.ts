@@ -19,7 +19,12 @@ import type {
   CreateToolExecutionContext,
   ModelToolDefinition,
 } from "../model.js";
+import { toolEffect } from "../model.js";
 import type { ToolOutcome } from "../request.js";
+import type {
+  ModelTimeoutContext,
+  ToolBatchContext,
+} from "../runner.js";
 import type { DocumentRuntime } from "../runtime.js";
 import { ToolRegistry } from "../tools.js";
 import type {
@@ -41,6 +46,19 @@ import {
 
 /** Blank-document creation tool name (workspace-owned, not a document tool). */
 const CREATE_BLANK_TOOL = "workspace.create_blank_docx";
+
+const AUTHORING_TIMEOUT_RETRY_MESSAGE =
+  "Runtime policy: previous authoring model turn timed out. " +
+  "Call tools now with a compact first pass only: document.insert_paragraphs " +
+  "(title + short intro), document.set_paragraph_style Heading 1 on the title, " +
+  "and one document.create_table with at most 6–8 rows. " +
+  "Do not generate a giant single payload.";
+
+const USE_DOCUMENT_TOOLS_NUDGE_MESSAGE =
+  "Runtime policy: you must use tools for document work — do not put the document body in chat. " +
+  "If the user wants a NEW document, call workspace.create_blank_docx alone first. " +
+  "If editing the already-open document, use inspect / set_paragraph_style / mutation tools as needed — do not create another blank file. " +
+  "Short confirmation text only after tools succeed.";
 
 /**
  * After blank create, only advertise core authoring tools until the first
@@ -200,8 +218,8 @@ export interface DocumentAgentRunnerOptionsInput {
 }
 
 /**
- * Convenience: build the three document-aware `AgentRunnerOptions` fields
- * (`tools`, `selectTurnTools`, `createToolContext`) from one call, wiring a
+ * Convenience: build the document-aware `AgentRunnerOptions` fields from one
+ * call, wiring a
  * single fresh `DocumentRunState` through both the turn selector and the
  * per-tool-execution context factory. Equivalent to constructing
  * `createDocumentRunState` + `createDocumentTurnToolSelector` +
@@ -213,6 +231,11 @@ export function createDocumentAgentRunnerOptions(
   readonly tools: ToolRegistry;
   readonly selectTurnTools: TurnToolSelector;
   readonly createToolContext: CreateToolExecutionContext;
+  readonly shouldTerminalizeToolBatch: (context: ToolBatchContext) => boolean;
+  readonly getModelTimeoutRetryMessage: (
+    context: ModelTimeoutContext,
+  ) => string | undefined;
+  readonly requiredToolsNudgeMessage: string;
 } {
   const state = createDocumentRunState(input.primaryDocument ?? null);
   return {
@@ -228,12 +251,60 @@ export function createDocumentAgentRunnerOptions(
       runtime: input.runtime,
       mutations: input.mutations,
     }),
+    ...createDocumentAgentRunnerPolicyOptions(),
   };
+}
+
+export function createDocumentAgentRunnerPolicyOptions() {
+  return {
+    shouldTerminalizeToolBatch: shouldTerminalizeDocumentToolBatch,
+    getModelTimeoutRetryMessage: getDocumentModelTimeoutRetryMessage,
+    requiredToolsNudgeMessage: USE_DOCUMENT_TOOLS_NUDGE_MESSAGE,
+  };
+}
+
+function shouldTerminalizeDocumentToolBatch({
+  content,
+  toolCalls,
+  toolOutcomes,
+  tools,
+}: ToolBatchContext): boolean {
+  const trimmed = content.trim();
+  if (!trimmed || trimmed.length < 12) return false;
+  if (toolCalls.length === 0 || toolOutcomes.length !== toolCalls.length) {
+    return false;
+  }
+  if (toolOutcomes.some((outcome) => outcome.status !== "succeeded")) {
+    return false;
+  }
+  if (toolOutcomes.some((outcome) => outcome.diagnostic?.severity === "error")) {
+    return false;
+  }
+
+  return toolCalls.some((call) => {
+    if (isDocumentWriteTool(call.name)) return true;
+    if (call.name === CREATE_BLANK_TOOL) return false;
+    const tool = tools.get(call.name);
+    return tool !== undefined && toolEffect(tool) === "write";
+  });
+}
+
+function getDocumentModelTimeoutRetryMessage({
+  toolOutcomes,
+}: ModelTimeoutContext): string | undefined {
+  return hasSuccessfulCreate(toolOutcomes) &&
+    !hasSuccessfulMutation(toolOutcomes)
+    ? AUTHORING_TIMEOUT_RETRY_MESSAGE
+    : undefined;
 }
 
 function isDocumentWriteTool(name: string): boolean {
   if (!name.startsWith("document.")) return false;
-  return name !== "document.inspect" && name !== "document.find";
+  return (
+    name !== "document.inspect" &&
+    name !== "document.find" &&
+    name !== "document.capabilities"
+  );
 }
 
 function hasSuccessfulCreate(outcomes: readonly ToolOutcome[]): boolean {

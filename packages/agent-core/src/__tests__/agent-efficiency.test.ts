@@ -10,6 +10,7 @@ import {
   buildDocumentAgentSystemPrompt,
   createCapabilities,
   createDocumentAgentRunnerOptions,
+  createDocumentAgentRunnerPolicyOptions,
   createDocumentCapabilitiesTool,
   createFakeTool,
   createFakeToolExecutionContext,
@@ -727,6 +728,27 @@ test("model turn timeout fails the run instead of hanging", async () => {
   });
   assert.equal(result.status, "failed");
   assert.match(result.summary, /exceeded 50ms/i);
+});
+
+test("document timeout policy does not retry before create or after a read", () => {
+  const getRetryMessage =
+    createDocumentAgentRunnerPolicyOptions().getModelTimeoutRetryMessage;
+  assert.equal(
+    getRetryMessage({ toolOutcomes: [] }),
+    undefined,
+  );
+  assert.equal(
+    getRetryMessage({
+      toolOutcomes: [
+        {
+          toolCallId: "read-1",
+          toolName: DOCUMENT_TOOL_NAMES.inspect,
+          status: "succeeded",
+        },
+      ],
+    }),
+    undefined,
+  );
 });
 
 test("post-create authoring timeout retries once then can finish", async () => {

@@ -13,7 +13,6 @@ import {
 import { transformContext } from "./model-context.js";
 import {
   requiresConfirmation,
-  toolEffect,
   toolExecutionMode,
   type AgentModel,
   type CreateToolExecutionContext,
@@ -54,26 +53,18 @@ const REPEATED_FAILURE_STOP_MESSAGE =
   "Do not invent workarounds or retry the failed tool.";
 
 const USE_TOOLS_NUDGE_MESSAGE =
-  "Runtime policy: you must use tools for document work — do not put the document body in chat. " +
-  "If the user wants a NEW document, call workspace.create_blank_docx alone first. " +
-  "If editing the already-open document, use inspect / set_paragraph_style / mutation tools as needed — do not create another blank file. " +
-  "Short confirmation text only after tools succeed.";
+  "Runtime policy: you must call one of the available tools before answering.";
 
-const AUTHORING_TIMEOUT_RETRY_MESSAGE =
-  "Runtime policy: previous authoring model turn timed out. " +
-  "Call tools now with a compact first pass only: document.insert_paragraphs " +
-  "(title + short intro), document.set_paragraph_style Heading 1 on the title, " +
-  "and one document.create_table with at most 6–8 rows. " +
-  "Do not generate a giant single payload.";
+export interface ToolBatchContext {
+  readonly content: string;
+  readonly toolCalls: readonly ModelToolCall[];
+  readonly toolOutcomes: readonly ToolOutcome[];
+  readonly tools: ToolRegistry;
+}
 
-/**
- * Blank-document creation tool name. Still referenced here only for the
- * authoring-timeout retry heuristic and write-batch terminalization — both
- * are deferred to a later AgentCore v2 step (not turn-tool selection).
- * Active-tool/tool-choice selection policy (including this same constant)
- * has moved to `document-tools/turn-tool-selector.ts`.
- */
-const CREATE_BLANK_TOOL = "workspace.create_blank_docx";
+export interface ModelTimeoutContext {
+  readonly toolOutcomes: readonly ToolOutcome[];
+}
 
 export interface AgentRunnerOptions {
   readonly model: AgentModel;
@@ -89,16 +80,23 @@ export interface AgentRunnerOptions {
   /**
    * Injected per-tool-execution context boundary (see `CreateToolExecutionContext`
    * in `./model.ts`). AgentRunner calls this fresh before every tool `execute`
-   * and passes the result through unchanged — it owns no document/runtime
-   * state itself. OpenSuite builds this over its own run state (see
-   * `document-tools/run-state.ts` / `createDocumentAgentRunnerOptions`).
+   * and passes the result through unchanged — it owns no product runtime
+   * state itself.
    * Omit for tools that need no execution context beyond runId/signal/events.
    */
   readonly createToolContext?: CreateToolExecutionContext;
+  /** Decide whether assistant content plus this completed tool batch may finish the run. */
+  readonly shouldTerminalizeToolBatch?: (context: ToolBatchContext) => boolean;
+  /** Return a user message to retry one timed-out model turn, or nothing to fail. */
+  readonly getModelTimeoutRetryMessage?: (
+    context: ModelTimeoutContext,
+  ) => string | undefined;
+  /** Message sent once when a required-tools turn returns no tool calls. */
+  readonly requiredToolsNudgeMessage?: string;
   readonly events?: AgentEventSink;
   readonly confirmation?: ConfirmationGate;
   readonly steering?: SteeringSource;
-  /** Advertised to context; overridden by bootstrap discovery when catalog is set. */
+  /** Advertised to context; overridden when the turn selector returns capabilities. */
   readonly capabilities?: RuntimeCapabilities;
   /** Hard cap on model turns. Default 20. */
   readonly maxTurns?: number;
@@ -125,6 +123,13 @@ export class AgentRunner {
   private readonly tools: ToolRegistry;
   private readonly selectTurnTools: TurnToolSelector;
   private readonly createToolContext: CreateToolExecutionContext;
+  private readonly shouldTerminalizeToolBatch:
+    | ((context: ToolBatchContext) => boolean)
+    | undefined;
+  private readonly getModelTimeoutRetryMessage:
+    | ((context: ModelTimeoutContext) => string | undefined)
+    | undefined;
+  private readonly requiredToolsNudgeMessage: string;
   private readonly events: AgentEventSink;
   private readonly confirmation: ConfirmationGate;
   private readonly steering: SteeringSource | undefined;
@@ -145,6 +150,10 @@ export class AgentRunner {
       options.selectTurnTools ??
       createFixedTurnToolSelector(this.tools, this.capabilities);
     this.createToolContext = options.createToolContext ?? ((base) => base);
+    this.shouldTerminalizeToolBatch = options.shouldTerminalizeToolBatch;
+    this.getModelTimeoutRetryMessage = options.getModelTimeoutRetryMessage;
+    this.requiredToolsNudgeMessage =
+      options.requiredToolsNudgeMessage ?? USE_TOOLS_NUDGE_MESSAGE;
     this.maxTurns = options.maxTurns ?? DEFAULT_MAX_TURNS;
     this.modelTurnTimeoutMs =
       options.modelTurnTimeoutMs ?? DEFAULT_MODEL_TURN_TIMEOUT_MS;
@@ -169,10 +178,17 @@ export class AgentRunner {
 
     /** Failures per tool name in this run (circuit breaker). */
     const toolFailureCounts = new Map<string, number>();
+    /**
+     * Event/telemetry-sink failures observed AFTER a tool's side effect
+     * already completed successfully. These never rewrite the tool's
+     * outcome — they fail the run separately once the current turn's
+     * successful outcomes/transcript entries are recorded (see Step 5A).
+     */
+    const infrastructureFailures: Diagnostic[] = [];
     let forceAnswerOnly = false;
     let stopNudgeSent = false;
     let useToolsNudgeSent = false;
-    let authoringTimeoutRetrySent = false;
+    let timeoutRetrySent = false;
 
     await this.emit({
       type: "agent.started",
@@ -274,17 +290,14 @@ export class AgentRunner {
               throw error;
             }
             if (timeout.timedOut) {
-              // One retry after create when the first authoring turn stalls
-              // (common with slow models under tool_choice=required).
-              if (
-                !authoringTimeoutRetrySent &&
-                hasSuccessfulCreate(toolOutcomes) &&
-                !hasSuccessfulMutation(toolOutcomes)
-              ) {
-                authoringTimeoutRetrySent = true;
+              const retryMessage = !timeoutRetrySent
+                ? this.getModelTimeoutRetryMessage?.({ toolOutcomes })
+                : undefined;
+              if (retryMessage) {
+                timeoutRetrySent = true;
                 transcript.push({
                   role: "user",
-                  content: AUTHORING_TIMEOUT_RETRY_MESSAGE,
+                  content: retryMessage,
                 });
                 await this.emit({
                   type: "turn.completed",
@@ -327,7 +340,10 @@ export class AgentRunner {
           const toolCallsForMetrics = forceAnswerOnly
             ? []
             : (response.toolCalls ?? []);
-          await this.emit({
+          // Observability-only: a metrics-delivery failure must never be
+          // folded into "model call failed" (this emit sits inside the
+          // model-turn try/catch below).
+          await this.emitTelemetry({
             type: "model.turn.metrics",
             runId: request.runId,
             turnId,
@@ -418,7 +434,7 @@ export class AgentRunner {
             useToolsNudgeSent = true;
             transcript.push({
               role: "user",
-              content: USE_TOOLS_NUDGE_MESSAGE,
+              content: this.requiredToolsNudgeMessage,
             });
             await this.emit({
               type: "turn.completed",
@@ -477,6 +493,7 @@ export class AgentRunner {
           signal,
           toolFailureCounts,
           activeTools,
+          infrastructureFailures,
         );
         toolOutcomes.push(...turnOutcomes);
 
@@ -487,15 +504,37 @@ export class AgentRunner {
           }
         }
 
-        // Write-batch terminalization: content + successful side-effecting tools
-        // → finish without another model round. Read-only / failed batches continue.
+        // A tool already succeeded (its outcome above is authoritative and
+        // stays "succeeded") but a required event failed to persist/deliver
+        // afterward. Preserve that outcome, but fail the RUN here rather
+        // than let the model keep going — it must not be encouraged to
+        // retry a mutation that already happened.
+        if (infrastructureFailures.length > 0) {
+          for (const diagnostic of infrastructureFailures) {
+            diagnostics.push(diagnostic);
+          }
+          const diagnostic = infrastructureFailures[0]!;
+          await this.emit({
+            type: "agent.failed",
+            runId: request.runId,
+            diagnostic,
+            at: this.timestamp(),
+          });
+          return {
+            status: "failed",
+            summary: diagnostic.message,
+            diagnostics,
+            toolOutcomes: [...toolOutcomes],
+          };
+        }
+
         if (
-          canTerminalizeSuccessfulWriteBatch(
-            response.content,
+          this.shouldTerminalizeToolBatch?.({
+            content: response.content,
             toolCalls,
-            turnOutcomes,
-            activeTools,
-          )
+            toolOutcomes: turnOutcomes,
+            tools: activeTools,
+          })
         ) {
           await this.emit({
             type: "turn.completed",
@@ -596,6 +635,7 @@ export class AgentRunner {
     signal: AbortSignal,
     toolFailureCounts: Map<string, number>,
     activeTools: ToolRegistry,
+    infrastructureFailures: Diagnostic[],
   ): Promise<ToolOutcome[]> {
     const outcomes: ToolOutcome[] = new Array(toolCalls.length);
     let index = 0;
@@ -621,6 +661,7 @@ export class AgentRunner {
               signal,
               toolFailureCounts,
               activeTools,
+              infrastructureFailures,
             ),
           ),
         );
@@ -637,6 +678,7 @@ export class AgentRunner {
         signal,
         toolFailureCounts,
         activeTools,
+        infrastructureFailures,
       );
       index += 1;
     }
@@ -664,6 +706,7 @@ export class AgentRunner {
     signal: AbortSignal,
     toolFailureCounts: Map<string, number>,
     activeTools: ToolRegistry,
+    infrastructureFailures: Diagnostic[],
   ): Promise<ToolOutcome> {
     this.throwIfAborted(signal);
 
@@ -741,7 +784,7 @@ export class AgentRunner {
         diagnostic,
         at: this.timestamp(),
       });
-      await this.emit({
+      await this.emitTelemetry({
         type: "tool.execution.metrics",
         runId: request.runId,
         toolCallId: call.id,
@@ -860,38 +903,14 @@ export class AgentRunner {
     const inputBytes = measureJsonBytes(input);
     const toolStartedAt = Date.now();
 
+    // `output` is only assigned once tool.execute() resolves. Anything that
+    // happens after that point (event emission, metrics) is observation, not
+    // execution — a failure there must never rewrite this into a tool
+    // failure (see AgentCore v2 Step 5A: tool success vs event-sink failure).
+    let output: unknown;
     try {
       this.throwIfAborted(signal);
-      const output = await tool.execute(input, ctx);
-      const wallMs = elapsedMs(toolStartedAt);
-      const summary = summarizeOutput(output);
-      await this.emit({
-        type: "tool.completed",
-        runId: request.runId,
-        toolCallId: call.id,
-        toolName: tool.name,
-        summary,
-        output,
-        at: this.timestamp(),
-      });
-      await this.emit({
-        type: "tool.execution.metrics",
-        runId: request.runId,
-        toolCallId: call.id,
-        toolName: tool.name,
-        at: this.timestamp(),
-        wallMs,
-        inputBytes,
-        resultBytes: measureJsonBytes(output),
-        success: true,
-      });
-      return {
-        toolCallId: call.id,
-        toolName: tool.name,
-        status: "succeeded",
-        summary,
-        output,
-      };
+      output = await tool.execute(input, ctx);
     } catch (error) {
       if (this.isCancellation(error, signal)) {
         throw error;
@@ -914,7 +933,7 @@ export class AgentRunner {
         diagnostic,
         at: this.timestamp(),
       });
-      await this.emit({
+      await this.emitTelemetry({
         type: "tool.execution.metrics",
         runId: request.runId,
         toolCallId: call.id,
@@ -933,6 +952,59 @@ export class AgentRunner {
         diagnostic,
       };
     }
+
+    // tool.execute() succeeded: the side effect already happened. This
+    // outcome is now authoritative for the transcript/model regardless of
+    // what happens below.
+    const wallMs = elapsedMs(toolStartedAt);
+    const summary = summarizeOutput(output);
+    const outcome: ToolOutcome = {
+      toolCallId: call.id,
+      toolName: tool.name,
+      status: "succeeded",
+      summary,
+      output,
+    };
+
+    try {
+      await this.emit({
+        type: "tool.completed",
+        runId: request.runId,
+        toolCallId: call.id,
+        toolName: tool.name,
+        summary,
+        output,
+        at: this.timestamp(),
+      });
+    } catch (error) {
+      if (this.isCancellation(error, signal)) {
+        throw error;
+      }
+      // Required event failed to persist/deliver AFTER the tool already
+      // succeeded — an infrastructure fact, not a tool-execution fact.
+      // Do not touch `outcome` and do not emit tool.failed.
+      infrastructureFailures.push(
+        this.toDiagnostic(
+          error,
+          "EVENT_SINK_FAILURE",
+          `Failed to record completion of tool ${tool.name}`,
+        ),
+      );
+    }
+
+    await this.emitTelemetry({
+      type: "tool.execution.metrics",
+      runId: request.runId,
+      toolCallId: call.id,
+      toolName: tool.name,
+      at: this.timestamp(),
+      wallMs,
+      inputBytes,
+      resultBytes: measureJsonBytes(output),
+      success: true,
+    });
+
+    return outcome;
   }
 
   private async cancelled(
@@ -955,6 +1027,20 @@ export class AgentRunner {
 
   private async emit(event: AgentEvent): Promise<void> {
     await this.events.emit(event);
+  }
+
+  /**
+   * Observability-only emission (model/tool metrics). These events carry no
+   * durability contract — a sink failure here must never invalidate an
+   * already-successful model turn or tool execution, so failures are
+   * swallowed rather than surfaced as run/tool failures.
+   */
+  private async emitTelemetry(event: AgentEvent): Promise<void> {
+    try {
+      await this.events.emit(event);
+    } catch {
+      // Intentionally ignored — see doc comment above.
+    }
   }
 
   private timestamp(): string {
@@ -1025,76 +1111,6 @@ function steeringToUserMessage(message: SteeringMessage): ModelMessage {
     role: "user",
     content: message.content,
   };
-}
-
-function isDocumentWriteTool(name: string): boolean {
-  if (!name.startsWith("document.")) return false;
-  return (
-    name !== "document.inspect" &&
-    name !== "document.find" &&
-    name !== "document.capabilities"
-  );
-}
-
-function hasSuccessfulCreate(
-  outcomes: readonly ToolOutcome[],
-): boolean {
-  return outcomes.some(
-    (o) => o.status === "succeeded" && o.toolName === CREATE_BLANK_TOOL,
-  );
-}
-
-function hasSuccessfulMutation(
-  outcomes: readonly ToolOutcome[],
-): boolean {
-  return outcomes.some(
-    (o) => o.status === "succeeded" && isDocumentWriteTool(o.toolName),
-  );
-}
-
-/**
- * Finish the run when the model already supplied a short confirmation alongside
- * a fully successful document-write batch (no extra final-answer model turn).
- * Create-only and read-only batches never terminalize.
- *
- * Content must look like a user-facing completion (not a stub like "ok") so
- * intermediate write turns with placeholder text continue the loop.
- */
-function canTerminalizeSuccessfulWriteBatch(
-  content: string,
-  toolCalls: readonly ModelToolCall[],
-  outcomes: readonly ToolOutcome[],
-  tools: ToolRegistry,
-): boolean {
-  const trimmed = content.trim();
-  if (!trimmed || trimmed.length < 12) return false;
-  if (toolCalls.length === 0 || outcomes.length !== toolCalls.length) {
-    return false;
-  }
-  if (outcomes.some((o) => o.status !== "succeeded")) {
-    return false;
-  }
-  if (outcomes.some((o) => o.status === "awaiting_confirmation")) {
-    return false;
-  }
-  if (outcomes.some((o) => o.diagnostic?.severity === "error")) {
-    return false;
-  }
-
-  let hasDocumentWrite = false;
-  for (const call of toolCalls) {
-    if (isDocumentWriteTool(call.name)) {
-      hasDocumentWrite = true;
-      continue;
-    }
-    // Generic write tools (non-create) may terminalize; blank create alone must not.
-    if (call.name === CREATE_BLANK_TOOL) continue;
-    const tool = tools.get(call.name);
-    if (tool && toolEffect(tool) === "write") {
-      hasDocumentWrite = true;
-    }
-  }
-  return hasDocumentWrite;
 }
 
 /**

@@ -4,6 +4,7 @@ import { test } from "node:test";
 import {
   AgentRunner,
   DOCUMENT_TOOL_NAMES,
+  createDocumentAgentRunnerPolicyOptions,
   createDocumentRunState,
   createDocumentToolContext,
   createDocumentToolRegistry,
@@ -195,6 +196,7 @@ test("sequential writes in one model response: one version event each, ordered",
       runtime,
       mutations: createInMemoryDocumentMutationExecutor(runtime),
     }),
+    ...createDocumentAgentRunnerPolicyOptions(),
     events,
     capabilities: mutableDocumentCapabilities(),
   });

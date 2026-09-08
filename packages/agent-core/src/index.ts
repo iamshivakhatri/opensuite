@@ -217,6 +217,7 @@ export {
   createDocumentToolRegistry,
   createDocumentTurnToolSelector,
   createDocumentAgentRunnerOptions,
+  createDocumentAgentRunnerPolicyOptions,
   createDocumentRunState,
   createDocumentToolContext,
   createSlidesUpdateTextTool,
@@ -267,7 +268,12 @@ export {
 export type { SteeringSource } from "./steering.js";
 export { InMemorySteeringQueue } from "./steering.js";
 
-export type { AgentRunOptions, AgentRunnerOptions } from "./runner.js";
+export type {
+  AgentRunOptions,
+  AgentRunnerOptions,
+  ModelTimeoutContext,
+  ToolBatchContext,
+} from "./runner.js";
 export { AgentRunner } from "./runner.js";
 
 export type {
