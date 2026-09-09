@@ -12,12 +12,13 @@ _Read this before starting any work. Keep it a concise current-state handoff, no
 
 ## Just Completed
 
-* Frontend Phase 2 — dialog/menu deduplication on shared UI primitives.
-  * `sidebar.tsx` / `workspaces-home.tsx` / `command-palette.tsx` use
-    `components/ui/dialog.tsx` (local Modal/Dialog shells removed).
-  * Sidebar + workspaces-home workspace actions use shared `ContextMenu`.
-  * Behavior preserved: Escape, overlay dismiss, rename/delete/upload/create
-    callbacks; palette pickers stay above palette via `--z-popover`.
+* Frontend Phase 3 — agent panel affordances (confirm hint, version notice, retry).
+  * Confirmation: richer `waiting_for_confirmation` banner from SSE
+    `confirmation.required` (tool + reason); Stop still cancels.
+  * Version notice: subtle “Document updated to vN” on
+    `document.version.advanced` / refresh for the active document.
+  * Retry: one-click resubmit of last user message after failed/interrupted runs.
+  * No Approve/Deny API yet — confirm gate remains server-side; report only.
 
 ## Current Decisions
 
@@ -41,8 +42,10 @@ _Read this before starting any work. Keep it a concise current-state handoff, no
 ## Intentionally Deferred
 
 * Planner/DAG/sub-agents; model bakeoff; production analytics
-* Frontend Phase 3 (agent panel confirm/retry/version notice)
+* HTTP Approve/Deny for agent confirmation (no product route yet)
+* Frontend Phase 3 panel file split (hooks/components) — deferred; affordances shipped in place
+* Frontend Phase 4 (editor remount polish + tab dirty/overflow)
 
 ## Recommended Next Step
 
-Frontend Phase 3 — agent panel: wire confirmation UI, version-updated notice, and retry.
+Frontend Phase 4 — editor/document workflow: reduce remount-flash on version refresh; tab dirty-dot + overflow.

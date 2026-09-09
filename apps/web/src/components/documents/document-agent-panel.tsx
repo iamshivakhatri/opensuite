@@ -107,6 +107,18 @@ export function DocumentAgentPanel({
   const [progress, setProgress] = React.useState<AgentProgressLine[]>([]);
   const [runError, setRunError] = React.useState<string | null>(null);
   const [runNotice, setRunNotice] = React.useState<string | null>(null);
+  /** Whether a retry affordance should be shown for the last user message. */
+  const [canRetryRun, setCanRetryRun] = React.useState(false);
+  /** Latest "document updated to vN" acknowledgement for the active document. */
+  const [versionNotice, setVersionNotice] = React.useState<{
+    documentId: string;
+    versionNumber: number;
+  } | null>(null);
+  /** Detail for the currently pending confirmation.required tool, if any. */
+  const [pendingConfirmation, setPendingConfirmation] = React.useState<{
+    toolName: string;
+    reason: string;
+  } | null>(null);
   const [submitting, setSubmitting] = React.useState(false);
   const [cancelling, setCancelling] = React.useState(false);
   const [creatingChat, setCreatingChat] = React.useState(false);
@@ -157,11 +169,17 @@ export function DocumentAgentPanel({
     void getDocument(id)
       .then((fresh) => {
         onDocumentUpdated?.(fresh);
+        if (documentId && fresh.id === documentId) {
+          setVersionNotice({
+            documentId: fresh.id,
+            versionNumber: fresh.latestVersion.versionNumber,
+          });
+        }
       })
       .catch(() => {
         // Editor can still pick up the version on focus refresh.
       });
-  }, [onDocumentUpdated]);
+  }, [documentId, onDocumentUpdated]);
 
   const scheduleDocumentVersionRefresh = React.useCallback(
     (advancedDocumentId: string) => {
@@ -216,16 +234,21 @@ export function DocumentAgentPanel({
     if (run.status === "failed") {
       setRunError("The agent run failed. You can try again.");
       setRunNotice(null);
+      setCanRetryRun(true);
     } else if (run.status === "cancelled") {
       setRunError(null);
       setRunNotice(null);
+      setCanRetryRun(false);
     } else if (run.status === "completed") {
       setRunError(null);
       setRunNotice(null);
+      setCanRetryRun(false);
     } else {
       setRunError(null);
       setRunNotice(null);
+      setCanRetryRun(false);
     }
+    setPendingConfirmation(null);
 
     if (!isActiveAgentRunStatus(run.status)) {
       if (ms !== null) {
@@ -290,6 +313,8 @@ export function DocumentAgentPanel({
       }
       setRunError(message);
       setRunNotice(null);
+      setCanRetryRun(true);
+      setPendingConfirmation(null);
       setActiveRun(null);
       runIdRef.current = null;
       reconnectAttemptsRef.current = 0;
@@ -317,6 +342,8 @@ export function DocumentAgentPanel({
       setRunError(null);
       setRunNotice(null);
       if (!options?.preserveDraft) {
+        setCanRetryRun(false);
+        setPendingConfirmation(null);
         setLiveDraft(null);
         reconnectAttemptsRef.current = 0;
         const startedAt = Date.now();
@@ -372,10 +399,21 @@ export function DocumentAgentPanel({
             if (messageId) {
               setLiveDraft({ messageId, content });
             }
+          } else if (event.type === "confirmation.required") {
+            setPendingConfirmation({
+              toolName: String(event.data.toolName ?? "this action"),
+              reason: String(event.data.reason ?? ""),
+            });
           } else if (event.type === "document.version.advanced") {
             const advancedDocumentId = String(event.data.documentId ?? "");
             if (advancedDocumentId) {
               scheduleDocumentVersionRefresh(advancedDocumentId);
+              const rawVersion = event.data.versionNumber;
+              const versionNumber =
+                typeof rawVersion === "number" ? rawVersion : Number(rawVersion);
+              if (documentId && advancedDocumentId === documentId && Number.isFinite(versionNumber)) {
+                setVersionNotice({ documentId: advancedDocumentId, versionNumber });
+              }
             }
           } else if (event.type === "document.created") {
             const createdId = String(event.data.documentId ?? "");
@@ -395,6 +433,18 @@ export function DocumentAgentPanel({
                 })
                 .catch(() => undefined);
             }
+          }
+
+          if (
+            event.type === "tool.started" ||
+            event.type === "tool.failed" ||
+            event.type === "agent.completed" ||
+            event.type === "agent.failed" ||
+            event.type === "agent.cancelled"
+          ) {
+            // Confirmation is resolved (approved/denied) once the tool
+            // starts, fails, or the run ends — server decides synchronously.
+            setPendingConfirmation(null);
           }
 
           if (
@@ -489,6 +539,7 @@ export function DocumentAgentPanel({
     },
     [
       abandonLiveRun,
+      documentId,
       finalizeFromSnapshot,
       flushDocumentVersionRefresh,
       onDocumentCreated,
@@ -513,6 +564,9 @@ export function DocumentAgentPanel({
     setTimelineOpen(false);
     setRunError(null);
     setRunNotice(null);
+    setCanRetryRun(false);
+    setVersionNotice(null);
+    setPendingConfirmation(null);
     runIdRef.current = null;
     runStartedAtRef.current = null;
     setLiveDraft(null);
@@ -561,6 +615,8 @@ export function DocumentAgentPanel({
             setRunNotice(null);
           } else if (latestRun.status === "cancelled") {
             setRunNotice(null);
+          } else if (latestRun.status === "failed") {
+            setCanRetryRun(true);
           }
         }
       }
@@ -598,7 +654,19 @@ export function DocumentAgentPanel({
     if (!el || !stickToBottomRef.current) return;
     // Smooth scroll for structural changes — not every streamed token.
     el.scrollTo({ top: el.scrollHeight, behavior: "smooth" });
-  }, [messages.length, progress.length, liveDraft?.content.length, runError, runNotice, busy, runTotalMs, timelineOpen]);
+  }, [
+    messages.length,
+    progress.length,
+    liveDraft?.content.length,
+    runError,
+    runNotice,
+    versionNotice,
+    canRetryRun,
+    pendingConfirmation,
+    busy,
+    runTotalMs,
+    timelineOpen,
+  ]);
 
   React.useEffect(() => {
     const el = composerRef.current;
@@ -671,8 +739,15 @@ export function DocumentAgentPanel({
       .slice(0, 8);
   }, [mentionOpen, mentionQuery, tagged, workspaceFiles]);
 
-  async function handleSubmit() {
-    const instruction = draft.trim();
+  /**
+   * Core "start a run" flow, shared by the composer submit and the Retry
+   * affordance for a failed/interrupted run. Callers own draft handling.
+   */
+  async function submitInstruction(
+    instruction: string,
+    documentIds: string[],
+    options?: { restoreDraftOnError?: boolean },
+  ) {
     if (
       !shouldAcceptSubmit({
         instruction,
@@ -687,9 +762,10 @@ export function DocumentAgentPanel({
     setSubmitting(true);
     setRunError(null);
     setRunNotice(null);
-    setDraft("");
+    setCanRetryRun(false);
+    setVersionNotice(null);
+    setPendingConfirmation(null);
     setMentionOpen(false);
-    const documentIds = resolveDocumentIdsForRun();
 
     const optimisticId = `local-${Date.now()}`;
     setMessages((prev) => [
@@ -717,7 +793,9 @@ export function DocumentAgentPanel({
       attachRun(run, id);
     } catch (error) {
       setMessages((prev) => prev.filter((m) => m.id !== optimisticId));
-      setDraft(instruction);
+      if (options?.restoreDraftOnError) {
+        setDraft(instruction);
+      }
       setRunError(
         userFacingError(error, "Could not start the agent run. Try again."),
       );
@@ -725,6 +803,38 @@ export function DocumentAgentPanel({
       setSubmitting(false);
       submitLockRef.current = false;
     }
+  }
+
+  async function handleSubmit() {
+    const instruction = draft.trim();
+    if (
+      !shouldAcceptSubmit({
+        instruction,
+        busy,
+        locked: submitLockRef.current,
+      })
+    ) {
+      return;
+    }
+    const documentIds = resolveDocumentIdsForRun();
+    setDraft("");
+    await submitInstruction(instruction, documentIds, {
+      restoreDraftOnError: true,
+    });
+  }
+
+  /**
+   * Resubmits the last user message after a failed/interrupted run. Only
+   * shown when `canRetryRun` is true, i.e. the message was already durably
+   * persisted (so re-sending it is safe and unambiguous).
+   */
+  async function handleRetry() {
+    if (busy) return;
+    const lastUserMessage = [...messages]
+      .reverse()
+      .find((message) => message.role === "user");
+    if (!lastUserMessage) return;
+    await submitInstruction(lastUserMessage.content, resolveDocumentIdsForRun());
   }
 
   async function handleCancel() {
@@ -751,6 +861,7 @@ export function DocumentAgentPanel({
       progressRef.current = nextProgress;
       setProgress(nextProgress);
       setLiveDraft(null);
+      setPendingConfirmation(null);
       applyTerminalRunStatus(snapshot.run);
     } catch (error) {
       if (error instanceof ApiError && error.statusCode === 404) {
@@ -779,6 +890,9 @@ export function DocumentAgentPanel({
     setRunTotalMs(null);
     setRunError(null);
     setRunNotice(null);
+    setCanRetryRun(false);
+    setVersionNotice(null);
+    setPendingConfirmation(null);
     setLiveDraft(null);
     setDraft("");
     runIdRef.current = null;
@@ -806,6 +920,9 @@ export function DocumentAgentPanel({
                   ? "failed"
                   : "completed",
           });
+          if (latestRun.status === "failed") {
+            setCanRetryRun(true);
+          }
         }
       }
     } catch (error) {
@@ -852,6 +969,9 @@ export function DocumentAgentPanel({
       setLastTurn(null);
       setTimelineOpen(false);
       setRunTotalMs(null);
+      setCanRetryRun(false);
+      setVersionNotice(null);
+      setPendingConfirmation(null);
       setLiveDraft(null);
       setDraft("");
       setTagged([]);
@@ -947,7 +1067,9 @@ export function DocumentAgentPanel({
     messages.length === 0 &&
     !isLiveTurn &&
     !runError &&
-    !runNotice;
+    !runNotice &&
+    !versionNotice &&
+    !canRetryRun;
 
   return (
     <aside
@@ -1137,18 +1259,51 @@ export function DocumentAgentPanel({
                 />
               ) : null}
 
+              {versionNotice ? (
+                <p className="px-0.5 text-[10px] text-ink-faint">
+                  Document updated to{" "}
+                  <span className="font-medium text-ink-soft">
+                    v{versionNotice.versionNumber}
+                  </span>
+                </p>
+              ) : null}
+
               {runNotice ? (
                 <p className="px-0.5 text-[10px] text-ink-faint">{runNotice}</p>
               ) : null}
 
               {runError ? (
-                <p className="rounded-[var(--radius-sm)] bg-danger-soft px-2.5 py-2 text-[10.5px] text-danger">
-                  {runError}
-                </p>
+                <div className="flex items-center gap-2 rounded-[var(--radius-sm)] bg-danger-soft px-2.5 py-2 text-[10.5px] text-danger">
+                  <p className="min-w-0 flex-1">{runError}</p>
+                  {canRetryRun ? (
+                    <button
+                      type="button"
+                      onClick={() => void handleRetry()}
+                      disabled={busy}
+                      className="shrink-0 font-medium underline underline-offset-2 hover:opacity-80 disabled:opacity-50"
+                    >
+                      Retry
+                    </button>
+                  ) : null}
+                </div>
+              ) : null}
+
+              {!runError && canRetryRun ? (
+                <button
+                  type="button"
+                  onClick={() => void handleRetry()}
+                  disabled={busy}
+                  className="self-start px-0.5 text-[10.5px] font-medium text-accent hover:underline disabled:opacity-50"
+                >
+                  Retry last request
+                </button>
               ) : null}
 
               {activeRun && isActiveAgentRunStatus(activeRun.status) ? (
-                <RunStatusHint status={activeRun.status} />
+                <RunStatusHint
+                  status={activeRun.status}
+                  pendingConfirmation={pendingConfirmation}
+                />
               ) : null}
             </div>
           </>
@@ -1376,13 +1531,29 @@ function AgentThoughtToggle({
   );
 }
 
-function RunStatusHint({ status }: { status: AgentRunStatus }) {
-  if (status === "waiting_for_confirmation") {
-    return (
-      <p className="text-[10px] text-ink-faint">
-        Waiting for confirmation…
-      </p>
-    );
+function RunStatusHint({
+  status,
+  pendingConfirmation,
+}: {
+  status: AgentRunStatus;
+  pendingConfirmation: { toolName: string; reason: string } | null;
+}) {
+  if (status !== "waiting_for_confirmation") {
+    return null;
   }
-  return null;
+  return (
+    <div className="rounded-[var(--radius-sm)] border border-accent-line bg-accent-soft px-2.5 py-2 text-[10.5px] text-accent-hover">
+      <p className="font-medium">
+        Waiting to confirm
+        {pendingConfirmation?.toolName ? `: ${pendingConfirmation.toolName}` : "…"}
+      </p>
+      {pendingConfirmation?.reason ? (
+        <p className="mt-0.5 text-ink-soft">{pendingConfirmation.reason}</p>
+      ) : null}
+      <p className="mt-1 text-[10px] text-ink-faint">
+        Approving from here isn&apos;t available yet — use Stop to cancel this
+        run.
+      </p>
+    </div>
+  );
 }
