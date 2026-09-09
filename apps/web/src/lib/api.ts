@@ -800,6 +800,26 @@ export async function cancelAgentRun(runId: string): Promise<{
   return (await response.json()) as { run: AgentRun; steps: AgentStep[] };
 }
 
+/**
+ * Approve or deny a pending `waiting_for_confirmation` tool call. Throws
+ * `ApiError` with code `CONFIRMATION_NOT_PENDING` (409) for a stale,
+ * duplicate, unknown, or already-resolved `toolCallId`.
+ */
+export async function resolveAgentConfirmation(
+  runId: string,
+  input: { toolCallId: string; decision: "approve" | "deny" },
+): Promise<{ run: AgentRun }> {
+  const response = await apiFetch(`/api/agent/runs/${runId}/confirmation`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+  });
+  if (!response.ok) {
+    throw await parseError(response);
+  }
+  return (await response.json()) as { run: AgentRun };
+}
+
 export interface SubscribeAgentRunEventsOptions {
   readonly onEvent: (event: AgentLiveEvent) => void;
   /** Fired when the SSE stream ends without a handled terminal event. */

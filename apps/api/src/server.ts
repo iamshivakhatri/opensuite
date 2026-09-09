@@ -7,6 +7,7 @@ import {
 
 import { createAuth } from "./auth/index.js";
 import { buildApp } from "./app.js";
+import { createHttpConfirmationBridge } from "./agent/confirmation-bridge.js";
 import { loadConfig } from "./config/index.js";
 import { createResendEmailSender } from "./email/index.js";
 import { createS3ObjectStorage } from "./storage/index.js";
@@ -20,7 +21,15 @@ async function main(): Promise<void> {
   });
   const auth = createAuth(config, dbClient.db, emailSender);
   const storage = createS3ObjectStorage(config.s3);
-  const app = await buildApp(config, { auth, db: dbClient.db, storage });
+  // Real interactive confirmation: destructive tools wait for an explicit
+  // Approve/Deny over HTTP instead of defaulting to deny-all.
+  const confirmationBridge = createHttpConfirmationBridge();
+  const app = await buildApp(config, {
+    auth,
+    db: dbClient.db,
+    storage,
+    agent: { confirmationBridge },
+  });
 
   try {
     await app.listen({ host: config.host, port: config.port });

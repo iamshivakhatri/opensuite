@@ -46,7 +46,8 @@ test("system prompt mentions mutate behavior without listing every tool", () => 
   assert.match(prompt, /re-inspect/i);
   assert.match(prompt, /do not retry the same call unchanged/i);
   assert.match(prompt, /fewest MODEL ROUNDS/i);
-  assert.match(prompt, /ideally 2 turns/i);
+  assert.match(prompt, /LONG-FORM/i);
+  assert.match(prompt, /compact first pass|compact passes/i);
   assert.match(prompt, /semantic rowLabel/i);
   // Catalog communicates availability — prompt must not enumerate ops as callable lists.
   assert.doesNotMatch(prompt, /document\.set_table_cells_text/);

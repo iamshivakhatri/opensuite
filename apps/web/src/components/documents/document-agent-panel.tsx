@@ -27,6 +27,7 @@ import {
   isActiveAgentRunStatus,
   listDocuments,
   listWorkspaceAgentThreads,
+  resolveAgentConfirmation,
   startAgentRun,
   subscribeAgentRunEvents,
   type AgentMessage,
@@ -116,9 +117,15 @@ export function DocumentAgentPanel({
   } | null>(null);
   /** Detail for the currently pending confirmation.required tool, if any. */
   const [pendingConfirmation, setPendingConfirmation] = React.useState<{
+    toolCallId: string;
     toolName: string;
     reason: string;
   } | null>(null);
+  /** True while an Approve/Deny request is in flight. */
+  const [confirmingDecision, setConfirmingDecision] = React.useState(false);
+  const [confirmationError, setConfirmationError] = React.useState<
+    string | null
+  >(null);
   const [submitting, setSubmitting] = React.useState(false);
   const [cancelling, setCancelling] = React.useState(false);
   const [creatingChat, setCreatingChat] = React.useState(false);
@@ -315,6 +322,8 @@ export function DocumentAgentPanel({
       setRunNotice(null);
       setCanRetryRun(true);
       setPendingConfirmation(null);
+      setConfirmationError(null);
+      setConfirmingDecision(false);
       setActiveRun(null);
       runIdRef.current = null;
       reconnectAttemptsRef.current = 0;
@@ -344,6 +353,8 @@ export function DocumentAgentPanel({
       if (!options?.preserveDraft) {
         setCanRetryRun(false);
         setPendingConfirmation(null);
+        setConfirmationError(null);
+        setConfirmingDecision(false);
         setLiveDraft(null);
         reconnectAttemptsRef.current = 0;
         const startedAt = Date.now();
@@ -400,7 +411,9 @@ export function DocumentAgentPanel({
               setLiveDraft({ messageId, content });
             }
           } else if (event.type === "confirmation.required") {
+            setConfirmationError(null);
             setPendingConfirmation({
+              toolCallId: String(event.data.toolCallId ?? ""),
               toolName: String(event.data.toolName ?? "this action"),
               reason: String(event.data.reason ?? ""),
             });
@@ -445,6 +458,8 @@ export function DocumentAgentPanel({
             // Confirmation is resolved (approved/denied) once the tool
             // starts, fails, or the run ends — server decides synchronously.
             setPendingConfirmation(null);
+            setConfirmingDecision(false);
+            setConfirmationError(null);
           }
 
           if (
@@ -567,6 +582,8 @@ export function DocumentAgentPanel({
     setCanRetryRun(false);
     setVersionNotice(null);
     setPendingConfirmation(null);
+    setConfirmationError(null);
+    setConfirmingDecision(false);
     runIdRef.current = null;
     runStartedAtRef.current = null;
     setLiveDraft(null);
@@ -765,6 +782,8 @@ export function DocumentAgentPanel({
     setCanRetryRun(false);
     setVersionNotice(null);
     setPendingConfirmation(null);
+    setConfirmationError(null);
+    setConfirmingDecision(false);
     setMentionOpen(false);
 
     const optimisticId = `local-${Date.now()}`;
@@ -837,6 +856,34 @@ export function DocumentAgentPanel({
     await submitInstruction(lastUserMessage.content, resolveDocumentIdsForRun());
   }
 
+  /**
+   * Approve or deny the currently pending confirmation. The run's own SSE
+   * stream (tool.started / tool.failed) is the source of truth for what
+   * happens next — this only submits the decision.
+   */
+  async function handleConfirmationDecision(decision: "approve" | "deny") {
+    const runId = runIdRef.current ?? activeRun?.id;
+    if (!runId || !pendingConfirmation || confirmingDecision) {
+      return;
+    }
+    setConfirmingDecision(true);
+    setConfirmationError(null);
+    try {
+      await resolveAgentConfirmation(runId, {
+        toolCallId: pendingConfirmation.toolCallId,
+        decision,
+      });
+      // Success: leave `confirmingDecision` true until the SSE
+      // tool.started/tool.failed event clears `pendingConfirmation` — avoids
+      // a flash of re-enabled buttons before the run actually moves on.
+    } catch (error) {
+      setConfirmingDecision(false);
+      setConfirmationError(
+        userFacingError(error, "Could not submit that decision. Try again."),
+      );
+    }
+  }
+
   async function handleCancel() {
     const runId = runIdRef.current ?? activeRun?.id;
     if (!runId || cancelling) {
@@ -862,6 +909,8 @@ export function DocumentAgentPanel({
       setProgress(nextProgress);
       setLiveDraft(null);
       setPendingConfirmation(null);
+      setConfirmationError(null);
+      setConfirmingDecision(false);
       applyTerminalRunStatus(snapshot.run);
     } catch (error) {
       if (error instanceof ApiError && error.statusCode === 404) {
@@ -893,6 +942,8 @@ export function DocumentAgentPanel({
     setCanRetryRun(false);
     setVersionNotice(null);
     setPendingConfirmation(null);
+    setConfirmationError(null);
+    setConfirmingDecision(false);
     setLiveDraft(null);
     setDraft("");
     runIdRef.current = null;
@@ -972,6 +1023,8 @@ export function DocumentAgentPanel({
       setCanRetryRun(false);
       setVersionNotice(null);
       setPendingConfirmation(null);
+      setConfirmationError(null);
+      setConfirmingDecision(false);
       setLiveDraft(null);
       setDraft("");
       setTagged([]);
@@ -1303,6 +1356,10 @@ export function DocumentAgentPanel({
                 <RunStatusHint
                   status={activeRun.status}
                   pendingConfirmation={pendingConfirmation}
+                  confirming={confirmingDecision}
+                  confirmationError={confirmationError}
+                  onApprove={() => void handleConfirmationDecision("approve")}
+                  onDeny={() => void handleConfirmationDecision("deny")}
                 />
               ) : null}
             </div>
@@ -1534,13 +1591,29 @@ function AgentThoughtToggle({
 function RunStatusHint({
   status,
   pendingConfirmation,
+  confirming,
+  confirmationError,
+  onApprove,
+  onDeny,
 }: {
   status: AgentRunStatus;
-  pendingConfirmation: { toolName: string; reason: string } | null;
+  pendingConfirmation: {
+    toolCallId: string;
+    toolName: string;
+    reason: string;
+  } | null;
+  confirming: boolean;
+  confirmationError: string | null;
+  onApprove: () => void;
+  onDeny: () => void;
 }) {
   if (status !== "waiting_for_confirmation") {
     return null;
   }
+  // The banner is only actionable once the toolCallId to approve/deny is
+  // known — a bare `waiting_for_confirmation` snapshot (e.g. right after a
+  // page reload, before the SSE event replays) has nothing to submit yet.
+  const canAct = pendingConfirmation !== null;
   return (
     <div className="rounded-[var(--radius-sm)] border border-accent-line bg-accent-soft px-2.5 py-2 text-[10.5px] text-accent-hover">
       <p className="font-medium">
@@ -1550,10 +1623,36 @@ function RunStatusHint({
       {pendingConfirmation?.reason ? (
         <p className="mt-0.5 text-ink-soft">{pendingConfirmation.reason}</p>
       ) : null}
-      <p className="mt-1 text-[10px] text-ink-faint">
-        Approving from here isn&apos;t available yet — use Stop to cancel this
-        run.
-      </p>
+      {canAct ? (
+        <div className="mt-1.5 flex items-center gap-1.5">
+          <button
+            type="button"
+            onClick={onApprove}
+            disabled={confirming}
+            className="rounded-[7px] bg-ink px-2 py-1 text-[10.5px] font-medium text-on-ink hover:opacity-90 disabled:opacity-50"
+          >
+            Approve
+          </button>
+          <button
+            type="button"
+            onClick={onDeny}
+            disabled={confirming}
+            className="rounded-[7px] border border-line bg-surface px-2 py-1 text-[10.5px] font-medium text-ink hover:bg-sunken disabled:opacity-50"
+          >
+            Deny
+          </button>
+          {confirming ? (
+            <span className="text-[10px] text-ink-faint">Submitting…</span>
+          ) : null}
+        </div>
+      ) : (
+        <p className="mt-1 text-[10px] text-ink-faint">
+          Reconnecting to the pending confirmation…
+        </p>
+      )}
+      {confirmationError ? (
+        <p className="mt-1 text-[10px] text-danger">{confirmationError}</p>
+      ) : null}
     </div>
   );
 }

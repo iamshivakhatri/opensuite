@@ -52,9 +52,9 @@ const CREATE_BLANK_TOOL = "workspace.create_blank_docx";
 const AUTHORING_TIMEOUT_RETRY_MESSAGE =
   "Runtime policy: previous authoring model turn timed out. " +
   "Call tools now with a compact first pass only: document.insert_paragraphs " +
-  "(title + short intro), document.set_paragraph_style Heading 1 on the title, " +
-  "and one document.create_table with at most 6–8 rows. " +
-  "Do not generate a giant single payload.";
+  "(title + short intro / outline), document.set_paragraph_style Heading 1 on the title, " +
+  "and one document.create_table with at most 6–8 rows if needed. " +
+  "Do not generate a giant single payload — continue remaining sections in later turns.";
 
 const USE_DOCUMENT_TOOLS_NUDGE_MESSAGE =
   "Runtime policy: you must use tools for document work — do not put the document body in chat. " +
@@ -108,8 +108,6 @@ export function createDocumentTurnToolSelector(
   let bootstrappedPrimaryId: string | null | undefined = undefined;
   let cachedRegistry: ToolRegistry = baseTools;
   let cachedCapabilities: RuntimeCapabilities = createCapabilities();
-  /** True when the run began with an open primary (Q&A/edit vs blank workspace). */
-  let startedWithPrimary: boolean | null = null;
 
   async function bootstrap(
     primary: DocumentRef | null,
@@ -178,10 +176,6 @@ export function createDocumentTurnToolSelector(
   }
 
   return async (context): Promise<TurnToolSelectorResult> => {
-    if (startedWithPrimary === null) {
-      startedWithPrimary = state.primary != null;
-    }
-
     const currentPrimaryId = state.primary?.documentId ?? null;
     if (
       bootstrappedPrimaryId === undefined ||
@@ -198,11 +192,7 @@ export function createDocumentTurnToolSelector(
       status: "ok",
       registry: cachedRegistry,
       toolsForModel: selectToolsForModel(cachedRegistry, context.toolOutcomes),
-      toolChoice: resolveToolChoice(
-        cachedRegistry,
-        context.toolOutcomes,
-        startedWithPrimary,
-      ),
+      toolChoice: resolveToolChoice(cachedRegistry, context.toolOutcomes),
       capabilities: cachedCapabilities,
     };
   };
@@ -296,10 +286,26 @@ function shouldTerminalizeDocumentToolBatch({
 function getDocumentModelTimeoutRetryMessage({
   toolOutcomes,
 }: ModelTimeoutContext): string | undefined {
-  return hasSuccessfulCreate(toolOutcomes) &&
-    !hasSuccessfulMutation(toolOutcomes)
-    ? AUTHORING_TIMEOUT_RETRY_MESSAGE
-    : undefined;
+  // One compact-first-pass retry when a write stall is likely:
+  // - post-create authoring (create ok, no write yet), or
+  // - open-doc first turn with no tools yet (e.g. "write a paper" building a
+  //   giant insert_paragraphs payload and hanging until the 90s wall timeout).
+  // Skip once any write landed, or after a successful read (Q&A answer stalls
+  // are different — do not nudge create/author tools there).
+  if (hasSuccessfulMutation(toolOutcomes)) return undefined;
+  if (hasSuccessfulDocumentRead(toolOutcomes)) return undefined;
+  if (hasSuccessfulCreate(toolOutcomes) || toolOutcomes.length === 0) {
+    return AUTHORING_TIMEOUT_RETRY_MESSAGE;
+  }
+  return undefined;
+}
+
+function hasSuccessfulDocumentRead(outcomes: readonly ToolOutcome[]): boolean {
+  return outcomes.some(
+    (o) =>
+      o.status === "succeeded" &&
+      (o.toolName === "document.inspect" || o.toolName === "document.find"),
+  );
 }
 
 function isDocumentWriteTool(name: string): boolean {
@@ -323,38 +329,28 @@ function hasSuccessfulMutation(outcomes: readonly ToolOutcome[]): boolean {
   );
 }
 
-function hasSuccessfulDocumentRead(outcomes: readonly ToolOutcome[]): boolean {
-  return outcomes.some(
-    (o) =>
-      o.status === "succeeded" &&
-      (o.toolName === "document.inspect" || o.toolName === "document.find"),
-  );
-}
-
 function resolveToolChoice(
   tools: ToolRegistry,
   outcomes: readonly ToolOutcome[],
-  startedWithPrimary: boolean,
 ): "auto" | "required" | undefined {
   if (tools.definitions().length === 0) {
     return undefined;
   }
-  const hasCreate = tools.get(CREATE_BLANK_TOOL) !== undefined;
   const created = hasSuccessfulCreate(outcomes);
   const mutated = hasSuccessfulMutation(outcomes);
-  // Post-create authoring: force tools until first document write.
+  // Post-create authoring: force tools until first document write. This is
+  // safe to force — the user's intent to work on a document is already
+  // established by the successful create call.
   if (created && !mutated) {
     return "required";
   }
-  // Open-doc Q&A/edit: after inspect/find, allow a normal text answer.
-  // Do not keep forcing create — that falsely fails "what does paragraph 2 say?".
-  if (startedWithPrimary && hasSuccessfulDocumentRead(outcomes) && !created) {
-    return "auto";
-  }
-  // Greenfield: force tools until create or any write.
-  if (hasCreate && !created && !mutated) {
-    return "required";
-  }
+  // Before any create/mutation (fresh greenfield turn, or open-doc Q&A), we
+  // have no reliable signal that the user wants document work at all — the
+  // message could be a plain greeting or question. Never force a tool call
+  // here: forcing "required" with only `workspace.create_blank_docx`
+  // available would make the model create an unwanted document for any
+  // non-document message. The system prompt guides real create requests;
+  // "auto" lets the model decide.
   return "auto";
 }
 

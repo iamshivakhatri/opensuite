@@ -25,6 +25,7 @@ import {
   createAgentRunManager,
   type AgentRunManager,
 } from "./agent/run-manager.js";
+import type { ConfirmationBridge } from "./agent/confirmation-bridge.js";
 import {
   createConfiguredAgentModel,
 } from "./agent/model/index.js";
@@ -64,6 +65,13 @@ export interface AgentAppDependencies {
   readonly tools?: ToolRegistry;
   readonly runtime?: DocumentRuntime;
   readonly confirmation?: ConfirmationGate;
+  /**
+   * Interactive HTTP approve/deny bridge. When set (and `confirmation` is
+   * not separately overridden), it becomes the execution service's
+   * confirmation gate AND the resolver the confirm/deny route calls into.
+   * Omitted → confirmation semantics are unchanged (deny-all by default).
+   */
+  readonly confirmationBridge?: ConfirmationBridge;
   readonly steering?: SteeringSource;
   readonly capabilities?: RuntimeCapabilities;
   readonly maxTurns?: number;
@@ -221,7 +229,7 @@ export async function buildApp(
       tools: documentTools,
       runtime: documentRuntime,
       resolveRuntime,
-      confirmation: deps.agent?.confirmation,
+      confirmation: deps.agent?.confirmation ?? deps.agent?.confirmationBridge,
       steering: deps.agent?.steering,
       capabilities: documentCapabilities,
       maxTurns: deps.agent?.maxTurns,
@@ -247,6 +255,7 @@ export async function buildApp(
     persistence: agentPersistence,
     execution: agentExecution,
     runManager: agentRunManager,
+    confirmationBridge: deps.agent?.confirmationBridge,
     webOrigin: config.webOrigin,
   });
 

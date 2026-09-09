@@ -21,6 +21,7 @@ import {
   type AgentRunManager,
   type LiveEvent,
 } from "../agent/run-manager.js";
+import type { ConfirmationBridge } from "../agent/confirmation-bridge.js";
 import { getRequestUser, type SessionAuth } from "../auth/session.js";
 import {
   DocumentAccessError,
@@ -64,6 +65,15 @@ const CreateRunBody = z.object({
     .optional(),
 });
 
+const ConfirmationDecisionBody = z.object({
+  toolCallId: z
+    .string()
+    .trim()
+    .min(1, "toolCallId is required")
+    .max(200, "toolCallId is too long"),
+  decision: z.enum(["approve", "deny"]),
+});
+
 const SSE_HEARTBEAT_MS = 15_000;
 
 function unauthenticated() {
@@ -82,6 +92,12 @@ export interface AgentRouteDeps {
   readonly persistence: AgentPersistenceService;
   readonly execution: AgentExecutionService;
   readonly runManager: AgentRunManager;
+  /**
+   * Resolves a pending `waiting_for_confirmation` tool call. Omitted when no
+   * interactive confirmation gate is wired — the confirm route then reports
+   * cleanly that nothing is pending instead of throwing.
+   */
+  readonly confirmationBridge?: ConfirmationBridge;
   /** Required on hijacked SSE — reply.hijack bypasses @fastify/cors. */
   readonly webOrigin: string;
 }
@@ -100,7 +116,8 @@ export function registerAgentRoutes(
   app: FastifyInstance,
   deps: AgentRouteDeps,
 ): void {
-  const { auth, documents, persistence, runManager, webOrigin } = deps;
+  const { auth, documents, persistence, runManager, confirmationBridge, webOrigin } =
+    deps;
 
   app.get(
     "/api/workspaces/:workspaceId/agent/threads",
@@ -525,6 +542,90 @@ export function registerAgentRoutes(
         run: toAgentRunDto(current),
         steps: steps.map(toAgentStepDto),
       });
+    } catch (error) {
+      return mapPersistenceError(reply, error);
+    }
+  });
+
+  app.post("/api/agent/runs/:runId/confirmation", async (request, reply) => {
+    const user = await getRequestUser(auth, request);
+    if (!user) {
+      return reply.status(401).send(unauthenticated());
+    }
+
+    const params = RunIdParams.safeParse(request.params);
+    if (!params.success) {
+      return reply.status(400).send({
+        error: {
+          statusCode: 400,
+          message: params.error.issues[0]?.message ?? "Invalid run id",
+          code: "INVALID_RUN_ID",
+        },
+      });
+    }
+
+    const body = ConfirmationDecisionBody.safeParse(request.body);
+    if (!body.success) {
+      return reply.status(400).send({
+        error: {
+          statusCode: 400,
+          message:
+            body.error.issues[0]?.message ?? "Invalid confirmation decision",
+          code: "INVALID_CONFIRMATION_DECISION",
+        },
+      });
+    }
+
+    try {
+      // Ownership check first, exactly like /cancel — never leak whether a
+      // run exists to a caller who doesn't own its workspace.
+      const run = await persistence.getRun({
+        runId: params.data.runId,
+        ownerUserId: user.id,
+      });
+      if (!run) {
+        return reply.status(404).send({
+          error: {
+            statusCode: 404,
+            message: "Agent run not found",
+            code: "RUN_NOT_FOUND",
+          },
+        });
+      }
+
+      if (run.status !== "waiting_for_confirmation" || !confirmationBridge) {
+        return reply.status(409).send({
+          error: {
+            statusCode: 409,
+            message: "No confirmation is pending for this run",
+            code: "CONFIRMATION_NOT_PENDING",
+          },
+        });
+      }
+
+      const outcome = confirmationBridge.resolve({
+        runId: run.id,
+        toolCallId: body.data.toolCallId,
+        approve: body.data.decision === "approve",
+      });
+      if (outcome === "not_found") {
+        return reply.status(409).send({
+          error: {
+            statusCode: 409,
+            message: "No confirmation is pending for this run",
+            code: "CONFIRMATION_NOT_PENDING",
+          },
+        });
+      }
+
+      // Best-effort refresh — the tool.started/tool.failed transition that
+      // follows resolution happens asynchronously in the runner; the SSE
+      // stream (not this response) is the source of truth for that.
+      const current = (await persistence.getRun({
+        runId: run.id,
+        ownerUserId: user.id,
+      })) ?? run;
+      return reply.send({ run: toAgentRunDto(current) });
     } catch (error) {
       return mapPersistenceError(reply, error);
     }

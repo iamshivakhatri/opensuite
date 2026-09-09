@@ -497,14 +497,15 @@ test("telemetry records model and tool metrics without changing outcomes", async
 test("system prompt with mutate caps encourages multi-tool batching", () => {
   const prompt = buildDocumentAgentSystemPrompt(mutableDocumentCapabilities());
   assert.match(prompt, /fewest MODEL ROUNDS/i);
-  assert.match(prompt, /emit them together in one assistant response/i);
+  assert.match(prompt, /emit several small writes together in one assistant response/i);
+  assert.match(prompt, /LONG-FORM/i);
   assert.match(prompt, /need no inspect before append/i);
   assert.match(prompt, /do not retry the same call unchanged/i);
   assert.match(prompt, /create_blank_docx alone/i);
   assert.match(prompt, /short Done/i);
   assert.match(prompt, /NEW DOCUMENT/i);
   assert.match(prompt, /Heading 1/i);
-  assert.match(prompt, /ideally 2 turns/i);
+  assert.match(prompt, /compact first pass|compact passes/i);
   assert.match(prompt, /semantic rowLabel/i);
   assert.doesNotMatch(prompt, /Global capabilities tell you/i);
   assert.doesNotMatch(prompt, /Call document\.capabilities/i);
@@ -556,7 +557,7 @@ test("empty-caps production prompt omits mutate guidance (static bug regression)
   assert.doesNotMatch(prompt, /After create_blank succeeds/);
 });
 
-test("greenfield: forces toolChoice required and nudges chat-only replies", async () => {
+test("greenfield create request: auto tool choice lets model create, then forces authoring until write lands", async () => {
   const createTool = createFakeTool({
     name: "workspace.create_blank_docx",
     effect: "write",
@@ -584,18 +585,10 @@ test("greenfield: forces toolChoice required and nudges chat-only replies", asyn
     (request) => {
       choices.push(request.toolChoice);
       turn += 1;
-      // Simulate DeepSeek dumping a chat essay with no tools.
-      return assistantOnlyResponse(
-        "Here is a long fashion content plan with songs and downtown filming ideas...",
-      );
-    },
-    (request) => {
-      choices.push(request.toolChoice);
-      turn += 1;
-      assert.match(
-        request.messages.map((m) => ("content" in m ? m.content : "")).join("\n"),
-        /must use tools/i,
-      );
+      // A well-behaved model follows the system prompt's "new document"
+      // guidance and calls create even though tool choice is only "auto" —
+      // there is no forced tool_choice on the very first, intent-unknown
+      // turn (that would also fire for plain chit-chat).
       return toolCallResponse("", [
         {
           id: "c1",
@@ -678,10 +671,9 @@ test("greenfield: forces toolChoice required and nudges chat-only replies", asyn
 
   assert.equal(result.status, "completed");
   assert.ok(turn >= 3);
-  assert.equal(choices[0], "required");
+  assert.equal(choices[0], "auto");
+  // After create, authoring turn forces tools until a mutation lands.
   assert.equal(choices[1], "required");
-  // After create, authoring turn still forces tools until a mutation lands.
-  assert.equal(choices[2], "required");
   assert.ok(
     result.toolOutcomes.some(
       (o) =>
@@ -695,6 +687,61 @@ test("greenfield: forces toolChoice required and nudges chat-only replies", asyn
         o.status === "succeeded",
     ),
   );
+});
+
+test("greenfield chit-chat ('hello') completes in one turn without creating a document", async () => {
+  const createTool = createFakeTool({
+    name: "workspace.create_blank_docx",
+    effect: "write",
+    executionMode: "sequential",
+    execute: async () => {
+      throw new Error("must not be called for plain chit-chat");
+    },
+  });
+
+  const choices: Array<"auto" | "required" | undefined> = [];
+  let turn = 0;
+  const model = createScriptedAgentModel([
+    (request) => {
+      choices.push(request.toolChoice);
+      turn += 1;
+      return assistantOnlyResponse("Hi! How can I help you today?");
+    },
+  ]);
+
+  const runtime: DocumentRuntime = {
+    async capabilities() {
+      return mutableDocumentCapabilities();
+    },
+    async inspect() {
+      throw new Error("unused");
+    },
+    async execute() {
+      throw new Error("unused");
+    },
+  };
+
+  const runner = new AgentRunner({
+    model,
+    ...createDocumentAgentRunnerOptions({
+      tools: ToolRegistry.create([createTool]),
+      documentToolCatalog: listDocumentToolDescriptors(),
+      runtime,
+      mutations: createInMemoryDocumentMutationExecutor(runtime),
+    }),
+  });
+
+  const result = await runner.run({
+    instruction: "hello how are you?",
+    threadId: "t1",
+    runId: "r-nudge-chitchat",
+  });
+
+  assert.equal(turn, 1);
+  assert.equal(choices[0], "auto");
+  assert.equal(result.status, "completed");
+  assert.match(result.summary, /how can i help/i);
+  assert.equal(result.toolOutcomes.length, 0);
 });
 
 test("model turn timeout fails the run instead of hanging", async () => {
@@ -730,19 +777,32 @@ test("model turn timeout fails the run instead of hanging", async () => {
   assert.match(result.summary, /exceeded 50ms/i);
 });
 
-test("document timeout policy does not retry before create or after a read", () => {
+test("document timeout policy retries open-doc first-turn stalls, not after read/write", () => {
   const getRetryMessage =
     createDocumentAgentRunnerPolicyOptions().getModelTimeoutRetryMessage;
-  assert.equal(
-    getRetryMessage({ toolOutcomes: [] }),
-    undefined,
-  );
+  // Open-doc / greenfield first turn with no tools yet → compact-pass retry.
+  assert.match(getRetryMessage({ toolOutcomes: [] }) ?? "", /timed out/i);
+  assert.match(getRetryMessage({ toolOutcomes: [] }) ?? "", /compact first pass/i);
+  // After a successful read, do not nudge authoring tools.
   assert.equal(
     getRetryMessage({
       toolOutcomes: [
         {
           toolCallId: "read-1",
           toolName: DOCUMENT_TOOL_NAMES.inspect,
+          status: "succeeded",
+        },
+      ],
+    }),
+    undefined,
+  );
+  // After a write landed, no further authoring-stall retry.
+  assert.equal(
+    getRetryMessage({
+      toolOutcomes: [
+        {
+          toolCallId: "w1",
+          toolName: DOCUMENT_TOOL_NAMES.insertParagraphs,
           status: "succeeded",
         },
       ],
@@ -862,6 +922,178 @@ test("post-create authoring timeout retries once then can finish", async () => {
   );
 });
 
+test("open-doc long-form authoring timeout retries with compact first pass", async () => {
+  let authoringAttempts = 0;
+  const model = createScriptedAgentModel([
+    async (request) => {
+      authoringAttempts += 1;
+      await new Promise<void>((resolve, reject) => {
+        const timer = setTimeout(resolve, 5_000);
+        request.signal?.addEventListener(
+          "abort",
+          () => {
+            clearTimeout(timer);
+            reject(new Error("aborted"));
+          },
+          { once: true },
+        );
+      });
+      return assistantOnlyResponse("stalling on giant paper payload");
+    },
+    (request) => {
+      authoringAttempts += 1;
+      assert.match(
+        request.messages.map((m) => ("content" in m ? m.content : "")).join("\n"),
+        /compact first pass/i,
+      );
+      return toolCallResponse("Done — outline drafted.", [
+        {
+          id: "p1",
+          name: DOCUMENT_TOOL_NAMES.insertParagraphs,
+          input: {
+            texts: [
+              "Quantum Tunneling in Thin Barriers",
+              "Abstract. We outline a simple model of tunneling probabilities.",
+            ],
+            placement: { kind: "end" },
+          },
+        },
+      ]);
+    },
+  ]);
+
+  const runtime: DocumentRuntime = {
+    async capabilities() {
+      return mutableDocumentCapabilities();
+    },
+    async inspect() {
+      throw new Error("unused");
+    },
+    async execute() {
+      return {
+        status: "success",
+        diagnostics: [],
+        artifactBytes: new Uint8Array([1]),
+      };
+    },
+  };
+
+  const runner = new AgentRunner({
+    model,
+    ...createDocumentAgentRunnerOptions({
+      tools: ToolRegistry.create([]),
+      documentToolCatalog: listDocumentToolDescriptors(),
+      runtime,
+      mutations: createInMemoryDocumentMutationExecutor(runtime),
+      primaryDocument: docxRef,
+    }),
+    modelTurnTimeoutMs: 40,
+  });
+
+  const result = await runner.run({
+    instruction: "write a physics research paper in this doc",
+    threadId: "t1",
+    runId: "r-open-doc-authoring-timeout",
+    primaryDocument: docxRef,
+  });
+
+  assert.equal(result.status, "completed");
+  assert.equal(authoringAttempts, 2);
+  assert.ok(
+    result.toolOutcomes.some(
+      (o) =>
+        o.toolName === DOCUMENT_TOOL_NAMES.insertParagraphs &&
+        o.status === "succeeded",
+    ),
+  );
+});
+
+test("open-doc long-form authoring timeout retries with compact first pass", async () => {
+  let authoringAttempts = 0;
+  const model = createScriptedAgentModel([
+    async (request) => {
+      authoringAttempts += 1;
+      await new Promise<void>((resolve, reject) => {
+        const timer = setTimeout(resolve, 5_000);
+        request.signal?.addEventListener(
+          "abort",
+          () => {
+            clearTimeout(timer);
+            reject(new Error("aborted"));
+          },
+          { once: true },
+        );
+      });
+      return assistantOnlyResponse("stalling on giant paper payload");
+    },
+    (request) => {
+      authoringAttempts += 1;
+      assert.match(
+        request.messages.map((m) => ("content" in m ? m.content : "")).join("\n"),
+        /compact first pass/i,
+      );
+      return toolCallResponse("Done — outline drafted.", [
+        {
+          id: "p1",
+          name: DOCUMENT_TOOL_NAMES.insertParagraphs,
+          input: {
+            texts: [
+              "Quantum Tunneling in Thin Barriers",
+              "Abstract. We outline a simple model of tunneling probabilities.",
+            ],
+            placement: { kind: "end" },
+          },
+        },
+      ]);
+    },
+  ]);
+
+  const runtime: DocumentRuntime = {
+    async capabilities() {
+      return mutableDocumentCapabilities();
+    },
+    async inspect() {
+      throw new Error("unused");
+    },
+    async execute() {
+      return {
+        status: "success",
+        diagnostics: [],
+        artifactBytes: new Uint8Array([1]),
+      };
+    },
+  };
+
+  const runner = new AgentRunner({
+    model,
+    ...createDocumentAgentRunnerOptions({
+      tools: ToolRegistry.create([]),
+      documentToolCatalog: listDocumentToolDescriptors(),
+      runtime,
+      mutations: createInMemoryDocumentMutationExecutor(runtime),
+      primaryDocument: docxRef,
+    }),
+    modelTurnTimeoutMs: 40,
+  });
+
+  const result = await runner.run({
+    instruction: "write a physics research paper in this doc",
+    threadId: "t1",
+    runId: "r-open-doc-authoring-timeout",
+    primaryDocument: docxRef,
+  });
+
+  assert.equal(result.status, "completed");
+  assert.equal(authoringAttempts, 2);
+  assert.ok(
+    result.toolOutcomes.some(
+      (o) =>
+        o.toolName === DOCUMENT_TOOL_NAMES.insertParagraphs &&
+        o.status === "succeeded",
+    ),
+  );
+});
+
 test("edit follow-up after mutation allows final chat without create nudge fail", async () => {
   const createTool = createFakeTool({
     name: "workspace.create_blank_docx",
@@ -928,7 +1160,7 @@ test("edit follow-up after mutation allows final chat without create nudge fail"
   });
 
   assert.equal(result.status, "completed");
-  assert.equal(choices[0], "required");
+  assert.equal(choices[0], "auto");
   assert.equal(choices[1], "auto");
   assert.match(result.summary, /Heading 1/i);
 });
@@ -987,7 +1219,7 @@ test("open-doc Q&A: after inspect, text answer completes without create-nudge fa
 
   assert.equal(result.status, "completed");
   assert.equal(modelCalls, 2);
-  assert.equal(choices[0], "required");
+  assert.equal(choices[0], "auto");
   assert.equal(choices[1], "auto");
   assert.match(result.summary, /second paragraph|intro|reading/i);
   assert.ok(

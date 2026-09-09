@@ -1,9 +1,11 @@
 "use client";
 
 import type { ListedDocument } from "@/lib/api";
+import { formatLabel } from "@/components/files/format";
 import { Button } from "@/components/ui/button";
 import Link from "next/link";
 import { workspacePath } from "@/lib/paths";
+import { cn } from "@/lib/utils";
 
 function TrashIcon({ className }: { className?: string }) {
   return (
@@ -24,7 +26,7 @@ function TrashIcon({ className }: { className?: string }) {
 }
 
 /**
- * IDE chrome — back + workspace name + document actions.
+ * IDE chrome — document title primary, workspace context secondary, actions grouped.
  */
 export function DocumentHeader({
   workspaceId,
@@ -60,59 +62,90 @@ export function DocumentHeader({
   let saveLabel = "Saved";
   if (saving) saveLabel = "Saving…";
   else if (conflict) saveLabel = "Conflict";
-  else if (dirty) saveLabel = "Unsaved changes";
+  else if (dirty) saveLabel = "Unsaved";
+
+  const saveTone = conflict
+    ? "text-danger"
+    : dirty || saving
+      ? "text-ink-soft"
+      : "text-ink-faint";
 
   return (
-    <header
-      className="flex h-[44px] shrink-0 items-center gap-2 border-b border-line px-3"
-      style={{
-        background: "color-mix(in srgb, var(--surface) 88%, transparent)",
-        backdropFilter: "blur(16px) saturate(1.12)",
-      }}
-    >
+    <header className="flex h-11 shrink-0 items-center gap-2 border-b border-line bg-surface/90 px-3 backdrop-blur-md">
       <Link
         href="/app"
         title="Back to workspaces"
-        className="grid h-7 w-7 shrink-0 place-items-center rounded-[8px] text-[14px] text-ink-faint hover:bg-sunken hover:text-ink"
+        aria-label="Back to workspaces"
+        className="grid h-7 w-7 shrink-0 place-items-center rounded-[var(--radius-md)] text-[14px] text-ink-faint hover:bg-sunken hover:text-ink"
       >
         ←
       </Link>
 
-      <div className="flex min-w-0 flex-1 items-center gap-2">
-        <Link
-          href={workspacePath(workspaceId)}
-          title={`${wsLabel} — workspace home`}
-          className="min-w-0 truncate text-[13px] font-semibold tracking-[-0.02em] text-ink hover:underline"
-        >
-          {wsLabel}
-        </Link>
-        {document && document.format === "docx" ? (
-          <span
-            className={
-              "hidden min-w-[7.5rem] truncate font-mono text-[10px] sm:inline " +
-              (conflict
-                ? "text-danger"
-                : dirty
-                  ? "text-ink-soft"
-                  : "text-ink-faint")
-            }
-            title={saveLabel}
-          >
-            {saveLabel}
-          </span>
+      <div className="flex min-w-0 flex-1 flex-col justify-center gap-0.5">
+        {document ? (
+          <>
+            <div className="flex min-w-0 items-center gap-2">
+              <h1
+                className="min-w-0 truncate text-[length:var(--text-sm)] font-semibold tracking-[-0.02em] text-ink"
+                title={document.name}
+              >
+                {document.name}
+              </h1>
+              {document.format === "docx" ? (
+                <span
+                  className={cn(
+                    "hidden shrink-0 text-[length:var(--text-2xs)] font-medium sm:inline",
+                    saveTone,
+                  )}
+                  title={
+                    dirty
+                      ? "Unsaved changes"
+                      : saving
+                        ? "Saving…"
+                        : conflict
+                          ? "Version conflict"
+                          : "All changes saved"
+                  }
+                >
+                  {saveLabel}
+                </span>
+              ) : null}
+            </div>
+            <div className="flex min-w-0 items-center gap-1.5 text-[length:var(--text-2xs)] text-ink-faint">
+              <Link
+                href={workspacePath(workspaceId)}
+                title={`${wsLabel} — workspace home`}
+                className="min-w-0 truncate hover:text-ink-soft hover:underline"
+              >
+                {wsLabel}
+              </Link>
+              <span aria-hidden className="text-ink-faint/70">
+                ·
+              </span>
+              <span className="shrink-0 font-mono uppercase tracking-[0.04em]">
+                {formatLabel(document.format)}
+              </span>
+            </div>
+          </>
         ) : (
-          <span className="hidden min-w-[7.5rem] sm:inline" aria-hidden />
+          <Link
+            href={workspacePath(workspaceId)}
+            title={`${wsLabel} — workspace home`}
+            className="min-w-0 truncate text-[length:var(--text-sm)] font-semibold tracking-[-0.02em] text-ink hover:underline"
+          >
+            {wsLabel}
+          </Link>
         )}
       </div>
 
       {document ? (
-        <div className="flex shrink-0 items-center gap-0.5">
+        <div className="flex shrink-0 items-center gap-1">
           {document.format === "docx" && onSave ? (
             <Button
               type="button"
               variant={dirty || conflict ? "primary" : "outline"}
               size="sm"
-              className="mr-1 h-7 shrink-0 rounded-[var(--radius-sm)] px-2.5 text-[11px]"
+              className="h-7 px-2.5 text-[length:var(--text-xs)]"
               disabled={!canSave || saving}
               onClick={onSave}
               title="Save (⌘S)"
@@ -120,38 +153,50 @@ export function DocumentHeader({
               {saving ? "Saving…" : "Save"}
             </Button>
           ) : null}
-          {onToggleStar ? (
-            <button
-              type="button"
-              title={starred ? "Unstar" : "Star"}
-              onClick={onToggleStar}
-              className="grid h-7 w-7 place-items-center rounded-[8px] text-[13px] text-ink-faint hover:bg-sunken hover:text-accent"
-            >
-              {starred ? "★" : "☆"}
-            </button>
-          ) : null}
-          {onTrash ? (
-            <button
-              type="button"
-              title="Move to Trash"
-              onClick={onTrash}
-              className="grid h-7 w-7 place-items-center rounded-[8px] text-ink-faint hover:bg-danger-soft hover:text-danger"
-            >
-              <TrashIcon className="h-[14px] w-[14px]" />
-            </button>
-          ) : null}
           {onDownload ? (
             <Button
               type="button"
               variant="outline"
               size="sm"
-              className="ml-1 h-7 shrink-0 rounded-[var(--radius-sm)] border-line px-2.5 text-[11px]"
+              className="h-7 px-2.5 text-[length:var(--text-xs)]"
               disabled={downloading}
               onClick={onDownload}
+              title="Download"
             >
               {downloading ? "Downloading…" : "Download"}
             </Button>
           ) : null}
+          <div className="ml-0.5 flex items-center gap-0.5 border-l border-line pl-1.5">
+            {onToggleStar ? (
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                title={starred ? "Unstar" : "Star"}
+                aria-label={starred ? "Unstar document" : "Star document"}
+                onClick={onToggleStar}
+                className={cn(
+                  "text-[13px]",
+                  starred ? "text-accent hover:text-accent" : "text-ink-faint",
+                )}
+              >
+                {starred ? "★" : "☆"}
+              </Button>
+            ) : null}
+            {onTrash ? (
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                title="Move to Trash"
+                aria-label="Move to Trash"
+                onClick={onTrash}
+                className="text-ink-faint hover:bg-danger-soft hover:text-danger"
+              >
+                <TrashIcon className="h-[14px] w-[14px]" />
+              </Button>
+            ) : null}
+          </div>
         </div>
       ) : null}
     </header>

@@ -29,8 +29,13 @@ coverage/
 # developer agent benchmark JSON output
 .agent-bench/
 
+# local verification / scratch artifacts
+.tmp/
+
 # generated WASM copy for Turbopack (@schnsrw/core)
 apps/web/vendor/s1engine_wasm_bg.wasm
 
 # drizzle migrations (generated locally)
 packages/db/migrations
+
+docs/future/

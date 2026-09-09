@@ -346,28 +346,12 @@ export class AgentRunner {
             continue;
           }
 
-          if (toolsWereRequired) {
-            const diagnostic: Diagnostic = {
-              code: "MODEL_FAILURE",
-              severity: "error",
-              message:
-                "Model finished without calling required tools after a nudge",
-              details: { turnIndex: turn },
-            };
-            diagnostics.push(diagnostic);
-            await this.emit({
-              type: "agent.failed",
-              runId: request.runId,
-              diagnostic,
-              at: this.timestamp(),
-            });
-            return {
-              status: "failed",
-              summary: diagnostic.message,
-              diagnostics,
-              toolOutcomes: [...toolOutcomes],
-            };
-          }
+          // Tools were required (e.g. greenfield create-or-edit policy) but
+          // the model still answered in chat after a nudge — this happens
+          // for plain conversational turns (e.g. "hello") that never implied
+          // document work. Degrade to a normal completion instead of hard
+          // failing the run; the nudge already gave the model a chance to
+          // comply, and there is no document side effect to lose here.
 
           await this.emit({
             type: "turn.completed",

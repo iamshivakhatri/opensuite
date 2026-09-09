@@ -400,6 +400,11 @@ export function WorkspaceIde({
             workspaceId={workspaceId}
             activeDocument={activeDocument}
             revision={tabsRevision}
+            dirtyDocumentId={
+              editorStatus.dirty && activeDocument
+                ? activeDocument.id
+                : null
+            }
             onRequestCloseTab={requestCloseTab}
             onRequestNavigate={requestNavigate}
           />
