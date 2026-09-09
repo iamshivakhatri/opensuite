@@ -32,6 +32,39 @@
   --radius-lg: 12px;
   --sidebar: #f8f9fb;
   --shell-main: #f4f5f7;
+
+  /*
+   * Z-index scale — documents the stacking order already in use across
+   * dropdowns/overlays/dialogs/palette/toasts so new UI doesn't invent
+   * one-off values. See docs/future/frontend-audit.md (Section C, item 13).
+   */
+  --z-dropdown: 20;
+  --z-overlay: 40;
+  --z-modal: 50;
+  --z-palette: 60;
+  --z-popover: 70;
+  --z-toast: 80;
+
+  /*
+   * Elevation scale — the shadow values already hand-written across
+   * dropdowns/dialogs/palette, named so new UI reuses them instead of
+   * hand-writing another rgba shadow.
+   */
+  --elevation-sm: 0 8px 28px rgba(15, 18, 24, 0.12);
+  --elevation-md: 0 24px 80px rgba(15, 18, 24, 0.2);
+  --elevation-lg: 0 28px 100px rgba(15, 18, 24, 0.22);
+
+  /*
+   * Type scale — reference sizes matching the most common ad hoc
+   * text-[Npx] values already in use, for gradual adoption by components
+   * that currently pick sizes independently.
+   */
+  --text-2xs: 10.5px;
+  --text-xs: 11.5px;
+  --text-sm: 13px;
+  --text-md: 14px;
+  --text-lg: 18px;
+  --text-xl: 22px;
 }
 
 html[data-opensuite-theme="dark"] {

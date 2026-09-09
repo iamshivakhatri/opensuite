@@ -17,6 +17,8 @@ const buttonVariants = cva(
       size: {
         default: "h-9 px-4",
         sm: "h-8 px-3 text-xs",
+        /** Square icon-only button — see docs/future/frontend-audit.md Section R. */
+        icon: "h-7 w-7 rounded-[var(--radius-md)] p-0",
       },
     },
     defaultVariants: {
