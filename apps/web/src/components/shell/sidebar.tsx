@@ -5,7 +5,10 @@ import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 
 import { Button } from "@/components/ui/button";
+import { ContextMenu } from "@/components/ui/context-menu";
+import { Dialog } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
+import { PageLoading } from "@/components/ui/page-state";
 import { userFacingError } from "@/components/files/format";
 import {
   createWorkspace,
@@ -17,7 +20,6 @@ import {
 import { workspacePath } from "@/lib/paths";
 import { useCommandPalette } from "@/components/shell/command-palette";
 import { useToast } from "@/lib/toast";
-import { PageLoading } from "@/components/ui/page-state";
 
 const mainNav = [
   { href: "/app", label: "Workspaces", icon: "nav-workspaces" as const, match: "exact" as const },
@@ -148,6 +150,9 @@ export function Sidebar() {
   );
   const [busy, setBusy] = React.useState(false);
   const [actionError, setActionError] = React.useState<string | null>(null);
+  const menuAnchorRefs = React.useRef<Map<string, HTMLButtonElement>>(
+    new Map(),
+  );
 
   const refresh = React.useCallback(async () => {
     try {
@@ -163,25 +168,8 @@ export function Sidebar() {
     void refresh();
   }, [refresh, pathname]);
 
-  React.useEffect(() => {
-    function onKey(event: KeyboardEvent) {
-      if (event.key === "Escape") {
-        setMenuId(null);
-        setCreateOpen(false);
-        setRenameId(null);
-        setDeleteTarget(null);
-      }
-    }
-    function onClick() {
-      setMenuId(null);
-    }
-    window.addEventListener("keydown", onKey);
-    window.addEventListener("click", onClick);
-    return () => {
-      window.removeEventListener("keydown", onKey);
-      window.removeEventListener("click", onClick);
-    };
-  }, []);
+  const menuWorkspace =
+    (workspaces ?? []).find((workspace) => workspace.id === menuId) ?? null;
 
   async function handleCreate(event: React.FormEvent) {
     event.preventDefault();
@@ -333,6 +321,10 @@ export function Sidebar() {
                 <button
                   type="button"
                   title="Workspace actions"
+                  ref={(node) => {
+                    if (node) menuAnchorRefs.current.set(workspace.id, node);
+                    else menuAnchorRefs.current.delete(workspace.id);
+                  }}
                   onClick={(event) => {
                     event.preventDefault();
                     event.stopPropagation();
@@ -344,34 +336,6 @@ export function Sidebar() {
                 >
                   ···
                 </button>
-                {menuId === workspace.id ? (
-                  <div
-                    className="absolute right-0 top-8 z-20 min-w-[140px] overflow-hidden rounded-[var(--radius-md)] border border-line bg-surface py-1 shadow-[0_8px_28px_rgba(15,18,24,0.12)]"
-                    onClick={(event) => event.stopPropagation()}
-                  >
-                    <button
-                      type="button"
-                      className="block w-full px-3 py-1.5 text-left text-[11.5px] text-ink hover:bg-sunken"
-                      onClick={() => {
-                        setMenuId(null);
-                        setRenameId(workspace.id);
-                        setRenameValue(workspace.name);
-                      }}
-                    >
-                      Rename
-                    </button>
-                    <button
-                      type="button"
-                      className="block w-full px-3 py-1.5 text-left text-[11.5px] text-danger hover:bg-danger-soft"
-                      onClick={() => {
-                        setMenuId(null);
-                        setDeleteTarget(workspace);
-                      }}
-                    >
-                      Move to Trash
-                    </button>
-                  </div>
-                ) : null}
               </div>
             );
           })}
@@ -433,8 +397,38 @@ export function Sidebar() {
         </Link>
       </div>
 
+      {menuWorkspace ? (
+        <ContextMenu
+          open={menuId === menuWorkspace.id}
+          onClose={() => setMenuId(null)}
+          anchorRef={{
+            current: menuAnchorRefs.current.get(menuWorkspace.id) ?? null,
+          }}
+          items={[
+            {
+              id: "rename",
+              label: "Rename",
+              onSelect: () => {
+                setRenameId(menuWorkspace.id);
+                setRenameValue(menuWorkspace.name);
+                setActionError(null);
+              },
+            },
+            {
+              id: "trash",
+              label: "Move to Trash",
+              danger: true,
+              onSelect: () => {
+                setDeleteTarget(menuWorkspace);
+                setActionError(null);
+              },
+            },
+          ]}
+        />
+      ) : null}
+
       {createOpen ? (
-        <Modal onClose={() => setCreateOpen(false)} title="New workspace">
+        <Dialog onClose={() => setCreateOpen(false)} title="New workspace">
           <form onSubmit={(event) => void handleCreate(event)} className="space-y-3">
             <Input
               autoFocus
@@ -460,11 +454,11 @@ export function Sidebar() {
               </Button>
             </div>
           </form>
-        </Modal>
+        </Dialog>
       ) : null}
 
       {renameId ? (
-        <Modal onClose={() => setRenameId(null)} title="Rename workspace">
+        <Dialog onClose={() => setRenameId(null)} title="Rename workspace">
           <form onSubmit={(event) => void handleRename(event)} className="space-y-3">
             <Input
               autoFocus
@@ -489,11 +483,11 @@ export function Sidebar() {
               </Button>
             </div>
           </form>
-        </Modal>
+        </Dialog>
       ) : null}
 
       {deleteTarget ? (
-        <Modal
+        <Dialog
           onClose={() => setDeleteTarget(null)}
           title="Move workspace to Trash?"
         >
@@ -523,35 +517,8 @@ export function Sidebar() {
               {busy ? "Moving…" : "Move to Trash"}
             </Button>
           </div>
-        </Modal>
+        </Dialog>
       ) : null}
     </aside>
-  );
-}
-
-function Modal({
-  title,
-  onClose,
-  children,
-}: {
-  title: string;
-  onClose: () => void;
-  children: React.ReactNode;
-}) {
-  return (
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-overlay px-4 backdrop-blur-[6px]"
-      onClick={onClose}
-    >
-      <div
-        className="w-full max-w-[380px] rounded-[var(--radius-lg)] border border-line bg-surface p-4 shadow-[0_24px_80px_rgba(15,18,24,0.2)]"
-        onClick={(event) => event.stopPropagation()}
-      >
-        <h2 className="mb-3 text-[14px] font-semibold tracking-[-0.02em] text-ink">
-          {title}
-        </h2>
-        {children}
-      </div>
-    </div>
   );
 }

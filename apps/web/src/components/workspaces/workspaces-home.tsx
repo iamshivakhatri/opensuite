@@ -5,6 +5,8 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 
 import { Button } from "@/components/ui/button";
+import { ContextMenu } from "@/components/ui/context-menu";
+import { Dialog } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { PageEmpty, PageError, PageLoading } from "@/components/ui/page-state";
 import {
@@ -48,6 +50,9 @@ export function WorkspacesHome() {
   const [draggingOver, setDraggingOver] = React.useState(false);
   const dragDepth = React.useRef(0);
   const fileRef = React.useRef<HTMLInputElement>(null);
+  const menuAnchorRefs = React.useRef<Map<string, HTMLButtonElement>>(
+    new Map(),
+  );
 
   const load = React.useCallback(async () => {
     setError(null);
@@ -62,25 +67,8 @@ export function WorkspacesHome() {
     void load();
   }, [load]);
 
-  React.useEffect(() => {
-    function onKey(event: KeyboardEvent) {
-      if (event.key === "Escape") {
-        setMenuId(null);
-        setRenameId(null);
-        setDeleteTarget(null);
-        setPendingFiles(null);
-      }
-    }
-    function onClick() {
-      setMenuId(null);
-    }
-    window.addEventListener("keydown", onKey);
-    window.addEventListener("click", onClick);
-    return () => {
-      window.removeEventListener("keydown", onKey);
-      window.removeEventListener("click", onClick);
-    };
-  }, []);
+  const menuWorkspace =
+    (workspaces ?? []).find((workspace) => workspace.id === menuId) ?? null;
 
   function takeOfficeFiles(files: FileList | File[] | null) {
     if (!files) return;
@@ -304,6 +292,10 @@ export function WorkspacesHome() {
             <button
               type="button"
               title="Workspace actions"
+              ref={(node) => {
+                if (node) menuAnchorRefs.current.set(workspace.id, node);
+                else menuAnchorRefs.current.delete(workspace.id);
+              }}
               className="absolute right-3 top-3 grid h-7 w-7 place-items-center rounded-[var(--radius-sm)] text-[12px] text-ink-faint opacity-0 hover:bg-sunken hover:text-ink group-hover:opacity-100"
               onClick={(event) => {
                 event.preventDefault();
@@ -315,37 +307,39 @@ export function WorkspacesHome() {
             >
               ···
             </button>
-            {menuId === workspace.id ? (
-              <div
-                className="absolute right-3 top-11 z-10 min-w-[140px] overflow-hidden rounded-[var(--radius-md)] border border-line bg-surface py-1 shadow-[0_8px_28px_rgba(15,18,24,0.12)]"
-                onClick={(event) => event.stopPropagation()}
-              >
-                <button
-                  type="button"
-                  className="block w-full px-3 py-1.5 text-left text-[11.5px] text-ink hover:bg-sunken"
-                  onClick={() => {
-                    setMenuId(null);
-                    setRenameId(workspace.id);
-                    setRenameValue(workspace.name);
-                  }}
-                >
-                  Rename
-                </button>
-                <button
-                  type="button"
-                  className="block w-full px-3 py-1.5 text-left text-[11.5px] text-danger hover:bg-danger-soft"
-                  onClick={() => {
-                    setMenuId(null);
-                    setDeleteTarget(workspace);
-                  }}
-                >
-                  Move to Trash
-                </button>
-              </div>
-            ) : null}
           </div>
         ))}
       </div>
+
+      {menuWorkspace ? (
+        <ContextMenu
+          open={menuId === menuWorkspace.id}
+          onClose={() => setMenuId(null)}
+          anchorRef={{
+            current: menuAnchorRefs.current.get(menuWorkspace.id) ?? null,
+          }}
+          items={[
+            {
+              id: "rename",
+              label: "Rename",
+              onSelect: () => {
+                setRenameId(menuWorkspace.id);
+                setRenameValue(menuWorkspace.name);
+                setActionError(null);
+              },
+            },
+            {
+              id: "trash",
+              label: "Move to Trash",
+              danger: true,
+              onSelect: () => {
+                setDeleteTarget(menuWorkspace);
+                setActionError(null);
+              },
+            },
+          ]}
+        />
+      ) : null}
 
       {pendingFiles ? (
         <UploadDestinationDialog
@@ -479,7 +473,11 @@ function UploadDestinationDialog({
   }
 
   return (
-    <Dialog title="Where should these files go?" onClose={onClose}>
+    <Dialog
+      title="Where should these files go?"
+      onClose={onClose}
+      className="max-w-[400px]"
+    >
       <p className="mb-3 text-[12px] text-ink-soft">
         {files.length === 1
           ? files[0]!.name
@@ -554,32 +552,5 @@ function UploadDestinationDialog({
         </Button>
       </div>
     </Dialog>
-  );
-}
-
-function Dialog({
-  title,
-  onClose,
-  children,
-}: {
-  title: string;
-  onClose: () => void;
-  children: React.ReactNode;
-}) {
-  return (
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-overlay px-4 backdrop-blur-[6px]"
-      onClick={onClose}
-    >
-      <div
-        className="w-full max-w-[400px] rounded-[var(--radius-lg)] border border-line bg-surface p-4 shadow-[0_24px_80px_rgba(15,18,24,0.2)]"
-        onClick={(event) => event.stopPropagation()}
-      >
-        <h2 className="mb-3 text-[14px] font-semibold tracking-[-0.02em] text-ink">
-          {title}
-        </h2>
-        {children}
-      </div>
-    </div>
   );
 }

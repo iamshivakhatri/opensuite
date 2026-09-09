@@ -12,14 +12,12 @@ _Read this before starting any work. Keep it a concise current-state handoff, no
 
 ## Just Completed
 
-* AgentCore v2 Step 5C — extracted generic `executeModelTurn`.
-  * Owns transformed model request preparation, answer-only suppression,
-    timeout signal lifecycle/classification, streaming, metrics, required
-    message events, one-retry policy decision, cancellation, and normalized
-    completion/failure.
-  * `AgentRunner` retains transcript mutation and the complete model/tool loop.
-  * Successful ordering remains `message.started` → `message.delta*` →
-    `model.turn.metrics` → `message.completed`.
+* Frontend Phase 2 — dialog/menu deduplication on shared UI primitives.
+  * `sidebar.tsx` / `workspaces-home.tsx` / `command-palette.tsx` use
+    `components/ui/dialog.tsx` (local Modal/Dialog shells removed).
+  * Sidebar + workspaces-home workspace actions use shared `ContextMenu`.
+  * Behavior preserved: Escape, overlay dismiss, rename/delete/upload/create
+    callbacks; palette pickers stay above palette via `--z-popover`.
 
 ## Current Decisions
 
@@ -30,27 +28,21 @@ _Read this before starting any work. Keep it a concise current-state handoff, no
   delivery failures fail the run separately (`EVENT_SINK_FAILURE`) instead of
   rewriting the tool outcome — never encourages an automatic retry of a
   completed side effect.
+* **AgentCore v2 frozen** — product/frontend work only unless evidence-backed fixes.
 
 ## Verification Status
 
 | Check | Status |
 |---|---|
-| `pnpm --filter @opensuite/agent-core test` | **Pass** (191) |
-| `pnpm --filter @opensuite/api test` | **Pass** (100 + 17 skip) |
-| `pnpm typecheck` | **Pass** |
-| `pnpm agent:bench` | **Pass** (5/5) |
+| `pnpm --filter @opensuite/web typecheck` | **Pass** |
+| `pnpm --filter @opensuite/web test` | **Pass** (17) |
 | `git diff --check` | **Pass** |
-
-## Benchmark (post Step 5C)
-
-Provider/model: `openrouter` / `deepseek/deepseek-v4-flash-0731` — all 5 `ok`.
-Turns: 2/4/3/4/4; tools: 1/3/5/6/5; failures: 0/0/0/0/0.
 
 ## Intentionally Deferred
 
 * Planner/DAG/sub-agents; model bakeoff; production analytics
+* Frontend Phase 3 (agent panel confirm/retry/version notice)
 
 ## Recommended Next Step
 
-**FREEZE AgentCore v2.** Continue only for product work or evidence-backed fixes,
-not further structural decomposition.
+Frontend Phase 3 — agent panel: wire confirmation UI, version-updated notice, and retry.

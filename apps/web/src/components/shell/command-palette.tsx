@@ -8,7 +8,9 @@ import {
   formatUpdatedAt,
   userFacingError,
 } from "@/components/files/format";
+import { Button } from "@/components/ui/button";
 import { PromptDialog } from "@/components/ui/context-menu";
+import { Dialog } from "@/components/ui/dialog";
 import {
   createBlankDocument,
   createWorkspace,
@@ -618,89 +620,77 @@ function CommandPalette({
       ) : null}
 
       {pickWorkspaceForUpload ? (
-        <div
-          className="fixed inset-0 z-[70] flex items-center justify-center bg-overlay px-4 backdrop-blur-[6px]"
-          onClick={() => setPickWorkspaceForUpload(false)}
+        <Dialog
+          title="Upload to workspace"
+          onClose={() => setPickWorkspaceForUpload(false)}
+          overlayClassName="z-[var(--z-popover)]"
         >
-          <div
-            className="w-full max-w-[380px] rounded-[16px] border border-line bg-surface p-4 shadow-[0_24px_80px_rgba(15,18,24,0.2)]"
-            onClick={(event) => event.stopPropagation()}
-          >
-            <h2 className="mb-3 text-[14px] font-semibold text-ink">
-              Upload to workspace
-            </h2>
-            {workspaces.length === 0 ? (
-              <p className="text-[12px] text-ink-soft">
-                Create a workspace first, then upload a file.
-              </p>
-            ) : (
-              <div className="max-h-[280px] space-y-1 overflow-y-auto">
-                {workspaces.map((ws) => (
-                  <button
-                    key={ws.id}
-                    type="button"
-                    className="block w-full rounded-[10px] px-3 py-2 text-left text-[12.5px] text-ink hover:bg-sunken"
-                    onClick={() => runUpload(ws.id)}
-                  >
-                    {ws.name}
-                  </button>
-                ))}
-              </div>
-            )}
-            <div className="mt-3 flex justify-end">
-              <button
-                type="button"
-                className="text-[12px] text-ink-soft hover:text-ink"
-                onClick={() => setPickWorkspaceForUpload(false)}
-              >
-                Cancel
-              </button>
+          {workspaces.length === 0 ? (
+            <p className="text-[12px] text-ink-soft">
+              Create a workspace first, then upload a file.
+            </p>
+          ) : (
+            <div className="max-h-[280px] space-y-1 overflow-y-auto">
+              {workspaces.map((ws) => (
+                <button
+                  key={ws.id}
+                  type="button"
+                  className="block w-full rounded-[var(--radius-md)] px-3 py-2 text-left text-[12.5px] text-ink hover:bg-sunken"
+                  onClick={() => runUpload(ws.id)}
+                >
+                  {ws.name}
+                </button>
+              ))}
             </div>
+          )}
+          <div className="mt-3 flex justify-end">
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              onClick={() => setPickWorkspaceForUpload(false)}
+            >
+              Cancel
+            </Button>
           </div>
-        </div>
+        </Dialog>
       ) : null}
 
       {pickWorkspaceForBlank ? (
-        <div
-          className="fixed inset-0 z-[70] flex items-center justify-center bg-overlay px-4 backdrop-blur-[6px]"
-          onClick={() => setPickWorkspaceForBlank(false)}
+        <Dialog
+          title="New document in workspace"
+          onClose={() => setPickWorkspaceForBlank(false)}
+          overlayClassName="z-[var(--z-popover)]"
         >
-          <div
-            className="w-full max-w-[380px] rounded-[16px] border border-line bg-surface p-4 shadow-[0_24px_80px_rgba(15,18,24,0.2)]"
-            onClick={(event) => event.stopPropagation()}
-          >
-            <h2 className="mb-3 text-[14px] font-semibold text-ink">
-              New document in workspace
-            </h2>
-            {workspaces.length === 0 ? (
-              <p className="text-[12px] text-ink-soft">
-                Create a workspace first, then create a document.
-              </p>
-            ) : (
-              <div className="max-h-[280px] space-y-1 overflow-y-auto">
-                {workspaces.map((ws) => (
-                  <button
-                    key={ws.id}
-                    type="button"
-                    className="block w-full rounded-[10px] px-3 py-2 text-left text-[12.5px] text-ink hover:bg-sunken"
-                    onClick={() => void runCreateBlank(ws.id)}
-                  >
-                    {ws.name}
-                  </button>
-                ))}
-              </div>
-            )}
-            <div className="mt-3 flex justify-end">
-              <button
-                type="button"
-                className="text-[12px] text-ink-soft hover:text-ink"
-                onClick={() => setPickWorkspaceForBlank(false)}
-              >
-                Cancel
-              </button>
+          {workspaces.length === 0 ? (
+            <p className="text-[12px] text-ink-soft">
+              Create a workspace first, then create a document.
+            </p>
+          ) : (
+            <div className="max-h-[280px] space-y-1 overflow-y-auto">
+              {workspaces.map((ws) => (
+                <button
+                  key={ws.id}
+                  type="button"
+                  className="block w-full rounded-[var(--radius-md)] px-3 py-2 text-left text-[12.5px] text-ink hover:bg-sunken"
+                  onClick={() => void runCreateBlank(ws.id)}
+                >
+                  {ws.name}
+                </button>
+              ))}
             </div>
+          )}
+          <div className="mt-3 flex justify-end">
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              onClick={() => setPickWorkspaceForBlank(false)}
+            >
+              Cancel
+            </Button>
           </div>
-        </div>
+        </Dialog>
       ) : null}
     </>
   );

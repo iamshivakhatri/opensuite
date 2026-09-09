@@ -6,18 +6,14 @@ import { cn } from "@/lib/utils";
 
 /**
  * Shared modal dialog shell — overlay + centered card + Escape-to-close.
- *
- * Consolidates the near-identical `Modal`/`Dialog` shells previously
- * hand-rolled per file (sidebar.tsx, workspaces-home.tsx,
- * command-palette.tsx). This component establishes the shared primitive;
- * migrating those call sites is a separate follow-up (see
- * docs/future/frontend-audit.md, Phase 2), not part of this change.
+ * Replaces the duplicated Modal/Dialog shells in shell + workspaces surfaces.
  */
 export function Dialog({
   title,
   onClose,
   children,
   className,
+  overlayClassName,
   closeOnOverlayClick = true,
 }: {
   title: React.ReactNode;
@@ -25,6 +21,8 @@ export function Dialog({
   children: React.ReactNode;
   /** Extra classes for the panel, e.g. to override the default max width. */
   className?: string;
+  /** Extra classes for the overlay (e.g. higher z-index above the command palette). */
+  overlayClassName?: string;
   closeOnOverlayClick?: boolean;
 }) {
   React.useEffect(() => {
@@ -37,7 +35,10 @@ export function Dialog({
 
   return (
     <div
-      className="fixed inset-0 z-[var(--z-modal)] flex items-center justify-center bg-overlay px-4 backdrop-blur-[6px]"
+      className={cn(
+        "fixed inset-0 z-[var(--z-modal)] flex items-center justify-center bg-overlay px-4 backdrop-blur-[6px]",
+        overlayClassName,
+      )}
       onClick={closeOnOverlayClick ? onClose : undefined}
     >
       <div
