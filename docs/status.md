@@ -6,20 +6,20 @@ _Read this before starting any work. Keep it a concise current-state handoff, no
 
 * Workspace shell, Casual Docs DOCX, engine-backed inspect/mutate, blank create, workspace agent.
 * **Agent Efficiency v1–v4:** projection, timeouts, force-tools, write-batch terminalization, arg compaction, lean model surface.
-* **AgentCore v2 Steps 1–5B:** document state, tool selection, terminalization, timeout recovery,
-  event-sink correctness, and context transformation are outside the generic runner.
+* **AgentCore v2 Steps 1–5C complete:** document state, tool selection,
+  terminalization, timeout recovery, context transformation, and model-turn
+  mechanics have explicit generic boundaries.
 
 ## Just Completed
 
-* AgentCore v2 Step 5B — dependency-invert context transformation.
-  * `AgentRunnerOptions.transformContext?: TransformAgentContext` — called
-    immediately before each `model.complete`; default is identity
-    (`identityTransformContext`).
-  * `runner.ts` no longer imports `model-context.ts` / OpenSuite projection.
-  * OpenSuite injects the existing `transformContext` via
-    `createDocumentAgentRunnerPolicyOptions` (also used by
-    `createDocumentAgentRunnerOptions`, API execution, bench harness).
-  * Canonical runtime transcript unchanged; projection is model-facing only.
+* AgentCore v2 Step 5C — extracted generic `executeModelTurn`.
+  * Owns transformed model request preparation, answer-only suppression,
+    timeout signal lifecycle/classification, streaming, metrics, required
+    message events, one-retry policy decision, cancellation, and normalized
+    completion/failure.
+  * `AgentRunner` retains transcript mutation and the complete model/tool loop.
+  * Successful ordering remains `message.started` → `message.delta*` →
+    `model.turn.metrics` → `message.completed`.
 
 ## Current Decisions
 
@@ -35,18 +35,16 @@ _Read this before starting any work. Keep it a concise current-state handoff, no
 
 | Check | Status |
 |---|---|
-| `pnpm --filter @opensuite/agent-core test` | **Pass** (181) |
-| `pnpm --filter @opensuite/api test` | **Pass** (100+17 skip) |
+| `pnpm --filter @opensuite/agent-core test` | **Pass** (191) |
+| `pnpm --filter @opensuite/api test` | **Pass** (100 + 17 skip) |
 | `pnpm typecheck` | **Pass** |
 | `pnpm agent:bench` | **Pass** (5/5) |
 | `git diff --check` | **Pass** |
 
-## Benchmark (post Step 5B)
+## Benchmark (post Step 5C)
 
 Provider/model: `openrouter` / `deepseek/deepseek-v4-flash-0731` — all 5 `ok`.
-Turns: 2/4/4/3/4; tools: 1/3/5/6/6; failures: 0/0/0/1/0 (one create_table retry in
-greenfield-large — live-model variance). Behavior unchanged aside from normal
-turn-count variance.
+Turns: 2/4/3/4/4; tools: 1/3/5/6/5; failures: 0/0/0/0/0.
 
 ## Intentionally Deferred
 
@@ -54,4 +52,5 @@ turn-count variance.
 
 ## Recommended Next Step
 
-Extract model-turn execution from `AgentRunner` as the next AgentCore v2 milestone.
+**FREEZE AgentCore v2.** Continue only for product work or evidence-backed fixes,
+not further structural decomposition.

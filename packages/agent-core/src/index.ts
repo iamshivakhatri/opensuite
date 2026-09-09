@@ -271,11 +271,19 @@ export { InMemorySteeringQueue } from "./steering.js";
 export type {
   AgentRunOptions,
   AgentRunnerOptions,
-  ModelTimeoutContext,
   ToolBatchContext,
-  TransformAgentContext,
 } from "./runner.js";
-export { AgentRunner, identityTransformContext } from "./runner.js";
+export { AgentRunner } from "./runner.js";
+export type {
+  ExecuteModelTurnOptions,
+  ModelTimeoutContext,
+  ModelTurnResult,
+  TransformAgentContext,
+} from "./model-turn-executor.js";
+export {
+  executeModelTurn,
+  identityTransformContext,
+} from "./model-turn-executor.js";
 
 export type {
   TurnToolSelection,

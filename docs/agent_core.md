@@ -27,7 +27,7 @@ AgentRequest
   → AgentResult
 ```
 
-### OpenSuite policy boundaries (AgentRunner v2 Steps 3–5B)
+### OpenSuite policy boundaries (AgentRunner v2 Steps 3–5C)
 
 `AgentRunner` is domain-agnostic for tools and document state:
 
@@ -44,7 +44,12 @@ AgentRequest
 * Calls an injected generic tool-batch predicate after execution; OpenSuite
   decides whether successful writes plus assistant content may finish the run.
 * On model timeout, an injected policy may supply one retry message; the runner
-  owns the timer and one-retry limit but does not interpret authoring state.
+  runtime owns the timer and one-retry limit but does not interpret authoring
+  state.
+* Generic `executeModelTurn` owns model-facing transformation timing, tool
+  request preparation, timeout/abort mechanics, streaming message events,
+  model metrics, and normalized model-turn results. `AgentRunner` retains the
+  canonical transcript and outer model/tool loop.
 
 OpenSuite document runs wire these via `createDocumentAgentRunnerOptions` /
 `createDocumentAgentRunnerPolicyOptions` (selector + per-tool context +

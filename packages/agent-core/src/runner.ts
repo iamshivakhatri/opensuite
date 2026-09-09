@@ -18,6 +18,17 @@ import {
   type ModelMessage,
   type ModelToolCall,
 } from "./model.js";
+import {
+  executeModelTurn,
+  identityTransformContext,
+  type ModelTimeoutContext,
+  type TransformAgentContext,
+} from "./model-turn-executor.js";
+export {
+  identityTransformContext,
+  type ModelTimeoutContext,
+  type TransformAgentContext,
+} from "./model-turn-executor.js";
 import type {
   AgentRequest,
   AgentResult,
@@ -29,9 +40,6 @@ import type { TurnToolSelector } from "./turn-tools.js";
 import {
   elapsedMs,
   measureJsonBytes,
-  measureMessagesBytes,
-  measureToolArgumentBytes,
-  measureToolCatalogBytes,
 } from "./telemetry.js";
 import { ToolRegistry } from "./tools.js";
 import {
@@ -59,26 +67,6 @@ export interface ToolBatchContext {
   readonly toolCalls: readonly ModelToolCall[];
   readonly toolOutcomes: readonly ToolOutcome[];
   readonly tools: ToolRegistry;
-}
-
-export interface ModelTimeoutContext {
-  readonly toolOutcomes: readonly ToolOutcome[];
-}
-
-/**
- * Canonical transcript → model-facing messages. AgentRunner owns *when*
- * this runs; the injected function owns *what* projection occurs.
- * Must not mutate the input transcript.
- */
-export type TransformAgentContext = (
-  transcript: readonly ModelMessage[],
-) => ModelMessage[];
-
-/** Generic default: pass transcript through unchanged (shallow copy). */
-export function identityTransformContext(
-  transcript: readonly ModelMessage[],
-): ModelMessage[] {
-  return [...transcript];
 }
 
 export interface AgentRunnerOptions {
@@ -265,162 +253,53 @@ export class AgentRunner {
           at: this.timestamp(),
         });
 
-        let response;
-        let turnToolChoice: "auto" | "required" | undefined;
         const messageId = this.createId();
-        try {
-          await this.emit({
-            type: "message.started",
-            runId: request.runId,
-            messageId,
-            role: "assistant",
-            at: this.timestamp(),
-          });
-
-          const modelMessages = this.transformContext(transcript);
-          const toolsForModel = forceAnswerOnly ? [] : selection.toolsForModel;
-          const toolChoice = forceAnswerOnly ? undefined : selection.toolChoice;
-          turnToolChoice = toolChoice;
-          const contextMessageBytes = measureMessagesBytes(modelMessages);
-          const toolCatalogBytes = measureToolCatalogBytes(toolsForModel);
-          const modelStartedAt = Date.now();
-
-          const timeout = createTimeoutSignal(
-            signal,
-            this.modelTurnTimeoutMs,
-          );
-          try {
-            response = await this.model.complete({
-              messages: modelMessages,
-              // Empty tools when circuit-broken — model must answer, not keep looping.
-              tools: toolsForModel,
-              signal: timeout.signal,
-              capabilities: runCapabilities,
-              ...(toolChoice !== undefined ? { toolChoice } : {}),
-              onTextDelta: async (delta) => {
-                if (!delta) return;
-                await this.emit({
-                  type: "message.delta",
-                  runId: request.runId,
-                  messageId,
-                  role: "assistant",
-                  delta,
-                  at: this.timestamp(),
-                });
-              },
-            });
-          } catch (error) {
-            if (signal.aborted) {
-              throw error;
-            }
-            if (timeout.timedOut) {
-              const retryMessage = !timeoutRetrySent
-                ? this.getModelTimeoutRetryMessage?.({ toolOutcomes })
-                : undefined;
-              if (retryMessage) {
-                timeoutRetrySent = true;
-                transcript.push({
-                  role: "user",
-                  content: retryMessage,
-                });
-                await this.emit({
-                  type: "turn.completed",
-                  runId: request.runId,
-                  turnId,
-                  at: this.timestamp(),
-                });
-                continue;
+        const modelTurn = await executeModelTurn({
+          model: this.model,
+          transformContext: this.transformContext,
+          transcript,
+          tools: selection.toolsForModel,
+          ...(selection.toolChoice !== undefined
+            ? { toolChoice: selection.toolChoice }
+            : {}),
+          capabilities: runCapabilities,
+          forceAnswerOnly,
+          signal,
+          timeoutMs: this.modelTurnTimeoutMs,
+          timeoutRetryUsed: timeoutRetrySent,
+          ...(this.getModelTimeoutRetryMessage !== undefined
+            ? {
+                getTimeoutRetryMessage: this.getModelTimeoutRetryMessage,
               }
-              const diagnostic: Diagnostic = {
-                code: "MODEL_FAILURE",
-                severity: "error",
-                message: `Model turn exceeded ${this.modelTurnTimeoutMs}ms without completing`,
-                details: {
-                  timeoutMs: this.modelTurnTimeoutMs,
-                  turnIndex: turn,
-                },
-              };
-              diagnostics.push(diagnostic);
-              await this.emit({
-                type: "agent.failed",
-                runId: request.runId,
-                diagnostic,
-                at: this.timestamp(),
-              });
-              return {
-                status: "failed",
-                summary: diagnostic.message,
-                diagnostics,
-                toolOutcomes: [...toolOutcomes],
-              };
-            }
-            throw error;
-          } finally {
-            timeout.clear();
-          }
+            : {}),
+          toolOutcomes,
+          runId: request.runId,
+          turnId,
+          turnIndex: turn,
+          messageId,
+          events: this.events,
+          now: this.now,
+        });
 
-          const modelWallMs =
-            response.meta?.latencyMs ?? elapsedMs(modelStartedAt);
-          const toolCallsForMetrics = forceAnswerOnly
-            ? []
-            : (response.toolCalls ?? []);
-          // Observability-only: a metrics-delivery failure must never be
-          // folded into "model call failed" (this emit sits inside the
-          // model-turn try/catch below).
-          await this.emitTelemetry({
-            type: "model.turn.metrics",
+        if (modelTurn.status === "cancelled") {
+          return this.cancelled(request.runId, toolOutcomes, diagnostics);
+        }
+        if (modelTurn.status === "retry") {
+          timeoutRetrySent = true;
+          transcript.push({
+            role: "user",
+            content: modelTurn.retryMessage,
+          });
+          await this.emit({
+            type: "turn.completed",
             runId: request.runId,
             turnId,
-            turnIndex: turn,
-            at: this.timestamp(),
-            ...(response.meta?.provider !== undefined
-              ? { provider: response.meta.provider }
-              : {}),
-            ...(response.meta?.modelId !== undefined
-              ? { modelId: response.meta.modelId }
-              : {}),
-            modelWallMs,
-            ...(response.meta?.timeToFirstTokenMs !== undefined
-              ? { timeToFirstTokenMs: response.meta.timeToFirstTokenMs }
-              : {}),
-            ...(response.meta?.usage?.inputTokens !== undefined
-              ? { inputTokens: response.meta.usage.inputTokens }
-              : {}),
-            ...(response.meta?.usage?.cachedInputTokens !== undefined
-              ? { cachedInputTokens: response.meta.usage.cachedInputTokens }
-              : {}),
-            ...(response.meta?.usage?.outputTokens !== undefined
-              ? { outputTokens: response.meta.usage.outputTokens }
-              : {}),
-            ...(response.meta?.usage?.reasoningTokens !== undefined
-              ? { reasoningTokens: response.meta.usage.reasoningTokens }
-              : {}),
-            toolCallCount: toolCallsForMetrics.length,
-            toolArgumentBytes: measureToolArgumentBytes(toolCallsForMetrics),
-            contextMessageBytes,
-            toolCatalogBytes,
-            ...(response.meta?.finishReason !== undefined
-              ? { finishReason: response.meta.finishReason }
-              : {}),
-          });
-
-          await this.emit({
-            type: "message.completed",
-            runId: request.runId,
-            messageId,
-            role: "assistant",
-            content: response.content,
             at: this.timestamp(),
           });
-        } catch (error) {
-          if (this.isCancellation(error, signal)) {
-            return this.cancelled(request.runId, toolOutcomes, diagnostics);
-          }
-          const diagnostic = this.toDiagnostic(
-            error,
-            "MODEL_FAILURE",
-            "Model call failed",
-          );
+          continue;
+        }
+        if (modelTurn.status === "failed") {
+          const diagnostic = modelTurn.diagnostic;
           diagnostics.push(diagnostic);
           await this.emit({
             type: "agent.failed",
@@ -438,9 +317,7 @@ export class AgentRunner {
 
         this.throwIfAborted(signal);
 
-        const toolCalls = forceAnswerOnly
-          ? []
-          : (response.toolCalls ?? []);
+        const { response, toolCalls, toolChoice: turnToolChoice } = modelTurn;
         transcript.push({
           role: "assistant",
           content: response.content,
@@ -1153,38 +1030,6 @@ function createFixedTurnToolSelector(
     toolChoice: undefined,
     capabilities,
   });
-}
-
-function createTimeoutSignal(
-  parent: AbortSignal,
-  timeoutMs: number,
-): { signal: AbortSignal; timedOut: boolean; clear: () => void } {
-  const controller = new AbortController();
-  let timedOut = false;
-  const onParentAbort = () => {
-    controller.abort();
-  };
-  if (parent.aborted) {
-    controller.abort();
-  } else {
-    parent.addEventListener("abort", onParentAbort, { once: true });
-  }
-  const timer = setTimeout(() => {
-    timedOut = true;
-    controller.abort();
-  }, timeoutMs);
-  return {
-    get signal() {
-      return controller.signal;
-    },
-    get timedOut() {
-      return timedOut;
-    },
-    clear() {
-      clearTimeout(timer);
-      parent.removeEventListener("abort", onParentAbort);
-    },
-  };
 }
 
 function summarizeOutput(output: unknown): string | undefined {
