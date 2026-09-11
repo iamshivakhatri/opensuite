@@ -71,6 +71,13 @@
       "when": 1789167000000,
       "tag": "0009_cost_snapshot_rename",
       "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1789167881807,
+      "tag": "0011_certain_stellaris",
+      "breakpoints": true
     }
   ]
 }

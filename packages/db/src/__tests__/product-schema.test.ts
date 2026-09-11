@@ -4,6 +4,7 @@ import { getTableName } from "drizzle-orm";
 
 import {
   agentMessage,
+  agentExecutionLease,
   agentMessageRoleEnum,
   agentRun,
   agentRunStatusEnum,
@@ -84,11 +85,12 @@ test("format and source enums match the decided product vocabulary", () => {
   ]);
 });
 
-test("agent schema exports thread, message, run, and step tables", () => {
+test("agent schema exports thread, message, run, step, and execution lease tables", () => {
   assert.equal(getTableName(agentThread), "agent_thread");
   assert.equal(getTableName(agentMessage), "agent_message");
   assert.equal(getTableName(agentRun), "agent_run");
   assert.equal(getTableName(agentStep), "agent_step");
+  assert.equal(getTableName(agentExecutionLease), "agent_execution_lease");
 });
 
 test("agent enums match the decided persistence vocabulary", () => {

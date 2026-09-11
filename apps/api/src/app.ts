@@ -25,6 +25,7 @@ import {
   createAgentRunManager,
   type AgentRunManager,
 } from "./agent/run-manager.js";
+import { createAgentExecutionLeaseService } from "./agent/execution-lease.js";
 import type { ConfirmationBridge } from "./agent/confirmation-bridge.js";
 import {
   createConfiguredAgentModel,
@@ -292,6 +293,7 @@ export async function buildApp(
             modelUsage,
           }
         : {}),
+      lease: createAgentExecutionLeaseService(deps.db),
       tools: documentTools,
       runtime: documentRuntime,
       resolveRuntime,

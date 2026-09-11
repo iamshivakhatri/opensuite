@@ -42,6 +42,11 @@ import {
   type AgentThread,
 } from "./persistence.js";
 import { createWorkspaceCreateBlankDocxTool } from "./workspace-tools.js";
+import {
+  AGENT_EXECUTION_LEASE_RENEW_MS,
+  type AgentExecutionLease,
+  type AgentExecutionLeaseService,
+} from "./execution-lease.js";
 import { devLog } from "../dev-log.js";
 
 /** Trusted usage attribution resolved with the model (never from model output). */
@@ -60,6 +65,7 @@ export type AgentExecutionErrorCode =
   | "THREAD_NOT_FOUND"
   | "DOCUMENT_NOT_FOUND"
   | "AI_CONFIGURATION_INVALID"
+  | "AGENT_EXECUTION_BUSY"
   | "AGENT_EXECUTION_FAILED"
   | "AGENT_PERSISTENCE_FAILED";
 
@@ -128,6 +134,8 @@ export interface AgentExecutionServiceDeps {
   ) => Promise<AgentModel | ResolvedAgentExecutionModel>;
   /** Append-only model usage ledger (optional; tests may omit). */
   readonly modelUsage?: ModelUsageService;
+  /** Required by the application; omitted only by existing isolated tests. */
+  readonly lease?: AgentExecutionLeaseService;
   /**
    * Optional fixed tool registry (tests). When omitted, the runner discovers
    * document tools once from DocumentRuntime.capabilities(primaryDocument).
@@ -182,7 +190,16 @@ export function createAgentExecutionService(deps: AgentExecutionServiceDeps) {
       throw new AgentExecutionError("THREAD_NOT_FOUND", "Agent thread not found");
     }
 
-    let model = deps.model;
+    const lease = await deps.lease?.acquire(input.userId);
+    if (deps.lease && !lease) {
+      throw new AgentExecutionError(
+        "AGENT_EXECUTION_BUSY",
+        "Another agent execution is already active.",
+      );
+    }
+
+    try {
+      let model = deps.model;
     let usageAttribution: AgentModelUsageAttribution | undefined;
     if (deps.resolveModel) {
       try {
@@ -279,10 +296,19 @@ export function createAgentExecutionService(deps: AgentExecutionServiceDeps) {
       signal: input.signal,
       liveEvents: input.liveEvents,
     });
+    const protectedResult = lease
+      ? keepLeaseUntilFinished(deps.lease!, lease, result)
+      : result;
     // Detached callers (HTTP 202) must not leave unhandled rejections.
-    void result.catch(() => undefined);
+    void protectedResult.catch(() => undefined);
 
-    return { thread, userMessage, run, result };
+      return { thread, userMessage, run, result: protectedResult };
+    } catch (error) {
+      if (lease) {
+        await releaseLease(deps.lease!, lease);
+      }
+      throw error;
+    }
   }
 
   async function execute(
@@ -293,6 +319,36 @@ export function createAgentExecutionService(deps: AgentExecutionServiceDeps) {
   }
 
   return { start, execute };
+}
+
+function keepLeaseUntilFinished<T>(
+  leases: AgentExecutionLeaseService,
+  lease: AgentExecutionLease,
+  result: Promise<T>,
+): Promise<T> {
+  const timer = setInterval(() => {
+    void leases.renew(lease).catch(() => undefined);
+  }, AGENT_EXECUTION_LEASE_RENEW_MS);
+  timer.unref?.();
+  return result.finally(async () => {
+    clearInterval(timer);
+    await releaseLease(leases, lease);
+  });
+}
+
+async function releaseLease(
+  leases: AgentExecutionLeaseService,
+  lease: AgentExecutionLease,
+): Promise<void> {
+  try {
+    await leases.release(lease);
+  } catch (error) {
+    devLog(
+      `agent execution lease release failed: ${
+        error instanceof Error ? error.message : String(error)
+      }`,
+    );
+  }
 }
 
 async function continueExecution(input: {

@@ -161,6 +161,24 @@ export const agentRun = pgTable(
 );
 
 /**
+ * Database-backed ownership of a user's currently executing agent run.
+ * It is coordination data only; agent_run and model_usage_event keep their
+ * independent lifecycle and accounting roles.
+ */
+export const agentExecutionLease = pgTable(
+  "agent_execution_lease",
+  {
+    userId: text("user_id")
+      .primaryKey()
+      .references(() => user.id, { onDelete: "cascade" }),
+    leaseId: uuid("lease_id").notNull().unique(),
+    acquiredAt: timestamp("acquired_at").defaultNow().notNull(),
+    expiresAt: timestamp("expires_at").notNull(),
+  },
+  (table) => [index("agent_execution_lease_expires_at_idx").on(table.expiresAt)],
+);
+
+/**
  * Ordered unit of work within a run. input/output are application-owned JSON
  * only — never raw chain-of-thought or engine/provider internals.
  */

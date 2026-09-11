@@ -907,6 +907,15 @@ function mapExecutionError(reply: FastifyReply, error: unknown) {
         },
       });
     }
+    if (error.code === "AGENT_EXECUTION_BUSY") {
+      return reply.status(409).send({
+        error: {
+          statusCode: 409,
+          message: "Another agent execution is already active.",
+          code: "AGENT_EXECUTION_BUSY",
+        },
+      });
+    }
     if (
       error.code === "AI_CONFIGURATION_INVALID" ||
       error.code === "AGENT_EXECUTION_FAILED" ||

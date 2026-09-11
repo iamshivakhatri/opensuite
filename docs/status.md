@@ -11,6 +11,10 @@ _Read this before starting any work. Keep it a concise current-state handoff, no
 
 ## Just Completed
 
+* **Phase C1:** one active agent execution per authenticated user, across API instances.
+  - PostgreSQL `agent_execution_lease` is atomically acquired before model resolution or run creation.
+  - Lease is token-checked on release, renewed every minute while active, and expires after five minutes if an API process crashes.
+
 * **BYOK Phase B2.1:** dynamic managed model catalog + OpenRouter provider-reported cost.
   - `GET /api/ai-models/managed` — OpenRouter Models API (`text` + `tools`), 10m in-process TTL, stale-on-error.
   - Managed prefs: `provider=openrouter` + exact OpenRouter model id; validated against catalog.
