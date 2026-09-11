@@ -64,6 +64,13 @@
       "when": 1789166245533,
       "tag": "0008_gigantic_leader",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1789167000000,
+      "tag": "0009_cost_snapshot_rename",
+      "breakpoints": true
     }
   ]
 }

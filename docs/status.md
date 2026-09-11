@@ -11,12 +11,13 @@ _Read this before starting any work. Keep it a concise current-state handoff, no
 
 ## Just Completed
 
-* **BYOK Phase B2:** immutable estimated cost snapshot on `model_usage_event`
-  (`estimated_cost_micros` / `cost_currency` / `pricing_version`).
-  Exact-model pricing registry + pure calculator; Anthropic separate vs OpenAI-inclusive
-  cached billing; reasoning never double-charged. Production registry empty (no invented
-  prices). Unknown pricing → null cost, raw usage still recorded. Cost aggregation over
-  stored snapshots only.
+* **BYOK Phase B2.1:** dynamic managed model catalog + OpenRouter provider-reported cost.
+  - `GET /api/ai-models/managed` — OpenRouter Models API (`text` + `tools`), 10m in-process TTL, stale-on-error.
+  - Managed prefs: `provider=openrouter` + exact OpenRouter model id; validated against catalog.
+  - OpenRouter `usage.cost` → integer `cost_micros` (half-up); source `openrouter_usage_cost`.
+  - Schema rename (pre-production): `estimated_cost_micros`→`cost_micros`, `pricing_version`→`cost_source`.
+  - B2 static registry remains empty/test-only; not used for managed OpenRouter billing.
+* **BYOK Phase B2:** immutable cost snapshot on `model_usage_event`.
 * **BYOK Phase B1:** append-only `model_usage_event` ledger at `AgentModel.complete`.
 * BYOK Phase A3: per-user provider/model/source preference + managed fallback.
 * BYOK Phase A2: provider-credential lifecycle APIs (safe metadata only).
@@ -31,6 +32,8 @@ _Read this before starting any work. Keep it a concise current-state handoff, no
 * Tool success authoritative; event-sink failures → `EVENT_SINK_FAILURE` separately.
 * Usage persistence failures are logged and must not fail a successful model call.
 * Cost is an insert-time snapshot; never reprice historical rows; unknown ≠ zero.
+* Managed AI gateway = OpenRouter; catalog/pricing display from Models API; authoritative cost from `usage.cost`.
+* Direct BYOK (OpenAI/Anthropic) records tokens; cost may stay null.
 * **AgentCore v2 frozen** — product/frontend work only unless evidence-backed fixes.
 * **Frontend visual pass complete** — stop broad UI polish; next is product/document capability integration.
 
@@ -41,7 +44,7 @@ _Read this before starting any work. Keep it a concise current-state handoff, no
 | `pnpm --filter @opensuite/db typecheck` | **Pass** |
 | `pnpm --filter @opensuite/db test` | **Pass** |
 | `pnpm --filter @opensuite/api typecheck` | **Pass** |
-| `pnpm --filter @opensuite/api test` | **Pass** (147; 20 skipped DB/integration) |
+| `pnpm --filter @opensuite/api test` | **Pass** (165; 20 skipped DB/integration) |
 | `pnpm --filter @opensuite/agent-core test` | **Pass** (194) |
 | `git diff --check` | **Pass** |
 
@@ -51,10 +54,11 @@ _Read this before starting any work. Keep it a concise current-state handoff, no
 * Confirmation bridge durable resume / Redis workers
 * Frontend Phase 3 panel file split
 * Further generic UI polish
-* Settings UI; managed trial credits, Stripe, invoices, usage UI
-* Verified production price entries for managed defaults (`claude-sonnet-4-5`, `gpt-4.1`, OpenRouter slugs)
+* Settings UI / model picker
+* Managed trial credits, Stripe, invoices, usage UI
 * Concurrency-safe trial debit (Phase D)
+* Static production price entries (not needed for managed OpenRouter)
 
 ## Recommended Next Step
 
-Add verified exact-model production pricing entries (or Settings UI for AI prefs), then Phase D managed trial debit over stored `managed` cost snapshots with concurrency protection.
+Phase D managed trial debit over stored `managed` + `openrouter_usage_cost` snapshots (with one-active-run concurrency), or Settings UI wired to `GET /api/ai-models/managed`.

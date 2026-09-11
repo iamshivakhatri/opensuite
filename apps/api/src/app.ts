@@ -52,6 +52,7 @@ import { createModelUsageService } from "./model-usage/service.js";
 import type { AuthHandler } from "./routes/auth.js";
 import { registerAgentRoutes } from "./routes/agent.js";
 import { registerAuthRoutes } from "./routes/auth.js";
+import { registerAiModelRoutes } from "./routes/ai-models.js";
 import { registerAiPreferenceRoutes } from "./routes/ai-preferences.js";
 import { registerDocumentRoutes } from "./routes/documents.js";
 import { registerHealthRoutes } from "./routes/health.js";
@@ -60,6 +61,7 @@ import { registerProviderCredentialRoutes } from "./routes/provider-credentials.
 import { registerSearchRoutes } from "./routes/search.js";
 import { registerTrashRoutes } from "./routes/trash.js";
 import { registerWorkspaceRoutes } from "./routes/workspaces.js";
+import { createOpenRouterManagedModelCatalog } from "./openrouter-models/catalog.js";
 import type { ObjectStorage } from "./storage/types.js";
 import { createWorkspaceService } from "./workspaces/service.js";
 import { isDevConsole, requestPath } from "./dev-log.js";
@@ -99,6 +101,10 @@ export interface AppDependencies {
   readonly agent?: AgentAppDependencies;
   /** Test/override: inject credential service without encryption-key config. */
   readonly credentials?: ProviderCredentialService;
+  /** Test/override: inject managed model catalog (mocked OpenRouter). */
+  readonly managedModelCatalog?: ReturnType<
+    typeof createOpenRouterManagedModelCatalog
+  >;
   /** Test/override: blank DOCX bytes without loading N-API. */
   readonly createBlankDocxBytes?: () => Uint8Array | Promise<Uint8Array>;
 }
@@ -184,14 +190,21 @@ export async function buildApp(
   const modelUsage = createModelUsageService(
     createModelUsageRepository(deps.db),
   );
+  const managedModelCatalog =
+    deps.managedModelCatalog ??
+    createOpenRouterManagedModelCatalog({
+      apiKey: config.agent.openrouterApiKey,
+    });
   const aiModelResolver =
     config.agent.provider === "anthropic" ||
     config.agent.provider === "openai" ||
-    config.agent.provider === "openrouter"
+    config.agent.provider === "openrouter" ||
+    Boolean(config.agent.openrouterApiKey)
       ? createAiModelResolver({
           preferences: aiPreferences,
           credentials,
           managed: config.agent,
+          catalog: managedModelCatalog,
         })
       : null;
 
@@ -298,7 +311,8 @@ export async function buildApp(
   registerHealthRoutes(app);
   registerAuthRoutes(app, deps.auth);
   registerMeRoutes(app, deps.auth);
-  registerAiPreferenceRoutes(app, deps.auth, aiPreferences);
+  registerAiModelRoutes(app, deps.auth, managedModelCatalog);
+  registerAiPreferenceRoutes(app, deps.auth, aiPreferences, managedModelCatalog);
   registerWorkspaceRoutes(app, deps.auth, workspaces);
   registerProviderCredentialRoutes(app, deps.auth, credentials);
   registerDocumentRoutes(app, deps.auth, workspaces, documents, preferences);

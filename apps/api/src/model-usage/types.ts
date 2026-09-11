@@ -11,13 +11,13 @@ export interface ModelUsageTokens {
 
 /**
  * Immutable cost snapshot written with the usage row.
- * All null when pricing was unknown / calculation impossible.
- * Never invent zero cost.
+ * All null when cost was unknown / calculation impossible.
+ * Never invent zero cost from absence.
  */
 export interface ModelUsageCostSnapshot {
-  readonly estimatedCostMicros: number | null;
+  readonly costMicros: number | null;
   readonly costCurrency: string | null;
-  readonly pricingVersion: string | null;
+  readonly costSource: string | null;
 }
 
 /** Trusted attribution for one completed provider request (never from model output). */
@@ -45,9 +45,9 @@ export interface ModelUsageEvent {
   readonly outputTokens: number | null;
   readonly cachedInputTokens: number | null;
   readonly reasoningTokens: number | null;
-  readonly estimatedCostMicros: number | null;
+  readonly costMicros: number | null;
   readonly costCurrency: string | null;
-  readonly pricingVersion: string | null;
+  readonly costSource: string | null;
   readonly agentRunId: string | null;
   readonly createdAt: string;
 }
@@ -62,24 +62,24 @@ export interface ModelUsageAggregate {
 
 /**
  * Cost aggregation over stored immutable snapshots (never re-priced).
- * `estimatedCostMicros` is null when there are no priced events (unknown ≠ zero).
+ * `costMicros` is null when there are no priced events (unknown ≠ zero).
  */
 export interface ModelUsageCostAggregate {
   readonly eventCount: number;
   readonly pricedEventCount: number;
   readonly unpricedEventCount: number;
-  readonly estimatedCostMicros: number | null;
+  readonly costMicros: number | null;
   readonly costCurrency: string | null;
   readonly byCredentialSource: {
     readonly byok: {
       readonly eventCount: number;
       readonly pricedEventCount: number;
-      readonly estimatedCostMicros: number | null;
+      readonly costMicros: number | null;
     };
     readonly managed: {
       readonly eventCount: number;
       readonly pricedEventCount: number;
-      readonly estimatedCostMicros: number | null;
+      readonly costMicros: number | null;
     };
   };
 }

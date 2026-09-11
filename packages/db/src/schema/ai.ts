@@ -74,7 +74,8 @@ export const aiPreference = pgTable("ai_preference", {
  * Append-only ledger of completed model provider requests.
  * Independent of agent_run / agent_step accounting; agent_run_id is correlation only.
  * Token fields are nullable — omit when the provider did not report them (never invent 0).
- * Cost fields are an immutable estimate snapshot (null when pricing unknown); never reprice rows.
+ * Cost fields are an immutable snapshot (null when unknown); never reprice rows.
+ * cost_source distinguishes provider-reported vs static-estimate origins.
  */
 export const modelUsageEvent = pgTable(
   "model_usage_event",
@@ -91,14 +92,17 @@ export const modelUsageEvent = pgTable(
     cachedInputTokens: integer("cached_input_tokens"),
     reasoningTokens: integer("reasoning_tokens"),
     /**
-     * Estimated provider cost in micro-USD (1 USD = 1_000_000).
-     * Null when pricing was unknown or usage was insufficient to price truthfully.
+     * Request cost in micro-USD (1 USD = 1_000_000).
+     * Null when cost was unknown or insufficient to record truthfully.
      */
-    estimatedCostMicros: bigint("estimated_cost_micros", { mode: "number" }),
-    /** ISO 4217 currency for estimated_cost_micros; only "USD" today. */
+    costMicros: bigint("cost_micros", { mode: "number" }),
+    /** ISO 4217 currency for cost_micros; only "USD" today. */
     costCurrency: text("cost_currency"),
-    /** Pricing registry version/key used at insert time; immutable thereafter. */
-    pricingVersion: text("pricing_version"),
+    /**
+     * Origin of the cost snapshot, e.g. openrouter_usage_cost or a static
+     * pricing registry version key. Immutable after insert.
+     */
+    costSource: text("cost_source"),
     /** Optional correlation to an agent run; not required for accounting. */
     agentRunId: uuid("agent_run_id"),
     createdAt: timestamp("created_at").defaultNow().notNull(),
@@ -126,15 +130,15 @@ export const modelUsageEvent = pgTable(
       sql`${table.reasoningTokens} IS NULL OR ${table.reasoningTokens} >= 0`,
     ),
     check(
-      "model_usage_event_estimated_cost_micros_nonneg",
-      sql`${table.estimatedCostMicros} IS NULL OR ${table.estimatedCostMicros} >= 0`,
+      "model_usage_event_cost_micros_nonneg",
+      sql`${table.costMicros} IS NULL OR ${table.costMicros} >= 0`,
     ),
     check(
       "model_usage_event_cost_snapshot_consistent",
       sql`(
-        (${table.estimatedCostMicros} IS NULL AND ${table.costCurrency} IS NULL AND ${table.pricingVersion} IS NULL)
+        (${table.costMicros} IS NULL AND ${table.costCurrency} IS NULL AND ${table.costSource} IS NULL)
         OR
-        (${table.estimatedCostMicros} IS NOT NULL AND ${table.costCurrency} IS NOT NULL AND ${table.pricingVersion} IS NOT NULL)
+        (${table.costMicros} IS NOT NULL AND ${table.costCurrency} IS NOT NULL AND ${table.costSource} IS NOT NULL)
       )`,
     ),
   ],

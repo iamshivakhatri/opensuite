@@ -1,6 +1,10 @@
 import type { ModelTokenUsage } from "@opensuite/agent-core";
 
 import {
+  OPENROUTER_USAGE_COST_SOURCE,
+  usdToCostMicros,
+} from "../openrouter-models/cost.js";
+import {
   estimateModelCost,
   productionModelPricingRegistry,
   type ModelPricingRegistry,
@@ -53,16 +57,55 @@ export function costSnapshotFromEstimate(
   });
   if (estimated.status !== "priced") {
     return {
-      estimatedCostMicros: null,
+      costMicros: null,
       costCurrency: null,
-      pricingVersion: null,
+      costSource: null,
     };
   }
   return {
-    estimatedCostMicros: estimated.estimatedCostMicros,
+    costMicros: estimated.estimatedCostMicros,
     costCurrency: estimated.currency,
-    pricingVersion: estimated.pricingVersion,
+    costSource: estimated.pricingVersion,
   };
+}
+
+/**
+ * Prefer OpenRouter provider-reported usage.cost; otherwise fall back to the
+ * optional static registry (tests / future). Never invent zero from absence.
+ */
+export function resolveCostSnapshot(input: {
+  readonly provider: ModelUsageAttribution["provider"];
+  readonly model: string;
+  readonly tokens: ModelUsageTokens;
+  readonly providerReportedCostUsd?: string | number;
+  readonly pricing: ModelPricingRegistry;
+}): ModelUsageCostSnapshot {
+  if (
+    input.provider === "openrouter" &&
+    input.providerReportedCostUsd !== undefined
+  ) {
+    const costMicros = usdToCostMicros(input.providerReportedCostUsd);
+    if (costMicros !== null) {
+      return {
+        costMicros,
+        costCurrency: "USD",
+        costSource: OPENROUTER_USAGE_COST_SOURCE,
+      };
+    }
+    // Present but unparseable → leave null rather than falling back to catalog.
+    return {
+      costMicros: null,
+      costCurrency: null,
+      costSource: null,
+    };
+  }
+
+  return costSnapshotFromEstimate(
+    input.provider,
+    input.model,
+    input.tokens,
+    input.pricing,
+  );
 }
 
 export interface ModelUsageServiceOptions {
@@ -85,27 +128,30 @@ export function createModelUsageService(
     /**
      * Record one completed provider request using trusted attribution +
      * provider-reported usage from ModelResponse.meta.
-     * Attaches an immutable cost snapshot when exact-model pricing is known.
+     * OpenRouter: prefer usage.cost → micro-USD snapshot.
+     * Other providers: optional static registry estimate (may stay null).
      */
     async recordFromProviderResponse(input: {
       attribution: ModelUsageAttribution;
       usage: ModelTokenUsage | undefined;
+      providerReportedCostUsd?: string | number;
     }): Promise<ModelUsageEvent> {
       const tokens = normalizeModelUsageTokens(input.usage);
       let cost: ModelUsageCostSnapshot;
       try {
-        cost = costSnapshotFromEstimate(
-          input.attribution.provider,
-          input.attribution.model,
+        cost = resolveCostSnapshot({
+          provider: input.attribution.provider,
+          model: input.attribution.model,
           tokens,
+          providerReportedCostUsd: input.providerReportedCostUsd,
           pricing,
-        );
+        });
       } catch (error) {
         options.onPricingError?.(error);
         cost = {
-          estimatedCostMicros: null,
+          costMicros: null,
           costCurrency: null,
-          pricingVersion: null,
+          costSource: null,
         };
       }
       return repository.insert({
@@ -132,13 +178,13 @@ export function createModelUsageService(
       return repository.aggregateForUser(input);
     },
 
-    async aggregateEstimatedCostForUser(input: {
+    async aggregateCostForUser(input: {
       userId: string;
       from?: Date;
       to?: Date;
       credentialSource?: ModelUsageEvent["credentialSource"];
     }): Promise<ModelUsageCostAggregate> {
-      return repository.aggregateEstimatedCostForUser(input);
+      return repository.aggregateCostForUser(input);
     },
   };
 }

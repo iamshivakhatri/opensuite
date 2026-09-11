@@ -20,9 +20,9 @@ function toEvent(row: {
   outputTokens: number | null;
   cachedInputTokens: number | null;
   reasoningTokens: number | null;
-  estimatedCostMicros: number | null;
+  costMicros: number | null;
   costCurrency: string | null;
-  pricingVersion: string | null;
+  costSource: string | null;
   agentRunId: string | null;
   createdAt: Date;
 }): ModelUsageEvent {
@@ -36,9 +36,9 @@ function toEvent(row: {
     outputTokens: row.outputTokens,
     cachedInputTokens: row.cachedInputTokens,
     reasoningTokens: row.reasoningTokens,
-    estimatedCostMicros: row.estimatedCostMicros,
+    costMicros: row.costMicros,
     costCurrency: row.costCurrency,
-    pricingVersion: row.pricingVersion,
+    costSource: row.costSource,
     agentRunId: row.agentRunId,
     createdAt: row.createdAt.toISOString(),
   };
@@ -48,7 +48,7 @@ function emptyCostBucket() {
   return {
     eventCount: 0,
     pricedEventCount: 0,
-    estimatedCostMicros: null as number | null,
+    costMicros: null as number | null,
   };
 }
 
@@ -57,9 +57,9 @@ export function createModelUsageRepository(db: Db) {
   return {
     async insert(input: RecordModelUsageInput): Promise<ModelUsageEvent> {
       const cost = input.cost ?? {
-        estimatedCostMicros: null,
+        costMicros: null,
         costCurrency: null,
-        pricingVersion: null,
+        costSource: null,
       };
       const [row] = await db
         .insert(schema.modelUsageEvent)
@@ -72,9 +72,9 @@ export function createModelUsageRepository(db: Db) {
           outputTokens: input.tokens.outputTokens,
           cachedInputTokens: input.tokens.cachedInputTokens,
           reasoningTokens: input.tokens.reasoningTokens,
-          estimatedCostMicros: cost.estimatedCostMicros,
+          costMicros: cost.costMicros,
           costCurrency: cost.costCurrency,
-          pricingVersion: cost.pricingVersion,
+          costSource: cost.costSource,
           agentRunId: input.agentRunId ?? null,
         })
         .returning();
@@ -138,9 +138,9 @@ export function createModelUsageRepository(db: Db) {
     },
 
     /**
-     * Sum stored estimated_cost_micros snapshots only — never re-price rows.
+     * Sum stored cost_micros snapshots only — never re-price rows.
      */
-    async aggregateEstimatedCostForUser(input: {
+    async aggregateCostForUser(input: {
       userId: string;
       from?: Date;
       to?: Date;
@@ -162,7 +162,7 @@ export function createModelUsageRepository(db: Db) {
       const rows = await db
         .select({
           credentialSource: schema.modelUsageEvent.credentialSource,
-          estimatedCostMicros: schema.modelUsageEvent.estimatedCostMicros,
+          costMicros: schema.modelUsageEvent.costMicros,
           costCurrency: schema.modelUsageEvent.costCurrency,
         })
         .from(schema.modelUsageEvent)
@@ -176,11 +176,10 @@ export function createModelUsageRepository(db: Db) {
       for (const row of rows) {
         const bucket = row.credentialSource === "byok" ? byok : managed;
         bucket.eventCount += 1;
-        if (row.estimatedCostMicros !== null) {
+        if (row.costMicros !== null) {
           bucket.pricedEventCount += 1;
           pricedEventCount += 1;
-          bucket.estimatedCostMicros =
-            (bucket.estimatedCostMicros ?? 0) + row.estimatedCostMicros;
+          bucket.costMicros = (bucket.costMicros ?? 0) + row.costMicros;
           currency ??= row.costCurrency;
         }
       }
@@ -190,10 +189,9 @@ export function createModelUsageRepository(db: Db) {
         eventCount,
         pricedEventCount,
         unpricedEventCount: eventCount - pricedEventCount,
-        estimatedCostMicros:
+        costMicros:
           pricedEventCount > 0
-            ? (byok.estimatedCostMicros ?? 0) +
-              (managed.estimatedCostMicros ?? 0)
+            ? (byok.costMicros ?? 0) + (managed.costMicros ?? 0)
             : null,
         costCurrency: pricedEventCount > 0 ? currency : null,
         byCredentialSource: { byok, managed },

@@ -232,7 +232,8 @@ export function loadConfig(
       anthropicModel: result.data.ANTHROPIC_MODEL,
       openaiApiKey: provider === "openai" ? openaiKey : null,
       openaiModel: result.data.OPENAI_MODEL,
-      openrouterApiKey: provider === "openrouter" ? openrouterKey : null,
+      // Always surface OpenRouter key when present — managed gateway + catalog.
+      openrouterApiKey: openrouterKey,
       openrouterModel: provider === "openrouter" ? openrouterModel : null,
     },
   };

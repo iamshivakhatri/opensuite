@@ -61,6 +61,14 @@ export interface OpenAIChatCompletion {
     readonly completion_tokens?: number;
     readonly prompt_tokens_details?: { readonly cached_tokens?: number };
     readonly completion_tokens_details?: { readonly reasoning_tokens?: number };
+    /**
+     * Total amount charged to the OpenRouter account for this request (USD).
+     * Prefer this over cost_details.upstream_inference_cost for managed accounting.
+     */
+    readonly cost?: number | string;
+    readonly cost_details?: {
+      readonly upstream_inference_cost?: number | string;
+    };
   };
 }
 
@@ -347,6 +355,9 @@ function withOpenRouterMeta(
 ): ModelResponse {
   const usage = raw?.usage;
   const finishReason = raw?.choices[0]?.finish_reason;
+  const reportedCost = usage?.cost;
+  const hasReportedCost =
+    typeof reportedCost === "number" || typeof reportedCost === "string";
   return {
     ...response,
     meta: {
@@ -355,6 +366,7 @@ function withOpenRouterMeta(
       latencyMs: Date.now() - startedAt,
       ...(timeToFirstTokenMs !== undefined ? { timeToFirstTokenMs } : {}),
       ...(finishReason ? { finishReason: String(finishReason) } : {}),
+      ...(hasReportedCost ? { providerReportedCostUsd: reportedCost } : {}),
       ...(usage
         ? {
             usage: {

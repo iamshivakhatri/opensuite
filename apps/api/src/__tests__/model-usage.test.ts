@@ -91,9 +91,9 @@ class MemoryModelUsageRepository implements ModelUsageRepository {
 
   async insert(input: RecordModelUsageInput): Promise<ModelUsageEvent> {
     const cost = input.cost ?? {
-      estimatedCostMicros: null,
+      costMicros: null,
       costCurrency: null,
-      pricingVersion: null,
+      costSource: null,
     };
     const event: ModelUsageEvent = {
       id: randomUUID(),
@@ -105,9 +105,9 @@ class MemoryModelUsageRepository implements ModelUsageRepository {
       outputTokens: input.tokens.outputTokens,
       cachedInputTokens: input.tokens.cachedInputTokens,
       reasoningTokens: input.tokens.reasoningTokens,
-      estimatedCostMicros: cost.estimatedCostMicros,
+      costMicros: cost.costMicros,
       costCurrency: cost.costCurrency,
-      pricingVersion: cost.pricingVersion,
+      costSource: cost.costSource,
       agentRunId: input.agentRunId ?? null,
       createdAt: new Date().toISOString(),
     };
@@ -153,7 +153,7 @@ class MemoryModelUsageRepository implements ModelUsageRepository {
     };
   }
 
-  async aggregateEstimatedCostForUser(input: {
+  async aggregateCostForUser(input: {
     userId: string;
     from?: Date;
     to?: Date;
@@ -168,7 +168,7 @@ class MemoryModelUsageRepository implements ModelUsageRepository {
     const bucket = () => ({
       eventCount: 0,
       pricedEventCount: 0,
-      estimatedCostMicros: null as number | null,
+      costMicros: null as number | null,
     });
     const byok = bucket();
     const managed = bucket();
@@ -177,11 +177,11 @@ class MemoryModelUsageRepository implements ModelUsageRepository {
     for (const event of events) {
       const target = event.credentialSource === "byok" ? byok : managed;
       target.eventCount += 1;
-      if (event.estimatedCostMicros !== null) {
+      if (event.costMicros !== null) {
         target.pricedEventCount += 1;
         pricedEventCount += 1;
-        target.estimatedCostMicros =
-          (target.estimatedCostMicros ?? 0) + event.estimatedCostMicros;
+        target.costMicros =
+          (target.costMicros ?? 0) + event.costMicros;
         currency ??= event.costCurrency;
       }
     }
@@ -189,10 +189,10 @@ class MemoryModelUsageRepository implements ModelUsageRepository {
       eventCount: events.length,
       pricedEventCount,
       unpricedEventCount: events.length - pricedEventCount,
-      estimatedCostMicros:
+      costMicros:
         pricedEventCount > 0
-          ? (byok.estimatedCostMicros ?? 0) +
-            (managed.estimatedCostMicros ?? 0)
+          ? (byok.costMicros ?? 0) +
+            (managed.costMicros ?? 0)
           : null,
       costCurrency: pricedEventCount > 0 ? currency : null,
       byCredentialSource: { byok, managed },
@@ -275,7 +275,7 @@ test("successful model call records one usage event with trusted attribution", a
   assert.equal(event.inputTokens, 12);
   assert.equal(event.outputTokens, 4);
   assert.equal(event.agentRunId, "run-1");
-  assert.equal(event.estimatedCostMicros, null);
+  assert.equal(event.costMicros, null);
   assert.equal(
     JSON.stringify(event).includes("secret prompt"),
     false,
@@ -574,6 +574,7 @@ test("OpenRouter usage normalization works (stream include_usage)", async () => 
       completion_tokens: 3,
       prompt_tokens_details: { cached_tokens: 1 },
       completion_tokens_details: { reasoning_tokens: 2 },
+      cost: 0.001234,
     },
   };
   const client: OpenAIChatCompletionsClient = {
@@ -613,6 +614,7 @@ test("OpenRouter usage normalization works (stream include_usage)", async () => 
     cachedInputTokens: 1,
     reasoningTokens: 2,
   });
+  assert.equal(streamed.meta?.providerReportedCostUsd, 0.001234);
 
   const nonStream = await model.complete({
     messages: [{ role: "user", content: "hi" }],
@@ -624,6 +626,7 @@ test("OpenRouter usage normalization works (stream include_usage)", async () => 
     cachedInputTokens: 1,
     reasoningTokens: 2,
   });
+  assert.equal(nonStream.meta?.providerReportedCostUsd, 0.001234);
 });
 
 test("metered fake model path stays deterministic and records without fabricated tokens", async () => {
@@ -655,7 +658,7 @@ test("metered fake model path stays deterministic and records without fabricated
   assert.equal(repo.events.length, 1);
   assert.equal(repo.events[0]?.inputTokens, null);
   assert.equal(repo.events[0]?.outputTokens, null);
-  assert.equal(repo.events[0]?.estimatedCostMicros, null);
+  assert.equal(repo.events[0]?.costMicros, null);
 });
 
 test("usage persistence failure does not fail a successful provider call", async () => {
@@ -676,19 +679,19 @@ test("usage persistence failure does not fail a successful provider call", async
           reasoningTokens: 0,
         };
       },
-      async aggregateEstimatedCostForUser() {
+      async aggregateCostForUser() {
         return {
           eventCount: 0,
           pricedEventCount: 0,
           unpricedEventCount: 0,
-          estimatedCostMicros: null,
+          costMicros: null,
           costCurrency: null,
           byCredentialSource: {
-            byok: { eventCount: 0, pricedEventCount: 0, estimatedCostMicros: null },
+            byok: { eventCount: 0, pricedEventCount: 0, costMicros: null },
             managed: {
               eventCount: 0,
               pricedEventCount: 0,
-              estimatedCostMicros: null,
+              costMicros: null,
             },
           },
         };
@@ -868,8 +871,8 @@ test("unknown pricing never prevents raw usage from being recorded", async () =>
   assert.equal(repo.events[0]?.inputTokens, 7);
   assert.equal(repo.events[0]?.outputTokens, 3);
   assert.equal(repo.events[0]?.cachedInputTokens, 1);
-  assert.equal(repo.events[0]?.estimatedCostMicros, null);
-  assert.equal(repo.events[0]?.pricingVersion, null);
+  assert.equal(repo.events[0]?.costMicros, null);
+  assert.equal(repo.events[0]?.costSource, null);
 });
 
 test("BYOK and managed priced events preserve credentialSource and remain distinguishable", async () => {
@@ -899,21 +902,21 @@ test("BYOK and managed priced events preserve credentialSource and remain distin
   assert.equal(repo.events.length, 2);
   assert.equal(repo.events[0]?.credentialSource, "byok");
   assert.equal(repo.events[1]?.credentialSource, "managed");
-  assert.equal(repo.events[0]?.estimatedCostMicros, 2_000_000);
-  assert.equal(repo.events[1]?.estimatedCostMicros, 2_000_000);
-  assert.equal(repo.events[0]?.pricingVersion, "test-fixture-v1");
+  assert.equal(repo.events[0]?.costMicros, 2_000_000);
+  assert.equal(repo.events[1]?.costMicros, 2_000_000);
+  assert.equal(repo.events[0]?.costSource, "test-fixture-v1");
   assert.notEqual(
     repo.events[0]?.credentialSource,
     repo.events[1]?.credentialSource,
   );
 
-  const aggregate = await usage.aggregateEstimatedCostForUser({
+  const aggregate = await usage.aggregateCostForUser({
     userId: "user-a",
   });
-  assert.equal(aggregate.estimatedCostMicros, 4_000_000);
-  assert.equal(aggregate.byCredentialSource.byok.estimatedCostMicros, 2_000_000);
+  assert.equal(aggregate.costMicros, 4_000_000);
+  assert.equal(aggregate.byCredentialSource.byok.costMicros, 2_000_000);
   assert.equal(
-    aggregate.byCredentialSource.managed.estimatedCostMicros,
+    aggregate.byCredentialSource.managed.costMicros,
     2_000_000,
   );
 });
@@ -931,8 +934,8 @@ test("pricing version is persisted; later registry changes do not alter historic
     },
     usage: { inputTokens: 1_000_000, outputTokens: 0 },
   });
-  assert.equal(repo.events[0]?.estimatedCostMicros, 2_000_000);
-  assert.equal(repo.events[0]?.pricingVersion, "test-fixture-v1");
+  assert.equal(repo.events[0]?.costMicros, 2_000_000);
+  assert.equal(repo.events[0]?.costSource, "test-fixture-v1");
 
   const v2Entry: ModelPricingEntry = {
     ...FIXTURE_OPENAI,
@@ -943,8 +946,8 @@ test("pricing version is persisted; later registry changes do not alter historic
     pricing: createModelPricingRegistry([v2Entry]),
   });
   const listed = await usageV2.listForUser({ userId: "user-a" });
-  assert.equal(listed[0]?.estimatedCostMicros, 2_000_000);
-  assert.equal(listed[0]?.pricingVersion, "test-fixture-v1");
+  assert.equal(listed[0]?.costMicros, 2_000_000);
+  assert.equal(listed[0]?.costSource, "test-fixture-v1");
 
   await usageV2.recordFromProviderResponse({
     attribution: {
@@ -955,8 +958,8 @@ test("pricing version is persisted; later registry changes do not alter historic
     },
     usage: { inputTokens: 1_000_000, outputTokens: 0 },
   });
-  assert.equal(repo.events[1]?.estimatedCostMicros, 9_000_000);
-  assert.equal(repo.events[1]?.pricingVersion, "test-fixture-v2");
+  assert.equal(repo.events[1]?.costMicros, 9_000_000);
+  assert.equal(repo.events[1]?.costSource, "test-fixture-v2");
 });
 
 test("one priced provider call still produces exactly one usage row; raw tokens unchanged", async () => {
@@ -989,8 +992,8 @@ test("one priced provider call still produces exactly one usage row; raw tokens 
   assert.equal(repo.events[0]?.outputTokens, 2);
   assert.equal(repo.events[0]?.cachedInputTokens, 4);
   assert.equal(repo.events[0]?.reasoningTokens, 1);
-  assert.equal(typeof repo.events[0]?.estimatedCostMicros, "number");
-  assert.ok(Number.isInteger(repo.events[0]?.estimatedCostMicros));
+  assert.equal(typeof repo.events[0]?.costMicros, "number");
+  assert.ok(Number.isInteger(repo.events[0]?.costMicros));
 });
 
 test("OpenRouter unsupported models stay unpriced; exact fixture model is priced", async () => {
@@ -1006,7 +1009,7 @@ test("OpenRouter unsupported models stay unpriced; exact fixture model is priced
     },
     usage: { inputTokens: 10, outputTokens: 2 },
   });
-  assert.equal(repo.events[0]?.estimatedCostMicros, null);
+  assert.equal(repo.events[0]?.costMicros, null);
 
   await usage.recordFromProviderResponse({
     attribution: {
@@ -1017,7 +1020,7 @@ test("OpenRouter unsupported models stay unpriced; exact fixture model is priced
     },
     usage: { inputTokens: 1_000_000, outputTokens: 1_000_000 },
   });
-  assert.equal(repo.events[1]?.estimatedCostMicros, 3_000_000);
+  assert.equal(repo.events[1]?.costMicros, 3_000_000);
   assert.equal(repo.events[1]?.credentialSource, "byok");
 });
 
@@ -1036,9 +1039,9 @@ test("cost aggregation uses stored snapshots rather than recalculating", async (
       reasoningTokens: null,
     },
     cost: {
-      estimatedCostMicros: 42,
+      costMicros: 42,
       costCurrency: "USD",
-      pricingVersion: "frozen-old-v0",
+      costSource: "frozen-old-v0",
     },
   });
   await usage.record({
@@ -1054,22 +1057,22 @@ test("cost aggregation uses stored snapshots rather than recalculating", async (
     },
   });
 
-  const aggregate = await usage.aggregateEstimatedCostForUser({
+  const aggregate = await usage.aggregateCostForUser({
     userId: "user-a",
   });
   assert.equal(aggregate.eventCount, 2);
   assert.equal(aggregate.pricedEventCount, 1);
   assert.equal(aggregate.unpricedEventCount, 1);
-  assert.equal(aggregate.estimatedCostMicros, 42);
+  assert.equal(aggregate.costMicros, 42);
   assert.equal(aggregate.costCurrency, "USD");
-  assert.equal(aggregate.byCredentialSource.managed.estimatedCostMicros, 42);
-  assert.equal(aggregate.byCredentialSource.byok.estimatedCostMicros, null);
+  assert.equal(aggregate.byCredentialSource.managed.costMicros, 42);
+  assert.equal(aggregate.byCredentialSource.byok.costMicros, null);
 
-  const managedOnly = await usage.aggregateEstimatedCostForUser({
+  const managedOnly = await usage.aggregateCostForUser({
     userId: "user-a",
     credentialSource: "managed",
   });
-  assert.equal(managedOnly.estimatedCostMicros, 42);
+  assert.equal(managedOnly.costMicros, 42);
   assert.equal(managedOnly.eventCount, 1);
 });
 
@@ -1083,4 +1086,146 @@ test("production pricing registry has no invented model prices", () => {
     TEST_PRICING.lookup("anthropic", "claude-sonnet-4-5"),
     null,
   );
+});
+
+// --- Phase B2.1: OpenRouter provider-reported cost ---
+
+test("usdToCostMicros converts exactly and rounds half-up deterministically", async () => {
+  const { usdToCostMicros } = await import("../openrouter-models/cost.js");
+  assert.equal(usdToCostMicros(0.001234), 1234);
+  assert.equal(usdToCostMicros("0.001234"), 1234);
+  assert.equal(usdToCostMicros("0.0012345"), 1235);
+  assert.equal(usdToCostMicros("0.0012344"), 1234);
+  assert.equal(usdToCostMicros(0), 0);
+  assert.equal(usdToCostMicros(undefined), null);
+  assert.equal(usdToCostMicros(null), null);
+  assert.equal(usdToCostMicros(""), null);
+  assert.equal(usdToCostMicros(-1), null);
+});
+
+test("OpenRouter usage.cost becomes integer micro-USD; missing cost stays null", async () => {
+  const { OPENROUTER_USAGE_COST_SOURCE } = await import(
+    "../openrouter-models/cost.js"
+  );
+  const repo = new MemoryModelUsageRepository();
+  // Empty production-style registry — provider cost must not need catalog prices.
+  const usage = createModelUsageService(repo, {
+    pricing: createModelPricingRegistry([]),
+  });
+
+  await usage.recordFromProviderResponse({
+    attribution: {
+      userId: "user-a",
+      provider: "openrouter",
+      model: "openai/gpt-4.1",
+      credentialSource: "managed",
+    },
+    usage: { inputTokens: 10, outputTokens: 2, cachedInputTokens: 1 },
+    providerReportedCostUsd: 0.001234,
+  });
+  assert.equal(repo.events.length, 1);
+  assert.equal(repo.events[0]?.inputTokens, 10);
+  assert.equal(repo.events[0]?.outputTokens, 2);
+  assert.equal(repo.events[0]?.cachedInputTokens, 1);
+  assert.equal(repo.events[0]?.costMicros, 1234);
+  assert.equal(repo.events[0]?.costCurrency, "USD");
+  assert.equal(repo.events[0]?.costSource, OPENROUTER_USAGE_COST_SOURCE);
+  assert.equal(repo.events[0]?.credentialSource, "managed");
+
+  await usage.recordFromProviderResponse({
+    attribution: {
+      userId: "user-a",
+      provider: "openrouter",
+      model: "openai/gpt-4.1",
+      credentialSource: "byok",
+    },
+    usage: { inputTokens: 3, outputTokens: 1 },
+  });
+  assert.equal(repo.events[1]?.credentialSource, "byok");
+  assert.equal(repo.events[1]?.costMicros, null);
+  assert.equal(repo.events[1]?.costSource, null);
+});
+
+test("OpenRouter streaming path records one event with provider cost; catalog unused", async () => {
+  const { OPENROUTER_USAGE_COST_SOURCE } = await import(
+    "../openrouter-models/cost.js"
+  );
+  const repo = new MemoryModelUsageRepository();
+  const usage = createModelUsageService(repo, {
+    pricing: createModelPricingRegistry([]),
+  });
+  const client: OpenAIChatCompletionsClient = {
+    chat: {
+      completions: {
+        async create(params) {
+          assert.equal(params.stream, true);
+          async function* chunks() {
+            yield { choices: [{ delta: { content: "Hi" } }] };
+            yield {
+              choices: [{ delta: {}, finish_reason: "stop" }],
+              usage: {
+                prompt_tokens: 5,
+                completion_tokens: 1,
+                cost: "0.0000015",
+              },
+            };
+          }
+          return chunks();
+        },
+      },
+    },
+  };
+  const model = createMeteredAgentModel(
+    createOpenRouterAgentModel({ client, model: "openai/gpt-4.1" }),
+    {
+      attribution: {
+        userId: "user-a",
+        provider: "openrouter",
+        model: "openai/gpt-4.1",
+        credentialSource: "managed",
+      },
+      usage,
+    },
+  );
+
+  await model.complete({
+    messages: [{ role: "user", content: "hi" }],
+    tools: [],
+    onTextDelta: () => undefined,
+  });
+  assert.equal(repo.events.length, 1);
+  assert.equal(repo.events[0]?.costMicros, 2); // 0.0000015 → half-up to 2 micros
+  assert.equal(repo.events[0]?.costSource, OPENROUTER_USAGE_COST_SOURCE);
+  assert.equal(repo.events[0]?.inputTokens, 5);
+  assert.equal(repo.events[0]?.outputTokens, 1);
+});
+
+test("direct OpenAI/Anthropic BYOK does not require a price table", async () => {
+  const repo = new MemoryModelUsageRepository();
+  const usage = createModelUsageService(repo, {
+    pricing: createModelPricingRegistry([]),
+  });
+  await usage.recordFromProviderResponse({
+    attribution: {
+      userId: "user-a",
+      provider: "openai",
+      model: "gpt-user",
+      credentialSource: "byok",
+    },
+    usage: { inputTokens: 9, outputTokens: 4 },
+  });
+  await usage.recordFromProviderResponse({
+    attribution: {
+      userId: "user-a",
+      provider: "anthropic",
+      model: "claude-user",
+      credentialSource: "byok",
+    },
+    usage: { inputTokens: 7, outputTokens: 3 },
+  });
+  assert.equal(repo.events.length, 2);
+  assert.equal(repo.events[0]?.costMicros, null);
+  assert.equal(repo.events[1]?.costMicros, null);
+  assert.equal(repo.events[0]?.inputTokens, 9);
+  assert.equal(repo.events[1]?.inputTokens, 7);
 });

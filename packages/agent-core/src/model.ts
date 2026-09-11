@@ -93,6 +93,12 @@ export interface ModelResponseMeta {
   readonly modelId?: string;
   readonly finishReason?: string;
   readonly usage?: ModelTokenUsage;
+  /**
+   * Provider-reported USD charge for this request when available
+   * (e.g. OpenRouter `usage.cost` — total account charge).
+   * Prefer decimal string; number is accepted. Never invent from catalog pricing.
+   */
+  readonly providerReportedCostUsd?: string | number;
   /** Wall time inside the adapter for the provider round-trip, ms. */
   readonly latencyMs?: number;
   /** Time to first streamed text/tool token when available, ms. */

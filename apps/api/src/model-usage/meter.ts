@@ -36,6 +36,7 @@ export function createMeteredAgentModel(
             agentRunId: options.attribution.agentRunId ?? null,
           },
           usage: response.meta?.usage,
+          providerReportedCostUsd: response.meta?.providerReportedCostUsd,
         });
       } catch (error) {
         options.onRecordError?.(error);
