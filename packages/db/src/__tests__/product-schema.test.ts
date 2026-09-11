@@ -21,6 +21,7 @@ import {
   workspace,
 } from "../schema/product.js";
 import {
+  modelUsageEvent,
   providerCredential,
   providerCredentialProviderEnum,
 } from "../schema/ai.js";
@@ -34,6 +35,16 @@ test("provider credentials have only encrypted storage and supported providers",
     "openai",
     "openrouter",
   ]);
+});
+
+test("model_usage_event stores nullable immutable cost snapshot fields", () => {
+  assert.equal(getTableName(modelUsageEvent), "model_usage_event");
+  assert.ok("estimatedCostMicros" in modelUsageEvent);
+  assert.ok("costCurrency" in modelUsageEvent);
+  assert.ok("pricingVersion" in modelUsageEvent);
+  assert.ok("inputTokens" in modelUsageEvent);
+  assert.ok("cachedInputTokens" in modelUsageEvent);
+  assert.ok("reasoningTokens" in modelUsageEvent);
 });
 
 test("product schema exports workspace, document, and document_version", () => {

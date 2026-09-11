@@ -11,20 +11,17 @@ _Read this before starting any work. Keep it a concise current-state handoff, no
 
 ## Just Completed
 
-* **BYOK Phase B1:** append-only `model_usage_event` ledger at the `AgentModel.complete` boundary.
-  Trusted user/provider/model/`byok|managed` attribution; provider-reported tokens (nullable when absent).
-  Streaming Anthropic/OpenRouter usage gaps fixed; no credits/billing yet.
-* BYOK Phase A3: per-user provider/model/source preference and server-side
-  agent model resolution; managed fallback remains for users without a choice.
-* BYOK Phase A2: authenticated provider-credential lifecycle APIs
-  (`GET/PUT /api/provider-credentials`, `DELETE /api/provider-credentials/:provider`)
-  over the A1 domain service; safe metadata only.
-* DOCX agent surface covers the current 35-capability Node manifest, including table
-  column widths and cell shading; all writes use the immutable-version executor.
-* Trash removes the file from open tabs (no re-upsert race).
-* Shell token lock: Casual Docs `:root` no longer overrides OpenSuite `--text-*` /
-  `--radius-*` / `--color-*` on DOCX open (see `apps/web/src/app/globals.css`).
-* Explorer rhythm: `--explorer-row-h` / `--explorer-list-gap` (30px / 3px); softer type.
+* **BYOK Phase B2:** immutable estimated cost snapshot on `model_usage_event`
+  (`estimated_cost_micros` / `cost_currency` / `pricing_version`).
+  Exact-model pricing registry + pure calculator; Anthropic separate vs OpenAI-inclusive
+  cached billing; reasoning never double-charged. Production registry empty (no invented
+  prices). Unknown pricing → null cost, raw usage still recorded. Cost aggregation over
+  stored snapshots only.
+* **BYOK Phase B1:** append-only `model_usage_event` ledger at `AgentModel.complete`.
+* BYOK Phase A3: per-user provider/model/source preference + managed fallback.
+* BYOK Phase A2: provider-credential lifecycle APIs (safe metadata only).
+* DOCX agent surface covers the current 35-capability Node manifest.
+* Trash removes the file from open tabs; shell token lock; explorer rhythm tokens.
 
 ## Current Decisions
 
@@ -33,6 +30,7 @@ _Read this before starting any work. Keep it a concise current-state handoff, no
 * Bench stays developer-local (`.agent-bench/`).
 * Tool success authoritative; event-sink failures → `EVENT_SINK_FAILURE` separately.
 * Usage persistence failures are logged and must not fail a successful model call.
+* Cost is an insert-time snapshot; never reprice historical rows; unknown ≠ zero.
 * **AgentCore v2 frozen** — product/frontend work only unless evidence-backed fixes.
 * **Frontend visual pass complete** — stop broad UI polish; next is product/document capability integration.
 
@@ -41,8 +39,9 @@ _Read this before starting any work. Keep it a concise current-state handoff, no
 | Check | Status |
 |---|---|
 | `pnpm --filter @opensuite/db typecheck` | **Pass** |
+| `pnpm --filter @opensuite/db test` | **Pass** |
 | `pnpm --filter @opensuite/api typecheck` | **Pass** |
-| `pnpm --filter @opensuite/api test` | **Pass** (135; 20 skipped DB/integration) |
+| `pnpm --filter @opensuite/api test` | **Pass** (147; 20 skipped DB/integration) |
 | `pnpm --filter @opensuite/agent-core test` | **Pass** (194) |
 | `git diff --check` | **Pass** |
 
@@ -52,9 +51,10 @@ _Read this before starting any work. Keep it a concise current-state handoff, no
 * Confirmation bridge durable resume / Redis workers
 * Frontend Phase 3 panel file split
 * Further generic UI polish
-* Settings UI; managed trial credits, billing, quotas, usage UI
-* Normalized dollar-cost / pricing catalog
+* Settings UI; managed trial credits, Stripe, invoices, usage UI
+* Verified production price entries for managed defaults (`claude-sonnet-4-5`, `gpt-4.1`, OpenRouter slugs)
+* Concurrency-safe trial debit (Phase D)
 
 ## Recommended Next Step
 
-Add a Settings UI for AI preference and credential lifecycle APIs, or Phase B2 managed trial cost accounting on top of the usage ledger.
+Add verified exact-model production pricing entries (or Settings UI for AI prefs), then Phase D managed trial debit over stored `managed` cost snapshots with concurrency protection.

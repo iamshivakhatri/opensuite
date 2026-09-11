@@ -1,5 +1,6 @@
 import { sql } from "drizzle-orm";
 import {
+  bigint,
   check,
   index,
   integer,
@@ -73,6 +74,7 @@ export const aiPreference = pgTable("ai_preference", {
  * Append-only ledger of completed model provider requests.
  * Independent of agent_run / agent_step accounting; agent_run_id is correlation only.
  * Token fields are nullable — omit when the provider did not report them (never invent 0).
+ * Cost fields are an immutable estimate snapshot (null when pricing unknown); never reprice rows.
  */
 export const modelUsageEvent = pgTable(
   "model_usage_event",
@@ -88,6 +90,15 @@ export const modelUsageEvent = pgTable(
     outputTokens: integer("output_tokens"),
     cachedInputTokens: integer("cached_input_tokens"),
     reasoningTokens: integer("reasoning_tokens"),
+    /**
+     * Estimated provider cost in micro-USD (1 USD = 1_000_000).
+     * Null when pricing was unknown or usage was insufficient to price truthfully.
+     */
+    estimatedCostMicros: bigint("estimated_cost_micros", { mode: "number" }),
+    /** ISO 4217 currency for estimated_cost_micros; only "USD" today. */
+    costCurrency: text("cost_currency"),
+    /** Pricing registry version/key used at insert time; immutable thereafter. */
+    pricingVersion: text("pricing_version"),
     /** Optional correlation to an agent run; not required for accounting. */
     agentRunId: uuid("agent_run_id"),
     createdAt: timestamp("created_at").defaultNow().notNull(),
@@ -113,6 +124,18 @@ export const modelUsageEvent = pgTable(
     check(
       "model_usage_event_reasoning_tokens_nonneg",
       sql`${table.reasoningTokens} IS NULL OR ${table.reasoningTokens} >= 0`,
+    ),
+    check(
+      "model_usage_event_estimated_cost_micros_nonneg",
+      sql`${table.estimatedCostMicros} IS NULL OR ${table.estimatedCostMicros} >= 0`,
+    ),
+    check(
+      "model_usage_event_cost_snapshot_consistent",
+      sql`(
+        (${table.estimatedCostMicros} IS NULL AND ${table.costCurrency} IS NULL AND ${table.pricingVersion} IS NULL)
+        OR
+        (${table.estimatedCostMicros} IS NOT NULL AND ${table.costCurrency} IS NOT NULL AND ${table.pricingVersion} IS NOT NULL)
+      )`,
     ),
   ],
 );

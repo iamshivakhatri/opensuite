@@ -57,6 +57,13 @@
       "when": 1789165539321,
       "tag": "0007_curved_karma",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1789166245533,
+      "tag": "0008_gigantic_leader",
+      "breakpoints": true
     }
   ]
 }
