@@ -47,6 +47,8 @@ import {
 } from "./documents/runtime.js";
 import { createDocumentPreferenceService } from "./documents/preferences.js";
 import { createSearchService } from "./documents/search.js";
+import { createModelUsageRepository } from "./model-usage/repository.js";
+import { createModelUsageService } from "./model-usage/service.js";
 import type { AuthHandler } from "./routes/auth.js";
 import { registerAgentRoutes } from "./routes/agent.js";
 import { registerAuthRoutes } from "./routes/auth.js";
@@ -179,6 +181,9 @@ export async function buildApp(
         )
       : null);
   const aiPreferences = createAiPreferenceService(deps.db);
+  const modelUsage = createModelUsageService(
+    createModelUsageRepository(deps.db),
+  );
   const aiModelResolver =
     config.agent.provider === "anthropic" ||
     config.agent.provider === "openai" ||
@@ -259,7 +264,20 @@ export async function buildApp(
       documents,
       model: deps.agent?.model ?? createConfiguredAgentModel(config),
       ...(aiModelResolver && !deps.agent?.model
-        ? { resolveModel: async (userId: string) => createResolvedAgentModel(await aiModelResolver.resolve(userId)) }
+        ? {
+            resolveModel: async (userId: string) => {
+              const resolved = await aiModelResolver.resolve(userId);
+              return {
+                model: createResolvedAgentModel(resolved),
+                usageAttribution: {
+                  provider: resolved.provider,
+                  model: resolved.model,
+                  credentialSource: resolved.credentialSource,
+                },
+              };
+            },
+            modelUsage,
+          }
         : {}),
       tools: documentTools,
       runtime: documentRuntime,

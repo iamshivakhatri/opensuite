@@ -26,6 +26,10 @@ import {
   type DocumentService,
 } from "../documents/service.js";
 import type { DocumentRuntimeResolver } from "../documents/runtime.js";
+import type { CredentialSource } from "../ai-preferences/types.js";
+import type { ProviderCredentialProvider } from "../credentials/types.js";
+import { createMeteredAgentModel } from "../model-usage/meter.js";
+import type { ModelUsageService } from "../model-usage/service.js";
 import { createAgentDocumentMutationExecutor } from "./document-mutation-executor.js";
 import {
   AgentPersistenceError,
@@ -39,6 +43,18 @@ import {
 } from "./persistence.js";
 import { createWorkspaceCreateBlankDocxTool } from "./workspace-tools.js";
 import { devLog } from "../dev-log.js";
+
+/** Trusted usage attribution resolved with the model (never from model output). */
+export interface AgentModelUsageAttribution {
+  readonly provider: ProviderCredentialProvider;
+  readonly model: string;
+  readonly credentialSource: CredentialSource;
+}
+
+export interface ResolvedAgentExecutionModel {
+  readonly model: AgentModel;
+  readonly usageAttribution?: AgentModelUsageAttribution;
+}
 
 export type AgentExecutionErrorCode =
   | "THREAD_NOT_FOUND"
@@ -107,7 +123,11 @@ export interface AgentExecutionServiceDeps {
   >;
   readonly model: AgentModel;
   /** Resolves a user-scoped model before a run is made durable. */
-  readonly resolveModel?: (userId: string) => Promise<AgentModel>;
+  readonly resolveModel?: (
+    userId: string,
+  ) => Promise<AgentModel | ResolvedAgentExecutionModel>;
+  /** Append-only model usage ledger (optional; tests may omit). */
+  readonly modelUsage?: ModelUsageService;
   /**
    * Optional fixed tool registry (tests). When omitted, the runner discovers
    * document tools once from DocumentRuntime.capabilities(primaryDocument).
@@ -163,9 +183,16 @@ export function createAgentExecutionService(deps: AgentExecutionServiceDeps) {
     }
 
     let model = deps.model;
+    let usageAttribution: AgentModelUsageAttribution | undefined;
     if (deps.resolveModel) {
       try {
-        model = await deps.resolveModel(input.userId);
+        const resolved = await deps.resolveModel(input.userId);
+        if (isResolvedAgentExecutionModel(resolved)) {
+          model = resolved.model;
+          usageAttribution = resolved.usageAttribution;
+        } else {
+          model = resolved;
+        }
       } catch (error) {
         throw new AgentExecutionError(
           "AI_CONFIGURATION_INVALID",
@@ -213,6 +240,26 @@ export function createAgentExecutionService(deps: AgentExecutionServiceDeps) {
       run = started.createdRun;
     } catch (error) {
       throw mapStartPersistenceError(error);
+    }
+
+    if (deps.modelUsage && usageAttribution) {
+      model = createMeteredAgentModel(model, {
+        attribution: {
+          userId: input.userId,
+          provider: usageAttribution.provider,
+          model: usageAttribution.model,
+          credentialSource: usageAttribution.credentialSource,
+          agentRunId: run.id,
+        },
+        usage: deps.modelUsage,
+        onRecordError: (error) => {
+          devLog(
+            `agent ${run.id.slice(0, 8)} model usage record failed: ${
+              error instanceof Error ? error.message : String(error)
+            }`,
+          );
+        },
+      });
     }
 
     const result = continueExecution({
@@ -633,6 +680,17 @@ function logAgentTurn(shortRun: string, event: AgentEvent): void {
 export type AgentExecutionService = ReturnType<
   typeof createAgentExecutionService
 >;
+
+function isResolvedAgentExecutionModel(
+  value: AgentModel | ResolvedAgentExecutionModel,
+): value is ResolvedAgentExecutionModel {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    "model" in value &&
+    typeof (value as ResolvedAgentExecutionModel).model?.complete === "function"
+  );
+}
 
 async function resolveRunDocuments(
   documents: Pick<DocumentService, "getOwnedDocument">,

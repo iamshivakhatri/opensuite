@@ -70,6 +70,8 @@ export interface OpenAIChatCompletionsCreateParams {
   readonly tools?: readonly OpenAIChatTool[];
   readonly tool_choice?: "auto" | "required";
   readonly stream?: boolean;
+  /** OpenAI-compatible: include usage on the final stream chunk. */
+  readonly stream_options?: { readonly include_usage?: boolean };
 }
 
 export interface OpenAIChatCompletionChunk {
@@ -86,7 +88,10 @@ export interface OpenAIChatCompletionChunk {
         };
       }>;
     };
+    readonly finish_reason?: string | null;
   }>;
+  /** Present on the final chunk when `stream_options.include_usage` is set. */
+  readonly usage?: OpenAIChatCompletion["usage"];
 }
 
 export interface OpenAIChatCompletionsClient {
@@ -152,11 +157,17 @@ export function createOpenRouterAgentModel(
       try {
         if (request.onTextDelta) {
           const stream = (await options.client.chat.completions.create(
-            { ...baseParams, stream: true },
+            {
+              ...baseParams,
+              stream: true,
+              stream_options: { include_usage: true },
+            },
             callOptions,
           )) as AsyncIterable<OpenAIChatCompletionChunk>;
 
           let content = "";
+          let finishReason: string | null | undefined;
+          let streamUsage: OpenAIChatCompletion["usage"] | undefined;
           const toolAcc = new Map<
             number,
             { id: string; name: string; arguments: string }
@@ -166,7 +177,14 @@ export function createOpenRouterAgentModel(
             if (request.signal?.aborted) {
               throw cancelledError();
             }
-            const delta = chunk.choices[0]?.delta;
+            if (chunk.usage) {
+              streamUsage = chunk.usage;
+            }
+            const choice = chunk.choices[0];
+            if (choice?.finish_reason) {
+              finishReason = choice.finish_reason;
+            }
+            const delta = choice?.delta;
             if (!delta) continue;
 
             if (typeof delta.content === "string" && delta.content.length > 0) {
@@ -223,6 +241,10 @@ export function createOpenRouterAgentModel(
             options.model,
             startedAt,
             timeToFirstTokenMs,
+            {
+              choices: [{ finish_reason: finishReason ?? null }],
+              ...(streamUsage ? { usage: streamUsage } : {}),
+            },
           );
         }
 

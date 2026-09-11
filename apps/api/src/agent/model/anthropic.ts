@@ -168,11 +168,13 @@ export function createAnthropicAgentModel(
           if (request.signal?.aborted) {
             throw cancelledError();
           }
+          const finalMessage = await stream.finalMessage();
           return withAnthropicMeta(
-            fromAnthropicMessage(await stream.finalMessage()),
+            fromAnthropicMessage(finalMessage),
             options.model,
             startedAt,
             timeToFirstTokenMs,
+            finalMessage,
           );
         }
 

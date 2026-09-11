@@ -1,4 +1,15 @@
-import { index, integer, pgEnum, pgTable, text, timestamp, unique, uuid } from "drizzle-orm/pg-core";
+import { sql } from "drizzle-orm";
+import {
+  check,
+  index,
+  integer,
+  pgEnum,
+  pgTable,
+  text,
+  timestamp,
+  unique,
+  uuid,
+} from "drizzle-orm/pg-core";
 
 import { user } from "./auth.js";
 
@@ -57,3 +68,51 @@ export const aiPreference = pgTable("ai_preference", {
     .$onUpdate(() => new Date())
     .notNull(),
 });
+
+/**
+ * Append-only ledger of completed model provider requests.
+ * Independent of agent_run / agent_step accounting; agent_run_id is correlation only.
+ * Token fields are nullable — omit when the provider did not report them (never invent 0).
+ */
+export const modelUsageEvent = pgTable(
+  "model_usage_event",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    userId: text("user_id")
+      .notNull()
+      .references(() => user.id, { onDelete: "cascade" }),
+    provider: providerCredentialProviderEnum("provider").notNull(),
+    model: text("model").notNull(),
+    credentialSource: aiCredentialSourceEnum("credential_source").notNull(),
+    inputTokens: integer("input_tokens"),
+    outputTokens: integer("output_tokens"),
+    cachedInputTokens: integer("cached_input_tokens"),
+    reasoningTokens: integer("reasoning_tokens"),
+    /** Optional correlation to an agent run; not required for accounting. */
+    agentRunId: uuid("agent_run_id"),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+  },
+  (table) => [
+    index("model_usage_event_user_id_created_at_idx").on(
+      table.userId,
+      table.createdAt,
+    ),
+    index("model_usage_event_agent_run_id_idx").on(table.agentRunId),
+    check(
+      "model_usage_event_input_tokens_nonneg",
+      sql`${table.inputTokens} IS NULL OR ${table.inputTokens} >= 0`,
+    ),
+    check(
+      "model_usage_event_output_tokens_nonneg",
+      sql`${table.outputTokens} IS NULL OR ${table.outputTokens} >= 0`,
+    ),
+    check(
+      "model_usage_event_cached_input_tokens_nonneg",
+      sql`${table.cachedInputTokens} IS NULL OR ${table.cachedInputTokens} >= 0`,
+    ),
+    check(
+      "model_usage_event_reasoning_tokens_nonneg",
+      sql`${table.reasoningTokens} IS NULL OR ${table.reasoningTokens} >= 0`,
+    ),
+  ],
+);
