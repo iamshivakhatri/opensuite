@@ -20,6 +20,21 @@ import {
   documentVersionSourceEnum,
   workspace,
 } from "../schema/product.js";
+import {
+  providerCredential,
+  providerCredentialProviderEnum,
+} from "../schema/ai.js";
+
+test("provider credentials have only encrypted storage and supported providers", () => {
+  assert.equal(getTableName(providerCredential), "provider_credential");
+  assert.ok("encryptedPayload" in providerCredential);
+  assert.equal("secret" in providerCredential, false);
+  assert.deepEqual(providerCredentialProviderEnum.enumValues, [
+    "anthropic",
+    "openai",
+    "openrouter",
+  ]);
+});
 
 test("product schema exports workspace, document, and document_version", () => {
   assert.equal(getTableName(workspace), "workspace");

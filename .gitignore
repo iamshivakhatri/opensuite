@@ -35,8 +35,13 @@ coverage/
 # generated WASM copy for Turbopack (@schnsrw/core)
 apps/web/vendor/s1engine_wasm_bg.wasm
 
-# drizzle migrations (generated locally)
-packages/db/migrations
+# Drizzle migrations are normally local. Keep this committed migration and its
+# snapshot while leaving prior untracked local migration output alone.
+packages/db/migrations/*.sql
+!packages/db/migrations/0005_lowly_gamma_corps.sql
+packages/db/migrations/meta/*.json
+!packages/db/migrations/meta/_journal.json
+!packages/db/migrations/meta/0005_snapshot.json
 
 docs/future/
 notes.txt

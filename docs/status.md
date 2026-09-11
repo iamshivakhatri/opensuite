@@ -11,6 +11,8 @@ _Read this before starting any work. Keep it a concise current-state handoff, no
 
 ## Just Completed
 
+* BYOK credential foundation: per-user/provider encrypted credential table and
+  AES-256-GCM server-side domain service; no routes or runtime wiring yet.
 * DOCX agent surface covers the current 35-capability Node manifest, including table
   column widths and cell shading; all writes use the immutable-version executor.
 * Trash removes the file from open tabs (no re-upsert race).
@@ -45,5 +47,5 @@ _Read this before starting any work. Keep it a concise current-state handoff, no
 
 ## Recommended Next Step
 
-Confirm shell fonts stay stable after open file → Home → refresh (Casual token leak fix).
-Then product/document capability integration.
+Add authenticated credential lifecycle routes that use the BYOK domain service;
+keep provider resolution and settings UI separate milestones.

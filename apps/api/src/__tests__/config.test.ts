@@ -31,6 +31,7 @@ test("loadConfig applies defaults when auth/database env vars are provided", () 
   assert.equal(config.s3.bucket, testS3Env.S3_BUCKET);
   assert.equal(config.s3.forcePathStyle, true);
   assert.equal(config.uploadMaxBytes, 25 * 1024 * 1024);
+  assert.equal(config.aiCredentialEncryptionKey, null);
   assert.equal(config.agent.provider, "unconfigured");
   assert.equal(config.agent.anthropicApiKey, null);
   assert.equal(config.agent.anthropicModel, "claude-sonnet-4-5");
@@ -84,6 +85,13 @@ test("loadConfig parses provided env vars", () => {
   assert.equal(config.logLevel, "warn");
   assert.equal(config.betterAuthUrl, "http://127.0.0.1:4000");
   assert.equal(config.webOrigin, "https://app.example.com");
+});
+
+test("loadConfig keeps the server-only credential encryption key", () => {
+  const encryptionKey = Buffer.alloc(32, 1).toString("base64");
+  const config = loadConfig({ ...baseEnv, AI_CREDENTIAL_ENCRYPTION_KEY: encryptionKey });
+
+  assert.equal(config.aiCredentialEncryptionKey, encryptionKey);
 });
 
 test("loadConfig throws a descriptive error for an invalid PORT", () => {

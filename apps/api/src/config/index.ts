@@ -63,6 +63,8 @@ const EnvSchema = z
     OPENROUTER_API_KEY: z.string().optional(),
     /** Required when provider=openrouter — no default; pick an explicit model slug. */
     OPENROUTER_MODEL: z.string().optional(),
+    /** 32-byte base64 or 64-character hex key, used only for BYOK secrets. */
+    AI_CREDENTIAL_ENCRYPTION_KEY: z.string().optional(),
   })
   .superRefine((data, ctx) => {
     if (data.AGENT_MODEL_PROVIDER === "fake" && data.NODE_ENV === "production") {
@@ -157,6 +159,7 @@ export interface AppConfig {
   readonly emailFrom: string;
   readonly s3: S3Config;
   readonly uploadMaxBytes: number;
+  readonly aiCredentialEncryptionKey: string | null;
   readonly agent: AgentModelConfig;
 }
 
@@ -221,6 +224,8 @@ export function loadConfig(
       forcePathStyle: result.data.S3_FORCE_PATH_STYLE,
     },
     uploadMaxBytes: result.data.UPLOAD_MAX_BYTES,
+    aiCredentialEncryptionKey:
+      result.data.AI_CREDENTIAL_ENCRYPTION_KEY?.trim() || null,
     agent: {
       provider,
       anthropicApiKey: provider === "anthropic" ? anthropicKey : null,
