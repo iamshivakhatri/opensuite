@@ -13,12 +13,13 @@
     "start": "next start -p 3001",
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "lint": "echo \"(no lint configured yet)\"",
-    "test": "node --experimental-strip-types --test src/lib/agent-progress.test.ts src/lib/agent-markdown.test.ts src/lib/theme-model.test.ts src/lib/tab-overflow.test.ts"
+    "test": "node --experimental-strip-types --test src/lib/agent-progress.test.ts src/lib/agent-markdown.test.ts src/lib/theme-model.test.ts src/lib/tab-overflow.test.ts src/lib/editor-version-refresh.test.ts src/lib/open-tabs.test.ts"
   },
   "dependencies": {
     "@casualoffice/docs": "^1.4.2",
     "@hocuspocus/provider": "^4.6.0",
     "@schnsrw/core": "^0.1.1",
+    "@tanstack/react-query": "^5.102.8",
     "better-auth": "^1.7.2",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",

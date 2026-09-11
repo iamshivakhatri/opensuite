@@ -39,3 +39,4 @@ apps/web/vendor/s1engine_wasm_bg.wasm
 packages/db/migrations
 
 docs/future/
+notes.txt

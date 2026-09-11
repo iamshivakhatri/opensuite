@@ -4,8 +4,8 @@ import * as React from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 
+import { DocumentFormatIcon } from "@/components/files/document-format-icon";
 import {
-  formatLabel,
   formatUpdatedAt,
   userFacingError,
 } from "@/components/files/format";
@@ -85,13 +85,11 @@ export function SearchPageView() {
   return (
     <div className="mx-auto max-w-[920px] px-8 py-8">
       <div className="mb-6">
-        <div className="mb-1 font-mono text-[8.5px] font-medium uppercase tracking-[0.095em] text-ink-faint">
-          Search
-        </div>
-        <h1 className="text-[22px] font-semibold tracking-[-0.03em] text-ink">
+        <div className="os-type-section mb-1">Search</div>
+        <h1 className="text-[length:var(--text-xl)] font-semibold tracking-[-0.03em] text-ink">
           Find files
         </h1>
-        <p className="mt-1 text-[12px] text-ink-soft">
+        <p className="os-type-secondary mt-1 text-ink-soft">
           Search document names, workspace names, and formats. File contents are
           not searchable yet.
         </p>
@@ -114,9 +112,9 @@ export function SearchPageView() {
       ) : null}
 
       {!debounced ? (
-        <p className="text-[12px] text-ink-faint">
+        <p className="os-type-secondary text-ink-faint">
           Type a query to search. Tip: press{" "}
-          <kbd className="rounded border border-line bg-[var(--paper)] px-1.5 py-0.5 font-mono text-[10px]">
+          <kbd className="os-type-meta rounded border border-line bg-[var(--paper)] px-1.5 py-0.5 font-mono">
             ⌘K
           </kbd>{" "}
           for Quick Open.
@@ -134,9 +132,7 @@ export function SearchPageView() {
 
       {workspaces.length > 0 ? (
         <section className="mb-6">
-          <h2 className="mb-2 text-[11px] font-semibold uppercase tracking-[0.06em] text-ink-faint">
-            Workspaces
-          </h2>
+          <h2 className="os-type-section mb-2">Workspaces</h2>
           <div className="flex flex-col gap-1.5">
             {workspaces.map((ws) => (
               <Link
@@ -144,14 +140,14 @@ export function SearchPageView() {
                 href={workspacePath(ws.id)}
                 className="flex items-center gap-3 rounded-[var(--radius-md)] border border-line bg-surface px-3 py-2.5 hover:border-ink-faint"
               >
-                <span className="grid h-8 w-8 shrink-0 place-items-center rounded-[8px] border border-line bg-[var(--paper)] text-[10px] text-ink-soft">
+                <span className="os-type-meta grid h-8 w-8 shrink-0 place-items-center rounded-[8px] border border-line bg-[var(--paper)] text-ink-soft">
                   WS
                 </span>
                 <span className="min-w-0 flex-1">
-                  <span className="block truncate text-[12.5px] font-medium text-ink">
+                  <span className="os-type-label block truncate font-medium text-ink">
                     {ws.name}
                   </span>
-                  <span className="block text-[10.5px] text-ink-faint">
+                  <span className="os-type-meta block text-ink-faint">
                     Updated {formatUpdatedAt(ws.updatedAt)}
                   </span>
                 </span>
@@ -163,9 +159,7 @@ export function SearchPageView() {
 
       {(documents?.length ?? 0) > 0 ? (
         <section>
-          <h2 className="mb-2 text-[11px] font-semibold uppercase tracking-[0.06em] text-ink-faint">
-            Documents
-          </h2>
+          <h2 className="os-type-section mb-2">Documents</h2>
           <div className="flex flex-col gap-1.5">
             {documents!.map((doc) => (
               <Link
@@ -173,14 +167,16 @@ export function SearchPageView() {
                 href={documentPath(doc.workspaceId, doc.id)}
                 className="flex items-center gap-3 rounded-[var(--radius-md)] border border-line bg-surface px-3 py-2.5 hover:border-ink-faint"
               >
-                <span className="grid h-8 w-8 shrink-0 place-items-center rounded-[8px] border border-line bg-[var(--paper)] font-mono text-[7.5px] text-ink-soft">
-                  {formatLabel(doc.format)}
-                </span>
+                <DocumentFormatIcon
+                  format={doc.format}
+                  size="md"
+                  className="text-ink-soft"
+                />
                 <span className="min-w-0 flex-1">
-                  <span className="block truncate text-[12.5px] font-medium text-ink">
+                  <span className="os-type-label block truncate font-medium text-ink">
                     {doc.name}
                   </span>
-                  <span className="block truncate text-[10.5px] text-ink-faint">
+                  <span className="os-type-meta block truncate text-ink-faint">
                     {doc.workspaceName} · Updated{" "}
                     {formatUpdatedAt(doc.updatedAt)}
                   </span>

@@ -3,6 +3,7 @@
 import * as React from "react";
 import { useRouter } from "next/navigation";
 
+import { DocumentFormatIcon } from "@/components/files/document-format-icon";
 import { userFacingError } from "@/components/files/format";
 import {
   agentRunDurationMs,
@@ -40,7 +41,10 @@ import {
   OPENSUITE_DOCUMENT_DRAG_MIME,
   parseDocumentDragPayload,
 } from "@/lib/document-drag";
+import { Button } from "@/components/ui/button";
 import { documentPath } from "@/lib/paths";
+import { focusRingClass } from "@/lib/focus-scope";
+import { cn } from "@/lib/utils";
 
 type PanelPhase =
   | { kind: "loading" }
@@ -95,6 +99,8 @@ export function DocumentAgentPanel({
   const [threads, setThreads] = React.useState<AgentThread[]>([]);
   const [threadId, setThreadId] = React.useState<string | null>(null);
   const [historyOpen, setHistoryOpen] = React.useState(false);
+  const historyAnchorRef = React.useRef<HTMLButtonElement>(null);
+  const historyMenuRef = React.useRef<HTMLDivElement>(null);
   const [messages, setMessages] = React.useState<AgentMessage[]>([]);
   const [draft, setDraft] = React.useState("");
   const [tagged, setTagged] = React.useState<TaggedDocument[]>([]);
@@ -210,6 +216,29 @@ export function DocumentAgentPanel({
       }
     };
   }, []);
+
+  React.useEffect(() => {
+    if (!historyOpen) return;
+    function onKey(event: KeyboardEvent) {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        setHistoryOpen(false);
+        historyAnchorRef.current?.focus({ preventScroll: true });
+      }
+    }
+    function onPointer(event: MouseEvent) {
+      const target = event.target as Node;
+      if (historyMenuRef.current?.contains(target)) return;
+      if (historyAnchorRef.current?.contains(target)) return;
+      setHistoryOpen(false);
+    }
+    window.addEventListener("keydown", onKey);
+    window.addEventListener("mousedown", onPointer);
+    return () => {
+      window.removeEventListener("keydown", onKey);
+      window.removeEventListener("mousedown", onPointer);
+    };
+  }, [historyOpen]);
 
   progressRef.current = progress;
 
@@ -1063,9 +1092,13 @@ export function DocumentAgentPanel({
         type="button"
         onClick={onToggle}
         title="Show OpenSuite agent"
-        className="flex h-full w-10 shrink-0 flex-col items-center border-l border-line bg-[var(--sidebar)] pt-3"
+        aria-label="Show OpenSuite agent"
+        className={cn(
+          focusRingClass,
+          "flex h-full w-10 shrink-0 flex-col items-center border-l border-line bg-sidebar pt-3",
+        )}
       >
-        <span className="grid h-8 w-8 place-items-center rounded-[9px] text-[11px] font-semibold text-accent hover:bg-sunken">
+        <span className="grid h-7 w-7 place-items-center rounded-[var(--radius-md)] text-[length:var(--text-2xs)] font-semibold text-accent hover:bg-sunken">
           AI
         </span>
       </button>
@@ -1126,48 +1159,62 @@ export function DocumentAgentPanel({
 
   return (
     <aside
-      className="flex h-full shrink-0 flex-col border-l border-line bg-[var(--sidebar)]"
+      className="flex h-full shrink-0 flex-col border-l border-line bg-sidebar"
       style={{ width }}
     >
-      <div className="relative shrink-0 border-b border-line bg-[var(--sidebar)] px-3.5 pt-[15px] pb-3">
-        <div className="flex items-center justify-between">
-          <div className="text-[12px] font-semibold text-ink">OpenSuite</div>
-          <div className="flex items-center gap-0.5">
-            <button
+      <div className="os-workspace-rail relative flex items-center justify-between gap-2 bg-sidebar px-2.5">
+        <div className="min-w-0 truncate text-[length:var(--text-sm)] font-semibold tracking-[-0.01em] text-ink">
+          Agent
+        </div>
+        <div className="flex shrink-0 items-center gap-0.5">
+            <Button
+              ref={historyAnchorRef}
               type="button"
+              variant="ghost"
+              size="icon"
               onClick={() => setHistoryOpen((open) => !open)}
               disabled={phase.kind !== "ready" || threads.length === 0}
               title="Previous chats"
-              className="grid h-7 w-7 place-items-center rounded-[8px] text-[12px] text-ink-faint hover:bg-sunken hover:text-ink disabled:opacity-40"
+              aria-label="Previous chats"
+              aria-expanded={historyOpen}
+              aria-haspopup="menu"
+              className="text-[length:var(--text-sm)] text-ink-faint"
             >
               ☰
-            </button>
-            <button
+            </Button>
+            <Button
               type="button"
+              variant="ghost"
+              size="icon"
               onClick={() => void handleNewChat()}
               disabled={phase.kind !== "ready" || creatingChat}
               title="New chat"
-              className="grid h-7 w-7 place-items-center rounded-[8px] text-[14px] text-ink-faint hover:bg-sunken hover:text-ink disabled:opacity-40"
+              aria-label="New chat"
+              className="text-[length:var(--text-sm)] text-ink-faint"
             >
               +
-            </button>
-            <button
+            </Button>
+            <Button
               type="button"
+              variant="ghost"
+              size="icon"
               onClick={onToggle}
-              title="Hide OpenSuite agent"
-              className="grid h-7 w-7 place-items-center rounded-[8px] text-[12px] text-ink-faint hover:bg-sunken hover:text-ink-soft"
+              title="Hide agent panel"
+              aria-label="Hide agent panel"
+              className="text-[length:var(--text-sm)] text-ink-faint"
             >
               ›
-            </button>
-          </div>
-        </div>
-        <div className="mt-0.5 truncate font-mono text-[8.5px] text-ink-faint">
-          {activeThread ? threadLabel(activeThread) : contextLabel}
+            </Button>
         </div>
 
         {historyOpen ? (
-          <div className="absolute left-3 right-3 top-[calc(100%-4px)] z-20 max-h-[240px] overflow-y-auto rounded-[12px] border border-line bg-elevated py-1 shadow-[0_12px_40px_rgba(16,24,40,0.12)]">
-            <div className="px-3 py-1.5 font-mono text-[8px] uppercase tracking-[0.08em] text-ink-faint">
+          <div
+            ref={historyMenuRef}
+            role="menu"
+            aria-label="Previous chats"
+            className="absolute left-2 right-2 top-[calc(100%+2px)] z-[var(--z-dropdown)] max-h-[240px] overflow-y-auto rounded-[var(--radius-md)] border border-line bg-surface py-1 shadow-[var(--elevation-sm)]"
+          >
+            <div className="px-2.5 py-1.5 text-[length:var(--text-2xs)] font-medium uppercase tracking-[0.04em] text-ink-faint">
               Previous chats
             </div>
             {threads.map((thread) => {
@@ -1176,15 +1223,20 @@ export function DocumentAgentPanel({
                 <button
                   key={thread.id}
                   type="button"
+                  role="menuitem"
+                  aria-current={active ? "true" : undefined}
                   onClick={() => void handleSelectThread(thread.id)}
-                  className={`flex w-full flex-col gap-0.5 px-3 py-2 text-left hover:bg-sunken ${
-                    active ? "bg-selected" : ""
-                  }`}
+                  className={cn(
+                    focusRingClass,
+                    "flex w-full flex-col gap-0.5 px-2.5 py-1.5 text-left hover:bg-sunken",
+                    active && "bg-selected",
+                  )}
                 >
                   <span
-                    className={`truncate text-[11px] ${
-                      active ? "font-medium text-accent" : "text-ink"
-                    }`}
+                    className={cn(
+                      "truncate text-[length:var(--text-sm)]",
+                      active ? "font-medium text-ink" : "text-ink-soft",
+                    )}
                   >
                     {threadLabel(thread)}
                   </span>
@@ -1195,22 +1247,31 @@ export function DocumentAgentPanel({
         ) : null}
       </div>
 
-      <div ref={scrollRef} className="min-h-0 flex-1 overflow-y-auto px-3.5 py-3.5">
+      <div
+        ref={scrollRef}
+        className="min-h-0 flex-1 overflow-y-auto px-3 py-3"
+      >
+        <p className="os-type-meta mb-3 truncate text-ink-faint">
+          {activeThread ? threadLabel(activeThread) : contextLabel}
+        </p>
         {phase.kind === "loading" ? (
-          <p className="text-center text-[11.5px] text-ink-faint">
+          <p className="text-center text-[length:var(--text-xs)] text-ink-faint">
             Loading conversation…
           </p>
         ) : null}
 
         {phase.kind === "error" ? (
           <div className="text-center">
-            <p className="mb-3 rounded-[var(--radius-sm)] bg-danger-soft px-3 py-2 text-[11px] text-danger">
+            <p className="mb-2 border-l-2 border-danger bg-danger-soft/60 px-2.5 py-2 text-left text-[length:var(--text-sm)] text-danger">
               {phase.message}
             </p>
             <button
               type="button"
               onClick={() => void load()}
-              className="text-[11px] font-medium text-accent hover:underline"
+              className={cn(
+                focusRingClass,
+                "rounded-[var(--radius-sm)] text-[length:var(--text-xs)] font-medium text-accent hover:underline",
+              )}
             >
               Try again
             </button>
@@ -1220,22 +1281,22 @@ export function DocumentAgentPanel({
         {phase.kind === "ready" ? (
           <>
             {showEmpty ? (
-              <div className="flex h-full min-h-[120px] items-center justify-center px-3 text-center">
-                <p className="text-[11.5px] leading-relaxed text-ink-faint">
+              <div className="flex h-full min-h-[120px] items-center justify-center px-2 text-center">
+                <p className="max-w-[240px] text-[length:var(--text-sm)] leading-relaxed text-ink-faint">
                   Ask OpenSuite to create or edit documents. Use @ to tag files,
-                  or drag them here from the explorer.
+                  or drag them from the explorer.
                 </p>
               </div>
             ) : null}
 
-            <div className="flex flex-col gap-3.5">
+            <div className="flex flex-col gap-4">
               {messages.map((message, index) => {
                 const isLast = index === messages.length - 1;
                 if (message.role === "user") {
                   return (
                     <div
                       key={message.id}
-                      className="ml-6 rounded-[13px_13px_4px_13px] bg-ink px-3 py-2.5 text-[10.5px] leading-[1.6] text-on-ink shadow-[0_5px_18px_rgba(16,24,40,0.09)]"
+                      className="rounded-[var(--radius-md)] bg-sunken px-2.5 py-2 text-[length:var(--text-sm)] leading-[1.55] text-ink"
                     >
                       {message.content}
                     </div>
@@ -1284,7 +1345,7 @@ export function DocumentAgentPanel({
                   />
                   {showLiveDraft && liveDraft ? (
                     <div className="relative">
-                      <AgentMarkdown text={liveDraft.content} />
+                      <AgentMarkdown text={liveDraft.content} streaming />
                       <span
                         aria-hidden
                         className="ml-0.5 inline-block h-[0.85em] w-[2px] translate-y-[2px] animate-pulse bg-accent align-baseline"
@@ -1313,30 +1374,38 @@ export function DocumentAgentPanel({
               ) : null}
 
               {versionNotice ? (
-                <p className="px-0.5 text-[10px] text-ink-faint">
+                <p className="flex items-center gap-1.5 text-[length:var(--text-2xs)] text-ink-faint">
+                  <span
+                    aria-hidden
+                    className="h-1 w-1 shrink-0 rounded-full bg-ink-faint/70"
+                  />
                   Document updated to{" "}
-                  <span className="font-medium text-ink-soft">
+                  <span className="font-medium tabular-nums text-ink-soft">
                     v{versionNotice.versionNumber}
                   </span>
                 </p>
               ) : null}
 
               {runNotice ? (
-                <p className="px-0.5 text-[10px] text-ink-faint">{runNotice}</p>
+                <p className="text-[length:var(--text-2xs)] text-ink-faint">
+                  {runNotice}
+                </p>
               ) : null}
 
               {runError ? (
-                <div className="flex items-center gap-2 rounded-[var(--radius-sm)] bg-danger-soft px-2.5 py-2 text-[10.5px] text-danger">
-                  <p className="min-w-0 flex-1">{runError}</p>
+                <div className="flex items-start gap-2 border-l-2 border-danger bg-danger-soft/50 px-2.5 py-2 text-[length:var(--text-sm)] text-danger">
+                  <p className="min-w-0 flex-1 leading-snug">{runError}</p>
                   {canRetryRun ? (
-                    <button
+                    <Button
                       type="button"
+                      variant="outline"
+                      size="sm"
                       onClick={() => void handleRetry()}
                       disabled={busy}
-                      className="shrink-0 font-medium underline underline-offset-2 hover:opacity-80 disabled:opacity-50"
+                      className="h-6 shrink-0 border-danger/30 px-2 text-[length:var(--text-xs)] text-danger hover:bg-danger-soft"
                     >
                       Retry
-                    </button>
+                    </Button>
                   ) : null}
                 </div>
               ) : null}
@@ -1346,7 +1415,10 @@ export function DocumentAgentPanel({
                   type="button"
                   onClick={() => void handleRetry()}
                   disabled={busy}
-                  className="self-start px-0.5 text-[10.5px] font-medium text-accent hover:underline disabled:opacity-50"
+                  className={cn(
+                    focusRingClass,
+                    "self-start rounded-[var(--radius-sm)] text-[length:var(--text-xs)] font-medium text-accent hover:underline disabled:opacity-50",
+                  )}
                 >
                   Retry last request
                 </button>
@@ -1367,13 +1439,15 @@ export function DocumentAgentPanel({
         ) : null}
       </div>
 
-      <div className="shrink-0 border-t border-line bg-sidebar p-3">
+      <div className="shrink-0 border-t border-line bg-sidebar px-3 py-2.5">
         <div
-          className={`rounded-[13px] border bg-surface p-2.5 shadow-[0_1px_2px_rgba(16,24,40,0.03)] focus-within:border-accent-line focus-within:shadow-[0_0_0_3px_var(--accent-soft)] ${
+          className={cn(
+            "rounded-[var(--radius-md)] border bg-surface p-2 focus-within:border-accent-line",
             dragOverComposer
               ? "border-accent border-dashed"
-              : "border-line"
-          }`}
+              : "border-line",
+            canStop && "opacity-95",
+          )}
           onDragOver={(event) => {
             if (
               event.dataTransfer.types.includes(OPENSUITE_DOCUMENT_DRAG_MIME)
@@ -1399,14 +1473,18 @@ export function DocumentAgentPanel({
           }}
         >
           {tagged.length > 0 ? (
-            <div className="mb-2 flex flex-wrap gap-1">
+            <div className="mb-1.5 flex flex-wrap gap-1">
               {tagged.map((file) => (
                 <button
                   key={file.id}
                   type="button"
                   title="Remove tag"
+                  aria-label={`Remove tag ${file.name}`}
                   onClick={() => removeTagged(file.id)}
-                  className="inline-flex max-w-full items-center gap-1 rounded-[7px] bg-accent-soft px-1.5 py-0.5 text-[10px] font-medium text-accent-hover"
+                  className={cn(
+                    focusRingClass,
+                    "inline-flex max-w-full items-center gap-1 rounded-[var(--radius-sm)] bg-accent-soft px-1.5 py-0.5 text-[length:var(--text-2xs)] font-medium text-accent-hover",
+                  )}
                 >
                   <span className="truncate">@{file.name}</span>
                   <span className="opacity-60">×</span>
@@ -1416,18 +1494,23 @@ export function DocumentAgentPanel({
           ) : null}
           <div className="relative">
             {mentionOpen && mentionMatches.length > 0 ? (
-              <div className="absolute bottom-full left-0 right-0 z-20 mb-1 max-h-[180px] overflow-y-auto rounded-[10px] border border-line bg-elevated py-1 shadow-[0_12px_40px_rgba(16,24,40,0.12)]">
+              <div className="absolute bottom-full left-0 right-0 z-[var(--z-dropdown)] mb-1 max-h-[180px] overflow-y-auto rounded-[var(--radius-md)] border border-line bg-surface py-1 shadow-[var(--elevation-sm)]">
                 {mentionMatches.map((file) => (
                   <button
                     key={file.id}
                     type="button"
                     onClick={() => applyMention(file)}
-                    className="flex w-full items-center gap-2 px-2.5 py-1.5 text-left text-[11px] text-ink hover:bg-sunken"
+                    className={cn(
+                      focusRingClass,
+                      "flex w-full items-center gap-2 px-2.5 py-1.5 text-left text-[length:var(--text-sm)] text-ink hover:bg-sunken",
+                    )}
                   >
+                    <DocumentFormatIcon
+                      format={file.format}
+                      size="sm"
+                      className="text-ink-faint"
+                    />
                     <span className="min-w-0 flex-1 truncate">{file.name}</span>
-                    <span className="shrink-0 font-mono text-[8px] uppercase text-ink-faint">
-                      {file.format}
-                    </span>
                   </button>
                 ))}
               </div>
@@ -1439,46 +1522,56 @@ export function DocumentAgentPanel({
               disabled={canStop || phase.kind !== "ready"}
               onChange={(event) => updateDraftAndMention(event.target.value)}
               onKeyDown={onComposerKeyDown}
+              aria-label="Message to agent"
               placeholder={
                 canStop
-                  ? "Agent is working… press Stop to cancel"
+                  ? "Agent is working… Stop to cancel"
                   : "Ask OpenSuite… (@ to tag a file)"
               }
-              className="max-h-40 min-h-[40px] w-full resize-none overflow-y-auto border-none bg-transparent text-[11px] leading-[1.45] text-ink outline-none placeholder:text-ink-faint disabled:cursor-not-allowed disabled:text-ink-faint"
+              className={cn(
+                focusRingClass,
+                "max-h-40 min-h-[36px] w-full resize-none overflow-y-auto border-none bg-transparent text-[length:var(--text-sm)] leading-[1.5] text-ink placeholder:text-ink-faint disabled:cursor-not-allowed disabled:text-ink-faint",
+              )}
             />
           </div>
-          <div className="mt-1.5 flex items-center justify-between gap-2">
-            <div className="min-w-0 truncate text-[10px] tabular-nums text-ink-faint">
+          <div className="mt-1 flex items-center justify-between gap-2">
+            <div className="min-w-0 truncate text-[length:var(--text-2xs)] tabular-nums text-ink-faint">
               {canStop && wallClockMs !== null
                 ? `${isGenerating ? "Generating" : "Working"} · ${formatProgressElapsed(wallClockMs)}`
                 : null}
             </div>
             {canStop ? (
-              <button
+              <Button
                 type="button"
+                variant="primary"
+                size="icon"
                 onClick={() => void handleCancel()}
                 disabled={cancelling}
                 title="Stop"
-                className="grid h-7 w-7 shrink-0 place-items-center rounded-[8px] bg-ink text-on-ink hover:opacity-90 disabled:opacity-50"
+                aria-label="Stop agent run"
+                className="shrink-0"
               >
                 {cancelling ? (
-                  <span className="text-[10px]">…</span>
+                  <span className="text-[length:var(--text-2xs)]">…</span>
                 ) : (
                   <span className="block h-[10px] w-[10px] rounded-[1.5px] bg-on-ink" />
                 )}
-              </button>
+              </Button>
             ) : (
-              <button
+              <Button
                 type="button"
+                variant="accent"
+                size="icon"
                 disabled={
                   busy || phase.kind !== "ready" || draft.trim().length === 0
                 }
                 onClick={() => void handleSubmit()}
                 title="Send"
-                className="grid h-7 w-7 shrink-0 place-items-center rounded-[8px] bg-accent text-[11px] text-on-ink hover:bg-accent-hover disabled:bg-accent-soft disabled:text-ink-faint"
+                aria-label="Send message"
+                className="shrink-0 disabled:bg-accent-soft disabled:text-ink-faint disabled:opacity-100"
               >
                 ➤
-              </button>
+              </Button>
             )}
           </div>
         </div>
@@ -1488,7 +1581,7 @@ export function DocumentAgentPanel({
 }
 
 /**
- * Perplexity-style work summary: one compact line, click to expand grouped steps.
+ * Compact work summary: one line, click to expand grouped steps.
  * Repeated tools collapse (e.g. "Inserted paragraphs · 13").
  */
 function AgentThoughtToggle({
@@ -1519,15 +1612,17 @@ function AgentThoughtToggle({
         type="button"
         onClick={hasTimeline ? onToggle : undefined}
         disabled={!hasTimeline}
-        className={`group flex max-w-full items-center gap-1.5 rounded-[8px] py-0.5 text-left text-[11.5px] leading-[1.45] transition-colors ${
-          hasTimeline ? "cursor-pointer hover:opacity-80" : "cursor-default"
-        } ${
+        aria-expanded={hasTimeline ? expanded : undefined}
+        className={cn(
+          focusRingClass,
+          "group flex max-w-full items-center gap-1.5 rounded-[var(--radius-sm)] py-0.5 text-left text-[length:var(--text-xs)] leading-[1.4] transition-colors",
+          hasTimeline ? "cursor-pointer hover:opacity-80" : "cursor-default",
           status === "error"
             ? "text-danger"
             : isActive
               ? "text-accent"
-              : "text-ink-faint"
-        }`}
+              : "text-ink-faint",
+        )}
         title={
           hasTimeline
             ? expanded
@@ -1537,24 +1632,25 @@ function AgentThoughtToggle({
         }
       >
         {isActive ? (
-          <span className="relative flex h-2 w-2 shrink-0">
-            <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-accent opacity-40" />
-            <span className="relative inline-flex h-2 w-2 rounded-full bg-accent" />
+          <span className="relative flex h-1.5 w-1.5 shrink-0">
+            <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-accent opacity-35" />
+            <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-accent" />
           </span>
         ) : status === "error" ? (
-          <span className="shrink-0 text-[10px]">!</span>
+          <span className="shrink-0 text-[length:var(--text-2xs)]">!</span>
         ) : null}
         <span className="min-w-0 truncate font-medium">{label}</span>
         {totalElapsed && isActive ? (
-          <span className="shrink-0 tabular-nums text-[10.5px] opacity-70">
+          <span className="shrink-0 tabular-nums text-[length:var(--text-2xs)] opacity-70">
             · {totalElapsed}
           </span>
         ) : null}
         {hasTimeline ? (
           <span
-            className={`shrink-0 text-[10px] opacity-60 transition-transform ${
-              expanded ? "rotate-90" : ""
-            }`}
+            className={cn(
+              "shrink-0 text-[length:var(--text-2xs)] opacity-50 transition-transform",
+              expanded && "rotate-90",
+            )}
           >
             ›
           </span>
@@ -1562,17 +1658,18 @@ function AgentThoughtToggle({
       </button>
 
       {expanded && hasTimeline ? (
-        <div className="ml-3.5 mt-1.5 space-y-0.5 border-l border-line/80 pl-3">
+        <div className="ml-3 mt-1 space-y-0.5 border-l border-line pl-2.5">
           {groups.map((group, index) => (
             <div
               key={`${group.key}:${index}`}
-              className={`flex items-baseline gap-2 py-[2px] text-[11px] leading-[1.4] ${
+              className={cn(
+                "flex items-baseline gap-2 py-px text-[length:var(--text-2xs)] leading-[1.4]",
                 group.status === "error"
                   ? "text-danger"
                   : group.status === "active"
                     ? "text-ink-soft"
-                    : "text-ink-faint"
-              }`}
+                    : "text-ink-faint",
+              )}
             >
               <span className="min-w-0 flex-1 truncate">
                 {group.label}
@@ -1615,43 +1712,63 @@ function RunStatusHint({
   // page reload, before the SSE event replays) has nothing to submit yet.
   const canAct = pendingConfirmation !== null;
   return (
-    <div className="rounded-[var(--radius-sm)] border border-accent-line bg-accent-soft px-2.5 py-2 text-[10.5px] text-accent-hover">
-      <p className="font-medium">
-        Waiting to confirm
-        {pendingConfirmation?.toolName ? `: ${pendingConfirmation.toolName}` : "…"}
+    <div
+      className="rounded-[var(--radius-md)] border border-accent-line bg-accent-soft/80 px-2.5 py-2.5"
+      role="region"
+      aria-label="Confirmation needed"
+    >
+      <p className="text-[length:var(--text-sm)] font-semibold tracking-[-0.01em] text-ink">
+        Confirmation needed
+        {pendingConfirmation?.toolName
+          ? ` · ${pendingConfirmation.toolName}`
+          : ""}
       </p>
       {pendingConfirmation?.reason ? (
-        <p className="mt-0.5 text-ink-soft">{pendingConfirmation.reason}</p>
-      ) : null}
+        <p className="mt-1 text-[length:var(--text-sm)] leading-snug text-ink-soft">
+          {pendingConfirmation.reason}
+        </p>
+      ) : (
+        <p className="mt-1 text-[length:var(--text-xs)] text-ink-faint">
+          The agent needs your decision before continuing.
+        </p>
+      )}
       {canAct ? (
-        <div className="mt-1.5 flex items-center gap-1.5">
-          <button
+        <div className="mt-2 flex items-center gap-1.5">
+          <Button
             type="button"
+            variant="primary"
+            size="sm"
             onClick={onApprove}
             disabled={confirming}
-            className="rounded-[7px] bg-ink px-2 py-1 text-[10.5px] font-medium text-on-ink hover:opacity-90 disabled:opacity-50"
+            className="h-7 px-2.5 text-[length:var(--text-xs)]"
           >
             Approve
-          </button>
-          <button
+          </Button>
+          <Button
             type="button"
+            variant="outline"
+            size="sm"
             onClick={onDeny}
             disabled={confirming}
-            className="rounded-[7px] border border-line bg-surface px-2 py-1 text-[10.5px] font-medium text-ink hover:bg-sunken disabled:opacity-50"
+            className="h-7 px-2.5 text-[length:var(--text-xs)]"
           >
             Deny
-          </button>
+          </Button>
           {confirming ? (
-            <span className="text-[10px] text-ink-faint">Submitting…</span>
+            <span className="text-[length:var(--text-2xs)] text-ink-faint">
+              Submitting…
+            </span>
           ) : null}
         </div>
       ) : (
-        <p className="mt-1 text-[10px] text-ink-faint">
+        <p className="mt-1.5 text-[length:var(--text-2xs)] text-ink-faint">
           Reconnecting to the pending confirmation…
         </p>
       )}
       {confirmationError ? (
-        <p className="mt-1 text-[10px] text-danger">{confirmationError}</p>
+        <p className="mt-1.5 text-[length:var(--text-2xs)] text-danger">
+          {confirmationError}
+        </p>
       ) : null}
     </div>
   );

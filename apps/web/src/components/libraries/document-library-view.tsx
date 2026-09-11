@@ -1,12 +1,11 @@
 "use client";
 
 import * as React from "react";
-import Link from "next/link";
 
 import { Button } from "@/components/ui/button";
+import { DocumentLibraryRow } from "@/components/libraries/document-library-row";
 import { PageEmpty, PageError, PageLoading } from "@/components/ui/page-state";
 import {
-  formatLabel,
   formatUpdatedAt,
   userFacingError,
 } from "@/components/files/format";
@@ -22,7 +21,9 @@ import {
   type Workspace,
 } from "@/lib/api";
 import { documentPath } from "@/lib/paths";
+import { focusRingClass } from "@/lib/focus-scope";
 import { useToast } from "@/lib/toast";
+import { cn } from "@/lib/utils";
 
 type LibraryKind = "recent" | "starred" | "format";
 
@@ -128,24 +129,48 @@ export function DocumentLibraryView({
           ? ".xlsx"
           : ".docx,.pptx,.xlsx";
 
+  const emptyTitle =
+    kind === "recent"
+      ? "No recent documents"
+      : kind === "starred"
+        ? "No starred documents"
+        : "Nothing here yet";
+
+  const emptyDescription =
+    kind === "recent"
+      ? "Open a document from a workspace and it will appear here."
+      : kind === "starred"
+        ? "Star a file from a workspace and it will appear here."
+        : "Upload a matching Office file into a workspace.";
+
+  function rowMeta(doc: LibraryDocument): string {
+    const when =
+      kind === "recent" && doc.lastOpenedAt
+        ? `Opened ${formatUpdatedAt(doc.lastOpenedAt)}`
+        : `Updated ${formatUpdatedAt(doc.updatedAt)}`;
+    return `${doc.workspaceName} · ${when}`;
+  }
+
   return (
-    <div className="mx-auto max-w-[920px] px-8 py-8">
-      <div className="mb-6">
-        <div className="mb-1 font-mono text-[8.5px] font-medium uppercase tracking-[0.095em] text-ink-faint">
-          Library
-        </div>
-        <h1 className="text-[22px] font-semibold tracking-[-0.03em] text-ink">
+    <div className="mx-auto max-w-[880px] px-6 py-7 sm:px-8">
+      <header className="mb-6">
+        <h1 className="text-[length:var(--text-xl)] font-semibold tracking-[-0.03em] text-ink">
           {title}
         </h1>
-        <p className="mt-1 text-[12px] text-ink-soft">{description}</p>
-      </div>
+        <p className="os-type-secondary mt-1 max-w-[48ch] text-ink-soft">
+          {description}
+        </p>
+      </header>
 
       {kind === "format" ? (
-        <div className="mb-5 flex flex-wrap items-center gap-2 rounded-[var(--radius-md)] border border-line bg-surface px-3 py-3">
+        <div className="mb-5 flex flex-wrap items-center gap-2 rounded-[var(--radius-md)] border border-line bg-surface px-3 py-2.5">
           <select
             value={uploadWorkspaceId}
             onChange={(event) => setUploadWorkspaceId(event.target.value)}
-            className="h-8 rounded-[8px] border border-line bg-surface px-2 text-[12px] text-ink"
+            className={cn(
+              focusRingClass,
+              "h-8 rounded-[var(--radius-sm)] border border-line bg-surface px-2 text-[length:var(--text-xs)] text-ink",
+            )}
           >
             {workspaces.length === 0 ? (
               <option value="">No workspaces</option>
@@ -175,7 +200,7 @@ export function DocumentLibraryView({
             {uploading ? "Uploading…" : "Upload"}
           </Button>
           {uploadError ? (
-            <p className="w-full text-[11px] text-danger">{uploadError}</p>
+            <p className="os-type-meta w-full text-danger">{uploadError}</p>
           ) : null}
         </div>
       ) : null}
@@ -186,66 +211,48 @@ export function DocumentLibraryView({
         </div>
       ) : null}
 
-      {documents === null && !error ? (
-        <PageLoading />
-      ) : null}
+      {documents === null && !error ? <PageLoading variant="list" /> : null}
 
       {documents !== null && documents.length === 0 ? (
-        <PageEmpty
-          title="Nothing here yet"
-          description={
-            kind === "recent"
-              ? "Open a document and it will appear here."
-              : kind === "starred"
-                ? "Star files from a workspace explorer or this list."
-                : "Upload a matching Office file into a workspace."
-          }
-        />
+        <PageEmpty title={emptyTitle} description={emptyDescription} />
       ) : null}
 
-      <div className="flex flex-col gap-1.5">
-        {(documents ?? []).map((doc) => (
-          <div
-            key={doc.id}
-            className="flex items-center gap-3 rounded-[var(--radius-md)] border border-line bg-surface px-3 py-2.5 hover:border-ink-faint"
-          >
-            <Link
-              href={documentPath(doc.workspaceId, doc.id)}
-              className="flex min-w-0 flex-1 items-center gap-3"
-            >
-              <span className="grid h-8 w-8 shrink-0 place-items-center rounded-[8px] border border-line bg-[var(--paper)] font-mono text-[7.5px] text-ink-soft">
-                {formatLabel(doc.format)}
-              </span>
-              <span className="min-w-0 flex-1">
-                <span className="block truncate text-[12.5px] font-medium text-ink">
-                  {doc.name}
-                </span>
-                <span className="block truncate text-[10.5px] text-ink-faint">
-                  {doc.workspaceName}
-                  {" · "}
-                  {kind === "recent" && doc.lastOpenedAt
-                    ? `Opened ${formatUpdatedAt(doc.lastOpenedAt)}`
-                    : `Updated ${formatUpdatedAt(doc.updatedAt)}`}
-                </span>
-              </span>
-            </Link>
-            <button
-              type="button"
-              title={doc.starred ? "Unstar" : "Star"}
-              disabled={starBusyId === doc.id}
-              onClick={() => void toggleStar(doc)}
-              className={
-                "grid h-8 w-8 place-items-center rounded-[8px] text-[14px] " +
-                (doc.starred
-                  ? "text-accent hover:bg-accent-soft"
-                  : "text-ink-faint hover:bg-sunken hover:text-ink")
-              }
-            >
-              {doc.starred ? "★" : "☆"}
-            </button>
-          </div>
-        ))}
-      </div>
+      {documents !== null && documents.length > 0 ? (
+        <ul className="divide-y divide-line border-y border-line">
+          {documents.map((doc) => (
+            <li key={doc.id}>
+              <DocumentLibraryRow
+                href={documentPath(doc.workspaceId, doc.id)}
+                name={doc.name}
+                format={doc.format}
+                meta={rowMeta(doc)}
+                trailing={
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon"
+                    title={doc.starred ? "Unstar" : "Star"}
+                    aria-label={
+                      doc.starred ? "Unstar document" : "Star document"
+                    }
+                    aria-pressed={doc.starred}
+                    disabled={starBusyId === doc.id}
+                    onClick={() => void toggleStar(doc)}
+                    className={cn(
+                      "text-[length:var(--text-sm)]",
+                      doc.starred
+                        ? "text-accent hover:text-accent"
+                        : "text-ink-faint opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 focus-visible:opacity-100",
+                    )}
+                  >
+                    {doc.starred ? "★" : "☆"}
+                  </Button>
+                }
+              />
+            </li>
+          ))}
+        </ul>
+      ) : null}
     </div>
   );
 }

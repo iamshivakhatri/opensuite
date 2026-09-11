@@ -9,34 +9,43 @@ import { ContextMenu } from "@/components/ui/context-menu";
 import { Dialog } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { PageEmpty, PageError, PageLoading } from "@/components/ui/page-state";
+import { DocumentLibraryRow } from "@/components/libraries/document-library-row";
 import {
-  formatLabel,
   formatUpdatedAt,
   userFacingError,
 } from "@/components/files/format";
 import {
   createWorkspace,
   deleteWorkspace,
+  listRecentDocuments,
   listWorkspaces,
   renameWorkspace,
+  type LibraryDocument,
   type Workspace,
 } from "@/lib/api";
 import { documentPath, workspacePath } from "@/lib/paths";
+import { focusRingClass } from "@/lib/focus-scope";
 import {
   filterOfficeUploadFiles,
   isOfficeUploadFile,
   uploadOfficeFiles,
 } from "@/lib/office-upload";
 import { useToast } from "@/lib/toast";
+import { cn } from "@/lib/utils";
+
+const RECENT_HOME_LIMIT = 8;
 
 /**
- * /app home — workspaces + direct upload into existing or new workspace.
+ * /app home — resume recent documents, enter workspaces, create / upload.
+ * Complements the app sidebar; avoids a second navigation dashboard.
  */
 export function WorkspacesHome() {
   const router = useRouter();
   const { toast } = useToast();
   const [workspaces, setWorkspaces] = React.useState<Workspace[] | null>(null);
+  const [recent, setRecent] = React.useState<LibraryDocument[] | null>(null);
   const [error, setError] = React.useState<string | null>(null);
+  const [createOpen, setCreateOpen] = React.useState(false);
   const [creating, setCreating] = React.useState(false);
   const [name, setName] = React.useState("");
   const [createError, setCreateError] = React.useState<string | null>(null);
@@ -57,7 +66,12 @@ export function WorkspacesHome() {
   const load = React.useCallback(async () => {
     setError(null);
     try {
-      setWorkspaces(await listWorkspaces());
+      const [nextWorkspaces, nextRecent] = await Promise.all([
+        listWorkspaces(),
+        listRecentDocuments().catch(() => [] as LibraryDocument[]),
+      ]);
+      setWorkspaces(nextWorkspaces);
+      setRecent(nextRecent);
     } catch (err) {
       setError(userFacingError(err, "Could not load workspaces."));
     }
@@ -69,6 +83,10 @@ export function WorkspacesHome() {
 
   const menuWorkspace =
     (workspaces ?? []).find((workspace) => workspace.id === menuId) ?? null;
+  const recentPreview = (recent ?? []).slice(0, RECENT_HOME_LIMIT);
+  const hasWorkspaces = (workspaces?.length ?? 0) > 0;
+  const isEmpty =
+    workspaces !== null && workspaces.length === 0 && (recent?.length ?? 0) === 0;
 
   function takeOfficeFiles(files: FileList | File[] | null) {
     if (!files) return;
@@ -93,6 +111,7 @@ export function WorkspacesHome() {
     try {
       const workspace = await createWorkspace(name);
       setName("");
+      setCreateOpen(false);
       toast({ tone: "success", title: "Workspace created" });
       router.push(workspacePath(workspace.id));
     } catch (err) {
@@ -136,97 +155,75 @@ export function WorkspacesHome() {
   }
 
   return (
-    <div className="mx-auto max-w-[920px] px-8 py-8">
-      <div className="mb-6 flex items-end justify-between gap-4">
-        <div>
-          <div className="mb-1 font-mono text-[8.5px] font-medium uppercase tracking-[0.095em] text-ink-faint">
-            OpenSuite
-          </div>
-          <h1 className="text-[22px] font-semibold tracking-[-0.03em] text-ink">
-            Workspaces
+    <div
+      className="relative mx-auto max-w-[880px] px-6 py-7 sm:px-8"
+      onDragEnter={(event) => {
+        if (!event.dataTransfer.types.includes("Files")) return;
+        event.preventDefault();
+        dragDepth.current += 1;
+        setDraggingOver(true);
+      }}
+      onDragLeave={(event) => {
+        if (!event.dataTransfer.types.includes("Files")) return;
+        event.preventDefault();
+        dragDepth.current = Math.max(0, dragDepth.current - 1);
+        if (dragDepth.current === 0) setDraggingOver(false);
+      }}
+      onDragOver={(event) => {
+        if (!event.dataTransfer.types.includes("Files")) return;
+        event.preventDefault();
+        event.dataTransfer.dropEffect = "copy";
+      }}
+      onDrop={(event) => {
+        event.preventDefault();
+        dragDepth.current = 0;
+        setDraggingOver(false);
+        takeOfficeFiles(event.dataTransfer.files);
+      }}
+    >
+      <input
+        ref={fileRef}
+        type="file"
+        accept=".docx,.pptx,.xlsx"
+        multiple
+        className="hidden"
+        onChange={(event) => {
+          takeOfficeFiles(event.target.files);
+          event.target.value = "";
+        }}
+      />
+
+      <header className="mb-6 flex flex-wrap items-end justify-between gap-3">
+        <div className="min-w-0">
+          <h1 className="text-[length:var(--text-xl)] font-semibold tracking-[-0.03em] text-ink">
+            Home
           </h1>
-          <p className="mt-1 text-[12px] text-ink-soft">
-            Open a workspace, or upload files into a new or existing one.
+          <p className="os-type-secondary mt-1 max-w-[46ch] text-ink-soft">
+            Resume your work, open a workspace, or upload Office files.
           </p>
         </div>
-      </div>
-
-      <div
-        className={
-          "mb-5 rounded-[var(--radius-md)] border border-dashed px-5 py-7 text-center transition-colors " +
-          (draggingOver
-            ? "border-accent bg-accent-soft/40"
-            : "border-line bg-surface")
-        }
-        onDragEnter={(event) => {
-          if (!event.dataTransfer.types.includes("Files")) return;
-          event.preventDefault();
-          dragDepth.current += 1;
-          setDraggingOver(true);
-        }}
-        onDragLeave={(event) => {
-          if (!event.dataTransfer.types.includes("Files")) return;
-          event.preventDefault();
-          dragDepth.current = Math.max(0, dragDepth.current - 1);
-          if (dragDepth.current === 0) setDraggingOver(false);
-        }}
-        onDragOver={(event) => {
-          if (!event.dataTransfer.types.includes("Files")) return;
-          event.preventDefault();
-          event.dataTransfer.dropEffect = "copy";
-        }}
-        onDrop={(event) => {
-          event.preventDefault();
-          dragDepth.current = 0;
-          setDraggingOver(false);
-          takeOfficeFiles(event.dataTransfer.files);
-        }}
-      >
-        <input
-          ref={fileRef}
-          type="file"
-          accept=".docx,.pptx,.xlsx"
-          multiple
-          className="hidden"
-          onChange={(event) => {
-            takeOfficeFiles(event.target.files);
-            event.target.value = "";
-          }}
-        />
-        <p className="text-[13px] font-semibold tracking-[-0.01em] text-ink">
-          {draggingOver ? "Drop to upload" : "Drop Office files here"}
-        </p>
-        <p className="mt-1 text-[11.5px] text-ink-soft">
-          .docx · .pptx · .xlsx — then choose an existing workspace or create one
-        </p>
-        <Button
-          type="button"
-          size="sm"
-          className="mt-3"
-          onClick={() => fileRef.current?.click()}
-        >
-          Choose files
-        </Button>
-      </div>
-
-      <form
-        onSubmit={(event) => void handleCreate(event)}
-        className="mb-6 flex flex-wrap items-center gap-2 rounded-[var(--radius-md)] border border-line bg-surface px-3 py-3"
-      >
-        <Input
-          value={name}
-          onChange={(event) => setName(event.target.value)}
-          placeholder="Or create an empty workspace…"
-          className="min-w-[220px] flex-1"
-          maxLength={100}
-        />
-        <Button type="submit" size="sm" disabled={creating || !name.trim()}>
-          {creating ? "Creating…" : "Create workspace"}
-        </Button>
-        {createError ? (
-          <p className="w-full text-[11px] text-danger">{createError}</p>
-        ) : null}
-      </form>
+        <div className="flex shrink-0 items-center gap-2">
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            onClick={() => fileRef.current?.click()}
+          >
+            Upload
+          </Button>
+          <Button
+            type="button"
+            size="sm"
+            onClick={() => {
+              setCreateOpen(true);
+              setCreateError(null);
+              setName("");
+            }}
+          >
+            New workspace
+          </Button>
+        </div>
+      </header>
 
       {error ? (
         <div className="mb-4">
@@ -238,78 +235,147 @@ export function WorkspacesHome() {
         <PageLoading variant="workspaces" />
       ) : null}
 
-      {workspaces !== null && workspaces.length === 0 ? (
+      {isEmpty ? (
         <PageEmpty
           title="Create your first workspace"
-          description="Drop a file above to create a workspace around it, or name one here."
+          description="Start empty, or upload a .docx / .pptx / .xlsx and choose where it should live."
         />
       ) : null}
 
-      <div className="flex flex-col gap-2">
-        {(workspaces ?? []).map((workspace) => (
-          <div
-            key={workspace.id}
-            className="group relative rounded-[var(--radius-md)] border border-line bg-surface px-4 py-3.5 transition-colors hover:border-ink-faint"
-          >
-            <Link
-              href={workspacePath(workspace.id)}
-              className="block min-w-0 pr-10"
+      {recentPreview.length > 0 ? (
+        <section className="mb-7" aria-labelledby="home-continue">
+          <div className="mb-2 flex items-baseline justify-between gap-3">
+            <h2
+              id="home-continue"
+              className="os-type-section"
             >
-              <div className="mb-1 flex items-center gap-2">
-                <span className="truncate text-[13.5px] font-semibold tracking-[-0.02em] text-ink">
-                  {workspace.name}
-                </span>
-                <span className="shrink-0 text-[10.5px] text-ink-faint">
-                  {workspace.documentCount}{" "}
-                  {workspace.documentCount === 1 ? "file" : "files"}
-                </span>
-              </div>
-              <div className="mb-2 text-[11px] text-ink-faint">
-                Updated {formatUpdatedAt(workspace.updatedAt)}
-              </div>
-            </Link>
-            {workspace.recentDocuments.length > 0 ? (
-              <div className="flex flex-wrap gap-1.5">
-                {workspace.recentDocuments.map((doc) => (
-                  <Link
-                    key={doc.id}
-                    href={documentPath(workspace.id, doc.id)}
-                    className={
-                  "inline-flex max-w-[200px] items-center gap-1.5 rounded-[var(--radius-sm)] border border-line bg-[var(--paper)] px-2 py-0.5 text-[10px] text-ink-soft transition-colors hover:border-ink-faint hover:text-ink"
-                }
-                prefetch
-                  >
-                    <span className="font-mono text-[7.5px] uppercase text-ink-faint">
-                      {formatLabel(doc.format)}
-                    </span>
-                    <span className="truncate">{doc.name}</span>
-                  </Link>
-                ))}
-              </div>
-            ) : (
-              <p className="text-[11px] text-ink-faint">No files yet</p>
-            )}
-            <button
-              type="button"
-              title="Workspace actions"
-              ref={(node) => {
-                if (node) menuAnchorRefs.current.set(workspace.id, node);
-                else menuAnchorRefs.current.delete(workspace.id);
-              }}
-              className="absolute right-3 top-3 grid h-7 w-7 place-items-center rounded-[var(--radius-sm)] text-[12px] text-ink-faint opacity-0 hover:bg-sunken hover:text-ink group-hover:opacity-100"
-              onClick={(event) => {
-                event.preventDefault();
-                event.stopPropagation();
-                setMenuId((current) =>
-                  current === workspace.id ? null : workspace.id,
-                );
-              }}
-            >
-              ···
-            </button>
+              Continue
+            </h2>
+            {(recent?.length ?? 0) > RECENT_HOME_LIMIT ? (
+              <Link
+                href="/app/recent"
+                className={cn(
+                  focusRingClass,
+                  "os-type-meta rounded-[var(--radius-sm)] text-ink-faint hover:text-ink-soft",
+                )}
+              >
+                View all
+              </Link>
+            ) : null}
           </div>
-        ))}
-      </div>
+          <ul className="divide-y divide-line border-y border-line">
+            {recentPreview.map((doc) => (
+              <li key={doc.id}>
+                <DocumentLibraryRow
+                  href={documentPath(doc.workspaceId, doc.id)}
+                  name={doc.name}
+                  format={doc.format}
+                  meta={`${doc.workspaceName} · ${formatUpdatedAt(doc.updatedAt)}`}
+                />
+              </li>
+            ))}
+          </ul>
+        </section>
+      ) : null}
+
+      {hasWorkspaces ? (
+        <section aria-labelledby="home-workspaces">
+          <h2 id="home-workspaces" className="os-type-section mb-2">
+            Workspaces
+            {workspaces ? (
+              <span className="font-normal normal-case tracking-normal">
+                {" "}
+                · {workspaces.length}
+              </span>
+            ) : null}
+          </h2>
+          <ul className="divide-y divide-line border-y border-line">
+            {workspaces!.map((workspace) => {
+              const previewNames = workspace.recentDocuments
+                .slice(0, 3)
+                .map((doc) => doc.name);
+              return (
+                <li key={workspace.id} className="group relative">
+                  <Link
+                    href={workspacePath(workspace.id)}
+                    className={cn(
+                      focusRingClass,
+                      "flex min-w-0 items-center gap-3 py-2.5 pr-10 pl-1 transition-colors hover:bg-hover",
+                    )}
+                  >
+                    <span className="min-w-0 flex-1">
+                      <span className="flex min-w-0 items-baseline gap-2">
+                        <span className="os-type-label truncate font-medium text-ink">
+                          {workspace.name}
+                        </span>
+                        <span className="os-type-meta shrink-0 text-ink-faint">
+                          {workspace.documentCount}{" "}
+                          {workspace.documentCount === 1 ? "file" : "files"}
+                        </span>
+                      </span>
+                      <span className="os-type-meta mt-0.5 block truncate text-ink-faint">
+                        Updated {formatUpdatedAt(workspace.updatedAt)}
+                        {previewNames.length > 0 ? (
+                          <>
+                            <span aria-hidden className="mx-1 text-ink-faint/70">
+                              ·
+                            </span>
+                            {previewNames.join(", ")}
+                          </>
+                        ) : (
+                          <>
+                            <span aria-hidden className="mx-1 text-ink-faint/70">
+                              ·
+                            </span>
+                            No files yet
+                          </>
+                        )}
+                      </span>
+                    </span>
+                  </Link>
+                  <button
+                    type="button"
+                    title="Workspace actions"
+                    aria-label={`Actions for ${workspace.name}`}
+                    aria-haspopup="menu"
+                    aria-expanded={menuId === workspace.id}
+                    ref={(node) => {
+                      if (node) menuAnchorRefs.current.set(workspace.id, node);
+                      else menuAnchorRefs.current.delete(workspace.id);
+                    }}
+                    className={cn(
+                      focusRingClass,
+                      "absolute right-1 top-1/2 grid h-7 w-7 -translate-y-1/2 place-items-center rounded-[var(--radius-sm)] text-[length:var(--text-xs)] text-ink-faint opacity-0 hover:bg-sunken hover:text-ink focus-visible:opacity-100 group-hover:opacity-100 group-focus-within:opacity-100",
+                    )}
+                    onClick={(event) => {
+                      event.preventDefault();
+                      event.stopPropagation();
+                      setMenuId((current) =>
+                        current === workspace.id ? null : workspace.id,
+                      );
+                    }}
+                  >
+                    ···
+                  </button>
+                </li>
+              );
+            })}
+          </ul>
+        </section>
+      ) : null}
+
+      {draggingOver ? (
+        <div className="pointer-events-none absolute inset-0 z-20 flex items-center justify-center rounded-[var(--radius-lg)] bg-overlay/40 backdrop-blur-[1px]">
+          <div className="rounded-[var(--radius-lg)] border border-dashed border-accent bg-surface px-8 py-6 text-center shadow-[var(--elevation-md)]">
+            <p className="text-[length:var(--text-md)] font-semibold tracking-[-0.02em] text-ink">
+              Drop Office files to upload
+            </p>
+            <p className="os-type-secondary mt-1 text-ink-soft">
+              .docx · .pptx · .xlsx
+            </p>
+          </div>
+        </div>
+      ) : null}
 
       {menuWorkspace ? (
         <ContextMenu
@@ -358,9 +424,52 @@ export function WorkspacesHome() {
         />
       ) : null}
 
+      {createOpen ? (
+        <Dialog
+          title="New workspace"
+          onClose={() => setCreateOpen(false)}
+        >
+          <form
+            onSubmit={(event) => void handleCreate(event)}
+            className="space-y-3"
+          >
+            <Input
+              autoFocus
+              value={name}
+              onChange={(event) => setName(event.target.value)}
+              placeholder="Workspace name"
+              maxLength={100}
+            />
+            {createError ? (
+              <p className="os-type-meta text-danger">{createError}</p>
+            ) : null}
+            <div className="flex justify-end gap-2">
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={() => setCreateOpen(false)}
+              >
+                Cancel
+              </Button>
+              <Button
+                type="submit"
+                size="sm"
+                disabled={creating || !name.trim()}
+              >
+                {creating ? "Creating…" : "Create"}
+              </Button>
+            </div>
+          </form>
+        </Dialog>
+      ) : null}
+
       {renameId ? (
         <Dialog title="Rename workspace" onClose={() => setRenameId(null)}>
-          <form onSubmit={(event) => void handleRename(event)} className="space-y-3">
+          <form
+            onSubmit={(event) => void handleRename(event)}
+            className="space-y-3"
+          >
             <Input
               autoFocus
               value={renameValue}
@@ -368,13 +477,22 @@ export function WorkspacesHome() {
               maxLength={100}
             />
             {actionError ? (
-              <p className="text-[11px] text-danger">{actionError}</p>
+              <p className="os-type-meta text-danger">{actionError}</p>
             ) : null}
             <div className="flex justify-end gap-2">
-              <Button type="button" variant="outline" size="sm" onClick={() => setRenameId(null)}>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={() => setRenameId(null)}
+              >
                 Cancel
               </Button>
-              <Button type="submit" size="sm" disabled={busy || !renameValue.trim()}>
+              <Button
+                type="submit"
+                size="sm"
+                disabled={busy || !renameValue.trim()}
+              >
                 {busy ? "Saving…" : "Save"}
               </Button>
             </div>
@@ -383,16 +501,25 @@ export function WorkspacesHome() {
       ) : null}
 
       {deleteTarget ? (
-        <Dialog title="Move workspace to Trash?" onClose={() => setDeleteTarget(null)}>
-          <p className="mb-4 text-[12px] leading-relaxed text-ink-soft">
-            Move <span className="font-medium text-ink">{deleteTarget.name}</span>{" "}
-            to Trash. Files remain recoverable from Trash.
+        <Dialog
+          title="Move workspace to Trash?"
+          onClose={() => setDeleteTarget(null)}
+        >
+          <p className="os-type-secondary mb-4 text-ink-soft">
+            Move{" "}
+            <span className="font-medium text-ink">{deleteTarget.name}</span> to
+            Trash. Files remain recoverable from Trash.
           </p>
           {actionError ? (
-            <p className="mb-3 text-[11px] text-danger">{actionError}</p>
+            <p className="os-type-meta mb-3 text-danger">{actionError}</p>
           ) : null}
           <div className="flex justify-end gap-2">
-            <Button type="button" variant="outline" size="sm" onClick={() => setDeleteTarget(null)}>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={() => setDeleteTarget(null)}
+            >
               Cancel
             </Button>
             <Button
@@ -478,34 +605,36 @@ function UploadDestinationDialog({
       onClose={onClose}
       className="max-w-[400px]"
     >
-      <p className="mb-3 text-[12px] text-ink-soft">
+      <p className="os-type-secondary mb-3 text-ink-soft">
         {files.length === 1
           ? files[0]!.name
           : `${files.length} files ready to upload`}
       </p>
 
-      <div className="mb-3 flex gap-1 rounded-[var(--radius-sm)] border border-line bg-[var(--paper)] p-1">
+      <div className="mb-3 flex gap-1 rounded-[var(--radius-sm)] border border-line bg-paper p-1">
         <button
           type="button"
           disabled={workspaces.length === 0}
-          className={
-            "flex-1 rounded-[var(--radius-sm)] px-2 py-1.5 text-[11.5px] font-medium disabled:opacity-40 " +
-            (mode === "existing"
-              ? "bg-surface text-ink shadow-sm"
-              : "text-ink-soft hover:text-ink")
-          }
+          className={cn(
+            focusRingClass,
+            "os-type-label flex-1 rounded-[var(--radius-sm)] px-2 py-1.5 font-medium disabled:opacity-40",
+            mode === "existing"
+              ? "bg-surface text-ink shadow-[var(--elevation-xs)]"
+              : "text-ink-soft hover:text-ink",
+          )}
           onClick={() => setMode("existing")}
         >
           Existing workspace
         </button>
         <button
           type="button"
-          className={
-            "flex-1 rounded-[var(--radius-sm)] px-2 py-1.5 text-[11.5px] font-medium " +
-            (mode === "new"
-              ? "bg-surface text-ink shadow-sm"
-              : "text-ink-soft hover:text-ink")
-          }
+          className={cn(
+            focusRingClass,
+            "os-type-label flex-1 rounded-[var(--radius-sm)] px-2 py-1.5 font-medium",
+            mode === "new"
+              ? "bg-surface text-ink shadow-[var(--elevation-xs)]"
+              : "text-ink-soft hover:text-ink",
+          )}
           onClick={() => setMode("new")}
         >
           New workspace
@@ -513,17 +642,18 @@ function UploadDestinationDialog({
       </div>
 
       {mode === "existing" ? (
-        <div className="mb-3 max-h-[220px] space-y-1 overflow-y-auto">
+        <div className="mb-3 max-h-[220px] space-y-0.5 overflow-y-auto">
           {workspaces.map((workspace) => (
             <button
               key={workspace.id}
               type="button"
-              className={
-                "block w-full rounded-[var(--radius-sm)] px-3 py-2 text-left text-[12.5px] " +
-                (workspaceId === workspace.id
+              className={cn(
+                focusRingClass,
+                "os-type-label block w-full rounded-[var(--radius-sm)] px-3 py-2 text-left",
+                workspaceId === workspace.id
                   ? "bg-accent-soft font-medium text-accent-hover"
-                  : "text-ink hover:bg-sunken")
-              }
+                  : "text-ink hover:bg-sunken",
+              )}
               onClick={() => setWorkspaceId(workspace.id)}
             >
               {workspace.name}
@@ -541,13 +671,18 @@ function UploadDestinationDialog({
         />
       )}
 
-      {error ? <p className="mb-3 text-[11px] text-danger">{error}</p> : null}
+      {error ? <p className="os-type-meta mb-3 text-danger">{error}</p> : null}
 
       <div className="flex justify-end gap-2">
         <Button type="button" variant="outline" size="sm" onClick={onClose}>
           Cancel
         </Button>
-        <Button type="button" size="sm" disabled={busy} onClick={() => void submit()}>
+        <Button
+          type="button"
+          size="sm"
+          disabled={busy}
+          onClick={() => void submit()}
+        >
           {busy ? "Uploading…" : "Upload"}
         </Button>
       </div>

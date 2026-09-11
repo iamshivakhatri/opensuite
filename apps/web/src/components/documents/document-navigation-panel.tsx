@@ -3,12 +3,12 @@
 import * as React from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 
 import {
   createBlankDocument,
   deleteDocument,
   downloadDocument,
-  listDocuments,
   renameDocument,
   setDocumentStarred,
   type ListedDocument,
@@ -17,13 +17,20 @@ import {
   encodeDocumentDragPayload,
   OPENSUITE_DOCUMENT_DRAG_MIME,
 } from "@/lib/document-drag";
-import { formatLabel, userFacingError } from "@/components/files/format";
+import { DocumentFormatIcon } from "@/components/files/document-format-icon";
+import { userFacingError } from "@/components/files/format";
 import {
   ConfirmDialog,
   ContextMenu,
   PromptDialog,
 } from "@/components/ui/context-menu";
 import { documentPath } from "@/lib/paths";
+import {
+  queryKeys,
+  workspaceDocumentsQuery,
+} from "@/lib/query-keys";
+import { focusRingClass } from "@/lib/focus-scope";
+import { cn } from "@/lib/utils";
 import {
   closeTabAndPickNext,
   readStoredTabs,
@@ -59,8 +66,24 @@ export function DocumentNavigationPanel({
 }) {
   const router = useRouter();
   const { toast } = useToast();
-  const [siblings, setSiblings] = React.useState<ListedDocument[] | null>(null);
-  const [loadError, setLoadError] = React.useState<string | null>(null);
+  const queryClient = useQueryClient();
+  const documentsQuery = useQuery({
+    ...workspaceDocumentsQuery(workspaceId),
+    // refreshKey forces a refetch after agent/create events from the IDE.
+  });
+
+  React.useEffect(() => {
+    if (refreshKey > 0) {
+      void queryClient.invalidateQueries({
+        queryKey: queryKeys.workspaceDocuments(workspaceId),
+      });
+    }
+  }, [refreshKey, queryClient, workspaceId]);
+
+  const files = documentsQuery.data ?? [];
+  const loadError = documentsQuery.error
+    ? userFacingError(documentsQuery.error, "Could not load workspace files.")
+    : null;
   const [uploading, setUploading] = React.useState(false);
   const [creating, setCreating] = React.useState(false);
   const [menuDocId, setMenuDocId] = React.useState<string | null>(null);
@@ -73,19 +96,20 @@ export function DocumentNavigationPanel({
     new Map(),
   );
 
-  const refresh = React.useCallback(async () => {
-    setLoadError(null);
-    try {
-      setSiblings(await listDocuments(workspaceId));
-    } catch (error) {
-      setLoadError(userFacingError(error, "Could not load workspace files."));
-    }
-  }, [workspaceId]);
+  async function refresh() {
+    await queryClient.invalidateQueries({
+      queryKey: queryKeys.workspaceDocuments(workspaceId),
+    });
+  }
 
-  React.useEffect(() => {
-    setSiblings(null);
-    void refresh();
-  }, [refresh, refreshKey]);
+  function patchList(
+    updater: (current: ListedDocument[]) => ListedDocument[],
+  ) {
+    queryClient.setQueryData<ListedDocument[]>(
+      queryKeys.workspaceDocuments(workspaceId),
+      (current) => updater(current ?? []),
+    );
+  }
 
   async function handleUpload(fileList: FileList | null) {
     if (!fileList?.length || uploading) return;
@@ -149,11 +173,12 @@ export function DocumentNavigationPanel({
     setActionError(null);
     try {
       const updated = await renameDocument(renameDoc.id, name);
-      setSiblings((current) =>
-        (current ?? []).map((item) =>
+      patchList((current) =>
+        current.map((item) =>
           item.id === updated.id ? { ...item, ...updated } : item,
         ),
       );
+      queryClient.setQueryData(queryKeys.document(updated.id), updated);
       const tabs = readStoredTabs(workspaceId).map((tab) =>
         tab.id === updated.id
           ? { ...tab, name: updated.name, format: updated.format }
@@ -177,7 +202,8 @@ export function DocumentNavigationPanel({
     try {
       const id = trashDoc.id;
       await deleteDocument(id);
-      setSiblings((current) => (current ?? []).filter((item) => item.id !== id));
+      patchList((current) => current.filter((item) => item.id !== id));
+      queryClient.removeQueries({ queryKey: queryKeys.document(id) });
       const { href } = closeTabAndPickNext(
         workspaceId,
         id,
@@ -200,78 +226,107 @@ export function DocumentNavigationPanel({
         type="button"
         onClick={onToggle}
         title="Show files"
-        className="flex h-full w-10 shrink-0 flex-col items-center border-r border-line bg-[var(--sidebar)] pt-3"
+        aria-label="Show files"
+        className={cn(
+          focusRingClass,
+          "flex h-full w-10 shrink-0 flex-col items-center border-r border-line bg-sidebar pt-3",
+        )}
       >
-        <span className="grid h-8 w-8 place-items-center rounded-[9px] text-[13px] text-ink-faint hover:bg-sunken hover:text-ink-soft">
+        <span className="grid h-7 w-7 place-items-center rounded-[var(--radius-md)] text-[length:var(--text-sm)] text-ink-faint hover:bg-sunken hover:text-ink-soft">
           ›
         </span>
       </button>
     );
   }
 
-  const files = siblings ?? [];
   const menuDoc = files.find((file) => file.id === menuDocId) ?? null;
+  const listLoading = documentsQuery.isPending && !documentsQuery.data;
 
   return (
     <aside
-      className="flex h-full shrink-0 flex-col border-r border-line bg-[var(--sidebar)]"
+      className="flex h-full shrink-0 flex-col border-r border-line bg-sidebar"
       style={{ width }}
+      aria-label="Workspace files"
     >
-      <div className="flex items-center justify-between px-2.5 py-2">
-        <span className="text-[9px] font-semibold uppercase tracking-[0.09em] text-ink-faint">
-          Explorer
-        </span>
-        <div className="flex items-center gap-0.5">
-          <input
-            ref={fileRef}
-            type="file"
-            accept=".docx,.pptx,.xlsx"
-            multiple
-            className="hidden"
-            onChange={(event) => void handleUpload(event.target.files)}
-          />
-          <button
-            type="button"
-            title="New Word document"
-            disabled={creating}
-            onClick={() => void handleCreateBlank()}
-            className="grid h-6 w-6 place-items-center rounded-[7px] text-[13px] text-ink-faint hover:bg-sunken hover:text-ink-soft disabled:opacity-50"
-          >
-            {creating ? "…" : "+"}
-          </button>
-          <button
-            type="button"
-            title="Upload file (⌘O)"
-            disabled={uploading}
-            onClick={() => fileRef.current?.click()}
-            className="grid h-6 w-6 place-items-center rounded-[7px] text-[12px] text-ink-faint hover:bg-sunken hover:text-ink-soft disabled:opacity-50"
-          >
-            {uploading ? "…" : "↑"}
-          </button>
-          <button
-            type="button"
-            onClick={onToggle}
-            title="Hide files"
-            className="grid h-6 w-6 place-items-center rounded-[7px] text-[11px] text-ink-faint hover:bg-sunken hover:text-ink-soft"
-          >
-            ‹
-          </button>
-        </div>
+      <div className="os-workspace-rail flex items-center justify-end gap-0.5 px-2">
+        <input
+          ref={fileRef}
+          type="file"
+          accept=".docx,.pptx,.xlsx"
+          multiple
+          className="hidden"
+          onChange={(event) => void handleUpload(event.target.files)}
+        />
+        <button
+          type="button"
+          title="New Word document"
+          aria-label="New Word document"
+          disabled={creating}
+          onClick={() => void handleCreateBlank()}
+          className={cn(
+            focusRingClass,
+            "grid h-6 w-6 place-items-center rounded-[var(--radius-sm)] text-[length:var(--text-sm)] text-ink-faint hover:bg-sunken hover:text-ink disabled:opacity-50",
+          )}
+        >
+          {creating ? "…" : "+"}
+        </button>
+        <button
+          type="button"
+          title="Upload file (⌘O)"
+          aria-label="Upload file"
+          disabled={uploading}
+          onClick={() => fileRef.current?.click()}
+          className={cn(
+            focusRingClass,
+            "grid h-6 w-6 place-items-center rounded-[var(--radius-sm)] text-[length:var(--text-xs)] text-ink-faint hover:bg-sunken hover:text-ink disabled:opacity-50",
+          )}
+        >
+          {uploading ? "…" : "↑"}
+        </button>
+        <button
+          type="button"
+          onClick={onToggle}
+          title="Hide files"
+          aria-label="Hide files"
+          className={cn(
+            focusRingClass,
+            "grid h-6 w-6 place-items-center rounded-[var(--radius-sm)] text-[length:var(--text-xs)] text-ink-faint hover:bg-sunken hover:text-ink",
+          )}
+        >
+          ‹
+        </button>
       </div>
 
-      <div className="min-h-0 flex-1 overflow-y-auto px-1.5 pb-3 [scrollbar-width:thin]">
-        <div className="mb-1.5 px-2 font-mono text-[8.5px] font-medium uppercase tracking-[0.07em] text-ink-faint">
-          Files{siblings ? ` · ${files.length}` : ""}
-        </div>
-
+      <div
+        className="flex min-h-0 flex-1 flex-col overflow-y-auto [scrollbar-width:thin]"
+        style={{
+          gap: "var(--explorer-list-gap)",
+          padding: "var(--explorer-list-pad)",
+        }}
+      >
         {loadError ? (
-          <p className="px-2 text-[10.5px] leading-relaxed text-danger">
+          <p className="os-type-meta px-2 leading-relaxed text-danger">
             {loadError}
           </p>
         ) : null}
 
-        {siblings === null && !loadError ? (
-          <p className="px-2 text-[10.5px] text-ink-faint">Loading…</p>
+        {listLoading && !loadError ? (
+          <div
+            className="flex flex-col"
+            style={{ gap: "var(--explorer-list-gap)" }}
+            aria-hidden
+          >
+            {Array.from({ length: 6 }, (_, i) => (
+              <div
+                key={i}
+                className="os-shimmer rounded-[var(--radius-md)]"
+                style={{
+                  height: "var(--explorer-row-h)",
+                  width: `${78 - (i % 3) * 10}%`,
+                }}
+              />
+            ))}
+          </div>
         ) : null}
 
         {files.map((file) => {
@@ -306,25 +361,33 @@ export function DocumentNavigationPanel({
                     router.push(href);
                   }
                 }}
-                className={`flex w-full items-center gap-2 rounded-[8px] py-1.5 pl-2 pr-7 text-left text-[11px] transition-colors ${
-                  active
-                    ? "bg-accent-soft font-medium text-accent-hover"
-                    : "text-ink-soft hover:bg-sunken hover:text-ink"
-                }`}
+                className={
+                  cn(
+                    focusRingClass,
+                    "flex w-full items-center gap-2.5 rounded-[var(--radius-md)] pl-2.5 pr-7 text-left os-type-label transition-colors",
+                    active
+                      ? "bg-accent-soft text-accent-hover"
+                      : "text-ink-soft hover:bg-sunken hover:text-ink",
+                  )
+                }
+                style={{ height: "var(--explorer-row-h)" }}
+                aria-current={active ? "page" : undefined}
               >
-                <span
-                  className={`h-1.5 w-1.5 shrink-0 rounded-[2px] border ${
-                    active ? "border-current bg-current/20" : "border-ink-faint"
-                  }`}
+                <DocumentFormatIcon
+                  format={file.format}
+                  size="sm"
+                  className={active ? "text-accent-hover" : "text-ink-faint"}
                 />
-                <span className="min-w-0 flex-1 truncate">{file.name}</span>
-                <span className="shrink-0 font-mono text-[7.5px] uppercase text-ink-faint">
-                  {formatLabel(file.format)}
+                <span className="min-w-0 flex-1 truncate leading-none">
+                  {file.name}
                 </span>
               </Link>
               <button
                 type="button"
                 title="File actions"
+                aria-label={`Actions for ${file.name}`}
+                aria-haspopup="menu"
+                aria-expanded={menuDocId === file.id}
                 ref={(node) => {
                   if (node) menuAnchorRefs.current.set(file.id, node);
                   else menuAnchorRefs.current.delete(file.id);
@@ -336,7 +399,10 @@ export function DocumentNavigationPanel({
                     current === file.id ? null : file.id,
                   );
                 }}
-                className="absolute right-0.5 top-1/2 grid h-5 w-5 -translate-y-1/2 place-items-center rounded text-[11px] text-ink-faint opacity-0 hover:bg-sunken hover:text-ink group-hover:opacity-100"
+                className={cn(
+                  focusRingClass,
+                  "absolute right-1 top-1/2 grid h-5 w-5 -translate-y-1/2 place-items-center rounded-[var(--radius-sm)] text-[length:var(--text-xs)] text-ink-faint opacity-0 hover:bg-sunken hover:text-ink focus-visible:opacity-100 group-hover:opacity-100",
+                )}
               >
                 ···
               </button>
@@ -344,14 +410,20 @@ export function DocumentNavigationPanel({
           );
         })}
 
-        {siblings !== null && files.length === 0 ? (
-          <div className="mx-1 mt-2 rounded-[10px] border border-dashed border-line px-2.5 py-4 text-center">
-            <p className="text-[11px] font-medium text-ink">No files yet</p>
-            <p className="mt-1 text-[10.5px] leading-relaxed text-ink-faint">
+        {!listLoading && files.length === 0 ? (
+          <div className="mt-1 rounded-[var(--radius-md)] border border-dashed border-line px-2.5 py-5 text-center">
+            <p className="os-type-label text-ink-soft">No files yet</p>
+            <p className="os-type-meta mt-1.5 leading-relaxed text-ink-faint">
               Upload with ↑ or drag Office files here.
             </p>
           </div>
         ) : null}
+      </div>
+
+      <div className="shrink-0 border-t border-line px-2.5 py-2">
+        <p className="os-type-meta text-ink-faint">
+          {listLoading ? "Files" : `Files · ${files.length}`}
+        </p>
       </div>
 
       {menuDoc ? (
@@ -384,8 +456,8 @@ export function DocumentNavigationPanel({
               label: menuDoc.starred ? "Unstar" : "Star",
               onSelect: () => {
                 const next = !menuDoc.starred;
-                setSiblings((current) =>
-                  (current ?? []).map((item) =>
+                patchList((current) =>
+                  current.map((item) =>
                     item.id === menuDoc.id ? { ...item, starred: next } : item,
                   ),
                 );
@@ -397,8 +469,8 @@ export function DocumentNavigationPanel({
                     }),
                   )
                   .catch(() => {
-                    setSiblings((current) =>
-                      (current ?? []).map((item) =>
+                    patchList((current) =>
+                      current.map((item) =>
                         item.id === menuDoc.id
                           ? { ...item, starred: !next }
                           : item,

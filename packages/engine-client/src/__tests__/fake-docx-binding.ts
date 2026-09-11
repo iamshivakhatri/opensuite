@@ -20,6 +20,8 @@ import type {
   DocxSetParagraphStyleOperation,
   DocxSetTableCellsTextOperation,
   DocxSetTableFormattingOperation,
+  DocxSetTableCellShadingOperation,
+  DocxSetTableColumnWidthsOperation,
   DocxSetTextFormattingOperation,
 } from "../docx-engine-binding.js";
 
@@ -51,6 +53,8 @@ const DEFAULT_CAPS: DocxRuntimeCapabilities = {
         "delete_table_row",
         "delete_table_column",
         "set_table_formatting",
+        "set_table_column_widths",
+        "set_table_cell_shading",
       ],
     },
   ],
@@ -146,6 +150,8 @@ export function createFakeDocxEngineBinding(
       input: Uint8Array,
       operation: DocxSetTableFormattingOperation,
     ) => DocxMutationBindingResult | Promise<DocxMutationBindingResult>;
+    executeDocxSetTableColumnWidths?: (input: Uint8Array, operation: DocxSetTableColumnWidthsOperation) => DocxMutationBindingResult | Promise<DocxMutationBindingResult>;
+    executeDocxSetTableCellShading?: (input: Uint8Array, operation: DocxSetTableCellShadingOperation) => DocxMutationBindingResult | Promise<DocxMutationBindingResult>;
   } = {},
 ): DocxEngineBinding & {
   readonly replaceCalls: Array<{
@@ -486,6 +492,12 @@ export function createFakeDocxEngineBinding(
         return overrides.executeDocxSetTableFormatting(input, operation);
       }
       return notStubbed();
+    },
+    async executeDocxSetTableColumnWidths(input, operation) {
+      return overrides.executeDocxSetTableColumnWidths?.(input, operation) ?? notStubbed();
+    },
+    async executeDocxSetTableCellShading(input, operation) {
+      return overrides.executeDocxSetTableCellShading?.(input, operation) ?? notStubbed();
     },
   };
 }

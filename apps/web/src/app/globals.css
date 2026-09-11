@@ -4,18 +4,25 @@
  * Design tokens from opensuite_v4_modern_minimal.html.
  * Theme is applied via html[data-opensuite-theme] — not data-theme
  * (Casual Docs owns data-theme on documentElement).
+ *
+ * IMPORTANT: include html[data-opensuite-theme] (specificity 0,1,1), not
+ * :root alone. @casualoffice/docs/styles.css also writes --text-*,
+ * --radius-*, --color-*, --font-sans on :root (0,1,0). That CSS loads
+ * lazily on first DOCX open and would otherwise shrink/recolor the whole
+ * shell until a hard refresh.
  */
-:root {
+:root,
+html[data-opensuite-theme] {
   --paper: #f5f6f8;
   --surface: #ffffff;
   --elevated: #ffffff;
   --sunken: #eef0f3;
   --canvas: #eceef2;
   --ink: #14161a;
-  --ink-soft: #626773;
-  --ink-faint: #9297a3;
-  --line: #e4e7ec;
-  --hover: rgba(20, 22, 26, 0.045);
+  --ink-soft: #4f5563;
+  --ink-faint: #6e7480;
+  --line: #d8dce3;
+  --hover: rgba(20, 22, 26, 0.055);
   --selected: #f0f0ff;
   --overlay: rgba(15, 18, 24, 0.4);
   --accent: #5b5ce2;
@@ -40,10 +47,11 @@
    */
   --z-dropdown: 20;
   --z-overlay: 40;
-  --z-modal: 50;
-  --z-palette: 60;
-  --z-popover: 70;
-  --z-toast: 80;
+  /* Above Casual sticky editor chrome (z-50) so dialogs fully cover the toolbar. */
+  --z-modal: 200;
+  --z-palette: 220;
+  --z-popover: 230;
+  --z-toast: 240;
 
   /*
    * Elevation scale — the shadow values already hand-written across
@@ -55,16 +63,26 @@
   --elevation-lg: 0 28px 100px rgba(15, 18, 24, 0.22);
 
   /*
-   * Type scale — reference sizes matching the most common ad hoc
-   * text-[Npx] values already in use, for gradual adoption by components
-   * that currently pick sizes independently.
+   * Type scale — calibrated for long-session readability (Phase 6C).
+   * Routine chrome ≥12px; subordinate metadata may use 11px.
+   * Single source of truth for shell typography — tweak here only.
    */
-  --text-2xs: 10.5px;
-  --text-xs: 11.5px;
-  --text-sm: 13px;
-  --text-md: 14px;
+  --text-2xs: 11px;
+  --text-xs: 12px;
+  --text-sm: 13.5px;
+  --text-md: 14.5px;
   --text-lg: 18px;
   --text-xl: 22px;
+
+  /* Shared Explorer / Tabs / Agent top rail */
+  --workspace-rail-h: 2.5rem;
+  /* Explorer file list rhythm — comfortable, not sparse */
+  --explorer-row-h: 30px;
+  --explorer-list-gap: 3px;
+  --explorer-list-pad: 8px;
+
+  /* Micro elevation for selected tabs / quiet chrome */
+  --elevation-xs: 0 1px 2px rgba(16, 24, 40, 0.06);
 }
 
 html[data-opensuite-theme="dark"] {
@@ -124,6 +142,40 @@ html[data-opensuite-theme="dark"] {
     sans-serif;
 }
 
+/*
+ * Re-lock Tailwind bridges that share names with Casual Docs :root tokens.
+ * @theme emits these on :root (loses to Casual after DOCX open); this
+ * selector wins and keeps the shell on OpenSuite values.
+ * Type scale / radius live once above in :root, html[data-opensuite-theme].
+ */
+html[data-opensuite-theme] {
+  --color-paper: var(--paper);
+  --color-surface: var(--surface);
+  --color-elevated: var(--elevated);
+  --color-sunken: var(--sunken);
+  --color-canvas: var(--canvas);
+  --color-ink: var(--ink);
+  --color-ink-soft: var(--ink-soft);
+  --color-ink-faint: var(--ink-faint);
+  --color-line: var(--line);
+  --color-hover: var(--hover);
+  --color-selected: var(--selected);
+  --color-overlay: var(--overlay);
+  --color-accent: var(--accent);
+  --color-accent-hover: var(--accent-hover);
+  --color-accent-soft: var(--accent-soft);
+  --color-accent-line: var(--accent-line);
+  --color-success: var(--success);
+  --color-success-soft: var(--success-soft);
+  --color-danger: var(--danger);
+  --color-danger-soft: var(--danger-soft);
+  --color-on-ink: var(--on-ink);
+  --color-sidebar: var(--sidebar);
+  --color-shell-main: var(--shell-main);
+  --font-sans: var(--font-inter), -apple-system, BlinkMacSystemFont,
+    sans-serif;
+}
+
 html {
   background: var(--paper);
 }
@@ -170,4 +222,93 @@ html[data-opensuite-theme="dark"] .opensuite-docx-host {
 .opensuite-docx-host .ep-root {
   height: 100%;
   min-height: 0;
+}
+
+/* Hide embedded Casual toolbars while any OpenSuite modal is open. */
+html[data-opensuite-modal] .opensuite-docx-host [data-testid="editor-toolbar"],
+html[data-opensuite-modal] .opensuite-docx-host [data-testid="toolbar"] {
+  visibility: hidden !important;
+  pointer-events: none !important;
+}
+
+/*
+ * Workspace typography helpers — calibrated for long-session reading.
+ * Prefer these over ad-hoc text-[Npx] in the IDE shell.
+ */
+.os-type-body {
+  font-size: var(--text-sm);
+  line-height: 1.5;
+}
+
+.os-type-secondary {
+  font-size: var(--text-xs);
+  line-height: 1.5;
+}
+
+.os-type-label {
+  font-size: var(--text-xs);
+  font-weight: 400;
+  line-height: 1.4;
+}
+
+.os-type-meta {
+  font-size: var(--text-2xs);
+  line-height: 1.4;
+}
+
+.os-type-section {
+  font-size: var(--text-2xs);
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--ink-faint);
+}
+
+.os-type-badge {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: var(--text-2xs);
+  font-weight: 500;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+/* Explorer / document tabs / Agent panel — shared top rail */
+.os-workspace-rail {
+  height: var(--workspace-rail-h);
+  flex-shrink: 0;
+  border-bottom: 1px solid var(--line);
+}
+
+/* Soft shimmer for workspace boot / loading chrome */
+.os-shimmer {
+  background: linear-gradient(
+    90deg,
+    var(--sunken) 0%,
+    color-mix(in srgb, var(--surface) 70%, var(--sunken)) 45%,
+    var(--sunken) 90%
+  );
+  background-size: 200% 100%;
+  animation: os-shimmer-move 1.35s ease-in-out infinite;
+}
+
+@keyframes os-shimmer-move {
+  0% {
+    background-position: 100% 0;
+  }
+  100% {
+    background-position: -100% 0;
+  }
+}
+
+/* Visually hidden text for icon-only controls (Tailwind sr-only fallback). */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border-width: 0;
 }

@@ -15,11 +15,17 @@ import { DocumentAgentPanel } from "@/components/documents/document-agent-panel"
 import {
   deleteDocument,
   downloadDocument,
+  renameWorkspace,
   setDocumentStarred,
   type ListedDocument,
 } from "@/lib/api";
 import { userFacingError } from "@/components/files/format";
 import { ConfirmDialog } from "@/components/ui/context-menu";
+import { Dialog } from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
+import { Button } from "@/components/ui/button";
+import { queryKeys } from "@/lib/query-keys";
+import { useQueryClient } from "@tanstack/react-query";
 import {
   PANEL_LIMITS,
   readIdePanelPrefs,
@@ -29,6 +35,8 @@ import { uploadOfficeFiles } from "@/lib/office-upload";
 import { useToast } from "@/lib/toast";
 import { useCommandPalette } from "@/components/shell/command-palette";
 import { documentPath } from "@/lib/paths";
+import { focusRingClass } from "@/lib/focus-scope";
+import { cn } from "@/lib/utils";
 
 /**
  * Cursor-like workspace IDE: explorer + tabs + canvas + agent.
@@ -37,15 +45,21 @@ export function WorkspaceIde({
   workspaceId,
   workspaceName,
   document,
+  documentId = null,
   documentPending = false,
+  onWorkspaceRenamed,
 }: {
   workspaceId: string;
   workspaceName?: string | null;
   document: ListedDocument | null;
+  /** Route document id — drives tab selection before fetch resolves. */
+  documentId?: string | null;
   documentPending?: boolean;
+  onWorkspaceRenamed?: (name: string) => void;
 }) {
   const router = useRouter();
   const { toast } = useToast();
+  const queryClient = useQueryClient();
   const { setOpen: openPalette } = useCommandPalette();
   const prefs = React.useMemo(() => readIdePanelPrefs(), []);
 
@@ -63,6 +77,12 @@ export function WorkspaceIde({
   const [starred, setStarred] = React.useState(Boolean(document?.starred));
   const [trashOpen, setTrashOpen] = React.useState(false);
   const [discardOpen, setDiscardOpen] = React.useState(false);
+  const [renameWorkspaceOpen, setRenameWorkspaceOpen] = React.useState(false);
+  const [renameWorkspaceValue, setRenameWorkspaceValue] = React.useState("");
+  const [renameWorkspaceBusy, setRenameWorkspaceBusy] = React.useState(false);
+  const [renameWorkspaceError, setRenameWorkspaceError] = React.useState<
+    string | null
+  >(null);
   const [pendingHref, setPendingHref] = React.useState<string | null>(null);
   const [busy, setBusy] = React.useState(false);
   const [actionError, setActionError] = React.useState<string | null>(null);
@@ -82,9 +102,18 @@ export function WorkspaceIde({
   const fileInputRef = React.useRef<HTMLInputElement>(null);
 
   React.useEffect(() => {
-    setActiveDocument(document);
-    setStarred(Boolean(document?.starred));
-  }, [document]);
+    // Keep the previous document mounted while the next fetch resolves so the
+    // canvas does not flash empty on every tab click.
+    if (!documentId) {
+      setActiveDocument(null);
+      setStarred(false);
+      return;
+    }
+    if (document && document.id === documentId) {
+      setActiveDocument(document);
+      setStarred(Boolean(document.starred));
+    }
+  }, [document, documentId]);
 
   // Reset editor chrome only when the open file identity changes — not on
   // every latestVersion bump (agent writes), which caused header flicker.
@@ -269,8 +298,13 @@ export function WorkspaceIde({
       const id = activeDocument.id;
       await deleteDocument(id);
       setTrashOpen(false);
+      setActiveDocument(null);
       toast({ tone: "success", title: "Moved to Trash" });
       const { href } = closeTabAndPickNext(workspaceId, id, id);
+      queryClient.removeQueries({ queryKey: queryKeys.document(id) });
+      void queryClient.invalidateQueries({
+        queryKey: queryKeys.workspaceDocuments(workspaceId),
+      });
       setTabsRevision((value) => value + 1);
       setRefreshKey((value) => value + 1);
       if (href) router.push(href);
@@ -330,7 +364,6 @@ export function WorkspaceIde({
       />
 
       <DocumentHeader
-        workspaceId={workspaceId}
         workspaceName={workspaceName}
         document={activeDocument}
         downloading={downloading}
@@ -359,12 +392,17 @@ export function WorkspaceIde({
             ? () => setSaveRequestId((value) => value + 1)
             : undefined
         }
+        onRenameWorkspace={() => {
+          setRenameWorkspaceError(null);
+          setRenameWorkspaceValue(workspaceName?.trim() || "");
+          setRenameWorkspaceOpen(true);
+        }}
       />
 
       <div className="flex min-h-0 flex-1">
         <DocumentNavigationPanel
           workspaceId={workspaceId}
-          activeDocumentId={activeDocument?.id ?? null}
+          activeDocumentId={documentId ?? activeDocument?.id ?? null}
           collapsed={navCollapsed}
           width={explorerWidth}
           refreshKey={refreshKey}
@@ -376,7 +414,12 @@ export function WorkspaceIde({
             }
             setTabsRevision((value) => value + 1);
           }}
-          onDocumentTrashed={() => {
+          onDocumentTrashed={(trashedId) => {
+            // Clear active doc before tab revision so the strip does not
+            // upsert the deleted id back from sessionStorage.
+            setActiveDocument((current) =>
+              current?.id === trashedId ? null : current,
+            );
             setRefreshKey((value) => value + 1);
             setTabsRevision((value) => value + 1);
           }}
@@ -399,28 +442,39 @@ export function WorkspaceIde({
           <DocumentOpenTabs
             workspaceId={workspaceId}
             activeDocument={activeDocument}
+            activeDocumentId={documentId}
             revision={tabsRevision}
             dirtyDocumentId={
-              editorStatus.dirty && activeDocument
+              editorStatus.dirty &&
+              activeDocument &&
+              activeDocument.id === documentId
                 ? activeDocument.id
                 : null
             }
             onRequestCloseTab={requestCloseTab}
             onRequestNavigate={requestNavigate}
           />
-          {activeDocument ? (
+          {documentId && activeDocument ? (
             <DocumentSurface
+              key={activeDocument.id}
               document={activeDocument}
               saveRequestId={saveRequestId}
               onStatusChange={setEditorStatus}
               onDocumentUpdated={(updated) => {
                 setActiveDocument(updated);
+                queryClient.setQueryData(
+                  queryKeys.document(updated.id),
+                  updated,
+                );
+                void queryClient.invalidateQueries({
+                  queryKey: queryKeys.workspaceDocuments(workspaceId),
+                });
                 setRefreshKey((value) => value + 1);
               }}
             />
-          ) : documentPending ? (
+          ) : documentId || documentPending ? (
             <div className="flex h-full min-h-0 flex-1 items-center justify-center bg-sunken">
-              <p className="text-[12px] text-ink-faint">Opening file…</p>
+              <p className="os-type-secondary text-ink-faint">Opening file…</p>
             </div>
           ) : (
             <WorkspaceHomeCanvas
@@ -452,8 +506,13 @@ export function WorkspaceIde({
           onToggle={() => setAgentCollapsed((value) => !value)}
           onDocumentUpdated={(updated) => {
             setActiveDocument(updated);
+            queryClient.setQueryData(queryKeys.document(updated.id), updated);
           }}
           onDocumentCreated={(created) => {
+            queryClient.setQueryData(queryKeys.document(created.id), created);
+            void queryClient.invalidateQueries({
+              queryKey: queryKeys.workspaceDocuments(workspaceId),
+            });
             setRefreshKey((value) => value + 1);
             setActiveDocument(created);
           }}
@@ -461,12 +520,12 @@ export function WorkspaceIde({
       </div>
 
       {draggingOver || uploadingDrop ? (
-        <div className="pointer-events-none absolute inset-0 z-40 flex items-center justify-center bg-[rgba(15,18,24,0.28)] backdrop-blur-[2px]">
-          <div className="rounded-[16px] border border-dashed border-accent bg-surface px-8 py-7 text-center shadow-[0_20px_60px_rgba(15,18,24,0.18)]">
-            <p className="text-[14px] font-semibold tracking-[-0.02em] text-ink">
+        <div className="pointer-events-none absolute inset-0 z-40 flex items-center justify-center bg-overlay backdrop-blur-[2px]">
+          <div className="rounded-[var(--radius-lg)] border border-dashed border-accent bg-surface px-8 py-7 text-center shadow-[var(--elevation-md)]">
+            <p className="text-[length:var(--text-md)] font-semibold tracking-[-0.02em] text-ink">
               {uploadingDrop ? "Uploading…" : "Drop Office files to upload"}
             </p>
-            <p className="mt-1 text-[11.5px] text-ink-soft">
+            <p className="os-type-secondary mt-1 text-ink-soft">
               .docx · .pptx · .xlsx
             </p>
           </div>
@@ -489,6 +548,68 @@ export function WorkspaceIde({
           onCancel={() => setTrashOpen(false)}
           onConfirm={() => void handleTrash()}
         />
+      ) : null}
+
+      {renameWorkspaceOpen ? (
+        <Dialog
+          onClose={() => setRenameWorkspaceOpen(false)}
+          title="Rename workspace"
+        >
+          <form
+            className="space-y-3"
+            onSubmit={(event) => {
+              event.preventDefault();
+              void (async () => {
+                const next = renameWorkspaceValue.trim();
+                if (!next || renameWorkspaceBusy) return;
+                setRenameWorkspaceBusy(true);
+                setRenameWorkspaceError(null);
+                try {
+                  const updated = await renameWorkspace(workspaceId, next);
+                  onWorkspaceRenamed?.(updated.name);
+                  setRenameWorkspaceOpen(false);
+                  toast({ tone: "success", title: "Workspace renamed" });
+                } catch (error) {
+                  setRenameWorkspaceError(
+                    userFacingError(error, "Could not rename workspace."),
+                  );
+                } finally {
+                  setRenameWorkspaceBusy(false);
+                }
+              })();
+            }}
+          >
+            <Input
+              autoFocus
+              value={renameWorkspaceValue}
+              onChange={(event) => setRenameWorkspaceValue(event.target.value)}
+              maxLength={100}
+              placeholder="Workspace name"
+            />
+            {renameWorkspaceError ? (
+              <p className="os-type-meta text-danger">{renameWorkspaceError}</p>
+            ) : null}
+            <div className="flex justify-end gap-2">
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={() => setRenameWorkspaceOpen(false)}
+              >
+                Cancel
+              </Button>
+              <Button
+                type="submit"
+                size="sm"
+                disabled={
+                  renameWorkspaceBusy || !renameWorkspaceValue.trim()
+                }
+              >
+                {renameWorkspaceBusy ? "Saving…" : "Save"}
+              </Button>
+            </div>
+          </form>
+        </Dialog>
       ) : null}
 
       {discardOpen ? (
@@ -514,8 +635,15 @@ export function WorkspaceIde({
                 setBusy(true);
                 try {
                   await deleteDocument(id);
+                  setActiveDocument(null);
                   toast({ tone: "success", title: "Moved to Trash" });
                   const { href } = closeTabAndPickNext(workspaceId, id, id);
+                  queryClient.removeQueries({
+                    queryKey: queryKeys.document(id),
+                  });
+                  void queryClient.invalidateQueries({
+                    queryKey: queryKeys.workspaceDocuments(workspaceId),
+                  });
                   setTabsRevision((value) => value + 1);
                   setRefreshKey((value) => value + 1);
                   if (href) router.push(href);
@@ -563,8 +691,23 @@ function ResizeHandle({
     <div
       role="separator"
       aria-orientation="vertical"
+      aria-label="Resize panel"
       title="Drag to resize"
-      className="group relative z-10 w-1 shrink-0 cursor-col-resize bg-transparent hover:bg-accent/25"
+      className={cn(
+        focusRingClass,
+        "group relative z-10 w-1 shrink-0 cursor-col-resize bg-transparent hover:bg-accent/25",
+      )}
+      tabIndex={0}
+      onKeyDown={(event) => {
+        const step = event.shiftKey ? 24 : 8;
+        if (event.key === "ArrowLeft") {
+          event.preventDefault();
+          onResize(-step);
+        } else if (event.key === "ArrowRight") {
+          event.preventDefault();
+          onResize(step);
+        }
+      }}
       onPointerDown={(event) => {
         event.preventDefault();
         const startX = event.clientX;
@@ -606,13 +749,11 @@ function WorkspaceHomeCanvas({
   return (
     <div className="flex h-full min-h-0 flex-1 items-center justify-center bg-sunken px-9">
       <div className="max-w-[440px] text-center">
-        <div className="mb-3 font-mono text-[8.5px] font-medium uppercase tracking-[0.095em] text-ink-faint">
-          Workspace
-        </div>
-        <h2 className="mb-2 text-[18px] font-semibold tracking-[-0.03em] text-ink">
+        <div className="os-type-section mb-3">Workspace</div>
+        <h2 className="mb-2 text-[length:var(--text-lg)] font-semibold tracking-[-0.03em] text-ink">
           Open a file to get started
         </h2>
-        <p className="mb-5 text-[12px] leading-relaxed text-ink-soft">
+        <p className="os-type-secondary mb-5 text-ink-soft">
           Drag Office files here, upload with ⌘O, or open from the explorer. The
           agent attaches once a file is open.
         </p>
@@ -620,14 +761,20 @@ function WorkspaceHomeCanvas({
           <button
             type="button"
             onClick={onUpload}
-            className="inline-flex h-8 items-center rounded-[var(--radius-sm)] bg-ink px-3 text-[11.5px] font-medium text-on-ink hover:opacity-90"
+            className={cn(
+              focusRingClass,
+              "os-type-label inline-flex h-8 items-center rounded-[var(--radius-sm)] bg-ink px-3 font-medium text-on-ink hover:opacity-90",
+            )}
           >
             Upload file
           </button>
           <button
             type="button"
             onClick={onSearch}
-            className="inline-flex h-8 items-center rounded-[var(--radius-sm)] border border-line bg-surface px-3 text-[11.5px] font-medium text-ink-soft hover:text-ink"
+            className={cn(
+              focusRingClass,
+              "os-type-label inline-flex h-8 items-center rounded-[var(--radius-sm)] border border-line bg-surface px-3 font-medium text-ink-soft hover:text-ink",
+            )}
           >
             Quick Open
           </button>

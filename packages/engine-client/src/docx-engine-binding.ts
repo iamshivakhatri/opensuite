@@ -51,6 +51,23 @@ export interface DocxReplaceTextBindingResult {
 /** Alias — all mutate bindings share the same verified-artifact result shape. */
 export type DocxMutationBindingResult = DocxReplaceTextBindingResult;
 
+/** Newer DOCX operations share the same verified-output envelope. */
+export type DocxExtendedOperationName =
+  | "executeDocxSetTextFormatting"
+  | "executeDocxSetContentControlText"
+  | "executeDocxSetParagraphsList"
+  | "executeDocxSetHyperlink"
+  | "executeDocxInsertPicture"
+  | "executeDocxDeletePicture"
+  | "executeDocxSetPictureSize"
+  | "executeDocxReplacePicture"
+  | "executeDocxInsertPageBreak"
+  | "executeDocxDeletePageBreak"
+  | "executeDocxSetPageSetup"
+  | "executeDocxSetHeaderFooterText"
+  | "executeDocxSetPageNumber"
+  | "executeDocxInsertTableRow";
+
 /** Semantic or handle-based table target. */
 export interface DocxTableTarget {
   readonly headerCells?: readonly string[];
@@ -142,6 +159,22 @@ export interface DocxSetTableFormattingOperation {
   readonly baseRevision?: string;
 }
 
+export interface DocxSetTableColumnWidthsOperation {
+  readonly table: DocxTableTarget;
+  readonly widthsTwips: readonly number[];
+  readonly baseRevision?: string;
+}
+
+export interface DocxSetTableCellShadingOperation {
+  readonly table: DocxTableTarget;
+  readonly updates: readonly {
+    readonly target: DocxTableCellTarget;
+    /** Omit to clear the cell fill. */
+    readonly fill?: string;
+  }[];
+  readonly baseRevision?: string;
+}
+
 /** Placement for insert_paragraph — engine protocol shape. */
 export type DocxParagraphPlacement =
   | { readonly kind: "start" }
@@ -183,9 +216,11 @@ export type DocxParagraphAlignment = "left" | "center" | "right";
 
 export interface DocxSetParagraphFormattingOperation {
   readonly target: DocxTextTarget;
-  readonly alignment?: DocxParagraphAlignment;
+  readonly alignment?: DocxParagraphAlignment | "clear";
   readonly spacingBeforeTwips?: number;
   readonly spacingAfterTwips?: number;
+  readonly leftIndentTwips?: number;
+  readonly clearLeftIndent?: boolean;
   readonly baseRevision?: string;
 }
 
@@ -195,6 +230,17 @@ export interface DocxSetTextFormattingOperation {
   readonly italic?: boolean;
   readonly fontSizeHalfPoints?: number;
   readonly fontFamily?: string;
+  readonly clearBold?: boolean;
+  readonly color?: string;
+  readonly clearColor?: boolean;
+  readonly underline?: boolean;
+  readonly clearUnderline?: boolean;
+  readonly highlight?: string;
+  readonly clearHighlight?: boolean;
+  readonly strikethrough?: boolean;
+  readonly clearStrikethrough?: boolean;
+  readonly verticalAlignment?: "baseline" | "superscript" | "subscript";
+  readonly clearVerticalAlignment?: boolean;
   readonly baseRevision?: string;
 }
 
@@ -330,6 +376,14 @@ export interface DocxInspectBodyBlockItem {
   readonly kind: string;
   readonly text?: string | null;
   readonly tableHandle?: string | null;
+  readonly picture?: {
+    readonly handle: string;
+    readonly format: string;
+    readonly widthEmu: number;
+    readonly heightEmu: number;
+    readonly altText?: string;
+    readonly affordances?: readonly DocxInspectAffordance[];
+  };
 }
 
 export interface DocxInspectContextUnit {
@@ -440,6 +494,19 @@ export interface DocxEngineBinding {
   executeDocxSetTableFormatting(
     input: Uint8Array,
     operation: DocxSetTableFormattingOperation,
+  ): Promise<DocxMutationBindingResult>;
+  executeDocxSetTableColumnWidths?(
+    input: Uint8Array,
+    operation: DocxSetTableColumnWidthsOperation,
+  ): Promise<DocxMutationBindingResult>;
+  executeDocxSetTableCellShading?(
+    input: Uint8Array,
+    operation: DocxSetTableCellShadingOperation,
+  ): Promise<DocxMutationBindingResult>;
+  executeDocxExtended?(
+    input: Uint8Array,
+    name: DocxExtendedOperationName,
+    operation: Record<string, unknown>,
   ): Promise<DocxMutationBindingResult>;
 }
 
@@ -589,6 +656,9 @@ type NativeEngineModule = {
     result: DocxEngineOperationResult;
     output?: Buffer;
   }>;
+  executeDocxSetTableColumnWidths: (input: Buffer, operation: Record<string, unknown>) => Promise<{ result: DocxEngineOperationResult; output?: Buffer }>;
+  executeDocxSetTableCellShading: (input: Buffer, operation: Record<string, unknown>) => Promise<{ result: DocxEngineOperationResult; output?: Buffer }>;
+  [name: string]: unknown;
 };
 
 function toNativeInspectFocus(focus: DocxInspectFocus): Record<string, unknown> {
@@ -657,6 +727,21 @@ export async function createNapiDocxEngineBinding(): Promise<DocxEngineBinding> 
     "executeDocxDeleteTableRow",
     "executeDocxDeleteTableColumn",
     "executeDocxSetTableFormatting",
+    "executeDocxSetTableColumnWidths",
+    "executeDocxSetTableCellShading",
+    "executeDocxSetContentControlText",
+    "executeDocxSetParagraphsList",
+    "executeDocxSetHyperlink",
+    "executeDocxInsertPicture",
+    "executeDocxDeletePicture",
+    "executeDocxSetPictureSize",
+    "executeDocxReplacePicture",
+    "executeDocxInsertPageBreak",
+    "executeDocxDeletePageBreak",
+    "executeDocxSetPageSetup",
+    "executeDocxSetHeaderFooterText",
+    "executeDocxSetPageNumber",
+    "executeDocxInsertTableRow",
   ] as const) {
     if (typeof native[name] !== "function") {
       throw new Error(
@@ -772,6 +857,8 @@ export async function createNapiDocxEngineBinding(): Promise<DocxEngineBinding> 
           ...(operation.spacingAfterTwips !== undefined
             ? { spacingAfterTwips: operation.spacingAfterTwips }
             : {}),
+          ...(operation.leftIndentTwips !== undefined ? { leftIndentTwips: operation.leftIndentTwips } : {}),
+          ...(operation.clearLeftIndent !== undefined ? { clearLeftIndent: operation.clearLeftIndent } : {}),
           ...(operation.baseRevision !== undefined
             ? { baseRevision: operation.baseRevision }
             : {}),
@@ -795,6 +882,17 @@ export async function createNapiDocxEngineBinding(): Promise<DocxEngineBinding> 
           ...(operation.fontFamily !== undefined
             ? { fontFamily: operation.fontFamily }
             : {}),
+          ...(operation.clearBold !== undefined ? { clearBold: operation.clearBold } : {}),
+          ...(operation.color !== undefined ? { color: operation.color } : {}),
+          ...(operation.clearColor !== undefined ? { clearColor: operation.clearColor } : {}),
+          ...(operation.underline !== undefined ? { underline: operation.underline } : {}),
+          ...(operation.clearUnderline !== undefined ? { clearUnderline: operation.clearUnderline } : {}),
+          ...(operation.highlight !== undefined ? { highlight: operation.highlight } : {}),
+          ...(operation.clearHighlight !== undefined ? { clearHighlight: operation.clearHighlight } : {}),
+          ...(operation.strikethrough !== undefined ? { strikethrough: operation.strikethrough } : {}),
+          ...(operation.clearStrikethrough !== undefined ? { clearStrikethrough: operation.clearStrikethrough } : {}),
+          ...(operation.verticalAlignment !== undefined ? { verticalAlignment: operation.verticalAlignment } : {}),
+          ...(operation.clearVerticalAlignment !== undefined ? { clearVerticalAlignment: operation.clearVerticalAlignment } : {}),
           ...(operation.baseRevision !== undefined
             ? { baseRevision: operation.baseRevision }
             : {}),
@@ -938,6 +1036,42 @@ export async function createNapiDocxEngineBinding(): Promise<DocxEngineBinding> 
             ? { baseRevision: operation.baseRevision }
             : {}),
         },
+      );
+      return mapMutationBindingResponse(response);
+    },
+
+    async executeDocxSetTableColumnWidths(input, operation) {
+      const response = await native.executeDocxSetTableColumnWidths(Buffer.from(input), {
+        table: toNativeTableTarget(operation.table),
+        widthsTwips: [...operation.widthsTwips],
+        ...(operation.baseRevision !== undefined ? { baseRevision: operation.baseRevision } : {}),
+      });
+      return mapMutationBindingResponse(response);
+    },
+
+    async executeDocxSetTableCellShading(input, operation) {
+      const response = await native.executeDocxSetTableCellShading(Buffer.from(input), {
+        table: toNativeTableTarget(operation.table),
+        updates: operation.updates.map((update) => ({
+          target: toNativeCellTarget(update.target),
+          ...(update.fill !== undefined ? { fill: update.fill } : {}),
+        })),
+        ...(operation.baseRevision !== undefined ? { baseRevision: operation.baseRevision } : {}),
+      });
+      return mapMutationBindingResponse(response);
+    },
+
+    async executeDocxExtended(input, name, operation) {
+      const method = native[name];
+      if (typeof method !== "function") {
+        throw new Error(`@opensuite/engine is missing ${name}`);
+      }
+      const response = await (method as (
+        bytes: Buffer,
+        payload: Record<string, unknown>,
+      ) => Promise<{ result: DocxEngineOperationResult; output?: Buffer }>)(
+        Buffer.from(input),
+        operation,
       );
       return mapMutationBindingResponse(response);
     },

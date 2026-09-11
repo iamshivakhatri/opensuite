@@ -54,6 +54,17 @@ export function createAgentDocumentMutationExecutor(input: {
   }
 
   return {
+    async mutate(request): Promise<DocumentMutationResult> {
+      const applied = await mutations.applyOperation({
+        documentId: request.document.documentId,
+        ownerUserId: input.ownerUserId,
+        baseVersionId: request.document.versionId,
+        type: request.type,
+        payload: request.payload,
+        runtime: input.runtime,
+      });
+      return toExecutorResult(applied, request.document.versionId);
+    },
     async replaceText(request): Promise<DocumentMutationResult> {
       const applied = await mutations.applyReplaceText({
         documentId: request.document.documentId,
@@ -153,6 +164,11 @@ export function createAgentDocumentMutationExecutor(input: {
         ...(request.fontFamily !== undefined
           ? { fontFamily: request.fontFamily }
           : {}),
+        ...(request.color !== undefined ? { color: request.color } : {}),
+        ...(request.underline !== undefined ? { underline: request.underline } : {}),
+        ...(request.highlight !== undefined ? { highlight: request.highlight } : {}),
+        ...(request.strikethrough !== undefined ? { strikethrough: request.strikethrough } : {}),
+        ...(request.verticalAlignment !== undefined ? { verticalAlignment: request.verticalAlignment } : {}),
         runtime: input.runtime,
       });
       return toExecutorResult(applied, request.document.versionId);

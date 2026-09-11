@@ -12,6 +12,7 @@ import {
   type ListedDocument,
 } from "@/lib/api";
 import { clearCasualLocalAutosave } from "@/lib/casual-autosave";
+import { decideEditorVersionRefresh } from "@/lib/editor-version-refresh";
 import { userFacingError } from "@/components/files/format";
 import { ConfirmDialog } from "@/components/ui/context-menu";
 import { useTheme } from "@/lib/theme";
@@ -26,7 +27,7 @@ const DocxEditorHost = dynamic(
     ssr: false,
     loading: () => (
       <div className="flex h-full items-center justify-center bg-canvas">
-        <p className="text-[12px] text-ink-faint">Loading editor…</p>
+        <p className="os-type-secondary text-ink-faint">Loading editor…</p>
       </div>
     ),
   },
@@ -45,6 +46,10 @@ export type DocxSurfaceStatus = {
 /**
  * Host-owned DOCX surface: loads exact OpenSuite version bytes into Casual
  * Docs, edits locally, and saves via appendDocumentVersion (explicit only).
+ *
+ * Version advances on the *same* document prefer Casual's imperative
+ * `loadDocumentBuffer` so the React host stays mounted (Phase 4B). Remount is
+ * reserved for document switches / first open / in-place failure fallback.
  */
 export function DocxSurface({
   document,
@@ -63,14 +68,22 @@ export function DocxSurface({
   const editorRef = React.useRef<DocxEditorRef | null>(null);
   const selectionRef = React.useRef<unknown>(null);
   const savingRef = React.useRef(false);
+  const reloadingRef = React.useRef(false);
   const lastSaveRequestId = React.useRef(0);
   /** Ignore Casual dirty=true churn right after remount/agent reload. */
   const suppressDirtyRef = React.useRef(false);
   const suppressDirtyTimerRef = React.useRef<number | null>(null);
+  const documentIdRef = React.useRef(document.id);
+  const dirtyRef = React.useRef(false);
+  const conflictRef = React.useRef(false);
+  const phaseRef = React.useRef<LoadPhase>("loading");
+  const loadedVersionIdRef = React.useRef<string | null>(null);
+  const latestVersionIdRef = React.useRef(document.latestVersion.id);
 
   const [phase, setPhase] = React.useState<LoadPhase>("loading");
   const [loadError, setLoadError] = React.useState<string | null>(null);
   const [buffer, setBuffer] = React.useState<ArrayBuffer | null>(null);
+  /** Bumped only for remount fallback — not on every version advance. */
   const [editorKey, setEditorKey] = React.useState(0);
   const [loadedVersionId, setLoadedVersionId] = React.useState<string | null>(
     null,
@@ -82,6 +95,12 @@ export function DocxSurface({
   const [saving, setSaving] = React.useState(false);
   const [conflict, setConflict] = React.useState(false);
   const [reloadOpen, setReloadOpen] = React.useState(false);
+
+  dirtyRef.current = dirty;
+  conflictRef.current = conflict;
+  phaseRef.current = phase;
+  loadedVersionIdRef.current = loadedVersionId;
+  latestVersionIdRef.current = latestVersionId;
 
   const beginSuppressDirty = React.useCallback(() => {
     suppressDirtyRef.current = true;
@@ -124,6 +143,10 @@ export function DocxSurface({
     saving,
   ]);
 
+  /**
+   * First open / document switch: full load with loading phase.
+   * Remounts the Casual host (keyed by document id + editorKey).
+   */
   const loadVersion = React.useCallback(
     async (versionId: string) => {
       beginSuppressDirty();
@@ -157,8 +180,95 @@ export function DocxSurface({
     [beginSuppressDirty, document.id],
   );
 
+  /**
+   * Same-document clean version advance: keep the React host mounted and
+   * replace content via Casual `loadDocumentBuffer`. Falls back to remount
+   * if the imperative API is unavailable or fails.
+   *
+   * Data-loss invariant: callers must only invoke this when dirty human edits
+   * are absent (or the user explicitly discarded them).
+   */
+  const reloadVersionInPlace = React.useCallback(
+    async (versionId: string) => {
+      if (reloadingRef.current) return;
+      reloadingRef.current = true;
+      beginSuppressDirty();
+
+      const apiBefore = editorRef.current;
+      let priorZoom: number | undefined;
+      let priorPage: number | undefined;
+      try {
+        priorZoom = apiBefore?.getZoom();
+        priorPage = apiBefore?.getCurrentPage();
+      } catch {
+        // Viewport capture is best-effort only.
+      }
+
+      try {
+        await clearCasualLocalAutosave();
+        const bytes = await fetchDocumentVersionContent(
+          document.id,
+          versionId,
+        );
+        const copy = bytes.slice(0);
+        const api = editorRef.current;
+
+        if (api && typeof api.loadDocumentBuffer === "function") {
+          await api.loadDocumentBuffer(copy);
+          setBuffer(copy);
+          setLoadedVersionId(versionId);
+          setDirty(false);
+          setConflict(false);
+          setLoadError(null);
+          beginSuppressDirty();
+
+          // Best-effort viewport restore. Cursor/selection is not restored —
+          // paraIds can shift across agent mutations and Casual does not
+          // expose a durable selection snapshot API for this host path.
+          try {
+            if (typeof priorZoom === "number") {
+              api.setZoom(priorZoom);
+            }
+            if (typeof priorPage === "number" && priorPage >= 1) {
+              api.scrollToPage(priorPage);
+            }
+          } catch {
+            // ignore restore failures
+          }
+          return;
+        }
+
+        // Fallback remount without blanking the whole surface into phase=loading.
+        setBuffer(copy);
+        setLoadedVersionId(versionId);
+        setDirty(false);
+        setConflict(false);
+        setLoadError(null);
+        setEditorKey((value) => value + 1);
+        beginSuppressDirty();
+      } catch (error) {
+        toast({
+          tone: "error",
+          title: "Could not refresh document",
+          description: userFacingError(
+            error,
+            "The newer version could not be loaded into the editor.",
+          ),
+        });
+      } finally {
+        reloadingRef.current = false;
+      }
+    },
+    [beginSuppressDirty, document.id, toast],
+  );
+
   // Load exact version when opening a document (not on every latestVersion bump).
   React.useEffect(() => {
+    const switched = documentIdRef.current !== document.id;
+    documentIdRef.current = document.id;
+    if (switched) {
+      setEditorKey(0);
+    }
     setLatestVersionId(document.latestVersion.id);
     void loadVersion(document.latestVersion.id);
   }, [document.id, loadVersion]);
@@ -195,37 +305,49 @@ export function DocxSurface({
     };
   }, [document.id, onDocumentUpdated]);
 
-  // Auto-reload when a newer version appears.
-  // Prefer agent/server versions over Casual remount dirty-noise: if suppress
-  // window is active, clear dirty and adopt the latest. Real user edits
-  // (dirty after suppress ends) keep the banner and require Reload.
+  // Auto-refresh when a newer immutable version appears (agent/server).
   React.useEffect(() => {
-    if (!newerAvailable || conflict || saving || phase !== "ready") {
+    if (!newerAvailable || !latestVersionId || phase !== "ready") {
       return;
-    }
-    if (!latestVersionId) return;
-
-    if (dirty && !suppressDirtyRef.current) {
-      return;
-    }
-
-    if (dirty && suppressDirtyRef.current) {
-      setDirty(false);
     }
 
     const target = latestVersionId;
     const timer = window.setTimeout(() => {
-      void loadVersion(target);
+      // Re-decide at fire time so a keystroke during the coalesce window
+      // cannot be overwritten by a stale "clean" snapshot.
+      const action = decideEditorVersionRefresh({
+        documentChanged: false,
+        hasReadyEditor:
+          Boolean(editorRef.current) && phaseRef.current === "ready",
+        loadedVersionId: loadedVersionIdRef.current,
+        targetVersionId: target,
+        dirty: dirtyRef.current,
+        suppressDirtyNoise: suppressDirtyRef.current,
+        conflict: conflictRef.current,
+        saving: savingRef.current,
+      });
+
+      if (action === "defer_dirty" || action === "skip") {
+        return;
+      }
+
+      if (action === "initialize") {
+        void loadVersion(target);
+        return;
+      }
+
+      if (dirtyRef.current && suppressDirtyRef.current) {
+        setDirty(false);
+      }
+      void reloadVersionInPlace(target);
     }, 700);
     return () => window.clearTimeout(timer);
   }, [
-    conflict,
-    dirty,
     latestVersionId,
     loadVersion,
     newerAvailable,
     phase,
-    saving,
+    reloadVersionInPlace,
   ]);
 
   React.useEffect(() => {
@@ -256,12 +378,13 @@ export function DocxSurface({
 
         const nextVersionId = result.version.id;
         const copy = bytes.slice(0);
+        // Content already matches the editor — update version pointers only.
+        // Do not remount / re-import; that was a major post-save flash.
         setBuffer(copy);
         setLoadedVersionId(nextVersionId);
         setLatestVersionId(result.document.latestVersion.id);
         setDirty(false);
         setConflict(false);
-        setEditorKey((value) => value + 1);
         onDocumentUpdated?.(result.document);
         toast({
           tone: "success",
@@ -367,13 +490,18 @@ export function DocxSurface({
   function confirmReloadLatest() {
     if (!latestVersionId) return;
     setReloadOpen(false);
-    void loadVersion(latestVersionId);
+    // User explicitly discarded local edits — in-place when possible.
+    if (phase === "ready" && editorRef.current) {
+      void reloadVersionInPlace(latestVersionId);
+    } else {
+      void loadVersion(latestVersionId);
+    }
   }
 
   if (phase === "loading") {
     return (
       <div className="flex h-full min-h-0 flex-1 items-center justify-center bg-canvas">
-        <p className="text-[12px] text-ink-faint">Loading document…</p>
+        <p className="os-type-secondary text-ink-faint">Loading document…</p>
       </div>
     );
   }
@@ -381,12 +509,12 @@ export function DocxSurface({
   if (phase === "error" || !buffer || !loadedVersionId) {
     return (
       <div className="flex h-full min-h-0 flex-1 flex-col items-center justify-center gap-3 bg-canvas px-6">
-        <p className="max-w-md text-center text-[12.5px] text-danger">
+        <p className="os-type-secondary max-w-md text-center text-danger">
           {loadError ?? "Could not load this document."}
         </p>
         <button
           type="button"
-          className="inline-flex h-8 items-center rounded-[var(--radius-sm)] border border-line bg-surface px-3 text-[11.5px] font-medium text-ink"
+          className="os-type-label inline-flex h-8 items-center rounded-[var(--radius-sm)] border border-line bg-surface px-3 font-medium text-ink"
           onClick={() => void loadVersion(document.latestVersion.id)}
         >
           Retry
@@ -399,14 +527,14 @@ export function DocxSurface({
     <div className="relative flex h-full min-h-0 flex-1 flex-col bg-canvas">
       {conflict ? (
         <div className="flex shrink-0 items-center justify-between gap-3 border-b border-danger/25 bg-danger-soft px-3 py-2">
-          <p className="text-[11.5px] leading-snug text-danger">
+          <p className="os-type-secondary leading-snug text-danger">
             This file was updated elsewhere. Your unsaved edits are kept in
             memory — reload the latest version when you are ready (discards local
             changes).
           </p>
           <button
             type="button"
-            className="shrink-0 rounded-[var(--radius-sm)] border border-danger/30 bg-surface px-2.5 py-1 text-[11px] font-medium text-danger hover:bg-elevated"
+            className="os-type-label shrink-0 rounded-[var(--radius-sm)] border border-danger/30 bg-surface px-2.5 py-1 font-medium text-danger hover:bg-elevated"
             onClick={() => {
               if (dirty) setReloadOpen(true);
               else confirmReloadLatest();
@@ -417,13 +545,13 @@ export function DocxSurface({
         </div>
       ) : newerAvailable && dirty ? (
         <div className="flex shrink-0 items-center justify-between gap-3 border-b border-accent-line bg-accent-soft px-3 py-2">
-          <p className="text-[11.5px] leading-snug text-ink-soft">
+          <p className="os-type-secondary leading-snug text-ink-soft">
             Newer version available. Save is blocked until you reload — local
             edits will be discarded.
           </p>
           <button
             type="button"
-            className="shrink-0 rounded-[var(--radius-sm)] border border-accent-line bg-surface px-2.5 py-1 text-[11px] font-medium text-accent hover:bg-elevated"
+            className="os-type-label shrink-0 rounded-[var(--radius-sm)] border border-accent-line bg-surface px-2.5 py-1 font-medium text-accent hover:bg-elevated"
             onClick={() => setReloadOpen(true)}
           >
             Reload latest
@@ -433,7 +561,9 @@ export function DocxSurface({
 
       <div className="min-h-0 flex-1 overflow-hidden">
         <DocxEditorHost
-          key={`${document.id}:${loadedVersionId}:${editorKey}`}
+          // Key by document identity (+ remount fallback counter). Version
+          // advances must NOT force a React remount when in-place load works.
+          key={`${document.id}:${editorKey}`}
           ref={editorRef}
           documentBuffer={buffer}
           documentName={document.name}

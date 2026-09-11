@@ -1,22 +1,23 @@
-"use client";
+import type { Metadata } from "next";
 
-import * as React from "react";
+import { WorkspaceLayoutClient } from "./workspace-layout-client";
 
-import { WorkspaceRouteShell } from "@/components/documents/workspace-route-shell";
+export const metadata: Metadata = {
+  title: "OpenSuite",
+};
 
 /**
- * Persistent layout for workspace + nested document routes.
- * Keeps the IDE mounted across tab/file switches.
+ * Server layout so the browser tab keeps a stable OpenSuite title across
+ * document soft-navigations. IDE chrome lives in the client shell.
  */
 export default function WorkspaceLayout({
-  children: _children,
+  children,
   params,
 }: {
   children: React.ReactNode;
   params: Promise<{ workspaceId: string }>;
 }) {
-  const { workspaceId } = React.use(params);
-  // Nested pages are intentionally empty — the shell reads the URL and
-  // keeps the IDE mounted across document switches.
-  return <WorkspaceRouteShell workspaceId={workspaceId} />;
+  return (
+    <WorkspaceLayoutClient params={params}>{children}</WorkspaceLayoutClient>
+  );
 }

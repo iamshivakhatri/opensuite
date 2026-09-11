@@ -76,6 +76,11 @@ export interface DocumentSetTextFormattingInput {
   readonly italic?: boolean;
   readonly fontSizeHalfPoints?: number;
   readonly fontFamily?: string;
+  readonly color?: string;
+  readonly underline?: boolean;
+  readonly highlight?: string;
+  readonly strikethrough?: boolean;
+  readonly verticalAlignment?: "baseline" | "superscript" | "subscript";
 }
 
 export interface DocumentSetTableCellsTextInput {
@@ -128,6 +133,16 @@ export interface DocumentSetTableFormattingInput {
   readonly cellMarginBottomTwips?: number;
   readonly cellMarginLeftTwips?: number;
   readonly borders?: DocumentTableBorders;
+}
+
+export interface DocumentSetTableColumnWidthsInput {
+  readonly table: DocumentTableTarget;
+  readonly widthsTwips: readonly number[];
+}
+
+export interface DocumentSetTableCellShadingInput {
+  readonly table: DocumentTableTarget;
+  readonly updates: readonly { readonly target: DocumentTableCellUpdate["target"]; readonly fill?: string }[];
 }
 
 export interface SlidesUpdateTextInput {
@@ -583,7 +598,7 @@ export function createDocumentSetTextFormattingTool(): AgentTool<
   return defineDocumentTool({
     name: DOCUMENT_TOOL_NAMES.setTextFormatting,
     description:
-      "Set run formatting (bold/italic/fontSizeHalfPoints/fontFamily) on exact visible text.",
+      "Set run formatting (bold, italic, font, color, underline, highlight, strikethrough, or vertical alignment) on exact visible text.",
     effect: "write",
     executionMode: "sequential",
     capability: DOCX_ENGINE_CAPS.setTextFormatting,
@@ -598,6 +613,11 @@ export function createDocumentSetTextFormattingTool(): AgentTool<
           description: "Font size in Word half-points (e.g. 24 = 12pt)",
         },
         fontFamily: { type: "string" },
+        color: { type: "string", description: "Hex color without #, e.g. FF0000" },
+        underline: { type: "boolean" },
+        highlight: { type: "string" },
+        strikethrough: { type: "boolean" },
+        verticalAlignment: { type: "string", enum: ["baseline", "superscript", "subscript"] },
       },
       required: ["target"],
       additionalProperties: false,
@@ -643,6 +663,11 @@ export function createDocumentSetTextFormattingTool(): AgentTool<
         ...(typeof obj.fontFamily === "string"
           ? { fontFamily: obj.fontFamily }
           : {}),
+        ...(typeof obj.color === "string" ? { color: obj.color } : {}),
+        ...(typeof obj.underline === "boolean" ? { underline: obj.underline } : {}),
+        ...(typeof obj.highlight === "string" ? { highlight: obj.highlight } : {}),
+        ...(typeof obj.strikethrough === "boolean" ? { strikethrough: obj.strikethrough } : {}),
+        ...(obj.verticalAlignment === "baseline" || obj.verticalAlignment === "superscript" || obj.verticalAlignment === "subscript" ? { verticalAlignment: obj.verticalAlignment } : {}),
       };
     },
     execute: (input, ctx) =>
@@ -661,6 +686,11 @@ export function createDocumentSetTextFormattingTool(): AgentTool<
             ...(input.fontFamily !== undefined
               ? { fontFamily: input.fontFamily }
               : {}),
+            ...(input.color !== undefined ? { color: input.color } : {}),
+            ...(input.underline !== undefined ? { underline: input.underline } : {}),
+            ...(input.highlight !== undefined ? { highlight: input.highlight } : {}),
+            ...(input.strikethrough !== undefined ? { strikethrough: input.strikethrough } : {}),
+            ...(input.verticalAlignment !== undefined ? { verticalAlignment: input.verticalAlignment } : {}),
             signal: ctx.signal,
             runId: ctx.runId,
           }),
@@ -1438,6 +1468,48 @@ export function createDocumentSetTableFormattingTool(): AgentTool<
           }),
         input,
       ),
+  });
+}
+
+export function createDocumentSetTableColumnWidthsTool(): AgentTool<DocumentSetTableColumnWidthsInput, PersistedDocumentMutationToolResult> {
+  return defineDocumentTool({
+    name: DOCUMENT_TOOL_NAMES.setTableColumnWidths,
+    description: "Set explicit table column widths in twips.", effect: "write", executionMode: "sequential", capability: DOCX_ENGINE_CAPS.setTableColumnWidths,
+    inputSchema: { type: "object", properties: { table: tableTargetSchema(), widthsTwips: { type: "array", items: { type: "number" }, minItems: 1 } }, required: ["table", "widthsTwips"], additionalProperties: false },
+    parseInput(raw) {
+      const obj = assertObject(raw, DOCUMENT_TOOL_NAMES.setTableColumnWidths);
+      const table = parseTableTarget(obj.table, DOCUMENT_TOOL_NAMES.setTableColumnWidths);
+      if (!Array.isArray(obj.widthsTwips) || obj.widthsTwips.length === 0 || !obj.widthsTwips.every((width) => typeof width === "number" && Number.isInteger(width) && width > 0)) invalidInput("document.set_table_column_widths widthsTwips must be positive integers");
+      return { table, widthsTwips: obj.widthsTwips };
+    },
+    execute: (input, ctx) => executePersistedMutation(ctx, DOCUMENT_TOOL_NAMES.setTableColumnWidths, (document, mutations) => {
+      if (!mutations.mutate) throw new Error("Document mutation executor does not support table column widths");
+      return mutations.mutate({ document, type: DOCUMENT_TOOL_NAMES.setTableColumnWidths, payload: input, signal: ctx.signal, runId: ctx.runId });
+    }, input),
+  });
+}
+
+export function createDocumentSetTableCellShadingTool(): AgentTool<DocumentSetTableCellShadingInput, PersistedDocumentMutationToolResult> {
+  return defineDocumentTool({
+    name: DOCUMENT_TOOL_NAMES.setTableCellShading,
+    description: "Set or clear table-cell fill colors. Omit fill to clear.", effect: "write", executionMode: "sequential", capability: DOCX_ENGINE_CAPS.setTableCellShading,
+    inputSchema: { type: "object", properties: { table: tableTargetSchema(), updates: { type: "array", minItems: 1, items: { type: "object", properties: { target: { type: "object" }, fill: { type: "string", pattern: "^[0-9A-Fa-f]{6}$" } }, required: ["target"], additionalProperties: false } } }, required: ["table", "updates"], additionalProperties: false },
+    parseInput(raw) {
+      const obj = assertObject(raw, DOCUMENT_TOOL_NAMES.setTableCellShading);
+      const table = parseTableTarget(obj.table, DOCUMENT_TOOL_NAMES.setTableCellShading);
+      if (!Array.isArray(obj.updates) || obj.updates.length === 0) invalidInput("document.set_table_cell_shading requires updates");
+      const updates = obj.updates.map((value) => {
+        const update = assertObject(value, DOCUMENT_TOOL_NAMES.setTableCellShading);
+        const target = parseCellTarget(update, DOCUMENT_TOOL_NAMES.setTableCellShading);
+        if (update.fill !== undefined && (typeof update.fill !== "string" || !/^[0-9A-Fa-f]{6}$/.test(update.fill))) invalidInput("document.set_table_cell_shading fill must be a six-digit hex color");
+        return { target, ...(typeof update.fill === "string" ? { fill: update.fill.toUpperCase() } : {}) };
+      });
+      return { table, updates };
+    },
+    execute: (input, ctx) => executePersistedMutation(ctx, DOCUMENT_TOOL_NAMES.setTableCellShading, (document, mutations) => {
+      if (!mutations.mutate) throw new Error("Document mutation executor does not support table cell shading");
+      return mutations.mutate({ document, type: DOCUMENT_TOOL_NAMES.setTableCellShading, payload: input, signal: ctx.signal, runId: ctx.runId });
+    }, input),
   });
 }
 

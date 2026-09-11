@@ -7,7 +7,7 @@ export default function RecentPage() {
     <DocumentLibraryView
       kind="recent"
       title="Recent"
-      description="Documents you have opened, newest first."
+      description="Documents you opened recently, newest first."
     />
   );
 }

@@ -543,3 +543,38 @@ test("table mutation engine failure does not append a version", async () => {
   }
   assert.equal(appendCount, 0);
 });
+
+test("table widths persist through the generic table mutation path", async () => {
+  const documentId = randomUUID();
+  const baseVersionId = randomUUID();
+  let appended = 0;
+  const documents = {
+    async getOwnedDocument() { return listedDoc({ id: documentId, latestVersionId: baseVersionId }); },
+    async appendDocumentVersion(input: { baseVersionId: string; source: "user" | "agent" | "system"; bytes: Buffer }): Promise<AppendedDocumentDto> {
+      appended += 1;
+      return { document: listedDoc({ id: documentId, latestVersionId: "v2" }), version: { id: "v2", documentId, versionNumber: 2, parentVersionId: input.baseVersionId, sizeBytes: input.bytes.length, sha256: "hash", source: input.source, createdByUserId: "user-1", createdAt: new Date().toISOString() } };
+    },
+  } as Pick<DocumentService, "getOwnedDocument" | "appendDocumentVersion">;
+  const runtime = createFakeRuntime(async (_document, operation) => {
+    assert.equal(operation.type, "document.set_table_column_widths");
+    return { status: "success", diagnostics: [], artifactBytes: buildMinimalDocx(["widths"]) };
+  });
+  const result = await createDocumentMutationService(documents).applyOperation({ documentId, ownerUserId: "user-1", baseVersionId, runtime, type: "document.set_table_column_widths", payload: { table: { handle: "t0" }, widthsTwips: [1440, 2880] } });
+  assert.equal(result.status, "success");
+  assert.equal(appended, 1);
+});
+
+test("table shading diagnostics prevent persistence", async () => {
+  const documentId = randomUUID();
+  const baseVersionId = randomUUID();
+  let appended = 0;
+  const documents = {
+    async getOwnedDocument() { return listedDoc({ id: documentId, latestVersionId: baseVersionId }); },
+    async appendDocumentVersion(): Promise<AppendedDocumentDto> { appended += 1; throw new Error("must not append"); },
+  } as Pick<DocumentService, "getOwnedDocument" | "appendDocumentVersion">;
+  const runtime = createFakeRuntime(async () => ({ status: "error", code: "VALIDATION_FAILED", diagnostics: [{ code: "VALIDATION_FAILED", severity: "error", message: "invalid fill", reasonCode: "INVALID_COLOR" }] }));
+  const result = await createDocumentMutationService(documents).applyOperation({ documentId, ownerUserId: "user-1", baseVersionId, runtime, type: "document.set_table_cell_shading", payload: { table: { handle: "t0" }, updates: [{ target: { handle: "c0" }, fill: "invalid" }] } });
+  assert.equal(result.status, "error");
+  if (result.status === "error") assert.equal(result.diagnostics[0].reasonCode, "INVALID_COLOR");
+  assert.equal(appended, 0);
+});

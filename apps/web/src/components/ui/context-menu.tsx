@@ -1,6 +1,16 @@
 "use client";
 
 import * as React from "react";
+import { createPortal } from "react-dom";
+
+import {
+  focusRingClass,
+  getFocusableElements,
+  handleMenuRovingKeys,
+  useFocusScope,
+} from "@/lib/focus-scope";
+import { useModalLayer } from "@/lib/use-modal-layer";
+import { cn } from "@/lib/utils";
 
 export type ContextMenuItem = {
   readonly id: string;
@@ -11,7 +21,8 @@ export type ContextMenuItem = {
 };
 
 /**
- * Lightweight anchored context menu — Escape / outside click to close.
+ * Lightweight anchored context menu — Escape / outside click to close,
+ * arrow-key roving focus, restores focus to the anchor.
  */
 export function ContextMenu({
   open,
@@ -47,9 +58,19 @@ export function ContextMenu({
   }, [open, anchorRef, items.length]);
 
   React.useEffect(() => {
-    if (!open) return;
+    if (!open || !pos) return;
+    const menu = menuRef.current;
+    if (!menu) return;
+    const focusables = getFocusableElements(menu);
+    focusables[0]?.focus({ preventScroll: true });
+
     function onKey(event: KeyboardEvent) {
-      if (event.key === "Escape") onClose();
+      if (event.key === "Escape") {
+        event.preventDefault();
+        onClose();
+        return;
+      }
+      if (menu && handleMenuRovingKeys(event, menu)) return;
     }
     function onPointer(event: MouseEvent) {
       const target = event.target as Node;
@@ -62,16 +83,17 @@ export function ContextMenu({
     return () => {
       window.removeEventListener("keydown", onKey);
       window.removeEventListener("mousedown", onPointer);
+      anchorRef.current?.focus?.({ preventScroll: true });
     };
-  }, [open, onClose, anchorRef]);
+  }, [open, pos, onClose, anchorRef]);
 
   if (!open || !pos) return null;
 
-  return (
+  return createPortal(
     <div
       ref={menuRef}
       role="menu"
-      className="fixed z-50 min-w-[176px] overflow-hidden rounded-[10px] border border-line bg-surface py-1 shadow-[0_8px_28px_rgba(15,18,24,0.12)]"
+      className="fixed z-[var(--z-popover)] min-w-[176px] overflow-hidden rounded-[var(--radius-md)] border border-line bg-surface py-1 shadow-[var(--elevation-sm)]"
       style={{ top: pos.top, left: pos.left }}
     >
       {items.map((item) => (
@@ -80,12 +102,13 @@ export function ContextMenu({
           type="button"
           role="menuitem"
           disabled={item.disabled}
-          className={
-            "block w-full px-3 py-1.5 text-left text-[11.5px] disabled:opacity-40 " +
-            (item.danger
+          className={cn(
+            focusRingClass,
+            "os-type-label block w-full px-3 py-1.5 text-left disabled:opacity-40",
+            item.danger
               ? "text-danger hover:bg-danger-soft"
-              : "text-ink hover:bg-sunken")
-          }
+              : "text-ink hover:bg-sunken",
+          )}
           onClick={() => {
             if (item.disabled) return;
             onClose();
@@ -95,7 +118,8 @@ export function ContextMenu({
           {item.label}
         </button>
       ))}
-    </div>
+    </div>,
+    document.body,
   );
 }
 
@@ -116,6 +140,21 @@ export function ConfirmDialog({
   onCancel: () => void;
   onConfirm: () => void;
 }) {
+  const panelRef = React.useRef<HTMLDivElement>(null);
+  const titleId = React.useId();
+  const cancelRef = React.useRef<HTMLButtonElement>(null);
+  const [mounted, setMounted] = React.useState(false);
+  useFocusScope(true, panelRef);
+  useModalLayer(true);
+
+  React.useEffect(() => {
+    setMounted(true);
+  }, []);
+
+  React.useEffect(() => {
+    cancelRef.current?.focus({ preventScroll: true });
+  }, []);
+
   React.useEffect(() => {
     function onKey(event: KeyboardEvent) {
       if (event.key === "Escape") onCancel();
@@ -124,24 +163,38 @@ export function ConfirmDialog({
     return () => window.removeEventListener("keydown", onKey);
   }, [onCancel]);
 
-  return (
+  if (!mounted) return null;
+
+  return createPortal(
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-overlay px-4 backdrop-blur-[6px]"
+      className="fixed inset-0 z-[var(--z-modal)] flex items-center justify-center bg-overlay px-4 backdrop-blur-[6px]"
       onClick={onCancel}
     >
       <div
-        className="w-full max-w-[380px] rounded-[var(--radius-lg)] border border-line bg-surface p-4 shadow-[0_24px_80px_rgba(15,18,24,0.2)]"
+        ref={panelRef}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby={titleId}
+        tabIndex={-1}
+        className="w-full max-w-[380px] rounded-[var(--radius-lg)] border border-line bg-surface p-4 shadow-[var(--elevation-md)]"
         onClick={(event) => event.stopPropagation()}
       >
-        <h2 className="mb-3 text-[14px] font-semibold tracking-[-0.02em] text-ink">
+        <h2
+          id={titleId}
+          className="mb-3 text-[length:var(--text-md)] font-semibold tracking-[-0.02em] text-ink"
+        >
           {title}
         </h2>
-        <div className="mb-4 text-[12px] leading-relaxed text-ink-soft">{body}</div>
-        {error ? <p className="mb-3 text-[11px] text-danger">{error}</p> : null}
+        <div className="os-type-secondary mb-4 text-ink-soft">{body}</div>
+        {error ? <p className="os-type-meta mb-3 text-danger">{error}</p> : null}
         <div className="flex justify-end gap-2">
           <button
+            ref={cancelRef}
             type="button"
-            className="inline-flex h-8 items-center rounded-[var(--radius-sm)] border border-line bg-surface px-3 text-xs font-medium text-ink-soft hover:text-ink"
+            className={cn(
+              focusRingClass,
+              "os-type-label inline-flex h-8 items-center rounded-[var(--radius-sm)] border border-line bg-surface px-3 font-medium text-ink-soft hover:text-ink",
+            )}
             onClick={onCancel}
           >
             Cancel
@@ -149,14 +202,18 @@ export function ConfirmDialog({
           <button
             type="button"
             disabled={busy}
-            className="inline-flex h-8 items-center rounded-[var(--radius-sm)] bg-danger px-3 text-xs font-medium text-on-ink hover:opacity-90 disabled:opacity-50"
+            className={cn(
+              focusRingClass,
+              "os-type-label inline-flex h-8 items-center rounded-[var(--radius-sm)] bg-danger px-3 font-medium text-on-ink hover:opacity-90 disabled:opacity-50",
+            )}
             onClick={onConfirm}
           >
             {busy ? "Working…" : confirmLabel}
           </button>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }
 
@@ -178,7 +235,21 @@ export function PromptDialog({
   onSubmit: (value: string) => void;
 }) {
   const [value, setValue] = React.useState(initialValue);
+  const panelRef = React.useRef<HTMLFormElement>(null);
+  const inputRef = React.useRef<HTMLInputElement>(null);
+  const titleId = React.useId();
+  const inputId = React.useId();
+  const [mounted, setMounted] = React.useState(false);
+  useFocusScope(true, panelRef);
+  useModalLayer(true);
+
+  React.useEffect(() => {
+    setMounted(true);
+  }, []);
   React.useEffect(() => setValue(initialValue), [initialValue]);
+  React.useEffect(() => {
+    inputRef.current?.focus({ preventScroll: true });
+  }, []);
 
   React.useEffect(() => {
     function onKey(event: KeyboardEvent) {
@@ -188,13 +259,20 @@ export function PromptDialog({
     return () => window.removeEventListener("keydown", onKey);
   }, [onCancel]);
 
-  return (
+  if (!mounted) return null;
+
+  return createPortal(
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-overlay px-4 backdrop-blur-[6px]"
+      className="fixed inset-0 z-[var(--z-modal)] flex items-center justify-center bg-overlay px-4 backdrop-blur-[6px]"
       onClick={onCancel}
     >
       <form
-        className="w-full max-w-[380px] rounded-[var(--radius-lg)] border border-line bg-surface p-4 shadow-[0_24px_80px_rgba(15,18,24,0.2)]"
+        ref={panelRef}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby={titleId}
+        tabIndex={-1}
+        className="w-full max-w-[380px] rounded-[var(--radius-lg)] border border-line bg-surface p-4 shadow-[var(--elevation-md)]"
         onClick={(event) => event.stopPropagation()}
         onSubmit={(event) => {
           event.preventDefault();
@@ -202,24 +280,39 @@ export function PromptDialog({
           onSubmit(value.trim());
         }}
       >
-        <h2 className="mb-3 text-[14px] font-semibold tracking-[-0.02em] text-ink">
+        <h2
+          id={titleId}
+          className="mb-3 text-[length:var(--text-md)] font-semibold tracking-[-0.02em] text-ink"
+        >
           {title}
         </h2>
         {label ? (
-          <label className="mb-1 block text-[10.5px] text-ink-faint">{label}</label>
+          <label
+            htmlFor={inputId}
+            className="os-type-meta mb-1 block text-ink-faint"
+          >
+            {label}
+          </label>
         ) : null}
         <input
-          autoFocus
+          ref={inputRef}
+          id={inputId}
           value={value}
           maxLength={255}
           onChange={(event) => setValue(event.target.value)}
-          className="mb-3 h-9 w-full rounded-[var(--radius-sm)] border border-line bg-surface px-3 text-[13px] text-ink outline-none focus-visible:border-accent"
+          className={cn(
+            focusRingClass,
+            "mb-3 h-9 w-full rounded-[var(--radius-sm)] border border-line bg-surface px-3 text-[length:var(--text-sm)] text-ink placeholder:text-ink-faint",
+          )}
         />
-        {error ? <p className="mb-3 text-[11px] text-danger">{error}</p> : null}
+        {error ? <p className="os-type-meta mb-3 text-danger">{error}</p> : null}
         <div className="flex justify-end gap-2">
           <button
             type="button"
-            className="inline-flex h-8 items-center rounded-[var(--radius-sm)] border border-line bg-surface px-3 text-xs font-medium text-ink-soft hover:text-ink"
+            className={cn(
+              focusRingClass,
+              "os-type-label inline-flex h-8 items-center rounded-[var(--radius-sm)] border border-line bg-surface px-3 font-medium text-ink-soft hover:text-ink",
+            )}
             onClick={onCancel}
           >
             Cancel
@@ -227,12 +320,16 @@ export function PromptDialog({
           <button
             type="submit"
             disabled={busy || !value.trim()}
-            className="inline-flex h-8 items-center rounded-[var(--radius-sm)] bg-ink px-3 text-xs font-medium text-on-ink disabled:opacity-50"
+            className={cn(
+              focusRingClass,
+              "os-type-label inline-flex h-8 items-center rounded-[var(--radius-sm)] bg-ink px-3 font-medium text-on-ink disabled:opacity-50",
+            )}
           >
             {busy ? "Saving…" : "Save"}
           </button>
         </div>
       </form>
-    </div>
+    </div>,
+    document.body,
   );
 }

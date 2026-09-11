@@ -239,6 +239,11 @@ export interface ApplySetTextFormattingInput {
   readonly italic?: boolean;
   readonly fontSizeHalfPoints?: number;
   readonly fontFamily?: string;
+  readonly color?: string;
+  readonly underline?: boolean;
+  readonly highlight?: string;
+  readonly strikethrough?: boolean;
+  readonly verticalAlignment?: "baseline" | "superscript" | "subscript";
   readonly runtime: DocumentRuntime;
 }
 
@@ -423,6 +428,24 @@ export function createDocumentMutationService(
   }
 
   return {
+    async applyOperation(input: {
+      readonly documentId: string;
+      readonly ownerUserId: string;
+      readonly baseVersionId: string;
+      readonly runtime: DocumentRuntime;
+      readonly type: string;
+      readonly payload: Record<string, unknown>;
+    }): Promise<ApplyDocumentMutationResult> {
+      return authorizeAndPersist({
+        documentId: input.documentId,
+        ownerUserId: input.ownerUserId,
+        baseVersionId: input.baseVersionId,
+        runtime: input.runtime,
+        operationType: input.type,
+        payload: input.payload,
+        formatErrorLabel: input.type,
+      });
+    },
     async applyReplaceText(
       input: ApplyReplaceTextInput,
     ): Promise<ApplyDocumentMutationResult> {
@@ -557,6 +580,11 @@ export function createDocumentMutationService(
           ...(input.fontFamily !== undefined
             ? { fontFamily: input.fontFamily }
             : {}),
+          ...(input.color !== undefined ? { color: input.color } : {}),
+          ...(input.underline !== undefined ? { underline: input.underline } : {}),
+          ...(input.highlight !== undefined ? { highlight: input.highlight } : {}),
+          ...(input.strikethrough !== undefined ? { strikethrough: input.strikethrough } : {}),
+          ...(input.verticalAlignment !== undefined ? { verticalAlignment: input.verticalAlignment } : {}),
         },
         formatErrorLabel: "applySetTextFormatting",
       });

@@ -208,6 +208,11 @@ export interface DocumentSetTextFormattingMutationRequest {
   readonly italic?: boolean;
   readonly fontSizeHalfPoints?: number;
   readonly fontFamily?: string;
+  readonly color?: string;
+  readonly underline?: boolean;
+  readonly highlight?: string;
+  readonly strikethrough?: boolean;
+  readonly verticalAlignment?: "baseline" | "superscript" | "subscript";
   readonly signal?: AbortSignal;
   readonly runId?: string;
 }
@@ -229,6 +234,14 @@ export type DocumentMutationResult =
     };
 
 export interface DocumentMutationExecutor {
+  /** Typed tool schemas supply `type` and payload; this keeps new engine calls on the same persistence path. */
+  mutate?(input: {
+    readonly document: DocumentRef;
+    readonly type: string;
+    readonly payload: Record<string, unknown>;
+    readonly signal?: AbortSignal;
+    readonly runId?: string;
+  }): Promise<DocumentMutationResult>;
   replaceText(
     input: DocumentReplaceTextMutationRequest,
   ): Promise<DocumentMutationResult>;
@@ -378,6 +391,9 @@ export function createInMemoryDocumentMutationExecutor(
   }
 
   return {
+    async mutate(input) {
+      return executeOnce(input.document, input.type, input.payload, input.signal, input.runId);
+    },
     async replaceText(input) {
       return executeOnce(
         input.document,

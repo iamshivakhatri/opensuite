@@ -22,7 +22,7 @@ import { useCommandPalette } from "@/components/shell/command-palette";
 import { useToast } from "@/lib/toast";
 
 const mainNav = [
-  { href: "/app", label: "Workspaces", icon: "nav-workspaces" as const, match: "exact" as const },
+  { href: "/app", label: "Home", icon: "nav-home" as const, match: "exact" as const },
   { href: "/app/recent", label: "Recent", icon: "nav-recent" as const, match: "prefix" as const },
   {
     href: "/app/starred",
@@ -37,18 +37,26 @@ function NavIcon({
   name,
   active,
 }: {
-  name: "nav-workspaces" | "nav-recent" | "nav-starred" | "nav-trash";
+  name: "nav-home" | "nav-recent" | "nav-starred" | "nav-trash";
   active: boolean;
 }) {
   const stroke = active ? "currentColor" : "currentColor";
   const className = "h-[14px] w-[14px]";
-  if (name === "nav-workspaces") {
+  if (name === "nav-home") {
     return (
       <svg viewBox="0 0 16 16" fill="none" className={className} aria-hidden>
-        <rect x="2" y="2" width="5" height="5" rx="1" stroke={stroke} strokeWidth="1.4" />
-        <rect x="9" y="2" width="5" height="5" rx="1" stroke={stroke} strokeWidth="1.4" />
-        <rect x="2" y="9" width="5" height="5" rx="1" stroke={stroke} strokeWidth="1.4" />
-        <rect x="9" y="9" width="5" height="5" rx="1" stroke={stroke} strokeWidth="1.4" />
+        <path
+          d="M2.5 7.2 8 2.8l5.5 4.4V13a1 1 0 0 1-1 1H3.5a1 1 0 0 1-1-1V7.2Z"
+          stroke={stroke}
+          strokeWidth="1.4"
+          strokeLinejoin="round"
+        />
+        <path
+          d="M6.2 14V9.2h3.6V14"
+          stroke={stroke}
+          strokeWidth="1.4"
+          strokeLinejoin="round"
+        />
       </svg>
     );
   }
@@ -232,15 +240,15 @@ export function Sidebar() {
         <button
           type="button"
           onClick={() => openPalette(true)}
-          className="mb-3 flex w-full items-center gap-2 rounded-[var(--radius-sm)] border border-line bg-surface px-2.5 py-2 text-left text-[12px] text-ink-faint shadow-[0_1px_2px_rgba(16,24,40,0.025)] hover:border-ink-faint hover:text-ink"
+          className="os-type-label mb-3 flex w-full items-center gap-2 rounded-[var(--radius-sm)] border border-line bg-surface px-2.5 py-2 text-left text-ink-faint shadow-[0_1px_2px_rgba(16,24,40,0.025)] hover:border-ink-faint hover:text-ink"
         >
-          <span className="text-[13px]">⌕</span>
+          <span className="text-[length:var(--text-sm)]">⌕</span>
           <span className="min-w-0 flex-1">Search</span>
-          <kbd className="rounded border border-line bg-[var(--paper)] px-1.5 py-0.5 font-mono text-[9px] text-ink-faint">
+          <kbd className="os-type-meta rounded border border-line bg-[var(--paper)] px-1.5 py-0.5 font-mono text-ink-faint">
             ⌘K
           </kbd>
         </button>
-        <div className="mb-1.5 px-2.5 text-[9px] font-semibold uppercase tracking-[0.09em] text-ink-faint">
+        <div className="os-type-section mb-1.5 px-2.5">
           Navigate
         </div>
         <div className="flex flex-col gap-0.5">
@@ -251,7 +259,7 @@ export function Sidebar() {
                 key={item.href}
                 href={item.href}
                 className={
-                  "flex items-center gap-2.5 rounded-[var(--radius-sm)] px-2.5 py-2 text-[12px] transition-colors " +
+                  "os-type-label flex items-center gap-2.5 rounded-[var(--radius-sm)] px-2.5 py-2 transition-colors " +
                   (active
                     ? "bg-accent-soft font-semibold text-accent-hover shadow-[inset_0_0_0_1px_rgba(91,92,226,0.05)]"
                     : "text-ink-soft hover:bg-sunken hover:text-ink")
@@ -274,9 +282,7 @@ export function Sidebar() {
 
       <div className="min-h-0 flex-1">
         <div className="mb-1.5 flex items-center justify-between px-2.5">
-          <span className="text-[9px] font-semibold uppercase tracking-[0.09em] text-ink-faint">
-            Workspaces
-          </span>
+          <span className="os-type-section">Workspaces</span>
           <button
             type="button"
             title="Create workspace"
@@ -285,14 +291,14 @@ export function Sidebar() {
               setCreateOpen(true);
               setCreateError(null);
             }}
-            className="grid h-5 w-5 place-items-center rounded text-[12px] text-ink-faint hover:bg-sunken hover:text-ink"
+            className="grid h-5 w-5 place-items-center rounded text-[length:var(--text-xs)] text-ink-faint hover:bg-sunken hover:text-ink"
           >
             +
           </button>
         </div>
 
         {loadError ? (
-          <p className="px-2.5 text-[10.5px] text-danger">{loadError}</p>
+          <p className="os-type-meta px-2.5 text-danger">{loadError}</p>
         ) : null}
         {workspaces === null && !loadError ? (
           <div className="space-y-1 px-2.5 py-1">
@@ -310,7 +316,7 @@ export function Sidebar() {
                 <Link
                   href={workspacePath(workspace.id)}
                   className={
-                    "flex items-center gap-2 rounded-[var(--radius-sm)] py-1.5 pl-2.5 pr-7 text-[12px] " +
+                    "os-type-label flex items-center gap-2 rounded-[var(--radius-sm)] py-1.5 pl-2.5 pr-7 " +
                     (active
                       ? "bg-accent-soft font-medium text-accent-hover"
                       : "text-ink-soft hover:bg-sunken hover:text-ink")
@@ -332,7 +338,7 @@ export function Sidebar() {
                       current === workspace.id ? null : workspace.id,
                     );
                   }}
-                  className="absolute right-1 top-1/2 grid h-6 w-6 -translate-y-1/2 place-items-center rounded text-[12px] text-ink-faint hover:bg-sunken hover:text-ink"
+                  className="absolute right-1 top-1/2 grid h-6 w-6 -translate-y-1/2 place-items-center rounded text-[length:var(--text-xs)] text-ink-faint hover:bg-sunken hover:text-ink"
                 >
                   ···
                 </button>
@@ -340,7 +346,7 @@ export function Sidebar() {
             );
           })}
           {workspaces !== null && workspaces.length === 0 ? (
-            <p className="px-2.5 text-[10.5px] text-ink-faint">
+            <p className="os-type-meta px-2.5 text-ink-faint">
               No workspaces yet.
             </p>
           ) : null}
@@ -348,9 +354,7 @@ export function Sidebar() {
       </div>
 
       <div>
-        <div className="mb-1.5 px-2.5 text-[9px] font-semibold uppercase tracking-[0.09em] text-ink-faint">
-          Apps
-        </div>
+        <div className="os-type-section mb-1.5 px-2.5">Apps</div>
         <div className="grid grid-cols-3 gap-[7px] px-0.5">
           {appFilters.map((item) => {
             const active = isActive(pathname, item.href, "prefix");
@@ -359,7 +363,7 @@ export function Sidebar() {
                 key={item.href}
                 href={item.href}
                 className={
-                  "flex h-[58px] flex-col items-center justify-center gap-[5px] rounded-[var(--radius-sm)] border text-[10px] shadow-[0_1px_2px_rgba(16,24,40,0.025)] " +
+                  "flex h-[58px] flex-col items-center justify-center gap-[5px] rounded-[var(--radius-sm)] border text-[length:var(--text-sm)] shadow-[0_1px_2px_rgba(16,24,40,0.025)] " +
                   (active
                     ? "border-accent-line bg-accent-soft text-accent-hover"
                     : "border-line bg-surface text-ink-soft hover:border-ink-faint")
@@ -386,13 +390,15 @@ export function Sidebar() {
         <Link
           href="/app/settings"
           className={
-            "flex items-center gap-2.5 rounded-[var(--radius-sm)] px-2.5 py-2 text-[12px] " +
+            "os-type-label flex items-center gap-2.5 rounded-[var(--radius-sm)] px-2.5 py-2 " +
             (isActive(pathname, "/app/settings", "prefix")
               ? "bg-accent-soft font-semibold text-accent-hover"
               : "text-ink-soft hover:bg-sunken hover:text-ink")
           }
         >
-          <span className="w-4 text-center text-[13px] text-ink-faint">⚙</span>
+          <span className="w-4 text-center text-[length:var(--text-sm)] text-ink-faint">
+            ⚙
+          </span>
           Settings
         </Link>
       </div>
@@ -438,7 +444,7 @@ export function Sidebar() {
               maxLength={100}
             />
             {createError ? (
-              <p className="text-[11px] text-danger">{createError}</p>
+              <p className="os-type-meta text-danger">{createError}</p>
             ) : null}
             <div className="flex justify-end gap-2">
               <Button
@@ -467,7 +473,7 @@ export function Sidebar() {
               maxLength={100}
             />
             {actionError ? (
-              <p className="text-[11px] text-danger">{actionError}</p>
+              <p className="os-type-meta text-danger">{actionError}</p>
             ) : null}
             <div className="flex justify-end gap-2">
               <Button
@@ -491,12 +497,12 @@ export function Sidebar() {
           onClose={() => setDeleteTarget(null)}
           title="Move workspace to Trash?"
         >
-          <p className="mb-4 text-[12px] leading-relaxed text-ink-soft">
+          <p className="os-type-secondary mb-4 leading-relaxed text-ink-soft">
             Move <span className="font-medium text-ink">{deleteTarget.name}</span>{" "}
             to Trash. Documents and history are kept and can be restored later.
           </p>
           {actionError ? (
-            <p className="mb-3 text-[11px] text-danger">{actionError}</p>
+            <p className="os-type-meta mb-3 text-danger">{actionError}</p>
           ) : null}
           <div className="flex justify-end gap-2">
             <Button

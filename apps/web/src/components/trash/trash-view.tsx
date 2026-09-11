@@ -2,8 +2,8 @@
 
 import * as React from "react";
 
+import { DocumentFormatIcon } from "@/components/files/document-format-icon";
 import {
-  formatLabel,
   formatUpdatedAt,
   userFacingError,
 } from "@/components/files/format";
@@ -106,15 +106,15 @@ export function TrashView() {
   return (
     <div className="mx-auto max-w-[920px] px-8 py-8">
       <div className="mb-6">
-        <div className="mb-1 flex items-center gap-2 font-mono text-[8.5px] font-medium uppercase tracking-[0.095em] text-ink-faint">
+        <div className="os-type-section mb-1 flex items-center gap-2">
           <TrashIcon className="h-3 w-3" />
           Library
         </div>
-        <h1 className="flex items-center gap-2 text-[22px] font-semibold tracking-[-0.03em] text-ink">
+        <h1 className="flex items-center gap-2 text-[length:var(--text-xl)] font-semibold tracking-[-0.03em] text-ink">
           <TrashIcon className="h-[18px] w-[18px] text-ink-soft" />
           Trash
         </h1>
-        <p className="mt-1 text-[12px] text-ink-soft">
+        <p className="os-type-secondary mt-1 text-ink-soft">
           Soft-deleted workspaces and documents. Restore only — permanent
           delete is not available yet.
         </p>
@@ -144,9 +144,7 @@ export function TrashView() {
 
       {(workspaces?.length ?? 0) > 0 ? (
         <section className="mb-8">
-          <h2 className="mb-2 text-[11px] font-semibold uppercase tracking-[0.06em] text-ink-faint">
-            Workspaces
-          </h2>
+          <h2 className="os-type-section mb-2">Workspaces</h2>
           <div className="flex flex-col gap-1.5">
             {workspaces!.map((item) => (
               <div
@@ -157,10 +155,10 @@ export function TrashView() {
                   <TrashIcon className="h-3.5 w-3.5" />
                 </span>
                 <div className="min-w-0 flex-1">
-                  <div className="truncate text-[12.5px] font-medium text-ink">
+                  <div className="os-type-label truncate font-medium text-ink">
                     {item.name}
                   </div>
-                  <div className="text-[10.5px] text-ink-faint">
+                  <div className="os-type-meta text-ink-faint">
                     Workspace · Deleted {formatUpdatedAt(item.deletedAt)}
                   </div>
                 </div>
@@ -181,26 +179,28 @@ export function TrashView() {
 
       {(documents?.length ?? 0) > 0 ? (
         <section>
-          <h2 className="mb-2 text-[11px] font-semibold uppercase tracking-[0.06em] text-ink-faint">
-            Documents
-          </h2>
+          <h2 className="os-type-section mb-2">Documents</h2>
           <div className="flex flex-col gap-1.5">
             {documents!.map((item) => (
               <div
                 key={item.id}
                 className="flex items-center gap-3 rounded-[var(--radius-md)] border border-line bg-surface px-3 py-2.5"
               >
-                <span className="relative grid h-8 w-8 shrink-0 place-items-center rounded-[8px] border border-line bg-[var(--paper)] font-mono text-[7.5px] text-ink-soft">
-                  {formatLabel(item.format)}
-                  <span className="absolute -right-1 -top-1 grid h-3.5 w-3.5 place-items-center rounded-full bg-danger-soft text-danger">
+                <span className="relative shrink-0">
+                  <DocumentFormatIcon
+                    format={item.format}
+                    size="md"
+                    className="text-ink-soft"
+                  />
+                  <span className="absolute -right-1.5 -top-1.5 grid h-3.5 w-3.5 place-items-center rounded-full bg-danger-soft text-danger">
                     <TrashIcon className="h-2 w-2" />
                   </span>
                 </span>
                 <div className="min-w-0 flex-1">
-                  <div className="truncate text-[12.5px] font-medium text-ink">
+                  <div className="os-type-label truncate font-medium text-ink">
                     {item.name}
                   </div>
-                  <div className="truncate text-[10.5px] text-ink-faint">
+                  <div className="os-type-meta truncate text-ink-faint">
                     {item.workspaceName}
                     {item.workspaceDeleted ? " (workspace in trash)" : ""}
                     {" · "}

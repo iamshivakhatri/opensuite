@@ -1,10 +1,14 @@
 import * as React from "react";
 import { cva, type VariantProps } from "class-variance-authority";
 
+import { focusRingClass } from "@/lib/focus-scope";
 import { cn } from "@/lib/utils";
 
 const buttonVariants = cva(
-  "inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-[var(--radius-sm)] text-[13px] font-medium transition-colors disabled:pointer-events-none disabled:opacity-50",
+  cn(
+    "inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-[var(--radius-sm)] text-[length:var(--text-sm)] font-medium transition-colors disabled:pointer-events-none disabled:opacity-50",
+    focusRingClass,
+  ),
   {
     variants: {
       variant: {
@@ -16,7 +20,8 @@ const buttonVariants = cva(
       },
       size: {
         default: "h-9 px-4",
-        sm: "h-8 px-3 text-xs",
+        /** Keep the shared readable scale — do not drop to Tailwind text-xs. */
+        sm: "h-8 px-3",
         /** Square icon-only button — see docs/future/frontend-audit.md Section R. */
         icon: "h-7 w-7 rounded-[var(--radius-md)] p-0",
       },

@@ -102,8 +102,8 @@ export function estimateDocumentTabWidth(input: {
   readonly name: string;
   readonly dirty?: boolean;
 }): number {
-  // format badge (~28) + gaps/padding (~28) + close (~18) + optional dirty (~10)
-  const chrome = 28 + 28 + 18 + (input.dirty ? 10 : 0);
+  // format icon (~16) + gaps/padding (~28) + close (~18) + optional dirty (~10)
+  const chrome = 16 + 28 + 18 + (input.dirty ? 10 : 0);
   const label = Math.ceil(input.name.length * 6.6);
   return chrome + label;
 }

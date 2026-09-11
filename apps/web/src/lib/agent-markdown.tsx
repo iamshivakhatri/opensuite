@@ -1,16 +1,29 @@
 import * as React from "react";
 
 import { parseBlocks, type MdBlock } from "./agent-markdown-parse";
+import { cn } from "@/lib/utils";
 
 /**
  * Lightweight markdown for agent replies — bold, italics, headings, hr, lists,
  * GFM tables, paragraphs. No HTML passthrough.
  */
-export function AgentMarkdown({ text }: { text: string }) {
+export function AgentMarkdown({
+  text,
+  streaming = false,
+}: {
+  text: string;
+  /** Slightly softer body while tokens are still arriving. */
+  streaming?: boolean;
+}) {
   const blocks = React.useMemo(() => parseBlocks(text), [text]);
 
   return (
-    <div className="agent-md text-[11px] leading-[1.65] text-ink-soft">
+    <div
+      className={cn(
+        "agent-md text-[length:var(--text-sm)] leading-[1.55]",
+        streaming ? "text-ink-soft" : "text-ink",
+      )}
+    >
       {blocks.map((block, index) => (
         <Block key={index} block={block} />
       ))}
@@ -23,24 +36,29 @@ export { parseBlocks } from "./agent-markdown-parse";
 function Block({ block }: { block: MdBlock }) {
   switch (block.kind) {
     case "hr":
-      return <hr className="my-2.5 border-0 border-t border-line" />;
+      return <hr className="my-2 border-0 border-t border-line" />;
     case "h": {
       const Tag = block.level === 1 ? "h3" : block.level === 2 ? "h4" : "h5";
       const size =
         block.level === 1
-          ? "text-[12.5px]"
+          ? "text-[length:var(--text-md)]"
           : block.level === 2
-            ? "text-[12px]"
-            : "text-[11.5px]";
+            ? "text-[length:var(--text-sm)]"
+            : "text-[length:var(--text-sm)]";
       return (
-        <Tag className={`mb-1.5 mt-2 font-semibold text-ink first:mt-0 ${size}`}>
+        <Tag
+          className={cn(
+            "mb-1 mt-2.5 font-semibold tracking-[-0.01em] text-ink first:mt-0",
+            size,
+          )}
+        >
           <Inline text={block.text} />
         </Tag>
       );
     }
     case "ul":
       return (
-        <ul className="mb-2 list-disc space-y-0.5 pl-4">
+        <ul className="mb-2 list-disc space-y-0.5 pl-4 text-ink-soft marker:text-ink-faint">
           {block.items.map((item, i) => (
             <li key={i}>
               <Inline text={item} />
@@ -50,7 +68,7 @@ function Block({ block }: { block: MdBlock }) {
       );
     case "ol":
       return (
-        <ol className="mb-2 list-decimal space-y-0.5 pl-4">
+        <ol className="mb-2 list-decimal space-y-0.5 pl-4 text-ink-soft marker:text-ink-faint">
           {block.items.map((item, i) => (
             <li key={i}>
               <Inline text={item} />
@@ -60,14 +78,14 @@ function Block({ block }: { block: MdBlock }) {
       );
     case "table":
       return (
-        <div className="mb-2.5 overflow-x-auto rounded-[8px] border border-line">
-          <table className="w-full border-collapse text-left text-[10.5px]">
+        <div className="mb-2 overflow-x-auto rounded-[var(--radius-sm)] border border-line">
+          <table className="w-full border-collapse text-left text-[length:var(--text-xs)]">
             <thead>
               <tr className="border-b border-line bg-sunken">
                 {block.headers.map((header, i) => (
                   <th
                     key={i}
-                    className="px-2.5 py-1.5 font-semibold text-ink"
+                    className="px-2 py-1.5 font-semibold text-ink"
                   >
                     <Inline text={header} />
                   </th>
@@ -78,7 +96,7 @@ function Block({ block }: { block: MdBlock }) {
               {block.rows.map((row, ri) => (
                 <tr key={ri} className="border-b border-line last:border-b-0">
                   {row.map((cell, ci) => (
-                    <td key={ci} className="px-2.5 py-1.5 text-ink-soft">
+                    <td key={ci} className="px-2 py-1.5 text-ink-soft">
                       <Inline text={cell} />
                     </td>
                   ))}
@@ -90,7 +108,7 @@ function Block({ block }: { block: MdBlock }) {
       );
     case "p":
       return (
-        <p className="mb-2 whitespace-pre-wrap last:mb-0">
+        <p className="mb-1.5 whitespace-pre-wrap last:mb-0">
           <Inline text={block.text} />
         </p>
       );
@@ -116,7 +134,7 @@ function Inline({ text }: { text: string }) {
         ) : part.kind === "code" ? (
           <code
             key={i}
-            className="rounded-[4px] bg-sunken px-1 py-0.5 font-mono text-[10px] text-ink"
+            className="rounded-[var(--radius-sm)] bg-sunken px-1 py-px font-mono text-[length:var(--text-xs)] text-ink"
           >
             {part.text}
           </code>

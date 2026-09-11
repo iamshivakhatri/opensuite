@@ -3,6 +3,7 @@
 import * as React from "react";
 import { usePathname, useRouter } from "next/navigation";
 
+import { DocumentFormatIcon } from "@/components/files/document-format-icon";
 import {
   formatLabel,
   formatUpdatedAt,
@@ -321,8 +322,8 @@ function CommandPalette({
       },
       {
         kind: "command",
-        id: "cmd-workspaces",
-        title: "Go to Workspaces",
+        id: "cmd-home",
+        title: "Go to Home",
         subtitle: "Command",
         run: () => go("/app"),
       },
@@ -537,13 +538,13 @@ function CommandPalette({
 
           <div ref={listRef} className="max-h-[420px] overflow-y-auto p-2">
             {error ? (
-              <p className="px-2 py-3 text-[11px] text-danger">{error}</p>
+              <p className="os-type-meta px-2 py-3 text-danger">{error}</p>
             ) : null}
             {loading ? (
-              <p className="px-2 py-3 text-[11px] text-ink-faint">Searching…</p>
+              <p className="os-type-meta px-2 py-3 text-ink-faint">Searching…</p>
             ) : null}
             {!loading && items.length === 0 ? (
-              <p className="px-2 py-3 text-[11px] text-ink-faint">
+              <p className="os-type-meta px-2 py-3 text-ink-faint">
                 {debounced
                   ? "No matching files or commands."
                   : "No recent files yet. Start typing to search."}
@@ -564,17 +565,21 @@ function CommandPalette({
                     (active ? "bg-accent-soft" : "hover:bg-sunken")
                   }
                 >
-                  <span className="grid h-7 w-7 shrink-0 place-items-center rounded-[8px] border border-line bg-[var(--paper)] font-mono text-[7.5px] text-ink-soft">
-                    {item.kind === "document"
-                      ? formatLabel(item.format)
-                      : item.kind === "workspace"
-                        ? "WS"
-                        : "⌘"}
-                  </span>
+                  {item.kind === "document" ? (
+                    <DocumentFormatIcon
+                      format={item.format}
+                      size="md"
+                      className="text-ink-soft"
+                    />
+                  ) : (
+                    <span className="grid h-7 w-7 shrink-0 place-items-center rounded-[8px] border border-line bg-[var(--paper)] font-mono text-[length:var(--text-2xs)] text-ink-soft">
+                      {item.kind === "workspace" ? "WS" : "⌘"}
+                    </span>
+                  )}
                   <span className="min-w-0 flex-1">
                     <span
                       className={
-                        "block truncate text-[12.5px] " +
+                        "os-type-label block truncate " +
                         (active
                           ? "font-semibold text-accent-hover"
                           : "font-medium text-ink")
@@ -582,7 +587,7 @@ function CommandPalette({
                     >
                       {item.title}
                     </span>
-                    <span className="block truncate text-[10.5px] text-ink-faint">
+                    <span className="os-type-meta block truncate text-ink-faint">
                       {item.subtitle}
                     </span>
                   </span>
@@ -591,7 +596,7 @@ function CommandPalette({
             })}
           </div>
 
-          <div className="flex items-center justify-between border-t border-line px-3 py-2 text-[10px] text-ink-faint">
+          <div className="os-type-meta flex items-center justify-between border-t border-line px-3 py-2 text-ink-faint">
             <span>↑↓ navigate · ↵ open · esc close</span>
             <span>⌘K / Ctrl+K</span>
           </div>
@@ -626,7 +631,7 @@ function CommandPalette({
           overlayClassName="z-[var(--z-popover)]"
         >
           {workspaces.length === 0 ? (
-            <p className="text-[12px] text-ink-soft">
+            <p className="os-type-secondary text-ink-soft">
               Create a workspace first, then upload a file.
             </p>
           ) : (
@@ -663,7 +668,7 @@ function CommandPalette({
           overlayClassName="z-[var(--z-popover)]"
         >
           {workspaces.length === 0 ? (
-            <p className="text-[12px] text-ink-soft">
+            <p className="os-type-secondary text-ink-soft">
               Create a workspace first, then create a document.
             </p>
           ) : (

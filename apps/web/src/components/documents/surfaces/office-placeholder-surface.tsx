@@ -19,10 +19,10 @@ export function OfficePlaceholderSurface({
   return (
     <div className="flex h-full min-h-0 flex-1 items-start justify-center overflow-auto bg-canvas px-9 pb-24 pt-12">
       <div className={surfaceClassName(format)}>
-        <div className="mb-3.5 font-mono text-[8.5px] font-medium uppercase tracking-[0.095em] text-ink-faint">
+        <div className="os-type-section mb-3.5">
           {formatLabel(format)} · Preview
         </div>
-        <p className="text-[12.5px] leading-relaxed text-ink-faint">{label}</p>
+        <p className="os-type-secondary text-ink-faint">{label}</p>
       </div>
     </div>
   );
@@ -30,10 +30,10 @@ export function OfficePlaceholderSurface({
 
 function surfaceClassName(format: Exclude<DocumentFormat, "docx">): string {
   const base =
-    "grid place-items-center border border-line bg-surface text-center shadow-[0_1px_2px_rgba(16,24,40,0.06),0_18px_60px_rgba(16,24,40,0.09)]";
+    "grid place-items-center border border-line bg-surface text-center shadow-[var(--elevation-xs),var(--elevation-sm)]";
 
   if (format === "pptx") {
-    return `${base} aspect-video w-full max-w-[760px] rounded-[18px] px-14 py-12`;
+    return `${base} aspect-video w-full max-w-[760px] rounded-[var(--radius-lg)] px-14 py-12`;
   }
-  return `${base} aspect-[4/3] w-full max-w-[860px] rounded-[10px] px-14 py-16`;
+  return `${base} aspect-[4/3] w-full max-w-[860px] rounded-[var(--radius-md)] px-14 py-16`;
 }

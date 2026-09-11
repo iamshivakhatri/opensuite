@@ -135,6 +135,15 @@ export interface InspectedBodyBlock {
   readonly text?: string;
   /** Related table handle when kind is table — optional transport field. */
   readonly tableHandle?: string;
+  /** Picture details/handle when the engine supplies one. */
+  readonly picture?: {
+    readonly handle: string;
+    readonly format: string;
+    readonly widthEmu: number;
+    readonly heightEmu: number;
+    readonly altText?: string;
+    readonly affordances?: readonly DocumentAffordance[];
+  };
 }
 
 /**

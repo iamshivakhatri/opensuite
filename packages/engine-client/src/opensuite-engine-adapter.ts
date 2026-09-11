@@ -1,3 +1,4 @@
+import { Buffer } from "node:buffer";
 import {
   Capabilities,
   DEFAULT_INSPECT_PAGE_LIMIT,
@@ -32,6 +33,7 @@ import type {
   DocxDeleteTableOperation,
   DocxDeleteTableRowOperation,
   DocxEngineBinding,
+  DocxExtendedOperationName,
   DocxEngineDiagnostic,
   DocxInsertParagraphOperation,
   DocxInsertParagraphsOperation,
@@ -49,6 +51,8 @@ import type {
   DocxSetParagraphStyleOperation,
   DocxSetTableCellsTextOperation,
   DocxSetTableFormattingOperation,
+  DocxSetTableCellShadingOperation,
+  DocxSetTableColumnWidthsOperation,
   DocxSetTextFormattingOperation,
   DocxTableAlignment,
   DocxTableBorders,
@@ -80,12 +84,27 @@ const DOCX_MUTATION_TYPES = new Set([
   "document.set_text_formatting",
   "document.set_table_cells_text",
   "document.insert_table_rows",
+  "document.insert_table_row",
   "document.insert_table_column",
   "document.create_table",
   "document.delete_table",
   "document.delete_table_row",
   "document.delete_table_column",
   "document.set_table_formatting",
+  "document.set_table_column_widths",
+  "document.set_table_cell_shading",
+  "document.set_content_control_text",
+  "document.set_paragraphs_list",
+  "document.set_hyperlink",
+  "document.insert_picture",
+  "document.delete_picture",
+  "document.set_picture_size",
+  "document.replace_picture",
+  "document.insert_page_break",
+  "document.delete_page_break",
+  "document.set_page_setup",
+  "document.set_header_footer_text",
+  "document.set_page_number",
 ]);
 export interface OpenSuiteEngineAdapterOptions {
   readonly artifactLoader: DocumentArtifactLoader;
@@ -321,6 +340,13 @@ export function createOpenSuiteEngineAdapter(
       }
 
       if (operation.type === "document.set_text_formatting") {
+        if (Object.keys(operation.payload).some((key) => ["color", "underline", "highlight", "strikethrough", "verticalAlignment"].includes(key))) {
+          if (!binding.executeDocxExtended) return operationError("UNSUPPORTED_OPERATION", "The installed DOCX binding does not support this operation");
+          const payload = mapExtendedPayload(operation);
+          if (!payload.ok) return payload.error;
+          const engineResponse = await binding.executeDocxExtended(inputBytes, "executeDocxSetTextFormatting", payload.payload);
+          return mapEngineMutationResult(engineResponse, operation.type);
+        }
         const mapped = mapSetTextFormattingOperation(operation);
         if (!mapped.ok) {
           return mapped.error;
@@ -416,6 +442,37 @@ export function createOpenSuiteEngineAdapter(
         return mapEngineMutationResult(engineResponse, operation.type);
       }
 
+      if (operation.type === "document.set_table_column_widths") {
+        if (!binding.executeDocxSetTableColumnWidths) return operationError("UNSUPPORTED_OPERATION", "The installed DOCX binding does not support table column widths");
+        const mapped = mapSetTableColumnWidthsOperation(operation);
+        if (!mapped.ok) return mapped.error;
+        const engineResponse = await binding.executeDocxSetTableColumnWidths(inputBytes, mapped.operation);
+        return mapEngineMutationResult(engineResponse, operation.type);
+      }
+
+      if (operation.type === "document.set_table_cell_shading") {
+        if (!binding.executeDocxSetTableCellShading) return operationError("UNSUPPORTED_OPERATION", "The installed DOCX binding does not support table cell shading");
+        const mapped = mapSetTableCellShadingOperation(operation);
+        if (!mapped.ok) return mapped.error;
+        const engineResponse = await binding.executeDocxSetTableCellShading(inputBytes, mapped.operation);
+        return mapEngineMutationResult(engineResponse, operation.type);
+      }
+
+      const extendedName = EXTENDED_OPERATION_NAMES[operation.type];
+      if (extendedName) {
+        if (!binding.executeDocxExtended) {
+          return operationError("UNSUPPORTED_OPERATION", "The installed DOCX binding does not support this operation");
+        }
+        const payload = mapExtendedPayload(operation);
+        if (!payload.ok) return payload.error;
+        const engineResponse = await binding.executeDocxExtended(
+          inputBytes,
+          extendedName,
+          payload.payload,
+        );
+        return mapEngineMutationResult(engineResponse, operation.type);
+      }
+
       const mapped = mapSetTableFormattingOperation(operation);
       if (!mapped.ok) {
         return mapped.error;
@@ -427,6 +484,42 @@ export function createOpenSuiteEngineAdapter(
       return mapEngineMutationResult(engineResponse, operation.type);
     },
   };
+}
+
+const EXTENDED_OPERATION_NAMES: Readonly<Record<string, DocxExtendedOperationName>> = {
+  "document.set_content_control_text": "executeDocxSetContentControlText",
+  "document.set_paragraphs_list": "executeDocxSetParagraphsList",
+  "document.set_hyperlink": "executeDocxSetHyperlink",
+  "document.insert_picture": "executeDocxInsertPicture",
+  "document.delete_picture": "executeDocxDeletePicture",
+  "document.set_picture_size": "executeDocxSetPictureSize",
+  "document.replace_picture": "executeDocxReplacePicture",
+  "document.insert_page_break": "executeDocxInsertPageBreak",
+  "document.delete_page_break": "executeDocxDeletePageBreak",
+  "document.set_page_setup": "executeDocxSetPageSetup",
+  "document.set_header_footer_text": "executeDocxSetHeaderFooterText",
+  "document.set_page_number": "executeDocxSetPageNumber",
+  "document.insert_table_row": "executeDocxInsertTableRow",
+};
+
+function mapExtendedPayload(operation: DocumentOperation):
+  | { readonly ok: true; readonly payload: Record<string, unknown> }
+  | { readonly ok: false; readonly error: OperationResult } {
+  // Tool schemas validate model input. This adapter only adds the version-local
+  // engine revision and turns JSON byte arrays into Node buffers at the boundary.
+  const payload: Record<string, unknown> = {
+    ...operation.payload,
+    baseRevision: operation.baseVersionId,
+  };
+  for (const key of ["imageBytes", "replacementBytes"] as const) {
+    if (payload[key] !== undefined) {
+      if (!Array.isArray(payload[key]) || !payload[key].every((v) => Number.isInteger(v) && v >= 0 && v <= 255)) {
+        return { ok: false, error: operationError("VALIDATION_FAILED", `${operation.type} ${key} must be byte values`) };
+      }
+      payload[key] = Buffer.from(payload[key] as number[]);
+    }
+  }
+  return { ok: true, payload };
 }
 
 /**
@@ -465,6 +558,8 @@ export function mapRustCapabilitiesToRuntime(
     rustIds.includes("delete_table_row") ||
     rustIds.includes("delete_table_column") ||
     rustIds.includes("set_table_formatting") ||
+    rustIds.includes("set_table_column_widths") ||
+    rustIds.includes("set_table_cell_shading") ||
     rustIds.includes("set_table_cell_text") ||
     rustIds.includes("insert_table_row")
   ) {
@@ -823,6 +918,16 @@ function mapInspectPayload(
             : {}),
           ...(item.tableHandle != null && item.tableHandle !== undefined
             ? { tableHandle: item.tableHandle }
+            : {}),
+          ...(item.picture !== undefined
+            ? { picture: {
+              handle: item.picture.handle,
+              format: item.picture.format,
+              widthEmu: item.picture.widthEmu,
+              heightEmu: item.picture.heightEmu,
+              ...(item.picture.altText !== undefined ? { altText: item.picture.altText } : {}),
+              ...optionalAffordances(item.picture.affordances),
+            } }
             : {}),
         })),
       };
@@ -1873,6 +1978,38 @@ export function mapSetTableFormattingOperation(
       baseRevision: operation.baseVersionId,
     },
   };
+}
+
+export function mapSetTableColumnWidthsOperation(operation: DocumentOperation):
+  | { readonly ok: true; readonly operation: DocxSetTableColumnWidthsOperation }
+  | { readonly ok: false; readonly error: OperationResult } {
+  const table = mapTableTarget(operation.payload.table, "document.set_table_column_widths");
+  if (!table.ok) return table;
+  if (!Array.isArray(operation.payload.widthsTwips) || operation.payload.widthsTwips.length === 0 || !operation.payload.widthsTwips.every((width) => Number.isInteger(width) && width > 0)) {
+    return { ok: false, error: operationError("VALIDATION_FAILED", "document.set_table_column_widths requires positive integer widthsTwips") };
+  }
+  return { ok: true, operation: { table: table.value, widthsTwips: operation.payload.widthsTwips as number[], baseRevision: operation.baseVersionId } };
+}
+
+export function mapSetTableCellShadingOperation(operation: DocumentOperation):
+  | { readonly ok: true; readonly operation: DocxSetTableCellShadingOperation }
+  | { readonly ok: false; readonly error: OperationResult } {
+  const table = mapTableTarget(operation.payload.table, "document.set_table_cell_shading");
+  if (!table.ok) return table;
+  if (!Array.isArray(operation.payload.updates) || operation.payload.updates.length === 0) {
+    return { ok: false, error: operationError("VALIDATION_FAILED", "document.set_table_cell_shading requires updates") };
+  }
+  const updates: DocxSetTableCellShadingOperation["updates"][number][] = [];
+  for (const raw of operation.payload.updates) {
+    if (!isRecord(raw)) return { ok: false, error: operationError("VALIDATION_FAILED", "document.set_table_cell_shading updates must be objects") };
+    const target = mapCellTarget(raw, "document.set_table_cell_shading");
+    if (!target.ok) return target;
+    if (raw.fill !== undefined && (typeof raw.fill !== "string" || !/^[0-9A-Fa-f]{6}$/.test(raw.fill))) {
+      return { ok: false, error: operationError("VALIDATION_FAILED", "document.set_table_cell_shading fill must be a six-digit hex color") };
+    }
+    updates.push({ target: target.value, ...(typeof raw.fill === "string" ? { fill: raw.fill.toUpperCase() } : {}) });
+  }
+  return { ok: true, operation: { table: table.value, updates, baseRevision: operation.baseVersionId } };
 }
 
 function mapTableTarget(

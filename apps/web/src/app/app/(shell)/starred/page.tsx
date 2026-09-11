@@ -7,7 +7,7 @@ export default function StarredPage() {
     <DocumentLibraryView
       kind="starred"
       title="Starred"
-      description="Files you have starred across your workspaces."
+      description="Documents you saved for quick access across workspaces."
     />
   );
 }
