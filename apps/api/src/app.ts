@@ -28,9 +28,18 @@ import {
 import type { ConfirmationBridge } from "./agent/confirmation-bridge.js";
 import {
   createConfiguredAgentModel,
+  createResolvedAgentModel,
 } from "./agent/model/index.js";
+import { createAiModelResolver } from "./ai-preferences/resolver.js";
+import { createAiPreferenceService } from "./ai-preferences/service.js";
 import type { SessionAuth } from "./auth/session.js";
 import type { AppConfig } from "./config/index.js";
+import { createCredentialCipher } from "./credentials/crypto.js";
+import { createProviderCredentialRepository } from "./credentials/repository.js";
+import {
+  createProviderCredentialService,
+  type ProviderCredentialService,
+} from "./credentials/service.js";
 import { createDocumentService } from "./documents/service.js";
 import {
   createDocumentRuntimeResolver,
@@ -41,9 +50,11 @@ import { createSearchService } from "./documents/search.js";
 import type { AuthHandler } from "./routes/auth.js";
 import { registerAgentRoutes } from "./routes/agent.js";
 import { registerAuthRoutes } from "./routes/auth.js";
+import { registerAiPreferenceRoutes } from "./routes/ai-preferences.js";
 import { registerDocumentRoutes } from "./routes/documents.js";
 import { registerHealthRoutes } from "./routes/health.js";
 import { registerMeRoutes } from "./routes/me.js";
+import { registerProviderCredentialRoutes } from "./routes/provider-credentials.js";
 import { registerSearchRoutes } from "./routes/search.js";
 import { registerTrashRoutes } from "./routes/trash.js";
 import { registerWorkspaceRoutes } from "./routes/workspaces.js";
@@ -84,6 +95,8 @@ export interface AppDependencies {
   readonly db: Db;
   readonly storage: ObjectStorage;
   readonly agent?: AgentAppDependencies;
+  /** Test/override: inject credential service without encryption-key config. */
+  readonly credentials?: ProviderCredentialService;
   /** Test/override: blank DOCX bytes without loading N-API. */
   readonly createBlankDocxBytes?: () => Uint8Array | Promise<Uint8Array>;
 }
@@ -157,6 +170,25 @@ export async function buildApp(
   });
 
   const workspaces = createWorkspaceService(deps.db);
+  const credentials =
+    deps.credentials ??
+    (config.aiCredentialEncryptionKey
+      ? createProviderCredentialService(
+          createProviderCredentialRepository(deps.db),
+          createCredentialCipher(config.aiCredentialEncryptionKey),
+        )
+      : null);
+  const aiPreferences = createAiPreferenceService(deps.db);
+  const aiModelResolver =
+    config.agent.provider === "anthropic" ||
+    config.agent.provider === "openai" ||
+    config.agent.provider === "openrouter"
+      ? createAiModelResolver({
+          preferences: aiPreferences,
+          credentials,
+          managed: config.agent,
+        })
+      : null;
 
   // Production: load N-API once for DOCX runtime + blank DOCX creation.
   // Tests may inject runtime and/or createBlankDocxBytes without the native binding.
@@ -226,6 +258,9 @@ export async function buildApp(
       persistence: agentPersistence,
       documents,
       model: deps.agent?.model ?? createConfiguredAgentModel(config),
+      ...(aiModelResolver && !deps.agent?.model
+        ? { resolveModel: async (userId: string) => createResolvedAgentModel(await aiModelResolver.resolve(userId)) }
+        : {}),
       tools: documentTools,
       runtime: documentRuntime,
       resolveRuntime,
@@ -245,7 +280,9 @@ export async function buildApp(
   registerHealthRoutes(app);
   registerAuthRoutes(app, deps.auth);
   registerMeRoutes(app, deps.auth);
+  registerAiPreferenceRoutes(app, deps.auth, aiPreferences);
   registerWorkspaceRoutes(app, deps.auth, workspaces);
+  registerProviderCredentialRoutes(app, deps.auth, credentials);
   registerDocumentRoutes(app, deps.auth, workspaces, documents, preferences);
   registerTrashRoutes(app, deps.auth, workspaces, documents);
   registerSearchRoutes(app, deps.auth, search);

@@ -64,8 +64,19 @@ export function createProviderCredentialService(
       return credential ? toMetadata(credential) : null;
     },
 
+    async listMetadata(input: {
+      userId: string;
+    }): Promise<ProviderCredentialMetadata[]> {
+      const credentials = await repository.listByUser(input.userId);
+      return credentials.map(toMetadata);
+    },
+
     delete(input: { userId: string; provider: ProviderCredentialProvider }) {
       return repository.delete(input.userId, input.provider);
     },
   };
 }
+
+export type ProviderCredentialService = ReturnType<
+  typeof createProviderCredentialService
+>;

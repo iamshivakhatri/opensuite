@@ -37,3 +37,23 @@ export const providerCredential = pgTable(
     index("provider_credential_user_id_idx").on(table.userId),
   ],
 );
+
+export const aiCredentialSourceEnum = pgEnum("ai_credential_source", [
+  "byok",
+  "managed",
+]);
+
+/** One active model choice per user; credentials remain in provider_credential. */
+export const aiPreference = pgTable("ai_preference", {
+  userId: text("user_id")
+    .primaryKey()
+    .references(() => user.id, { onDelete: "cascade" }),
+  provider: providerCredentialProviderEnum("provider").notNull(),
+  model: text("model").notNull(),
+  credentialSource: aiCredentialSourceEnum("credential_source").notNull(),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at")
+    .defaultNow()
+    .$onUpdate(() => new Date())
+    .notNull(),
+});

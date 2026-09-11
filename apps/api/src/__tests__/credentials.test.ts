@@ -43,6 +43,12 @@ class MemoryCredentialRepository implements ProviderCredentialRepository {
     return this.records.get(this.recordKey(userId, provider)) ?? null;
   }
 
+  async listByUser(userId: string) {
+    return [...this.records.values()].filter(
+      (record) => record.userId === userId,
+    );
+  }
+
   async delete(
     userId: string,
     provider: "anthropic" | "openai" | "openrouter",
@@ -166,4 +172,25 @@ test("credential service upserts one credential per user and provider", async ()
   assert.equal(repository.records.size, 1);
   assert.equal(first.id, second.id);
   assert.equal(await service.getSecret(context), "sk-new");
+});
+
+test("credential service lists only the calling user's connected providers", async () => {
+  const repository = new MemoryCredentialRepository();
+  const service = createProviderCredentialService(
+    repository,
+    createCredentialCipher(key),
+  );
+
+  await service.save({ ...context, secret: "sk-a" });
+  await service.save({
+    userId: "user-b",
+    provider: "anthropic",
+    secret: "sk-b",
+  });
+
+  const listed = await service.listMetadata({ userId: "user-a" });
+  assert.equal(listed.length, 1);
+  assert.equal(listed[0]?.provider, "openai");
+  assert.equal(listed[0]?.connected, true);
+  assert.equal("encryptedPayload" in listed[0]!, false);
 });

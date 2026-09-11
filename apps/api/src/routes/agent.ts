@@ -908,13 +908,14 @@ function mapExecutionError(reply: FastifyReply, error: unknown) {
       });
     }
     if (
+      error.code === "AI_CONFIGURATION_INVALID" ||
       error.code === "AGENT_EXECUTION_FAILED" ||
       error.code === "AGENT_PERSISTENCE_FAILED"
     ) {
-      return reply.status(500).send({
+      return reply.status(error.code === "AI_CONFIGURATION_INVALID" ? 409 : 500).send({
         error: {
-          statusCode: 500,
-          message: "Agent run failed",
+          statusCode: error.code === "AI_CONFIGURATION_INVALID" ? 409 : 500,
+          message: error.code === "AI_CONFIGURATION_INVALID" ? error.message : "Agent run failed",
           code: error.code,
         },
       });

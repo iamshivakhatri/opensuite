@@ -77,6 +77,34 @@ export interface CreateConfiguredAgentModelOptions {
   readonly openrouterClient?: OpenAIChatCompletionsClient;
 }
 
+export interface ResolvedAgentModelConfig {
+  readonly provider: "anthropic" | "openai" | "openrouter";
+  readonly model: string;
+  readonly apiKey: string;
+}
+
+export function createResolvedAgentModel(
+  resolved: ResolvedAgentModelConfig,
+  options: CreateConfiguredAgentModelOptions = {},
+): AgentModel {
+  if (resolved.provider === "anthropic") {
+    return createAnthropicAgentModel({
+      client: options.anthropicClient ?? (new Anthropic({ apiKey: resolved.apiKey }) as unknown as AnthropicMessagesClient),
+      model: resolved.model,
+    });
+  }
+  if (resolved.provider === "openai") {
+    return createOpenAIAgentModel({
+      client: options.openaiClient ?? (new OpenAI({ apiKey: resolved.apiKey }) as unknown as OpenAIResponsesClient),
+      model: resolved.model,
+    });
+  }
+  return createOpenRouterAgentModel({
+    client: options.openrouterClient ?? (new OpenAI({ apiKey: resolved.apiKey, baseURL: OPENROUTER_BASE_URL }) as unknown as OpenAIChatCompletionsClient),
+    model: resolved.model,
+  });
+}
+
 /**
  * Composition boundary for agent models. Routes/UI stay provider-agnostic.
  */

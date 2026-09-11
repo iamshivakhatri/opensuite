@@ -43,6 +43,7 @@ import { devLog } from "../dev-log.js";
 export type AgentExecutionErrorCode =
   | "THREAD_NOT_FOUND"
   | "DOCUMENT_NOT_FOUND"
+  | "AI_CONFIGURATION_INVALID"
   | "AGENT_EXECUTION_FAILED"
   | "AGENT_PERSISTENCE_FAILED";
 
@@ -105,6 +106,8 @@ export interface AgentExecutionServiceDeps {
     | "createBlankDocxDocument"
   >;
   readonly model: AgentModel;
+  /** Resolves a user-scoped model before a run is made durable. */
+  readonly resolveModel?: (userId: string) => Promise<AgentModel>;
   /**
    * Optional fixed tool registry (tests). When omitted, the runner discovers
    * document tools once from DocumentRuntime.capabilities(primaryDocument).
@@ -159,6 +162,18 @@ export function createAgentExecutionService(deps: AgentExecutionServiceDeps) {
       throw new AgentExecutionError("THREAD_NOT_FOUND", "Agent thread not found");
     }
 
+    let model = deps.model;
+    if (deps.resolveModel) {
+      try {
+        model = await deps.resolveModel(input.userId);
+      } catch (error) {
+        throw new AgentExecutionError(
+          "AI_CONFIGURATION_INVALID",
+          error instanceof Error ? error.message : "AI configuration is unavailable",
+        );
+      }
+    }
+
     const resolved = await resolveRunDocuments(
       documents,
       thread,
@@ -202,6 +217,7 @@ export function createAgentExecutionService(deps: AgentExecutionServiceDeps) {
 
     const result = continueExecution({
       deps,
+      model,
       persistence,
       thread,
       userMessage,
@@ -234,6 +250,7 @@ export function createAgentExecutionService(deps: AgentExecutionServiceDeps) {
 
 async function continueExecution(input: {
   deps: AgentExecutionServiceDeps;
+  model: AgentModel;
   persistence: AgentPersistenceService;
   thread: AgentThread;
   userMessage: AgentMessage;
@@ -247,6 +264,7 @@ async function continueExecution(input: {
 }): Promise<AgentExecutionResult> {
   const {
     deps,
+    model,
     persistence,
     thread,
     userMessage,
@@ -370,7 +388,7 @@ async function continueExecution(input: {
       });
 
   const runner = new AgentRunner({
-    model: deps.model,
+    model,
     ...documentRun,
     events,
     confirmation: deps.confirmation,

@@ -11,8 +11,11 @@ _Read this before starting any work. Keep it a concise current-state handoff, no
 
 ## Just Completed
 
-* BYOK credential foundation: per-user/provider encrypted credential table and
-  AES-256-GCM server-side domain service; no routes or runtime wiring yet.
+* BYOK Phase A3: per-user provider/model/source preference and server-side
+  agent model resolution; managed fallback remains for users without a choice.
+* BYOK Phase A2: authenticated provider-credential lifecycle APIs
+  (`GET/PUT /api/provider-credentials`, `DELETE /api/provider-credentials/:provider`)
+  over the A1 domain service; safe metadata only; no agent/runtime wiring.
 * DOCX agent surface covers the current 35-capability Node manifest, including table
   column widths and cell shading; all writes use the immutable-version executor.
 * Trash removes the file from open tabs (no re-upsert race).
@@ -33,10 +36,9 @@ _Read this before starting any work. Keep it a concise current-state handoff, no
 
 | Check | Status |
 |---|---|
-| `pnpm --filter @opensuite/web typecheck` | **Pass** |
-| `pnpm --filter @opensuite/web test` | **Pass** (33) |
+| `pnpm --filter @opensuite/api typecheck` | **Pass** |
+| `pnpm --filter @opensuite/api test` | **Pass** (120; 20 skipped DB/integration) |
 | `git diff --check` | **Pass** |
-| Live auth screenshots | User-provided |
 
 ## Intentionally Deferred
 
@@ -44,8 +46,8 @@ _Read this before starting any work. Keep it a concise current-state handoff, no
 * Confirmation bridge durable resume / Redis workers
 * Frontend Phase 3 panel file split
 * Further generic UI polish
+* Settings UI; usage metering, managed credits, billing and quotas
 
 ## Recommended Next Step
 
-Add authenticated credential lifecycle routes that use the BYOK domain service;
-keep provider resolution and settings UI separate milestones.
+Add a Settings UI for AI preference and credential lifecycle APIs.

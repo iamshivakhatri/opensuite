@@ -20,6 +20,7 @@ export interface StoredProviderCredential {
 export interface ProviderCredentialRepository {
   save(input: Omit<StoredProviderCredential, "id" | "createdAt" | "updatedAt">): Promise<StoredProviderCredential>;
   get(userId: string, provider: ProviderCredentialProvider): Promise<StoredProviderCredential | null>;
+  listByUser(userId: string): Promise<StoredProviderCredential[]>;
   delete(userId: string, provider: ProviderCredentialProvider): Promise<boolean>;
 }
 
@@ -93,6 +94,14 @@ export function createProviderCredentialRepository(
         )
         .limit(1);
       return row ? toStoredCredential(row) : null;
+    },
+
+    async listByUser(userId) {
+      const rows = await db
+        .select()
+        .from(schema.providerCredential)
+        .where(eq(schema.providerCredential.userId, userId));
+      return rows.map(toStoredCredential);
     },
 
     async delete(userId, provider) {
