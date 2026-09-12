@@ -79,6 +79,10 @@ test("tool turn finalizes all outcomes before completion events", async () => {
     events: sink,
     toolTurnLifecycle: {
       begin() { order.push("begin"); },
+      beforeTool({ toolName, toolCallId, runId }) {
+        assert.equal(runId, "run-1");
+        order.push(`before:${toolName}:${toolCallId}`);
+      },
       finalize({ toolOutcomes }) {
         order.push("finalize");
         assert.equal(sink.events.filter((event) => event.type === "tool.completed").length, 0);
@@ -88,7 +92,7 @@ test("tool turn finalizes all outcomes before completion events", async () => {
   });
   const result = await runner.run(baseRequest());
   assert.equal(result.status, "completed");
-  assert.deepEqual(order, ["begin", "one", "two", "finalize"]);
+  assert.deepEqual(order, ["begin", "before:one:a", "one", "before:two:b", "two", "finalize"]);
   assert.deepEqual(
     sink.events.filter((event) => event.type === "tool.completed").map((event) =>
       event.type === "tool.completed" ? event.summary : undefined,

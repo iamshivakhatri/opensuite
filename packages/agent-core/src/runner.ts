@@ -71,9 +71,16 @@ export interface ToolBatchContext {
 
 /** Domain-owned lifecycle around one assistant response's tool calls. */
 export interface ToolTurnLifecycle {
-  begin(context: { readonly runId: string; readonly toolCalls: readonly ModelToolCall[] }): Promise<void> | void;
-  finalize(context: ToolBatchContext): Promise<readonly ToolOutcome[]> | readonly ToolOutcome[];
-  abandon?(context: { readonly runId: string; readonly toolCalls: readonly ModelToolCall[] }): Promise<void> | void;
+  begin(context: ToolTurnLifecycleContext): Promise<void> | void;
+  beforeTool?(context: ToolTurnLifecycleContext & { readonly toolCallId: string; readonly toolName: string }): Promise<void> | void;
+  finalize(context: ToolBatchContext & Omit<ToolTurnLifecycleContext, "toolCalls">): Promise<readonly ToolOutcome[]> | readonly ToolOutcome[];
+  abandon?(context: ToolTurnLifecycleContext): Promise<void> | void;
+}
+
+export interface ToolTurnLifecycleContext {
+  readonly runId: string;
+  readonly toolCalls: readonly ModelToolCall[];
+  readonly events: AgentEventSink;
 }
 
 export interface AgentRunnerOptions {
@@ -383,7 +390,8 @@ export class AgentRunner {
           };
         }
 
-        await this.toolTurnLifecycle?.begin({ runId: request.runId, toolCalls });
+        const lifecycleContext = { runId: request.runId, toolCalls, events: this.events };
+        await this.toolTurnLifecycle?.begin(lifecycleContext);
         let turnOutcomes: readonly ToolOutcome[];
         try {
           const executed = await this.executeToolCalls(
@@ -392,9 +400,11 @@ export class AgentRunner {
           );
           turnOutcomes = await this.toolTurnLifecycle?.finalize({
             content: response.content, toolCalls, toolOutcomes: executed, tools: activeTools,
+            runId: lifecycleContext.runId,
+            events: lifecycleContext.events,
           }) ?? executed;
         } catch (error) {
-          await this.toolTurnLifecycle?.abandon?.({ runId: request.runId, toolCalls });
+          await this.toolTurnLifecycle?.abandon?.(lifecycleContext);
           throw error;
         }
         if (this.toolTurnLifecycle) {
@@ -618,6 +628,14 @@ export class AgentRunner {
     infrastructureFailures: Diagnostic[],
   ): Promise<ToolOutcome> {
     this.throwIfAborted(signal);
+
+    await this.toolTurnLifecycle?.beforeTool?.({
+      runId: request.runId,
+      toolCalls: [call],
+      events: this.events,
+      toolCallId: call.id,
+      toolName: call.name,
+    });
 
     const priorFailures = toolFailureCounts.get(call.name) ?? 0;
     if (priorFailures >= MAX_FAILURES_PER_TOOL) {
