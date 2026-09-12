@@ -8,14 +8,14 @@ import { userFacingError } from "@/components/files/format";
 import {
   agentRunDurationMs,
   formatProgressElapsed,
-  groupProgressLines,
   latestProgressHeadline,
-  progressSummaryLabel,
+  presentAgentRun,
   reduceAgentProgress,
   visibleAgentProgress,
   type AgentProgressLine,
   type AgentTurnProgress,
 } from "@/lib/agent-progress";
+import { AgentRunProgress } from "@/components/documents/agent-run-progress";
 import { AgentMarkdown } from "@/lib/agent-markdown";
 import { shouldAcceptSubmit } from "@/lib/agent-submit";
 import {
@@ -305,8 +305,8 @@ export function DocumentAgentPanel({
       runIdRef.current = null;
       reconnectAttemptsRef.current = 0;
       runStartedAtRef.current = null;
-      // Keep lastTurn for expandable timeline; clear live progress.
-      // Leave timelineOpen as the user left it (Cursor keeps Thought visible).
+      // Keep lastTurn for expandable details; collapse primary execution UX.
+      setTimelineOpen(false);
       setProgress([]);
     }
   }, []);
@@ -1123,11 +1123,6 @@ export function DocumentAgentPanel({
   const isLiveTurn = showLiveDraft || liveHeadline !== null || busy;
   const isGenerating =
     liveHeadline?.id === "writing" || liveHeadline?.label === "Generating…";
-  const timelineLines = isLiveTurn
-    ? visibleProgress
-    : lastTurn
-      ? visibleAgentProgress(lastTurn.lines)
-      : [];
   const wallClockMs =
     runStartedAtRef.current !== null
       ? Math.max(0, nowTick - runStartedAtRef.current)
@@ -1138,16 +1133,16 @@ export function DocumentAgentPanel({
     (cancelling ||
       submitting ||
       (activeRun !== null && isActiveAgentRunStatus(activeRun.status)));
-  const showThoughtOnLastAssistant =
+  const showRunProgressOnLastAssistant =
     !isLiveTurn &&
     lastTurn !== null &&
     lastMessage?.role === "assistant";
-  // Always show a Thought block after a finished turn — even before the
+  // Always show run progress after a finished turn — even before the
   // durable assistant message lands (cancel / fail / brief gap).
-  const showFinishedThought =
+  const showFinishedProgress =
     !isLiveTurn &&
     lastTurn !== null &&
-    (showThoughtOnLastAssistant || lastMessage?.role !== "assistant");
+    (showRunProgressOnLastAssistant || lastMessage?.role !== "assistant");
   const showEmpty =
     phase.kind === "ready" &&
     messages.length === 0 &&
@@ -1304,9 +1299,9 @@ export function DocumentAgentPanel({
                 }
                 return (
                   <div key={message.id} className="flex flex-col gap-1.5">
-                    {isLast && showThoughtOnLastAssistant && lastTurn ? (
-                      <AgentThoughtToggle
-                        label={progressSummaryLabel(lastTurn.lines, {
+                    {isLast && showRunProgressOnLastAssistant && lastTurn ? (
+                      <AgentRunProgress
+                        presentation={presentAgentRun(lastTurn.lines, {
                           durationMs: lastTurn.durationMs,
                           outcome: lastTurn.outcome,
                         })}
@@ -1315,8 +1310,6 @@ export function DocumentAgentPanel({
                         }
                         expanded={timelineOpen}
                         onToggle={() => setTimelineOpen((open) => !open)}
-                        timeline={timelineLines}
-                        nowTick={nowTick}
                       />
                     ) : null}
                     <AgentMarkdown text={message.content} />
@@ -1324,11 +1317,11 @@ export function DocumentAgentPanel({
                 );
               })}
 
-              {/* Live turn: work header above streaming answer (Cursor order). */}
+              {/* Live turn: compact progress above streaming answer. */}
               {isLiveTurn ? (
                 <div className="flex flex-col gap-2">
-                  <AgentThoughtToggle
-                    label={progressSummaryLabel(visibleProgress, {
+                  <AgentRunProgress
+                    presentation={presentAgentRun(visibleProgress, {
                       live: true,
                     })}
                     status="active"
@@ -1339,8 +1332,6 @@ export function DocumentAgentPanel({
                     }
                     expanded={timelineOpen}
                     onToggle={() => setTimelineOpen((open) => !open)}
-                    timeline={timelineLines}
-                    nowTick={nowTick}
                     live
                   />
                   {showLiveDraft && liveDraft ? (
@@ -1358,18 +1349,16 @@ export function DocumentAgentPanel({
               {/* Finished turn with no assistant text yet (cancel / fail). */}
               {!isLiveTurn &&
               lastTurn &&
-              showFinishedThought &&
-              !showThoughtOnLastAssistant ? (
-                <AgentThoughtToggle
-                  label={progressSummaryLabel(lastTurn.lines, {
+              showFinishedProgress &&
+              !showRunProgressOnLastAssistant ? (
+                <AgentRunProgress
+                  presentation={presentAgentRun(lastTurn.lines, {
                     durationMs: lastTurn.durationMs,
                     outcome: lastTurn.outcome,
                   })}
                   status={lastTurn.outcome === "failed" ? "error" : "done"}
                   expanded={timelineOpen}
                   onToggle={() => setTimelineOpen((open) => !open)}
-                  timeline={timelineLines}
-                  nowTick={nowTick}
                 />
               ) : null}
 
@@ -1581,110 +1570,8 @@ export function DocumentAgentPanel({
 }
 
 /**
- * Compact work summary: one line, click to expand grouped steps.
- * Repeated tools collapse (e.g. "Inserted paragraphs · 13").
+ * Confirmation banner while a run waits for approve/deny.
  */
-function AgentThoughtToggle({
-  label,
-  status,
-  totalElapsed,
-  expanded,
-  onToggle,
-  timeline,
-  live = false,
-}: {
-  label: string;
-  status: AgentProgressLine["status"];
-  totalElapsed?: string | null;
-  expanded: boolean;
-  onToggle: () => void;
-  timeline: readonly AgentProgressLine[];
-  nowTick?: number;
-  live?: boolean;
-}) {
-  const groups = groupProgressLines(timeline);
-  const hasTimeline = groups.length > 0;
-  const isActive = status === "active" || live;
-
-  return (
-    <div className="min-w-0">
-      <button
-        type="button"
-        onClick={hasTimeline ? onToggle : undefined}
-        disabled={!hasTimeline}
-        aria-expanded={hasTimeline ? expanded : undefined}
-        className={cn(
-          focusRingClass,
-          "group flex max-w-full items-center gap-1.5 rounded-[var(--radius-sm)] py-0.5 text-left text-[length:var(--text-xs)] leading-[1.4] transition-colors",
-          hasTimeline ? "cursor-pointer hover:opacity-80" : "cursor-default",
-          status === "error"
-            ? "text-danger"
-            : isActive
-              ? "text-accent"
-              : "text-ink-faint",
-        )}
-        title={
-          hasTimeline
-            ? expanded
-              ? "Hide steps"
-              : "Show steps"
-            : undefined
-        }
-      >
-        {isActive ? (
-          <span className="relative flex h-1.5 w-1.5 shrink-0">
-            <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-accent opacity-35" />
-            <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-accent" />
-          </span>
-        ) : status === "error" ? (
-          <span className="shrink-0 text-[length:var(--text-2xs)]">!</span>
-        ) : null}
-        <span className="min-w-0 truncate font-medium">{label}</span>
-        {totalElapsed && isActive ? (
-          <span className="shrink-0 tabular-nums text-[length:var(--text-2xs)] opacity-70">
-            · {totalElapsed}
-          </span>
-        ) : null}
-        {hasTimeline ? (
-          <span
-            className={cn(
-              "shrink-0 text-[length:var(--text-2xs)] opacity-50 transition-transform",
-              expanded && "rotate-90",
-            )}
-          >
-            ›
-          </span>
-        ) : null}
-      </button>
-
-      {expanded && hasTimeline ? (
-        <div className="ml-3 mt-1 space-y-0.5 border-l border-line pl-2.5">
-          {groups.map((group, index) => (
-            <div
-              key={`${group.key}:${index}`}
-              className={cn(
-                "flex items-baseline gap-2 py-px text-[length:var(--text-2xs)] leading-[1.4]",
-                group.status === "error"
-                  ? "text-danger"
-                  : group.status === "active"
-                    ? "text-ink-soft"
-                    : "text-ink-faint",
-              )}
-            >
-              <span className="min-w-0 flex-1 truncate">
-                {group.label}
-                {group.count > 1 ? (
-                  <span className="opacity-70"> · {group.count}</span>
-                ) : null}
-              </span>
-            </div>
-          ))}
-        </div>
-      ) : null}
-    </div>
-  );
-}
-
 function RunStatusHint({
   status,
   pendingConfirmation,
