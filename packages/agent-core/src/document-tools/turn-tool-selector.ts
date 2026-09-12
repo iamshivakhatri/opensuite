@@ -25,10 +25,12 @@ import { transformContext } from "../model-context.js";
 import type {
   ModelTimeoutContext,
   ToolBatchContext,
+  ToolTurnLifecycle,
   TransformAgentContext,
 } from "../runner.js";
 import type { DocumentRuntime } from "../runtime.js";
 import { ToolRegistry } from "../tools.js";
+import type { AgentEventSink } from "../events.js";
 import type {
   TurnToolSelector,
   TurnToolSelectorResult,
@@ -225,6 +227,7 @@ export function createDocumentAgentRunnerOptions(
   readonly createToolContext: CreateToolExecutionContext;
   readonly transformContext: TransformAgentContext;
   readonly shouldTerminalizeToolBatch: (context: ToolBatchContext) => boolean;
+  readonly toolTurnLifecycle?: ToolTurnLifecycle;
   readonly getModelTimeoutRetryMessage: (
     context: ModelTimeoutContext,
   ) => string | undefined;
@@ -244,8 +247,76 @@ export function createDocumentAgentRunnerOptions(
       runtime: input.runtime,
       mutations: input.mutations,
     }),
+    toolTurnLifecycle: createDocumentToolTurnLifecycle(state, input.mutations),
     ...createDocumentAgentRunnerPolicyOptions(),
   };
+}
+
+function createDocumentToolTurnLifecycle(
+  state: DocumentRunState,
+  mutations: DocumentMutationExecutor | undefined,
+): ToolTurnLifecycle | undefined {
+  if (!mutations?.flushPendingFormatting) return undefined;
+  const pendingMutations = mutations;
+  let priorFlush: Exclude<Awaited<ReturnType<NonNullable<DocumentMutationExecutor["flushPendingFormatting"]>>>, { status: "noop" }> | undefined;
+  async function flush(context: { readonly runId: string; readonly events: AgentEventSink }) {
+    const flushed = await pendingMutations.flushPendingFormatting!();
+    if (flushed.status !== "success") return flushed;
+    priorFlush = flushed;
+    state.primary = flushed.document;
+    await context.events.emit({
+      type: "document.version.advanced", runId: context.runId,
+      documentId: flushed.document.documentId, versionId: flushed.document.versionId,
+      ...(flushed.versionNumber !== undefined ? { versionNumber: flushed.versionNumber } : {}),
+      baseVersionId: flushed.baseVersionId, at: new Date().toISOString(),
+    });
+    return flushed;
+  }
+  return {
+    begin() { priorFlush = undefined; },
+    async beforeTool(context) {
+      if (FORMATTER_TOOL_NAMES.has(context.toolName)) return;
+      const flushed = await flush(context);
+      if (flushed.status === "error") throw new Error(flushed.diagnostics[0].message);
+    },
+    async finalize(context) {
+      const flushed = priorFlush ?? await flush(context);
+      if (flushed.status === "noop") return context.toolOutcomes;
+      if (flushed.status === "error") {
+        return context.toolOutcomes.map((outcome) =>
+          isPendingOutcome(outcome)
+            ? { ...outcome, status: "failed" as const, summary: flushed.diagnostics[0].message, diagnostic: flushed.diagnostics[0], output: undefined }
+            : outcome,
+        );
+      }
+      return context.toolOutcomes.map((outcome) => {
+        if (!isPendingOutcome(outcome)) return outcome;
+        const pending = outcome.output as { operation: string; diagnostics: readonly Diagnostic[]; change?: unknown };
+        return {
+          ...outcome,
+          output: {
+            status: "success", document: flushed.document,
+            ...(flushed.versionNumber !== undefined ? { versionNumber: flushed.versionNumber } : {}),
+            baseVersionId: flushed.baseVersionId,
+            ...(pending.change !== undefined ? { change: pending.change } : {}),
+            diagnostics: pending.diagnostics,
+          },
+        };
+      });
+    },
+    abandon() { pendingMutations.abandonPendingFormatting?.(); },
+  };
+}
+
+const FORMATTER_TOOL_NAMES = new Set([
+  "document.set_paragraph_style",
+  "document.set_paragraph_formatting",
+  "document.set_text_formatting",
+]);
+
+function isPendingOutcome(outcome: ToolBatchContext["toolOutcomes"][number]): boolean {
+  return !!outcome.output && typeof outcome.output === "object" &&
+    (outcome.output as { status?: unknown }).status === "pending";
 }
 
 export function createDocumentAgentRunnerPolicyOptions() {
