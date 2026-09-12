@@ -19,6 +19,7 @@ import {
   type OfficeFormat,
 } from "./format.js";
 import { buildDocumentVersionStorageKey } from "./storage-key.js";
+import { StorageQuotaError, type StorageAccountingService } from "../storage-accounting/service.js";
 
 export interface DocumentDto {
   readonly id: string;
@@ -103,7 +104,8 @@ export type DocumentUploadErrorCode =
   | "EMPTY_UPLOAD"
   | "UPLOAD_TOO_LARGE"
   | "MISSING_BASE_VERSION"
-  | "BLANK_DOCX_UNAVAILABLE";
+  | "BLANK_DOCX_UNAVAILABLE"
+  | "STORAGE_QUOTA_EXCEEDED";
 
 export class DocumentUploadError extends Error {
   readonly statusCode: number;
@@ -162,6 +164,7 @@ export interface DocumentServiceOptions {
     storageKey: string;
     error: unknown;
   }) => void;
+  readonly storageAccounting?: StorageAccountingService;
 }
 
 function sha256Hex(bytes: Buffer): string {
@@ -360,6 +363,7 @@ export function createDocumentService(
 
       try {
         const created = await db.transaction(async (tx) => {
+          await options.storageAccounting?.reserve(tx, input.ownerUserId, input.bytes.byteLength);
           const [doc] = await tx
             .insert(schema.document)
             .values({
@@ -441,6 +445,7 @@ export function createDocumentService(
         };
       } catch (error) {
         await cleanupStorageKey(storageKey);
+        if (error instanceof StorageQuotaError) throw new DocumentUploadError(409, "STORAGE_QUOTA_EXCEEDED", error.message);
         throw error;
       }
     },
@@ -497,6 +502,7 @@ export function createDocumentService(
 
       try {
         const created = await db.transaction(async (tx) => {
+          await options.storageAccounting?.reserve(tx, input.ownerUserId, bytes.byteLength);
           const [doc] = await tx
             .insert(schema.document)
             .values({
@@ -578,6 +584,7 @@ export function createDocumentService(
         };
       } catch (error) {
         await cleanupStorageKey(storageKey);
+        if (error instanceof StorageQuotaError) throw new DocumentUploadError(409, "STORAGE_QUOTA_EXCEEDED", error.message);
         throw error;
       }
     },
@@ -686,6 +693,8 @@ export function createDocumentService(
             );
           }
 
+          await options.storageAccounting?.reserve(tx, input.ownerUserId, input.bytes.byteLength);
+
           const nextVersionNumber = latest.versionNumber + 1;
           const now = new Date();
 
@@ -764,6 +773,8 @@ export function createDocumentService(
         return created;
       } catch (error) {
         await cleanupStorageKey(storageKey);
+
+        if (error instanceof StorageQuotaError) throw new DocumentUploadError(409, "STORAGE_QUOTA_EXCEEDED", error.message);
 
         if (
           error instanceof DocumentAccessError &&

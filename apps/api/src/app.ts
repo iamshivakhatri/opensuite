@@ -28,6 +28,7 @@ import {
 import { createAgentExecutionLeaseService } from "./agent/execution-lease.js";
 import { createManagedTrialRepository } from "./managed-trial/repository.js";
 import { createManagedTrialService } from "./managed-trial/service.js";
+import { createStorageAccountingService } from "./storage-accounting/service.js";
 import type { ConfirmationBridge } from "./agent/confirmation-bridge.js";
 import {
   createConfiguredAgentModel,
@@ -64,6 +65,7 @@ import { registerMeRoutes } from "./routes/me.js";
 import { registerProviderCredentialRoutes } from "./routes/provider-credentials.js";
 import { registerSearchRoutes } from "./routes/search.js";
 import { registerTrashRoutes } from "./routes/trash.js";
+import { registerStorageRoutes } from "./routes/storage.js";
 import { registerWorkspaceRoutes } from "./routes/workspaces.js";
 import { createOpenRouterManagedModelCatalog } from "./openrouter-models/catalog.js";
 import type { ObjectStorage } from "./storage/types.js";
@@ -240,8 +242,13 @@ export async function buildApp(
     createBlankDocxBytes = () => binding.createBlankDocx();
   }
 
+  const storageAccounting = createStorageAccountingService(
+    deps.db,
+    config.userStorageQuotaBytes,
+  );
   const documents = createDocumentService(deps.db, deps.storage, {
     uploadMaxBytes: config.uploadMaxBytes,
+    storageAccounting,
     ...(createBlankDocxBytes ? { createBlankDocxBytes } : {}),
     onCleanupFailure: (cleanupError, storageKey) => {
       app.log.error(
@@ -328,6 +335,7 @@ export async function buildApp(
   registerProviderCredentialRoutes(app, deps.auth, credentials);
   registerDocumentRoutes(app, deps.auth, workspaces, documents, preferences);
   registerTrashRoutes(app, deps.auth, workspaces, documents);
+  registerStorageRoutes(app, deps.auth, storageAccounting);
   registerSearchRoutes(app, deps.auth, search);
   registerAgentRoutes(app, {
     auth: deps.auth,

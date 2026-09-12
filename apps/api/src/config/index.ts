@@ -66,6 +66,7 @@ const EnvSchema = z
     /** 32-byte base64 or 64-character hex key, used only for BYOK secrets. */
     AI_CREDENTIAL_ENCRYPTION_KEY: z.string().optional(),
     MANAGED_AI_TRIAL_CREDIT_MICROS: z.coerce.number().int().nonnegative().default(0),
+    USER_STORAGE_QUOTA_BYTES: z.coerce.number().int().nonnegative().default(500 * 1024 * 1024),
   })
   .superRefine((data, ctx) => {
     if (data.AGENT_MODEL_PROVIDER === "fake" && data.NODE_ENV === "production") {
@@ -162,6 +163,7 @@ export interface AppConfig {
   readonly uploadMaxBytes: number;
   readonly aiCredentialEncryptionKey: string | null;
   readonly managedAiTrialCreditMicros: number;
+  readonly userStorageQuotaBytes: number;
   readonly agent: AgentModelConfig;
 }
 
@@ -229,6 +231,7 @@ export function loadConfig(
     aiCredentialEncryptionKey:
       result.data.AI_CREDENTIAL_ENCRYPTION_KEY?.trim() || null,
     managedAiTrialCreditMicros: result.data.MANAGED_AI_TRIAL_CREDIT_MICROS,
+    userStorageQuotaBytes: result.data.USER_STORAGE_QUOTA_BYTES,
     agent: {
       provider,
       anthropicApiKey: provider === "anthropic" ? anthropicKey : null,

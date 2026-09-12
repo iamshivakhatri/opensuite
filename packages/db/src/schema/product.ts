@@ -126,6 +126,16 @@ export const documentVersion = pgTable(
   ],
 );
 
+/** Durable total of all immutable document-version bytes owned by a user. */
+export const userStorageAccount = pgTable("user_storage_account", {
+  userId: text("user_id")
+    .primaryKey()
+    .references(() => user.id, { onDelete: "cascade" }),
+  usedBytes: bigint("used_bytes", { mode: "number" }).notNull().default(0),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().$onUpdate(() => new Date()).notNull(),
+});
+
 export const workspaceRelations = relations(workspace, ({ one, many }) => ({
   owner: one(user, {
     fields: [workspace.ownerUserId],
