@@ -50,6 +50,8 @@ export function buildDocumentAgentSystemPrompt(
     "Do not reveal chain-of-thought; respond concisely.",
     "On tool failure: structured code/reasonCode are authoritative. " +
       "STALE_HANDLE / UNKNOWN_HANDLE → re-inspect if still needed, then use fresh handles or semantic selectors. " +
+      "TARGET_AMBIGUOUS / TARGET_NOT_FOUND / EXPECTED_TEXT_MISMATCH → make one smallest relevant inspect, then retry once with an exact target; " +
+      "when inspected text is repeated, include its 1-based occurrence instead of retrying the same text target. " +
       "INVALID_TOOL_INPUT / unsupported affordance (supported:false) → do not retry the same call unchanged. " +
       "At most one alternate approach with new information, then explain and stop.",
   ];
@@ -75,6 +77,7 @@ export function buildDocumentAgentSystemPrompt(
         "When batching a structural write with table cell updates in the same turn, " +
         "use semantic rowLabel+columnHeader targets — prior-turn handles go stale after any write. " +
         "set_paragraph_style needs a stylesheet style name that exists (e.g. Heading 1) and exact title text. " +
+        "Paragraph style/text-formatting targets accept exact visible text and optional 1-based occurrence; opaque handles are only valid for tools whose schema explicitly accepts a handle. " +
         "Never claim an edit succeeded without a successful mutation tool result.",
     );
   } else if (caps) {

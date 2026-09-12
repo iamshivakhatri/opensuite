@@ -1090,7 +1090,11 @@ function toNativeParagraphPlacement(
 function toNativeTextTarget(target: DocxTextTarget): Record<string, unknown> {
   return {
     text: target.text,
-    ...(target.occurrence !== undefined ? { occurrence: target.occurrence } : {}),
+    // Agent/document tools expose occurrences as 1-based; the native target
+    // selector is zero-based.
+    ...(target.occurrence !== undefined
+      ? { occurrence: target.occurrence - 1 }
+      : {}),
   };
 }
 

@@ -26,6 +26,40 @@ const SECOND_PARAGRAPH =
 
 export const BENCH_SCENARIOS: readonly BenchScenario[] = [
   {
+    id: "target-duplicate",
+    label: "G. Duplicate paragraph target",
+    instruction: "Format only the second paragraph whose exact text is 'Note'. Inspect narrowly if needed, then use occurrence 2.",
+    seed(harness) {
+      return harness.seedDocument(buildMinimalDocx(["Title", "Note", "Note", "Closing"]));
+    },
+    check({ result, toolNames }) {
+      const notes: string[] = [];
+      if (!toolNames.includes("document.set_paragraph_style")) notes.push("expected paragraph style mutation");
+      if (result.toolOutcomes.some((o) => o.diagnostic?.code === "TARGET_AMBIGUOUS")) notes.push("normal path must avoid TARGET_AMBIGUOUS");
+      if (result.toolOutcomes.some((o) => o.toolName === "document.set_paragraph_style" && o.status !== "succeeded")) notes.push("paragraph style mutation failed");
+      if (result.status !== "completed") notes.push(`run status=${result.status}`);
+      return { ok: notes.length === 0, notes };
+    },
+  },
+  {
+    id: "target-recovery",
+    label: "H. Target ambiguity recovery",
+    instruction: "If a paragraph style target is ambiguous, inspect only the matching paragraphs, retry once using the returned occurrence, then finish.",
+    seed(harness) {
+      return harness.seedDocument(buildMinimalDocx(["Title", "Note", "Note", "Closing"]));
+    },
+    check({ result, toolNames }) {
+      const notes: string[] = [];
+      const failures = result.toolOutcomes.filter((o) => o.diagnostic?.code === "TARGET_AMBIGUOUS");
+      if (failures.length !== 1) notes.push("expected exactly one ambiguous target failure");
+      if (!toolNames.includes("document.inspect")) notes.push("expected focused recovery inspection");
+      if (!toolNames.includes("document.set_paragraph_style")) notes.push("expected corrected style mutation");
+      if (result.toolOutcomes.at(-1)?.status !== "succeeded") notes.push("corrected style mutation failed");
+      if (result.status !== "completed") notes.push(`run status=${result.status}`);
+      return { ok: notes.length === 0, notes };
+    },
+  },
+  {
     id: "simple-read",
     label: "A. Simple read",
     instruction: "What does the second paragraph say?",

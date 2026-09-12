@@ -22,7 +22,19 @@ import {
   type DocxEngineBinding,
 } from "@opensuite/engine-client";
 
-import { WORKSPACE_TOOL_NAMES } from "../workspace-tools.js";
+import { createAgentDocumentMutationExecutor } from "../document-mutation-executor.js";
+import {
+  DocumentAccessError,
+  type AppendedDocumentDto,
+  type DocumentService,
+  type DocumentVersionDto,
+  type ListedDocumentDto,
+  type UploadedDocumentDto,
+} from "../../documents/service.js";
+import {
+  createWorkspaceCreateBlankDocxTool,
+  WORKSPACE_TOOL_NAMES,
+} from "../workspace-tools.js";
 
 /**
  * In-memory artifact store that persists N→N+1 bytes after engine mutations.
@@ -71,6 +83,104 @@ export function createBenchArtifactStore(
 }
 
 export type BenchArtifactStore = ReturnType<typeof createBenchArtifactStore>;
+
+const BENCH_OWNER_ID = "bench-owner";
+const BENCH_WORKSPACE_ID = "bench-workspace";
+
+/** In-memory implementation of the production document persistence contract. */
+function createBenchDocumentService(input: {
+  readonly binding: DocxEngineBinding;
+  readonly store: BenchArtifactStore;
+}) {
+  const documents = new Map<
+    string,
+    {
+      ownerUserId: string;
+      workspaceId: string;
+      name: string;
+      createdAt: string;
+      versions: DocumentVersionDto[];
+    }
+  >();
+
+  function listed(documentId: string, document: NonNullable<ReturnType<typeof documents.get>>): ListedDocumentDto {
+    const version = document.versions.at(-1)!;
+    return {
+      id: documentId,
+      workspaceId: document.workspaceId,
+      name: document.name,
+      format: "docx",
+      createdAt: document.createdAt,
+      updatedAt: version.createdAt,
+      latestVersion: {
+        id: version.id,
+        versionNumber: version.versionNumber,
+        sizeBytes: version.sizeBytes,
+        source: version.source,
+        createdAt: version.createdAt,
+      },
+    };
+  }
+
+  function addDocument(bytes: Uint8Array, name: string, ownerUserId: string, workspaceId: string): UploadedDocumentDto {
+    const documentId = randomUUID();
+    const versionId = randomUUID();
+    const createdAt = new Date().toISOString();
+    const version: DocumentVersionDto = {
+      id: versionId,
+      documentId,
+      versionNumber: 1,
+      parentVersionId: null,
+      sizeBytes: bytes.byteLength,
+      sha256: null,
+      source: "user",
+      createdByUserId: ownerUserId,
+      createdAt,
+    };
+    documents.set(documentId, { ownerUserId, workspaceId, name, createdAt, versions: [version] });
+    input.store.put(versionId, bytes);
+    return {
+      document: { id: documentId, workspaceId, name, format: "docx", createdAt, updatedAt: createdAt },
+      version,
+    };
+  }
+
+  const service = {
+    async getOwnedDocument({ documentId, ownerUserId }: { documentId: string; ownerUserId: string }) {
+      const document = documents.get(documentId);
+      if (!document || document.ownerUserId !== ownerUserId) {
+        throw new DocumentAccessError(404, "DOCUMENT_NOT_FOUND", "Document not found");
+      }
+      return listed(documentId, document);
+    },
+    async appendDocumentVersion({ documentId, ownerUserId, baseVersionId, source, bytes }: {
+      documentId: string; ownerUserId: string; baseVersionId: string;
+      source: "user" | "agent" | "system"; bytes: Buffer;
+    }): Promise<AppendedDocumentDto> {
+      const document = documents.get(documentId);
+      if (!document || document.ownerUserId !== ownerUserId) {
+        throw new DocumentAccessError(404, "DOCUMENT_NOT_FOUND", "Document not found");
+      }
+      const previous = document.versions.at(-1)!;
+      if (previous.id !== baseVersionId) {
+        throw new DocumentAccessError(409, "VERSION_CONFLICT", "Document was updated; reload the latest version before mutating");
+      }
+      const version: DocumentVersionDto = {
+        id: randomUUID(), documentId, versionNumber: previous.versionNumber + 1,
+        parentVersionId: previous.id, sizeBytes: bytes.byteLength, sha256: null,
+        source, createdByUserId: ownerUserId, createdAt: new Date().toISOString(),
+      };
+      document.versions.push(version);
+      input.store.put(version.id, new Uint8Array(bytes));
+      return { document: listed(documentId, document), version };
+    },
+    async createBlankDocxDocument({ workspaceId, ownerUserId, name }: { workspaceId: string; ownerUserId: string; name?: string }) {
+      return addDocument(input.binding.createBlankDocx(), name?.endsWith(".docx") ? name : `${name ?? "Untitled Document"}.docx`, ownerUserId, workspaceId);
+    },
+  } as Pick<DocumentService, "getOwnedDocument" | "appendDocumentVersion" | "createBlankDocxDocument">;
+
+  return { service, seed(bytes: Uint8Array) { const created = addDocument(bytes, "Bench.docx", BENCH_OWNER_ID, BENCH_WORKSPACE_ID); return { documentId: created.document.id, versionId: created.version.id, format: "docx" as const }; } };
+}
 
 /**
  * Mutation executor: engine execute once → store artifact bytes → new version id.
@@ -473,6 +583,61 @@ export async function createBenchHarness(): Promise<BenchHarness> {
         events: sink.events,
         totalPersistMs: store.totalPersistMs,
       };
+    },
+  };
+}
+
+/**
+ * Zero-cost benchmark assembly using the same document executor and
+ * formatting lifecycle as production, backed by the in-memory version store.
+ */
+export async function createProductionBenchHarness(): Promise<BenchHarness> {
+  const binding = await createNapiDocxEngineBinding();
+  const store = createBenchArtifactStore();
+  const runtime = createOpenSuiteEngineAdapter({
+    artifactLoader: store.loader,
+    binding,
+  });
+  const documents = createBenchDocumentService({ binding, store });
+  const mutations = createAgentDocumentMutationExecutor({
+    documents: documents.service,
+    ownerUserId: BENCH_OWNER_ID,
+    runtime,
+  });
+  const createTool = createWorkspaceCreateBlankDocxTool({
+    workspaceId: BENCH_WORKSPACE_ID,
+    ownerUserId: BENCH_OWNER_ID,
+    documents: documents.service,
+  });
+
+  return {
+    binding,
+    store,
+    runtime,
+    mutations,
+    seedDocument: documents.seed,
+    async run(input) {
+      store.resetPersistMs();
+      const sink = createRecordingEventSink();
+      const runner = new AgentRunner({
+        model: input.model,
+        ...createDocumentAgentRunnerOptions({
+          tools: ToolRegistry.create([createTool]),
+          documentToolCatalog: listDocumentToolDescriptors(),
+          runtime,
+          mutations,
+          primaryDocument: input.primaryDocument ?? null,
+        }),
+        events: sink,
+        maxTurns: input.maxTurns ?? 20,
+      });
+      const result = await runner.run({
+        instruction: input.instruction,
+        threadId: "bench-thread",
+        runId: input.runId ?? `bench-${randomUUID()}`,
+        ...(input.primaryDocument ? { primaryDocument: input.primaryDocument } : {}),
+      });
+      return { result, events: sink.events, totalPersistMs: store.totalPersistMs };
     },
   };
 }

@@ -9,7 +9,10 @@ import {
   type BenchmarkRunRecord,
 } from "@opensuite/agent-core";
 
-import { createBenchHarness } from "./harness.js";
+import {
+  createProductionBenchHarness,
+  type BenchHarness,
+} from "./harness.js";
 import { identifyBottleneck, printBenchmarkReport } from "./report.js";
 import {
   freshRunId,
@@ -25,6 +28,8 @@ const REPO_ROOT = resolve(
 
 export interface RunBenchSuiteOptions {
   readonly model: AgentModel;
+  /** Optional per-scenario local model factory (used by scripted benchmarks). */
+  readonly createModel?: (scenario: string) => AgentModel;
   readonly provider: string;
   readonly modelId: string;
   /** Comma-separated scenario ids or A,B,C… Default: all. */
@@ -44,7 +49,7 @@ export async function runBenchSuite(
   options: RunBenchSuiteOptions,
 ): Promise<BenchSuiteResult> {
   const scenarios = selectScenarios(options.scenarioFilter);
-  const harness = await createBenchHarness();
+  const harness = await createProductionBenchHarness();
   const records: BenchmarkRunRecord[] = [];
 
   if (!options.quiet) {
@@ -112,7 +117,7 @@ export async function runBenchSuite(
 }
 
 async function runOneScenario(
-  harness: Awaited<ReturnType<typeof createBenchHarness>>,
+  harness: BenchHarness,
   scenario: BenchScenario,
   options: RunBenchSuiteOptions,
 ): Promise<BenchmarkRunRecord> {
@@ -121,7 +126,7 @@ async function runOneScenario(
   const wallStart = Date.now();
 
   const { result, events, totalPersistMs } = await harness.run({
-    model: options.model,
+    model: options.createModel?.(scenario.id) ?? options.model,
     instruction: scenario.instruction,
     primaryDocument: primary,
     runId: freshRunId(scenario.id),

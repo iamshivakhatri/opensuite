@@ -9,12 +9,16 @@ import {
   assistantOnlyResponse,
 } from "@opensuite/agent-core";
 
-import { createBenchHarness } from "../agent/bench/harness.js";
+import {
+  createBenchHarness,
+  createProductionBenchHarness,
+} from "../agent/bench/harness.js";
 import { identifyBottleneck } from "../agent/bench/report.js";
-import { selectScenarios } from "../agent/bench/scenarios.js";
+import { selectScenarios, scenarioById } from "../agent/bench/scenarios.js";
+import { createScriptedBenchmarkModel } from "../agent/bench/scripted-model.js";
 
 test("selectScenarios resolves ids and letter aliases", () => {
-  assert.equal(selectScenarios("all").length, 6);
+  assert.equal(selectScenarios("all").length, 8);
   assert.deepEqual(
     selectScenarios("A,C").map((s) => s.id),
     ["simple-read", "greenfield-small"],
@@ -125,4 +129,25 @@ test("bench harness: scripted greenfield create→batch→terminalize (native en
 
   const bottleneck = identifyBottleneck([record]);
   assert.match(bottleneck, /Bottleneck:/);
+});
+
+test("production benchmark harness runs deterministic targeting and formatting plans", async () => {
+  const harness = await createProductionBenchHarness();
+  for (const id of ["target-duplicate", "target-recovery", "greenfield-poems"] as const) {
+    const scenario = scenarioById(id)!;
+    const primary = scenario.seed(harness);
+    const { result, events } = await harness.run({
+      model: createScriptedBenchmarkModel(id),
+      instruction: scenario.instruction,
+      primaryDocument: primary,
+      runId: `scripted-${id}`,
+    });
+    const check = scenario.check({ result, toolNames: result.toolOutcomes.map((outcome) => outcome.toolName) });
+    assert.deepEqual(check, { ok: true, notes: [] }, id);
+    const ambiguous = result.toolOutcomes.filter((outcome) => outcome.diagnostic?.code === "TARGET_AMBIGUOUS");
+    assert.equal(ambiguous.length, id === "target-recovery" ? 1 : 0);
+    if (id === "greenfield-poems") {
+      assert.equal(events.filter((event) => event.type === "document.version.advanced").length, 2);
+    }
+  }
 });

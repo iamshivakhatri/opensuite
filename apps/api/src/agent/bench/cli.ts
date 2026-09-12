@@ -12,12 +12,14 @@ import "../../load-env.js";
 import { createConfiguredAgentModel } from "../model/index.js";
 import { loadConfig, type AgentModelProvider } from "../../config/index.js";
 import { runBenchSuite } from "./run-suite.js";
+import { createScriptedBenchmarkModel } from "./scripted-model.js";
 
 const PROVIDERS = new Set([
   "anthropic",
   "openai",
   "openrouter",
   "fake",
+  "scripted",
 ]);
 
 async function main(): Promise<void> {
@@ -30,7 +32,12 @@ async function main(): Promise<void> {
     process.env.ANTHROPIC_MODEL?.trim();
 
   // Allow PROVIDER/MODEL overrides without rewriting the full .env.
-  if (envProvider && PROVIDERS.has(envProvider)) {
+  const scripted = envProvider === "scripted";
+  if (scripted) {
+    // Reuse the configured local fake only as an unused placeholder. Each
+    // scenario receives its own deterministic tool-calling model below.
+    process.env.AGENT_MODEL_PROVIDER = "fake";
+  } else if (envProvider && PROVIDERS.has(envProvider)) {
     process.env.AGENT_MODEL_PROVIDER = envProvider;
   }
   if (envModel) {
@@ -56,14 +63,16 @@ async function main(): Promise<void> {
     return;
   }
 
-  if (provider === "fake") {
+  if (provider === "fake" && !scripted) {
     console.warn(
       "Warning: AGENT_MODEL_PROVIDER=fake does not call tools — results are not meaningful for document workloads.",
     );
   }
 
   const modelId =
-    provider === "openrouter"
+    scripted
+      ? "scripted"
+      : provider === "openrouter"
       ? (config.agent.openrouterModel ?? "unknown")
       : provider === "openai"
         ? config.agent.openaiModel
@@ -75,8 +84,9 @@ async function main(): Promise<void> {
 
   const { records } = await runBenchSuite({
     model,
-    provider,
+    provider: scripted ? "scripted" : provider,
     modelId,
+    ...(scripted ? { createModel: createScriptedBenchmarkModel } : {}),
     scenarioFilter: process.env.SCENARIO ?? process.env.SCENARIOS,
   });
 
