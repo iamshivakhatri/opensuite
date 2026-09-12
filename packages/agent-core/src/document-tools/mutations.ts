@@ -326,7 +326,9 @@ export function createDocumentInsertParagraphsTool(): AgentTool<
     name: DOCUMENT_TOOL_NAMES.insertParagraphs,
     description:
       "Insert consecutive semantic units in one version (prefer over repeated insert_paragraph). " +
-      "Each texts[] entry = one unit; structure by meaning, then style/format deliberately. No punctuation layout hacks.",
+      "Each texts[] entry is exactly one paragraph — no embedded newline characters. " +
+      "Multiline content must use multiple entries plus paragraph formatting/spacing, not \\n/\\r inside a string. " +
+      "Structure by meaning, then style/format deliberately. No punctuation layout hacks.",
     effect: "write",
     executionMode: "sequential",
     capability: DOCX_ENGINE_CAPS.insertParagraphs,
@@ -338,7 +340,8 @@ export function createDocumentInsertParagraphsTool(): AgentTool<
           items: { type: "string", minLength: 1 },
           minItems: 1,
           description:
-            "Ordered units (title/heading/body/related line/closing); short related lines OK when needed",
+            "Ordered single-paragraph units (title/heading/body/related line/closing). " +
+            "One entry per paragraph — no embedded \\n/\\r; use multiple entries for multiline content",
         },
         placement: PARAGRAPH_PLACEMENT_SCHEMA,
       },
@@ -367,6 +370,12 @@ export function createDocumentInsertParagraphsTool(): AgentTool<
         if (item.length === 0) {
           invalidInput(
             "document.insert_paragraphs texts entries must be non-empty strings",
+          );
+        }
+        if (/[\r\n]/.test(item)) {
+          invalidInput(
+            "document.insert_paragraphs texts entries must be single paragraphs without embedded newlines; " +
+              "use multiple entries plus paragraph formatting/spacing for multiline content",
           );
         }
         texts.push(item);

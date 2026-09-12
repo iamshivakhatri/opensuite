@@ -78,7 +78,9 @@ export function buildDocumentAgentSystemPrompt(
         "Prefer: insert coherent structure → few deliberate style/format calls → inspect only if needed → Done. " +
         "Do not ritual-inspect then repair paragraph-by-paragraph. " +
         "Closely related units should read as a group; distinct sections need clear separation. " +
-        "Use stylesheet styles for consistent hierarchy; lists/tables only when content is semantically a list/matrix. " +
+        "Choose structure from meaning first, appearance second. " +
+        "Use stylesheet styles for hierarchy. Tables only for matrices. " +
+        "Bullet/numbered lists only for genuine itemization, enumeration, or steps — never as a grouping hack for related short lines, quotations, metadata, or compact prose (use paragraphs + spacing/style/alignment instead). " +
         "Use only tools in your catalog — choose the best supported approximation; never invent unsupported Word features " +
         "or fake layout with punctuation/separators. Capability presence is not a command to use it. " +
         "Avoid decorative over-formatting the user did not ask for. " +

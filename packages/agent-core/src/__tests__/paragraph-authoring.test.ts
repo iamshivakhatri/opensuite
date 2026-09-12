@@ -138,6 +138,46 @@ test("insert_paragraphs maps args to one persisted mutation (one version)", asyn
   });
 });
 
+test("insert_paragraphs rejects embedded newlines with INVALID_TOOL_INPUT", () => {
+  const tool = createDocumentInsertParagraphsTool();
+  for (const bad of [
+    ["Line one\nLine two"],
+    ["ok", "has\rembedded"],
+    ["a\nb\nc"],
+  ]) {
+    assert.throws(
+      () =>
+        tool.parseInput({
+          texts: bad,
+          placement: { kind: "end" },
+        }),
+      (error: unknown) =>
+        error instanceof AgentCoreError &&
+        error.code === "INVALID_TOOL_INPUT" &&
+        /without embedded newlines|multiple entries/i.test(error.message),
+      `expected reject for ${JSON.stringify(bad)}`,
+    );
+  }
+});
+
+test("insert_paragraphs still accepts multiple single-paragraph entries", () => {
+  const tool = createDocumentInsertParagraphsTool();
+  const parsed = tool.parseInput({
+    texts: ["Title", "A related line.", "Another related line.", "Closing."],
+    placement: { kind: "end" },
+  });
+  assert.deepEqual(parsed.texts, [
+    "Title",
+    "A related line.",
+    "Another related line.",
+    "Closing.",
+  ]);
+  assert.deepEqual(parsed.placement, { kind: "end" });
+  assert.match(tool.description, /exactly one paragraph|no embedded newline/i);
+  assert.match(tool.description, /multiple entries/i);
+  assert.doesNotMatch(tool.description, /\bpoem\b/i);
+});
+
 test("AgentRunner first model call receives all paragraph tools when caps present", async () => {
   let firstToolNames: string[] | undefined;
   const runtime: DocumentRuntime = {

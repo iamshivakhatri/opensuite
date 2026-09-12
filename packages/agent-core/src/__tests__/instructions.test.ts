@@ -45,6 +45,8 @@ test("system prompt mentions mutate behavior without listing every tool", () => 
   assert.match(prompt, /lightweight presentation plan|presentation plan/i);
   assert.match(prompt, /fake layout|punctuation/i);
   assert.match(prompt, /Capability presence is not a command/i);
+  assert.match(prompt, /grouping hack|genuine itemization/i);
+  assert.match(prompt, /meaning first, appearance second/i);
   assert.match(prompt, /create_blank succeeds/i);
   assert.match(prompt, /Never claim an edit succeeded/i);
   assert.match(prompt, /STALE_HANDLE/);

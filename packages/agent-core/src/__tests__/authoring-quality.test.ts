@@ -150,6 +150,14 @@ test("tool descriptions teach semantic units and spacing semantics", () => {
   );
   assert.match(
     tools[DOCUMENT_TOOL_NAMES.insertParagraphs]!.description,
+    /no embedded newline/i,
+  );
+  assert.match(
+    tools[DOCUMENT_TOOL_NAMES.insertParagraphs]!.description,
+    /multiple entries/i,
+  );
+  assert.match(
+    tools[DOCUMENT_TOOL_NAMES.insertParagraphs]!.description,
     /punctuation layout|layout hacks/i,
   );
   assert.match(
@@ -166,12 +174,46 @@ test("tool descriptions teach semantic units and spacing semantics", () => {
   );
   assert.match(
     tools[DOCUMENT_TOOL_NAMES.setParagraphsList]!.description,
-    /semantically a list/i,
+    /genuine itemization|enumeration|steps/i,
+  );
+  assert.match(
+    tools[DOCUMENT_TOOL_NAMES.setParagraphsList]!.description,
+    /not to group|grouping hack/i,
   );
   assert.match(
     tools[DOCUMENT_TOOL_NAMES.setParagraphStyle]!.description,
     /hierarchy/i,
   );
+});
+
+test("authoring guidance distinguishes true lists from related short-form grouping", () => {
+  const prompt = buildDocumentAgentSystemPrompt(mutableDocumentCapabilities());
+  const listTool = listDocumentToolDescriptors().find(
+    (t) => t.name === DOCUMENT_TOOL_NAMES.setParagraphsList,
+  );
+  assert.ok(listTool);
+
+  // True list content → list is appropriate
+  assert.match(prompt, /Bullet\/numbered lists only for genuine itemization/i);
+  assert.match(prompt, /enumeration, or steps/i);
+  assert.match(listTool!.description, /genuine itemization|enumeration|steps/i);
+
+  // Related short-form → list is not the default grouping choice
+  assert.match(prompt, /never as a grouping hack/i);
+  assert.match(
+    prompt,
+    /related short lines, quotations, metadata, or compact prose/i,
+  );
+  assert.match(
+    prompt,
+    /paragraphs \+ spacing\/style\/alignment instead/i,
+  );
+  assert.match(listTool!.description, /not to group related short lines/i);
+  assert.match(prompt, /meaning first, appearance second/i);
+
+  // Still genre-agnostic
+  assert.doesNotMatch(prompt, /\bpoem\b/i);
+  assert.doesNotMatch(listTool!.description, /\bpoem\b/i);
 });
 
 test("authoring guidance is genre-agnostic", () => {
@@ -232,6 +274,10 @@ test("scripted short creative document: hierarchy + grouping, no inspect loop", 
     ],
   });
   assert.ok(toolNames.includes(DOCUMENT_TOOL_NAMES.setParagraphFormatting));
+  assert.ok(
+    !toolNames.includes(DOCUMENT_TOOL_NAMES.setParagraphsList),
+    "related short lines must not default to list grouping",
+  );
   assert.ok(!toolNames.includes(DOCUMENT_TOOL_NAMES.createTable));
 });
 
