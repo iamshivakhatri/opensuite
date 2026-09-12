@@ -11,18 +11,16 @@ _Read this before starting any work. Keep it a concise current-state handoff, no
 
 ## Just Completed
 
-* **Phase F1:** Settings → AI & Models UI.
-  - Settings sections: Account / AI & Models / Appearance (`#ai`, `#appearance`).
-  - Mode: OpenSuite managed vs bring-your-own-key; searchable managed model picker from `GET /api/ai-models/managed`.
-  - BYOK provider rows (OpenAI / Anthropic / OpenRouter): connect / replace / remove; password dialog; keys never re-rendered.
-  - Preference save via `PUT /api/ai-preferences`; trial strip from `GET /api/ai-trial`.
-  - Helpers: `apps/web/src/lib/ai-settings-api.ts`, `ai-settings-model.ts` (+ tests).
+* **Phase F2:** Settings → Storage + Trash document permanent delete.
+  - Settings sections: Account / AI & Models / Storage / Appearance (`#storage`).
+  - `GET /api/storage` usage bar (used / quota / remaining); near ≥90% and full states; Review Trash → `/app/trash`.
+  - Trash documents: Restore + Delete forever → `DELETE /api/trash/documents/:id` with ConfirmDialog; notifies storage refresh.
+  - Workspace permanent purge still deferred (Restore only).
+  - Helpers: `storage-api.ts`, `storage-model.ts` (+ tests).
 
-* **Phase E2:** permanent purge for soft-deleted documents.
-* **Phase E1:** per-user immutable-version storage accounting and quota.
-* **Phase D1:** managed OpenRouter one-time trial credit.
-* **Phase C1:** one active agent execution per authenticated user.
-* **BYOK B2.1 / B2 / B1 / A3 / A2:** catalog, cost, ledger, preferences, credentials.
+* **Phase F1:** Settings → AI & Models UI (managed/BYOK, catalog picker, trial, credentials).
+* **Phase E2 / E1:** permanent document purge + storage accounting.
+* **Phase D1 / C1 / BYOK B2.1–A2:** trial, concurrency, catalog/cost/ledger/prefs/credentials.
 
 ## Current Decisions
 
@@ -34,6 +32,7 @@ _Read this before starting any work. Keep it a concise current-state handoff, no
 * Cost is an insert-time snapshot; never reprice historical rows; unknown ≠ zero.
 * Managed AI gateway = OpenRouter; catalog/pricing display from Models API; authoritative cost from `usage.cost`.
 * Direct BYOK (OpenAI/Anthropic) records tokens; cost may stay null.
+* Soft-deleted documents still consume storage until permanently purged.
 * **AgentCore v2 frozen** — product/frontend work only unless evidence-backed fixes.
 * **Frontend visual pass complete** — stop broad UI polish; next is product/document capability integration.
 
@@ -42,9 +41,9 @@ _Read this before starting any work. Keep it a concise current-state handoff, no
 | Check | Status |
 |---|---|
 | `pnpm --filter @opensuite/web typecheck` | **Pass** |
-| `pnpm --filter @opensuite/web test` | **Pass** (51; includes AI settings model + API client) |
+| `pnpm --filter @opensuite/web test` | **Pass** (63; F1 + F2 storage/purge helpers) |
 | `git diff --check` | **Pass** |
-| Browser screenshots (F1) | **Blocked** in this agent environment (no GUI / headless Chrome SIGABRT under sandbox) |
+| Browser screenshots (F1/F2) | **Blocked** in agent sandbox (no GUI / headless Chrome SIGABRT) |
 
 ## Intentionally Deferred
 
@@ -52,11 +51,11 @@ _Read this before starting any work. Keep it a concise current-state handoff, no
 * Confirmation bridge durable resume / Redis workers
 * Frontend Phase 3 panel file split
 * Further generic UI polish
-* Usage / Storage settings UI
-* Stripe, invoices
-* Static production price entries (not needed for managed OpenRouter)
+* Workspace permanent purge
+* Usage / billing UI; Stripe; paid storage plans
+* Version pruning / automatic cleanup
 * First-party OpenAI/Anthropic model catalogs
 
 ## Recommended Next Step
 
-Settings → Storage (wire `GET /api/storage` + trash/purge UX), or Usage once product copy for trial/ledger is ready.
+Usage settings (trial + model usage ledger summary), or workspace permanent purge once retention rules are product-approved.

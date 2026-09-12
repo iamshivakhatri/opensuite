@@ -4,6 +4,7 @@ import * as React from "react";
 import { useRouter } from "next/navigation";
 
 import { AiModelsSettings } from "@/components/settings/ai-models-settings";
+import { StorageSettings } from "@/components/settings/storage-settings";
 import { Button } from "@/components/ui/button";
 import { PageError, PageLoading } from "@/components/ui/page-state";
 import { userFacingError } from "@/components/files/format";
@@ -18,11 +19,12 @@ const themeOptions: Array<{ value: ThemePreference; label: string }> = [
   { value: "dark", label: "Dark" },
 ];
 
-type SettingsSection = "account" | "ai" | "appearance";
+type SettingsSection = "account" | "ai" | "storage" | "appearance";
 
 const sections: Array<{ id: SettingsSection; label: string }> = [
   { id: "account", label: "Account" },
   { id: "ai", label: "AI & Models" },
+  { id: "storage", label: "Storage" },
   { id: "appearance", label: "Appearance" },
 ];
 
@@ -30,7 +32,15 @@ function sectionFromHash(): SettingsSection {
   if (typeof window === "undefined") return "account";
   const hash = window.location.hash.replace(/^#/, "");
   if (hash === "ai" || hash === "ai-models") return "ai";
+  if (hash === "storage") return "storage";
   if (hash === "appearance") return "appearance";
+  return "account";
+}
+
+function hashForSection(section: SettingsSection): string {
+  if (section === "ai") return "ai";
+  if (section === "storage") return "storage";
+  if (section === "appearance") return "appearance";
   return "account";
 }
 
@@ -61,8 +71,7 @@ export function SettingsView() {
 
   function selectSection(next: SettingsSection) {
     setSection(next);
-    const hash =
-      next === "ai" ? "ai" : next === "appearance" ? "appearance" : "account";
+    const hash = hashForSection(next);
     if (window.location.hash.replace(/^#/, "") !== hash) {
       window.history.replaceState(null, "", `#${hash}`);
     }
@@ -90,7 +99,7 @@ export function SettingsView() {
 
       <nav
         aria-label="Settings sections"
-        className="mb-8 grid grid-cols-3 gap-1 rounded-[var(--radius-md)] border border-line bg-surface p-1"
+        className="mb-8 grid grid-cols-2 gap-1 rounded-[var(--radius-md)] border border-line bg-surface p-1 sm:grid-cols-4"
       >
         {sections.map((item) => {
           const active = section === item.id;
@@ -147,6 +156,8 @@ export function SettingsView() {
       ) : null}
 
       {section === "ai" ? <AiModelsSettings /> : null}
+
+      {section === "storage" ? <StorageSettings /> : null}
 
       {section === "appearance" ? (
         <section>

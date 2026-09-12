@@ -8,6 +8,7 @@ import {
   userFacingError,
 } from "@/components/files/format";
 import { Button } from "@/components/ui/button";
+import { ConfirmDialog } from "@/components/ui/context-menu";
 import { PageEmpty, PageError, PageLoading } from "@/components/ui/page-state";
 import {
   listTrash,
@@ -16,6 +17,13 @@ import {
   type TrashedDocument,
   type TrashedWorkspace,
 } from "@/lib/api";
+import { purgeTrashedDocument } from "@/lib/storage-api";
+import {
+  notifyStorageChanged,
+  permanentDeleteConfirmBody,
+  trashDocumentActions,
+  trashWorkspaceActions,
+} from "@/lib/storage-model";
 import { useToast } from "@/lib/toast";
 
 function TrashIcon({ className }: { className?: string }) {
@@ -47,6 +55,11 @@ export function TrashView() {
   const [error, setError] = React.useState<string | null>(null);
   const [busyId, setBusyId] = React.useState<string | null>(null);
   const [actionError, setActionError] = React.useState<string | null>(null);
+  const [purgeTarget, setPurgeTarget] = React.useState<TrashedDocument | null>(
+    null,
+  );
+  const [purgeBusy, setPurgeBusy] = React.useState(false);
+  const [purgeError, setPurgeError] = React.useState<string | null>(null);
 
   const load = React.useCallback(async () => {
     setError(null);
@@ -97,11 +110,42 @@ export function TrashView() {
     }
   }
 
+  async function handlePurgeConfirm() {
+    if (!purgeTarget || purgeBusy) return;
+    setPurgeBusy(true);
+    setPurgeError(null);
+    const documentId = purgeTarget.id;
+    try {
+      await purgeTrashedDocument(documentId);
+      setDocuments((current) =>
+        (current ?? []).filter((row) => row.id !== documentId),
+      );
+      setPurgeTarget(null);
+      notifyStorageChanged();
+      toast({ tone: "success", title: "Document permanently deleted" });
+    } catch (err) {
+      const message = userFacingError(
+        err,
+        "Could not permanently delete document.",
+      );
+      setPurgeError(message);
+      toast({
+        tone: "error",
+        title: "Permanent delete failed",
+        description: message,
+      });
+    } finally {
+      setPurgeBusy(false);
+    }
+  }
+
   const empty =
     workspaces !== null &&
     documents !== null &&
     workspaces.length === 0 &&
     documents.length === 0;
+
+  const workspaceActions = trashWorkspaceActions();
 
   return (
     <div className="mx-auto max-w-[920px] px-8 py-8">
@@ -115,8 +159,8 @@ export function TrashView() {
           Trash
         </h1>
         <p className="os-type-secondary mt-1 text-ink-soft">
-          Soft-deleted workspaces and documents. Restore only — permanent
-          delete is not available yet.
+          Soft-deleted workspaces and documents. Restore items, or permanently
+          delete documents to free storage.
         </p>
       </div>
 
@@ -149,7 +193,7 @@ export function TrashView() {
             {workspaces!.map((item) => (
               <div
                 key={item.id}
-                className="flex items-center gap-3 rounded-[var(--radius-md)] border border-line bg-surface px-3 py-2.5"
+                className="flex flex-wrap items-center gap-3 rounded-[var(--radius-md)] border border-line bg-surface px-3 py-2.5"
               >
                 <span className="grid h-8 w-8 shrink-0 place-items-center rounded-[8px] border border-line bg-[var(--paper)] text-ink-faint">
                   <TrashIcon className="h-3.5 w-3.5" />
@@ -162,15 +206,17 @@ export function TrashView() {
                     Workspace · Deleted {formatUpdatedAt(item.deletedAt)}
                   </div>
                 </div>
-                <Button
-                  type="button"
-                  size="sm"
-                  variant="outline"
-                  disabled={busyId === item.id}
-                  onClick={() => void handleRestoreWorkspace(item)}
-                >
-                  {busyId === item.id ? "Restoring…" : "Restore"}
-                </Button>
+                {workspaceActions.canRestore ? (
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    disabled={busyId === item.id}
+                    onClick={() => void handleRestoreWorkspace(item)}
+                  >
+                    {busyId === item.id ? "Restoring…" : "Restore"}
+                  </Button>
+                ) : null}
               </div>
             ))}
           </div>
@@ -181,50 +227,85 @@ export function TrashView() {
         <section>
           <h2 className="os-type-section mb-2">Documents</h2>
           <div className="flex flex-col gap-1.5">
-            {documents!.map((item) => (
-              <div
-                key={item.id}
-                className="flex items-center gap-3 rounded-[var(--radius-md)] border border-line bg-surface px-3 py-2.5"
-              >
-                <span className="relative shrink-0">
-                  <DocumentFormatIcon
-                    format={item.format}
-                    size="md"
-                    className="text-ink-soft"
-                  />
-                  <span className="absolute -right-1.5 -top-1.5 grid h-3.5 w-3.5 place-items-center rounded-full bg-danger-soft text-danger">
-                    <TrashIcon className="h-2 w-2" />
+            {documents!.map((item) => {
+              const actions = trashDocumentActions({
+                workspaceDeleted: item.workspaceDeleted,
+              });
+              const rowBusy = busyId === item.id;
+              return (
+                <div
+                  key={item.id}
+                  className="flex flex-wrap items-center gap-3 rounded-[var(--radius-md)] border border-line bg-surface px-3 py-2.5"
+                >
+                  <span className="relative shrink-0">
+                    <DocumentFormatIcon
+                      format={item.format}
+                      size="md"
+                      className="text-ink-soft"
+                    />
+                    <span className="absolute -right-1.5 -top-1.5 grid h-3.5 w-3.5 place-items-center rounded-full bg-danger-soft text-danger">
+                      <TrashIcon className="h-2 w-2" />
+                    </span>
                   </span>
-                </span>
-                <div className="min-w-0 flex-1">
-                  <div className="os-type-label truncate font-medium text-ink">
-                    {item.name}
+                  <div className="min-w-0 flex-1 basis-[12rem]">
+                    <div className="os-type-label truncate font-medium text-ink">
+                      {item.name}
+                    </div>
+                    <div className="os-type-meta truncate text-ink-faint">
+                      {item.workspaceName}
+                      {item.workspaceDeleted ? " (workspace in trash)" : ""}
+                      {" · "}
+                      Deleted {formatUpdatedAt(item.deletedAt)}
+                    </div>
                   </div>
-                  <div className="os-type-meta truncate text-ink-faint">
-                    {item.workspaceName}
-                    {item.workspaceDeleted ? " (workspace in trash)" : ""}
-                    {" · "}
-                    Deleted {formatUpdatedAt(item.deletedAt)}
+                  <div className="flex shrink-0 flex-wrap gap-1.5">
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      disabled={rowBusy || !actions.canRestore}
+                      title={actions.restoreBlockedReason ?? "Restore"}
+                      onClick={() => void handleRestoreDocument(item)}
+                    >
+                      {rowBusy ? "Restoring…" : "Restore"}
+                    </Button>
+                    {actions.canPermanentlyDelete ? (
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="ghost"
+                        className="text-danger hover:bg-danger-soft hover:text-danger"
+                        disabled={rowBusy || purgeBusy}
+                        onClick={() => {
+                          setPurgeError(null);
+                          setPurgeTarget(item);
+                        }}
+                      >
+                        Delete forever
+                      </Button>
+                    ) : null}
                   </div>
                 </div>
-                <Button
-                  type="button"
-                  size="sm"
-                  variant="outline"
-                  disabled={busyId === item.id || item.workspaceDeleted}
-                  title={
-                    item.workspaceDeleted
-                      ? "Restore the workspace first"
-                      : "Restore"
-                  }
-                  onClick={() => void handleRestoreDocument(item)}
-                >
-                  {busyId === item.id ? "Restoring…" : "Restore"}
-                </Button>
-              </div>
-            ))}
+              );
+            })}
           </div>
         </section>
+      ) : null}
+
+      {purgeTarget ? (
+        <ConfirmDialog
+          title="Delete forever?"
+          body={permanentDeleteConfirmBody(purgeTarget.name)}
+          confirmLabel="Delete forever"
+          busy={purgeBusy}
+          error={purgeError}
+          onCancel={() => {
+            if (purgeBusy) return;
+            setPurgeTarget(null);
+            setPurgeError(null);
+          }}
+          onConfirm={() => void handlePurgeConfirm()}
+        />
       ) : null}
     </div>
   );
