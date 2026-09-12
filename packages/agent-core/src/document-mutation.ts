@@ -246,6 +246,10 @@ export type DocumentMutationExecutionResult =
   | PendingDocumentMutationResult;
 
 export interface DocumentMutationExecutor {
+  /** Finalize the executor-owned formatting session, if one is active. */
+  flushPendingFormatting?(): Promise<DocumentMutationResult | { readonly status: "noop" }>;
+  /** Discard unpersisted formatting working bytes. */
+  abandonPendingFormatting?(): void;
   /** Typed tool schemas supply `type` and payload; this keeps new engine calls on the same persistence path. */
   mutate?(input: {
     readonly document: DocumentRef;

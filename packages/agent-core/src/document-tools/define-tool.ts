@@ -161,9 +161,9 @@ export async function executePersistedMutation(
 
   const result = await apply(document, mutations);
   if (result.status === "pending") {
-    throw new Error(
-      "Pending document mutations require a tool-turn finalizer",
-    );
+    // Internal only: the document tool-turn finalizer will replace this with
+    // one durable result before transcript/SSE delivery.
+    return result as unknown as PersistedDocumentMutationToolResult;
   }
   if (result.status === "error") {
     throw diagnosticError(result.diagnostics[0]!);

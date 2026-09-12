@@ -82,6 +82,29 @@ export function createAgentDocumentMutationExecutor(input: {
   }
 
   return {
+    async flushPendingFormatting() {
+      if (!formattingSession) return { status: "noop" as const };
+      const session = formattingSession;
+      formattingSession = undefined;
+      formattingDocumentId = undefined;
+      const flushed = await session.flush();
+      if (flushed.status === "noop") return { status: "noop" as const };
+      if (flushed.status === "error") {
+        return { status: "error" as const, code: flushed.code, diagnostics: flushed.diagnostics };
+      }
+      return {
+        status: "success" as const,
+        document: { documentId: flushed.document.id, versionId: flushed.version.id, format: "docx" as const },
+        versionNumber: flushed.version.versionNumber,
+        baseVersionId: flushed.version.parentVersionId ?? "",
+        diagnostics: [],
+      };
+    },
+    abandonPendingFormatting() {
+      formattingSession?.abandon();
+      formattingSession = undefined;
+      formattingDocumentId = undefined;
+    },
     async mutate(request): Promise<DocumentMutationResult> {
       const applied = await mutations.applyOperation({
         documentId: request.document.documentId,
