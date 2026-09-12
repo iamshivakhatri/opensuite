@@ -505,6 +505,7 @@ test("system prompt with mutate caps encourages multi-tool batching", () => {
   assert.match(prompt, /short Done/i);
   assert.match(prompt, /NEW DOCUMENT/i);
   assert.match(prompt, /Heading 1/i);
+  assert.match(prompt, /AUTHORING:/i);
   assert.match(prompt, /compact first pass|compact passes/i);
   assert.match(prompt, /semantic rowLabel/i);
   assert.doesNotMatch(prompt, /Global capabilities tell you/i);
@@ -611,9 +612,19 @@ test("greenfield create request: auto tool choice lets model create, then forces
             t.name === DOCUMENT_TOOL_NAMES.insertParagraphs ||
             t.name === DOCUMENT_TOOL_NAMES.createTable ||
             t.name === DOCUMENT_TOOL_NAMES.setTableCellsText ||
-            t.name === DOCUMENT_TOOL_NAMES.setParagraphStyle,
+            t.name === DOCUMENT_TOOL_NAMES.setParagraphStyle ||
+            t.name === DOCUMENT_TOOL_NAMES.setParagraphFormatting ||
+            t.name === DOCUMENT_TOOL_NAMES.setParagraphsList,
         ),
         "post-create authoring catalog is narrowed",
+      );
+      assert.ok(
+        request.tools.some((t) => t.name === DOCUMENT_TOOL_NAMES.setParagraphFormatting),
+        "presentation spacing available on first authoring turn",
+      );
+      assert.ok(
+        request.tools.some((t) => t.name === DOCUMENT_TOOL_NAMES.setParagraphsList),
+        "list formatting available on first authoring turn",
       );
       assert.ok(
         !request.tools.some((t) => t.name === DOCUMENT_TOOL_NAMES.inspect),

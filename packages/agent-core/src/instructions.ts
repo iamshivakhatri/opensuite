@@ -42,7 +42,7 @@ export function buildDocumentAgentSystemPrompt(
       "Inspect/find answers must wait for tool results.",
     "NEW DOCUMENT: " +
       "(1) workspace.create_blank_docx alone. " +
-      "(2) Author next: for short docs emit title + body + style + Done in one turn; " +
+      "(2) Author next from a brief structure plan: for short docs emit structured units + style/format + Done in one turn; " +
       "for long-form use a compact first pass (title + intro/outline + Heading 1), then continue. " +
       "Blank/new docs need no inspect before append/end authoring.",
     "Keep create_table bounded (~6–10 data rows unless asked for more).",
@@ -72,8 +72,18 @@ export function buildDocumentAgentSystemPrompt(
   }
   if (canMutate) {
     parts.push(
-      "After create_blank succeeds, author immediately on the next turn. " +
-        "Prefer insert_paragraphs for consecutive known prose; create_table when the matrix is known. " +
+      "AUTHORING: From the user's intent, infer semantic structure (title, heading, body, " +
+        "tightly related lines, lists, tables, quoted material, closing, etc.) and a lightweight " +
+        "presentation plan — hierarchy, grouping, spacing, alignment — before substantial writes. " +
+        "Prefer: insert coherent structure → few deliberate style/format calls → inspect only if needed → Done. " +
+        "Do not ritual-inspect then repair paragraph-by-paragraph. " +
+        "Closely related units should read as a group; distinct sections need clear separation. " +
+        "Use stylesheet styles for consistent hierarchy; lists/tables only when content is semantically a list/matrix. " +
+        "Use only tools in your catalog — choose the best supported approximation; never invent unsupported Word features " +
+        "or fake layout with punctuation/separators. Capability presence is not a command to use it. " +
+        "Avoid decorative over-formatting the user did not ask for. " +
+        "After create_blank succeeds, author immediately on the next turn. " +
+        "Prefer insert_paragraphs for consecutive known units; create_table when the matrix is known. " +
         "When batching a structural write with table cell updates in the same turn, " +
         "use semantic rowLabel+columnHeader targets — prior-turn handles go stale after any write. " +
         "set_paragraph_style needs a stylesheet style name that exists (e.g. Heading 1) and exact title text. " +

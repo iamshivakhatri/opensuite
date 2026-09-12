@@ -54,8 +54,9 @@ const CREATE_BLANK_TOOL = "workspace.create_blank_docx";
 const AUTHORING_TIMEOUT_RETRY_MESSAGE =
   "Runtime policy: previous authoring model turn timed out. " +
   "Call tools now with a compact first pass only: document.insert_paragraphs " +
-  "(title + short intro / outline), document.set_paragraph_style Heading 1 on the title, " +
-  "and one document.create_table with at most 6–8 rows if needed. " +
+  "(structured semantic units: title + short intro / outline), " +
+  "document.set_paragraph_style for hierarchy on the title, " +
+  "and one document.create_table with at most 6–8 rows if the content is tabular. " +
   "Do not generate a giant single payload — continue remaining sections in later turns.";
 
 const USE_DOCUMENT_TOOLS_NUDGE_MESSAGE =
@@ -68,6 +69,7 @@ const USE_DOCUMENT_TOOLS_NUDGE_MESSAGE =
  * After blank create, only advertise core authoring tools until the first
  * write lands. A full catalog + tool_choice=required can hang slow models
  * for minutes while they stall before the first token.
+ * Includes style/spacing/list so deliberate presentation can land with content.
  */
 const POST_CREATE_AUTHORING_TOOL_NAMES = new Set<string>([
   "document.insert_paragraph",
@@ -75,6 +77,8 @@ const POST_CREATE_AUTHORING_TOOL_NAMES = new Set<string>([
   "document.create_table",
   "document.set_table_cells_text",
   "document.set_paragraph_style",
+  "document.set_paragraph_formatting",
+  "document.set_paragraphs_list",
 ]);
 
 export interface DocumentTurnToolSelectorOptions {

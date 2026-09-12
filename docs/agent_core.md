@@ -143,7 +143,9 @@ summary — never storage keys or engine source identities.
 
 System instruction: `buildDocumentAgentSystemPrompt(capabilities)` — behavioral only; adapters must
 pass the run's discovered capabilities so mutate/authoring guidance matches the filtered tool catalog.
-Prefer fewest **model rounds** (batch independent writes in one assistant response). Blank docs need
+AUTHORING guidance (mutate runs): infer semantic structure from intent, plan hierarchy/grouping/spacing,
+author coherent structure then few deliberate format calls, use only catalog capabilities, never fake
+layout with punctuation, never genre-branch. Prefer fewest **model rounds** (batch independent writes in one assistant response). Blank docs need
 no ritual inspect before append/end authoring. Structured `reasonCode` over message parsing; no blind retries.
 Canonical transcript stays rich; `transformContext` projects slim model-facing tool results
 (no echoed prose / version UUIDs; inspect drops empty caps/null summary/format duplication)

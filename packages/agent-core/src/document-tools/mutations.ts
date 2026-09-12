@@ -236,9 +236,8 @@ export function createDocumentInsertParagraphTool(): AgentTool<
   return defineDocumentTool({
     name: DOCUMENT_TOOL_NAMES.insertParagraph,
     description:
-      "Insert one paragraph. Prefer insert_paragraphs for several known consecutive paragraphs. " +
-      "placement: start | end | before/after body-block handle from inspect(body_blocks). " +
-      "Handles go stale after any write.",
+      "Insert one semantic unit (title/heading/body/related line/closing). Prefer insert_paragraphs for several consecutive units. " +
+      "placement: start|end|before/after body-block handle (stale after write).",
     effect: "write",
     executionMode: "sequential",
     capability: DOCX_ENGINE_CAPS.insertParagraph,
@@ -248,7 +247,7 @@ export function createDocumentInsertParagraphTool(): AgentTool<
         text: {
           type: "string",
           description:
-            "Full paragraph or heading text (prefer multi-sentence prose; avoid one short line per call)",
+            "One semantic unit; short related lines OK when meaning requires them",
         },
         placement: {
           type: "object",
@@ -326,8 +325,8 @@ export function createDocumentInsertParagraphsTool(): AgentTool<
   return defineDocumentTool({
     name: DOCUMENT_TOOL_NAMES.insertParagraphs,
     description:
-      "Insert multiple consecutive paragraphs in one version. Prefer over repeated insert_paragraph. " +
-      "Same placement rules as insert_paragraph (start|end|before|after handle).",
+      "Insert consecutive semantic units in one version (prefer over repeated insert_paragraph). " +
+      "Each texts[] entry = one unit; structure by meaning, then style/format deliberately. No punctuation layout hacks.",
     effect: "write",
     executionMode: "sequential",
     capability: DOCX_ENGINE_CAPS.insertParagraphs,
@@ -339,7 +338,7 @@ export function createDocumentInsertParagraphsTool(): AgentTool<
           items: { type: "string", minLength: 1 },
           minItems: 1,
           description:
-            "Non-empty ordered paragraph texts (prefer multi-sentence prose per entry)",
+            "Ordered units (title/heading/body/related line/closing); short related lines OK when needed",
         },
         placement: PARAGRAPH_PLACEMENT_SCHEMA,
       },
@@ -448,9 +447,8 @@ export function createDocumentSetParagraphStyleTool(): AgentTool<
   return defineDocumentTool({
     name: DOCUMENT_TOOL_NAMES.setParagraphStyle,
     description:
-      "Set/clear paragraph style by display name that exists in the document stylesheet " +
-      "(e.g. Heading 1). Target exact visible text. Omit style to clear. " +
-      "Fails with TARGET_NOT_FOUND if the style name is missing from styles.xml.",
+      "Set/clear stylesheet style by display name (e.g. Title, Heading 1/2) for hierarchy — not decoration. " +
+      "Target exact visible text. Omit style to clear. TARGET_NOT_FOUND if style missing from styles.xml.",
     effect: "write",
     executionMode: "sequential",
     capability: DOCX_ENGINE_CAPS.setParagraphStyle,
@@ -460,8 +458,7 @@ export function createDocumentSetParagraphStyleTool(): AgentTool<
         target: TEXT_TARGET_SCHEMA,
         style: {
           type: "string",
-          description:
-            "Existing style display name (e.g. Heading 1). Omit to clear.",
+          description: "Existing style display name (e.g. Heading 1). Omit to clear.",
         },
       },
       required: ["target"],
@@ -505,7 +502,7 @@ export function createDocumentSetParagraphFormattingTool(): AgentTool<
   return defineDocumentTool({
     name: DOCUMENT_TOOL_NAMES.setParagraphFormatting,
     description:
-      "Set paragraph alignment and/or spacing (twips). Target exact visible text.",
+      "Set alignment and/or spacingBefore/After (twips; 240≈12pt) to group related units or separate sections — not every paragraph. Target exact text.",
     effect: "write",
     executionMode: "sequential",
     capability: DOCX_ENGINE_CAPS.setParagraphFormatting,
@@ -516,14 +513,15 @@ export function createDocumentSetParagraphFormattingTool(): AgentTool<
         alignment: {
           type: "string",
           enum: ["left", "center", "right"],
+          description: "Use when it reinforces structure (e.g. centered title)",
         },
         spacingBeforeTwips: {
           type: "number",
-          description: "Spacing before paragraph in twips",
+          description: "Twips before (240≈12pt); increase to separate sections",
         },
         spacingAfterTwips: {
           type: "number",
-          description: "Spacing after paragraph in twips",
+          description: "Twips after (240≈12pt); reduce for tightly related lines",
         },
       },
       required: ["target"],
@@ -598,7 +596,7 @@ export function createDocumentSetTextFormattingTool(): AgentTool<
   return defineDocumentTool({
     name: DOCUMENT_TOOL_NAMES.setTextFormatting,
     description:
-      "Set run formatting (bold, italic, font, color, underline, highlight, strikethrough, or vertical alignment) on exact visible text.",
+      "Set run formatting on exact visible text. Use sparingly to reinforce meaning — not decorative over-formatting.",
     effect: "write",
     executionMode: "sequential",
     capability: DOCX_ENGINE_CAPS.setTextFormatting,
@@ -1059,8 +1057,8 @@ export function createDocumentCreateTableTool(): AgentTool<
   return defineDocumentTool({
     name: DOCUMENT_TOOL_NAMES.createTable,
     description:
-      "Create a rectangular table with full initial cell matrix at placement " +
-      "(start|end|before|after body-block handle). Prefer when contents are known.",
+      "Create a rectangular table with full initial cell matrix at placement. " +
+      "Only when content is semantically tabular — not a prose layout grid.",
     effect: "write",
     executionMode: "sequential",
     capability: DOCX_ENGINE_CAPS.createTable,

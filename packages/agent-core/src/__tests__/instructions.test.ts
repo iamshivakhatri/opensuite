@@ -40,6 +40,11 @@ test("system prompt mentions mutate behavior without listing every tool", () => 
     ),
   );
   assert.doesNotMatch(prompt, /Editing is currently unavailable/i);
+  assert.match(prompt, /AUTHORING:/i);
+  assert.match(prompt, /semantic structure/i);
+  assert.match(prompt, /lightweight presentation plan|presentation plan/i);
+  assert.match(prompt, /fake layout|punctuation/i);
+  assert.match(prompt, /Capability presence is not a command/i);
   assert.match(prompt, /create_blank succeeds/i);
   assert.match(prompt, /Never claim an edit succeeded/i);
   assert.match(prompt, /STALE_HANDLE/);
@@ -53,4 +58,6 @@ test("system prompt mentions mutate behavior without listing every tool", () => 
   assert.doesNotMatch(prompt, /document\.set_table_cells_text/);
   assert.doesNotMatch(prompt, /document\.insert_table_column/);
   assert.doesNotMatch(prompt, /Advertised runtime capabilities/);
+  // No genre-specific branching.
+  assert.doesNotMatch(prompt, /if poem|if resume|if report|contentType ===/i);
 });

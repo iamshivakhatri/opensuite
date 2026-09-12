@@ -240,6 +240,96 @@ export const BENCH_SCENARIOS: readonly BenchScenario[] = [
       return { ok: notes.length === 0, notes };
     },
   },
+  {
+    id: "authoring-memo",
+    label: "I. Authoring quality — professional memo",
+    instruction:
+      "Create a new short business memo with a title, To/From/Subject lines, two body paragraphs, and sensible hierarchy/spacing. Prefer batched writes; do not ritual-inspect.",
+    seed() {
+      return null;
+    },
+    check({ result, toolNames }) {
+      const notes: string[] = [];
+      if (!toolNames.includes("workspace.create_blank_docx")) {
+        notes.push("expected workspace.create_blank_docx");
+      }
+      if (!toolNames.includes("document.insert_paragraphs") && !toolNames.includes("document.insert_paragraph")) {
+        notes.push("expected paragraph authoring");
+      }
+      if (!toolNames.includes("document.set_paragraph_style")) {
+        notes.push("expected hierarchy via paragraph styles");
+      }
+      if (toolNames.includes("document.create_table")) {
+        notes.push("memo should not use a table for layout");
+      }
+      if (toolNames.filter((n) => n === "document.inspect").length > 1) {
+        notes.push("avoid inspect repair loops");
+      }
+      if (result.status !== "completed") {
+        notes.push(`run status=${result.status}`);
+      }
+      return { ok: notes.length === 0, notes };
+    },
+  },
+  {
+    id: "authoring-guide",
+    label: "J. Authoring quality — hierarchical guide",
+    instruction:
+      "Create a new onboarding guide with a title, Overview section, Setup steps as a short bullet list, and Tips. Use styles for hierarchy and list formatting for steps. Prefer batched writes.",
+    seed() {
+      return null;
+    },
+    check({ result, toolNames }) {
+      const notes: string[] = [];
+      if (!toolNames.includes("workspace.create_blank_docx")) {
+        notes.push("expected workspace.create_blank_docx");
+      }
+      if (!toolNames.includes("document.set_paragraph_style")) {
+        notes.push("expected heading hierarchy");
+      }
+      if (!toolNames.includes("document.set_paragraphs_list")) {
+        notes.push("expected list formatting for setup steps");
+      }
+      if (toolNames.includes("document.create_table")) {
+        notes.push("guide steps should be a list, not a table");
+      }
+      if (result.status !== "completed") {
+        notes.push(`run status=${result.status}`);
+      }
+      return { ok: notes.length === 0, notes };
+    },
+  },
+  {
+    id: "authoring-creative",
+    label: "K. Authoring quality — short creative pieces",
+    instruction:
+      "Create a new short document with a title and two titled pieces made of a few tightly related lines each. Use heading styles and tighter spacing for related lines. Prefer batched writes; do not fake layout with punctuation separators.",
+    seed() {
+      return null;
+    },
+    check({ result, toolNames }) {
+      const notes: string[] = [];
+      if (!toolNames.includes("workspace.create_blank_docx")) {
+        notes.push("expected workspace.create_blank_docx");
+      }
+      if (!toolNames.includes("document.insert_paragraphs")) {
+        notes.push("expected batched semantic inserts");
+      }
+      if (!toolNames.includes("document.set_paragraph_style")) {
+        notes.push("expected hierarchy via styles");
+      }
+      if (!toolNames.includes("document.set_paragraph_formatting")) {
+        notes.push("expected deliberate spacing for related lines");
+      }
+      if (toolNames.includes("document.create_table")) {
+        notes.push("creative pieces should not use a table for layout");
+      }
+      if (result.status !== "completed") {
+        notes.push(`run status=${result.status}`);
+      }
+      return { ok: notes.length === 0, notes };
+    },
+  },
 ];
 
 export function scenarioById(id: string): BenchScenario | undefined {
@@ -266,6 +356,9 @@ export function selectScenarios(
         D: "greenfield-large",
         E: "reason-mutate",
         F: "greenfield-poems",
+        I: "authoring-memo",
+        J: "authoring-guide",
+        K: "authoring-creative",
       };
       return scenarioById(map[letter] ?? id);
     })

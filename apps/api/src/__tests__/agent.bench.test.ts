@@ -18,7 +18,7 @@ import { selectScenarios, scenarioById } from "../agent/bench/scenarios.js";
 import { createScriptedBenchmarkModel } from "../agent/bench/scripted-model.js";
 
 test("selectScenarios resolves ids and letter aliases", () => {
-  assert.equal(selectScenarios("all").length, 8);
+  assert.equal(selectScenarios("all").length, 11);
   assert.deepEqual(
     selectScenarios("A,C").map((s) => s.id),
     ["simple-read", "greenfield-small"],
@@ -133,7 +133,14 @@ test("bench harness: scripted greenfield create→batch→terminalize (native en
 
 test("production benchmark harness runs deterministic targeting and formatting plans", async () => {
   const harness = await createProductionBenchHarness();
-  for (const id of ["target-duplicate", "target-recovery", "greenfield-poems"] as const) {
+  for (const id of [
+    "target-duplicate",
+    "target-recovery",
+    "greenfield-poems",
+    "authoring-memo",
+    "authoring-guide",
+    "authoring-creative",
+  ] as const) {
     const scenario = scenarioById(id)!;
     const primary = scenario.seed(harness);
     const { result, events } = await harness.run({
