@@ -78,6 +78,7 @@ test("DOCX run receives capability-gated tools without capabilities probe", asyn
   assert.ok(!firstTools!.includes(DOCUMENT_TOOL_NAMES.capabilities));
   assert.ok(firstTools!.includes(DOCUMENT_TOOL_NAMES.insertParagraphs));
   assert.ok(firstTools!.includes(DOCUMENT_TOOL_NAMES.createTable));
+  assert.ok(!firstTools!.includes(DOCUMENT_TOOL_NAMES.insertTableRows));
 });
 
 test("internal document.capabilities factory still works", async () => {

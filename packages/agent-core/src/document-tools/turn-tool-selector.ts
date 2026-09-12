@@ -49,6 +49,34 @@ import {
   type DocumentRunState,
 } from "./run-state.js";
 
+type DocumentToolFamily = "read" | "content" | "formatting" | "tables" | "layout" | "media";
+
+/** One source of truth for model-facing document-tool relevance. */
+const DOCUMENT_TOOL_FAMILIES: Record<string, DocumentToolFamily> = {
+  "document.inspect": "read", "document.find": "read",
+  "document.replace_text": "content", "document.insert_paragraph": "content",
+  "document.insert_paragraphs": "content", "document.delete_paragraph": "content",
+  "document.set_content_control_text": "content", "document.set_hyperlink": "content",
+  "document.set_paragraph_style": "formatting", "document.set_paragraph_formatting": "formatting",
+  "document.set_text_formatting": "formatting", "document.set_paragraphs_list": "formatting",
+  "document.set_table_formatting": "formatting", "document.set_table_column_widths": "formatting",
+  "document.set_table_cell_shading": "formatting",
+  "document.create_table": "content", "document.set_table_cells_text": "tables",
+  "document.insert_table_rows": "tables", "document.insert_table_row": "tables",
+  "document.insert_table_column": "tables", "document.delete_table": "tables",
+  "document.delete_table_row": "tables", "document.delete_table_column": "tables",
+  "document.insert_page_break": "layout", "document.delete_page_break": "layout",
+  "document.set_page_setup": "layout", "document.set_header_footer_text": "layout",
+  "document.set_page_number": "layout",
+  "document.insert_picture": "media", "document.delete_picture": "media",
+  "document.set_picture_size": "media", "document.replace_picture": "media",
+  "slides.update_text": "content", "workbook.set_cells": "content",
+};
+
+const DEFAULT_WORKING_FAMILIES = new Set<DocumentToolFamily>([
+  "read", "content", "formatting",
+]);
+
 /** Blank-document creation tool name (workspace-owned, not a document tool). */
 const CREATE_BLANK_TOOL = "workspace.create_blank_docx";
 
@@ -198,7 +226,7 @@ export function createDocumentTurnToolSelector(
     return {
       status: "ok",
       registry: cachedRegistry,
-      toolsForModel: selectToolsForModel(cachedRegistry, context.toolOutcomes),
+      toolsForModel: selectToolsForModel(cachedRegistry, context.toolOutcomes, state),
       toolChoice: resolveToolChoice(cachedRegistry, context.toolOutcomes),
       capabilities: cachedCapabilities,
     };
@@ -434,6 +462,7 @@ function resolveToolChoice(
 function selectToolsForModel(
   tools: ToolRegistry,
   outcomes: readonly ToolOutcome[],
+  state: DocumentRunState,
 ): readonly ModelToolDefinition[] {
   const defs = tools.definitions();
   const created = hasSuccessfulCreate(outcomes);
@@ -445,5 +474,24 @@ function selectToolsForModel(
     );
     return narrowed.length > 0 ? narrowed : defs;
   }
-  return defs;
+  const families = new Set(DEFAULT_WORKING_FAMILIES);
+  for (const outcome of outcomes) {
+    const family = DOCUMENT_TOOL_FAMILIES[outcome.toolName];
+    if (family) families.add(family);
+    if (outcome.status === "failed") families.add("read");
+  }
+  if (workingStateShowsTables(state.working?.inspection)) families.add("tables");
+  const narrowed = defs.filter((tool) => {
+    const family = DOCUMENT_TOOL_FAMILIES[tool.name];
+    return family === undefined || families.has(family);
+  });
+  return narrowed.length > 0 ? narrowed : defs;
+}
+
+function workingStateShowsTables(inspection: unknown): boolean {
+  if (!inspection || typeof inspection !== "object") return false;
+  const payload = (inspection as { payload?: unknown }).payload;
+  return !!payload && typeof payload === "object" &&
+    Array.isArray((payload as { tables?: unknown }).tables) &&
+    (payload as { tables: unknown[] }).tables.length > 0;
 }

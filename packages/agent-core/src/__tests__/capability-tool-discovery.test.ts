@@ -33,7 +33,7 @@ const docxRef: DocumentRef = {
   format: "docx",
 };
 
-test("DOCX advertised caps → first model request gets exactly those document tools", async () => {
+test("DOCX advertised caps → first model request receives the default working set", async () => {
   const caps = createCapabilities(
     Capabilities.DocumentInspect,
     Capabilities.DocumentFind,
@@ -76,10 +76,8 @@ test("DOCX advertised caps → first model request gets exactly those document t
   assert.deepEqual(firstTools, [
     "agent.ping",
     DOCUMENT_TOOL_NAMES.find,
-    DOCUMENT_TOOL_NAMES.insertTableRows,
     DOCUMENT_TOOL_NAMES.inspect,
     DOCUMENT_TOOL_NAMES.replaceText,
-    DOCUMENT_TOOL_NAMES.setTableCellsText,
   ]);
   assert.ok(!firstTools!.includes(DOCUMENT_TOOL_NAMES.insertTableColumn));
   assert.ok(!firstTools!.includes(DOCUMENT_TOOL_NAMES.updateSlideText));
