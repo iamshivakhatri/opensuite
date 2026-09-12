@@ -129,6 +129,7 @@ export function ConfirmDialog({
   confirmLabel,
   busy,
   error,
+  className,
   onCancel,
   onConfirm,
 }: {
@@ -137,6 +138,8 @@ export function ConfirmDialog({
   confirmLabel: string;
   busy?: boolean;
   error?: string | null;
+  /** Optional panel class — e.g. wider / danger-bordered for high-impact confirms. */
+  className?: string;
   onCancel: () => void;
   onConfirm: () => void;
 }) {
@@ -176,7 +179,10 @@ export function ConfirmDialog({
         aria-modal="true"
         aria-labelledby={titleId}
         tabIndex={-1}
-        className="w-full max-w-[380px] rounded-[var(--radius-lg)] border border-line bg-surface p-4 shadow-[var(--elevation-md)]"
+        className={cn(
+          "w-full max-w-[380px] rounded-[var(--radius-lg)] border border-line bg-surface p-4 shadow-[var(--elevation-md)]",
+          className,
+        )}
         onClick={(event) => event.stopPropagation()}
       >
         <h2

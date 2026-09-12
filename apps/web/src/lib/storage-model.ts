@@ -88,6 +88,56 @@ export function permanentDeleteConfirmBody(documentName: string): string {
   );
 }
 
+/**
+ * Product copy for irreversible workspace purge confirmation.
+ * Larger scope than a single document — UI should present this distinctly.
+ */
+export function permanentWorkspaceDeleteConfirmCopy(workspaceName: string): {
+  readonly lead: string;
+  readonly items: readonly string[];
+  readonly footer: string;
+} {
+  return {
+    lead: `Permanently deleting "${workspaceName}" will remove:`,
+    items: [
+      "the workspace",
+      "all documents inside it",
+      "all saved document versions",
+      "workspace conversation history",
+      "associated stored document data",
+    ],
+    footer:
+      "Storage used by this workspace will be reclaimed. This cannot be undone.",
+  };
+}
+
+/** Flat body string for tests / non-React consumers. */
+export function permanentWorkspaceDeleteConfirmBody(
+  workspaceName: string,
+): string {
+  const copy = permanentWorkspaceDeleteConfirmCopy(workspaceName);
+  return `${copy.lead} ${copy.items.join("; ")}. ${copy.footer}`;
+}
+
+export type TrashPurgeKind = "document" | "workspace";
+
+/** Permanent delete is only offered from Trash — never active library surfaces. */
+export const PERMANENT_DELETE_SURFACE = "trash" as const;
+
+export function trashPurgePath(kind: TrashPurgeKind, id: string): string {
+  return kind === "document"
+    ? `/api/trash/documents/${id}`
+    : `/api/trash/workspaces/${id}`;
+}
+
+/** Success-path list update after a permanent purge (failure must not call this). */
+export function removePurgedTrashItem<T extends { readonly id: string }>(
+  items: readonly T[],
+  purgedId: string,
+): T[] {
+  return items.filter((item) => item.id !== purgedId);
+}
+
 export function trashDocumentActions(options: {
   readonly workspaceDeleted: boolean;
 }): {
@@ -104,13 +154,13 @@ export function trashDocumentActions(options: {
   };
 }
 
-/** Workspaces in trash must not expose permanent purge until backend supports it. */
+/** Trashed workspaces: restore + permanent purge (owned trashed only; backend enforces). */
 export function trashWorkspaceActions(): {
   readonly canRestore: boolean;
   readonly canPermanentlyDelete: boolean;
 } {
   return {
     canRestore: true,
-    canPermanentlyDelete: false,
+    canPermanentlyDelete: true,
   };
 }

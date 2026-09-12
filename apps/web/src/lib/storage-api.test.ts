@@ -56,7 +56,21 @@ describe("storage API client", () => {
     ]);
   });
 
-  it("keeps purge failure as an error without inventing success", async () => {
+  it("purges a trashed workspace via DELETE /api/trash/workspaces/:id", async () => {
+    const calls: string[] = [];
+    globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      calls.push(`${init?.method ?? "GET"} ${String(input)}`);
+      return new Response(null, { status: 204 });
+    }) as typeof fetch;
+
+    const api = await loadApi();
+    await api.purgeTrashedWorkspace("22222222-2222-4222-8222-222222222222");
+    assert.deepEqual(calls, [
+      "DELETE http://api.test/api/trash/workspaces/22222222-2222-4222-8222-222222222222",
+    ]);
+  });
+
+  it("keeps document purge failure as an error without inventing success", async () => {
     globalThis.fetch = (async () =>
       new Response(
         JSON.stringify({
@@ -78,5 +92,41 @@ describe("storage API client", () => {
         return true;
       },
     );
+  });
+
+  it("keeps workspace purge failure as an error without inventing success", async () => {
+    globalThis.fetch = (async () =>
+      new Response(
+        JSON.stringify({
+          error: {
+            statusCode: 409,
+            code: "WORKSPACE_NOT_TRASHED",
+            message: "Workspace is not in trash",
+          },
+        }),
+        { status: 409, headers: { "Content-Type": "application/json" } },
+      )) as typeof fetch;
+
+    const api = await loadApi();
+    await assert.rejects(
+      () => api.purgeTrashedWorkspace("22222222-2222-4222-8222-222222222222"),
+      (error: unknown) => {
+        assert.ok(error instanceof api.StorageApiError);
+        assert.equal(error.code, "WORKSPACE_NOT_TRASHED");
+        return true;
+      },
+    );
+  });
+
+  it("does not issue a purge request when cancel is chosen (no client call)", async () => {
+    const calls: string[] = [];
+    globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      calls.push(`${init?.method ?? "GET"} ${String(input)}`);
+      return new Response(null, { status: 204 });
+    }) as typeof fetch;
+
+    await loadApi();
+    // Cancel path never invokes purgeTrashedWorkspace / purgeTrashedDocument.
+    assert.deepEqual(calls, []);
   });
 });

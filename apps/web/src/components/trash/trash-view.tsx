@@ -17,10 +17,15 @@ import {
   type TrashedDocument,
   type TrashedWorkspace,
 } from "@/lib/api";
-import { purgeTrashedDocument } from "@/lib/storage-api";
+import {
+  purgeTrashedDocument,
+  purgeTrashedWorkspace,
+} from "@/lib/storage-api";
 import {
   notifyStorageChanged,
   permanentDeleteConfirmBody,
+  permanentWorkspaceDeleteConfirmCopy,
+  removePurgedTrashItem,
   trashDocumentActions,
   trashWorkspaceActions,
 } from "@/lib/storage-model";
@@ -44,6 +49,31 @@ function TrashIcon({ className }: { className?: string }) {
   );
 }
 
+type PurgeTarget =
+  | { kind: "document"; item: TrashedDocument }
+  | { kind: "workspace"; item: TrashedWorkspace };
+
+function WorkspacePurgeConfirmBody({ name }: { name: string }) {
+  const copy = permanentWorkspaceDeleteConfirmCopy(name);
+  return (
+    <div className="space-y-3">
+      <p className="rounded-[var(--radius-sm)] border border-danger/25 bg-danger-soft px-3 py-2 text-[12.5px] leading-snug text-danger">
+        This permanently deletes an entire workspace and everything in it — not
+        just one file.
+      </p>
+      <p className="text-[12.5px] leading-snug">{copy.lead}</p>
+      <ul className="list-disc space-y-1 pl-4 text-[12.5px] leading-snug text-ink-soft">
+        {copy.items.map((item) => (
+          <li key={item}>{item}</li>
+        ))}
+      </ul>
+      <p className="text-[12.5px] font-medium leading-snug text-ink">
+        {copy.footer}
+      </p>
+    </div>
+  );
+}
+
 export function TrashView() {
   const { toast } = useToast();
   const [workspaces, setWorkspaces] = React.useState<TrashedWorkspace[] | null>(
@@ -55,7 +85,7 @@ export function TrashView() {
   const [error, setError] = React.useState<string | null>(null);
   const [busyId, setBusyId] = React.useState<string | null>(null);
   const [actionError, setActionError] = React.useState<string | null>(null);
-  const [purgeTarget, setPurgeTarget] = React.useState<TrashedDocument | null>(
+  const [purgeTarget, setPurgeTarget] = React.useState<PurgeTarget | null>(
     null,
   );
   const [purgeBusy, setPurgeBusy] = React.useState(false);
@@ -114,20 +144,34 @@ export function TrashView() {
     if (!purgeTarget || purgeBusy) return;
     setPurgeBusy(true);
     setPurgeError(null);
-    const documentId = purgeTarget.id;
+    const target = purgeTarget;
     try {
-      await purgeTrashedDocument(documentId);
-      setDocuments((current) =>
-        (current ?? []).filter((row) => row.id !== documentId),
-      );
+      if (target.kind === "document") {
+        await purgeTrashedDocument(target.item.id);
+        setDocuments((current) =>
+          removePurgedTrashItem(current ?? [], target.item.id),
+        );
+        toast({ tone: "success", title: "Document permanently deleted" });
+      } else {
+        const workspaceId = target.item.id;
+        await purgeTrashedWorkspace(workspaceId);
+        setWorkspaces((current) =>
+          removePurgedTrashItem(current ?? [], workspaceId),
+        );
+        // Backend removes workspace documents with the purge; drop them locally too.
+        setDocuments((current) =>
+          (current ?? []).filter((row) => row.workspaceId !== workspaceId),
+        );
+        toast({ tone: "success", title: "Workspace permanently deleted" });
+      }
       setPurgeTarget(null);
       notifyStorageChanged();
-      toast({ tone: "success", title: "Document permanently deleted" });
     } catch (err) {
-      const message = userFacingError(
-        err,
-        "Could not permanently delete document.",
-      );
+      const fallback =
+        target.kind === "document"
+          ? "Could not permanently delete document."
+          : "Could not permanently delete workspace.";
+      const message = userFacingError(err, fallback);
       setPurgeError(message);
       toast({
         tone: "error",
@@ -137,6 +181,12 @@ export function TrashView() {
     } finally {
       setPurgeBusy(false);
     }
+  }
+
+  function closePurgeDialog() {
+    if (purgeBusy) return;
+    setPurgeTarget(null);
+    setPurgeError(null);
   }
 
   const empty =
@@ -160,7 +210,7 @@ export function TrashView() {
         </h1>
         <p className="os-type-secondary mt-1 text-ink-soft">
           Soft-deleted workspaces and documents. Restore items, or permanently
-          delete documents to free storage.
+          delete them to free storage.
         </p>
       </div>
 
@@ -190,35 +240,55 @@ export function TrashView() {
         <section className="mb-8">
           <h2 className="os-type-section mb-2">Workspaces</h2>
           <div className="flex flex-col gap-1.5">
-            {workspaces!.map((item) => (
-              <div
-                key={item.id}
-                className="flex flex-wrap items-center gap-3 rounded-[var(--radius-md)] border border-line bg-surface px-3 py-2.5"
-              >
-                <span className="grid h-8 w-8 shrink-0 place-items-center rounded-[8px] border border-line bg-[var(--paper)] text-ink-faint">
-                  <TrashIcon className="h-3.5 w-3.5" />
-                </span>
-                <div className="min-w-0 flex-1">
-                  <div className="os-type-label truncate font-medium text-ink">
-                    {item.name}
+            {workspaces!.map((item) => {
+              const rowBusy = busyId === item.id;
+              return (
+                <div
+                  key={item.id}
+                  className="flex flex-wrap items-center gap-3 rounded-[var(--radius-md)] border border-line bg-surface px-3 py-2.5"
+                >
+                  <span className="grid h-8 w-8 shrink-0 place-items-center rounded-[8px] border border-line bg-[var(--paper)] text-ink-faint">
+                    <TrashIcon className="h-3.5 w-3.5" />
+                  </span>
+                  <div className="min-w-0 flex-1 basis-[12rem]">
+                    <div className="os-type-label truncate font-medium text-ink">
+                      {item.name}
+                    </div>
+                    <div className="os-type-meta text-ink-faint">
+                      Workspace · Deleted {formatUpdatedAt(item.deletedAt)}
+                    </div>
                   </div>
-                  <div className="os-type-meta text-ink-faint">
-                    Workspace · Deleted {formatUpdatedAt(item.deletedAt)}
+                  <div className="flex shrink-0 flex-wrap gap-1.5">
+                    {workspaceActions.canRestore ? (
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="outline"
+                        disabled={rowBusy || purgeBusy}
+                        onClick={() => void handleRestoreWorkspace(item)}
+                      >
+                        {rowBusy ? "Restoring…" : "Restore"}
+                      </Button>
+                    ) : null}
+                    {workspaceActions.canPermanentlyDelete ? (
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="ghost"
+                        className="text-danger hover:bg-danger-soft hover:text-danger"
+                        disabled={rowBusy || purgeBusy}
+                        onClick={() => {
+                          setPurgeError(null);
+                          setPurgeTarget({ kind: "workspace", item });
+                        }}
+                      >
+                        Delete forever
+                      </Button>
+                    ) : null}
                   </div>
                 </div>
-                {workspaceActions.canRestore ? (
-                  <Button
-                    type="button"
-                    size="sm"
-                    variant="outline"
-                    disabled={busyId === item.id}
-                    onClick={() => void handleRestoreWorkspace(item)}
-                  >
-                    {busyId === item.id ? "Restoring…" : "Restore"}
-                  </Button>
-                ) : null}
-              </div>
-            ))}
+              );
+            })}
           </div>
         </section>
       ) : null}
@@ -263,7 +333,7 @@ export function TrashView() {
                       type="button"
                       size="sm"
                       variant="outline"
-                      disabled={rowBusy || !actions.canRestore}
+                      disabled={rowBusy || !actions.canRestore || purgeBusy}
                       title={actions.restoreBlockedReason ?? "Restore"}
                       onClick={() => void handleRestoreDocument(item)}
                     >
@@ -278,7 +348,7 @@ export function TrashView() {
                         disabled={rowBusy || purgeBusy}
                         onClick={() => {
                           setPurgeError(null);
-                          setPurgeTarget(item);
+                          setPurgeTarget({ kind: "document", item });
                         }}
                       >
                         Delete forever
@@ -292,18 +362,27 @@ export function TrashView() {
         </section>
       ) : null}
 
-      {purgeTarget ? (
+      {purgeTarget?.kind === "document" ? (
         <ConfirmDialog
           title="Delete forever?"
-          body={permanentDeleteConfirmBody(purgeTarget.name)}
+          body={permanentDeleteConfirmBody(purgeTarget.item.name)}
           confirmLabel="Delete forever"
           busy={purgeBusy}
           error={purgeError}
-          onCancel={() => {
-            if (purgeBusy) return;
-            setPurgeTarget(null);
-            setPurgeError(null);
-          }}
+          onCancel={closePurgeDialog}
+          onConfirm={() => void handlePurgeConfirm()}
+        />
+      ) : null}
+
+      {purgeTarget?.kind === "workspace" ? (
+        <ConfirmDialog
+          title="Delete workspace forever?"
+          body={<WorkspacePurgeConfirmBody name={purgeTarget.item.name} />}
+          confirmLabel="Delete forever"
+          busy={purgeBusy}
+          error={purgeError}
+          className="max-w-[440px] border-danger/30"
+          onCancel={closePurgeDialog}
           onConfirm={() => void handlePurgeConfirm()}
         />
       ) : null}

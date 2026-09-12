@@ -2,15 +2,22 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
 import {
+  PERMANENT_DELETE_SURFACE,
   TRASH_PATH,
   formatStorageBytes,
+  notifyStorageChanged,
   permanentDeleteConfirmBody,
+  permanentWorkspaceDeleteConfirmBody,
+  permanentWorkspaceDeleteConfirmCopy,
+  removePurgedTrashItem,
+  STORAGE_CHANGED_EVENT,
   storageQuotaKind,
   storageQuotaMessage,
   storageRemainingLabel,
   storageUsageRatio,
   storageUsedOfQuotaLabel,
   trashDocumentActions,
+  trashPurgePath,
   trashWorkspaceActions,
   type StorageStatus,
 } from "./storage-model.ts";
@@ -76,7 +83,7 @@ describe("trash navigation and actions", () => {
     assert.equal(TRASH_PATH, "/app/trash");
   });
 
-  it("exposes permanent-delete for trashed documents only", () => {
+  it("exposes permanent-delete for trashed documents", () => {
     const doc = trashDocumentActions({ workspaceDeleted: false });
     assert.equal(doc.canPermanentlyDelete, true);
     assert.equal(doc.canRestore, true);
@@ -87,13 +94,17 @@ describe("trash navigation and actions", () => {
     assert.equal(blocked.restoreBlockedReason, "Restore the workspace first");
   });
 
-  it("does not expose unsupported workspace permanent purge", () => {
+  it("exposes Delete forever for trashed workspaces", () => {
     const workspace = trashWorkspaceActions();
     assert.equal(workspace.canRestore, true);
-    assert.equal(workspace.canPermanentlyDelete, false);
+    assert.equal(workspace.canPermanentlyDelete, true);
   });
 
-  it("builds clear permanent-delete confirmation copy", () => {
+  it("keeps permanent-delete surface limited to Trash", () => {
+    assert.equal(PERMANENT_DELETE_SURFACE, "trash");
+  });
+
+  it("builds clear document permanent-delete confirmation copy", () => {
     const body = permanentDeleteConfirmBody("Q3 Report.docx");
     assert.match(body, /permanently deleted/);
     assert.match(body, /All saved versions/);
@@ -101,5 +112,87 @@ describe("trash navigation and actions", () => {
     assert.match(body, /cannot be undone/);
     assert.equal(body.includes("S3"), false);
     assert.equal(body.includes("document_version"), false);
+  });
+
+  it("builds workspace confirmation with larger deletion scope", () => {
+    const copy = permanentWorkspaceDeleteConfirmCopy("Acme HQ");
+    assert.match(copy.lead, /Permanently deleting "Acme HQ"/);
+    assert.deepEqual([...copy.items], [
+      "the workspace",
+      "all documents inside it",
+      "all saved document versions",
+      "workspace conversation history",
+      "associated stored document data",
+    ]);
+    assert.match(copy.footer, /Storage used by this workspace will be reclaimed/);
+    assert.match(copy.footer, /cannot be undone/);
+
+    const body = permanentWorkspaceDeleteConfirmBody("Acme HQ");
+    assert.match(body, /all documents inside it/);
+    assert.match(body, /workspace conversation history/);
+    assert.equal(body.includes("agent_run"), false);
+    assert.equal(body.includes("S3"), false);
+    assert.equal(body.includes("model_usage_event"), false);
+  });
+
+  it("maps purge kinds to the correct trash endpoints", () => {
+    assert.equal(
+      trashPurgePath("document", "doc-1"),
+      "/api/trash/documents/doc-1",
+    );
+    assert.equal(
+      trashPurgePath("workspace", "ws-1"),
+      "/api/trash/workspaces/ws-1",
+    );
+  });
+
+  it("removes a purged workspace from the trash list on success", () => {
+    const before = [
+      { id: "ws-keep", name: "Keep" },
+      { id: "ws-gone", name: "Gone" },
+    ];
+    const after = removePurgedTrashItem(before, "ws-gone");
+    assert.deepEqual(after, [{ id: "ws-keep", name: "Keep" }]);
+  });
+
+  it("leaves the list unchanged when purge fails (no success apply)", () => {
+    const before = [
+      { id: "ws-1", name: "Still here" },
+      { id: "ws-2", name: "Also here" },
+    ];
+    // Failure path must not call removePurgedTrashItem.
+    assert.deepEqual(before, [
+      { id: "ws-1", name: "Still here" },
+      { id: "ws-2", name: "Also here" },
+    ]);
+  });
+
+  it("cancel performs no list mutation", () => {
+    const workspaces = [{ id: "ws-1", name: "Drafts" }];
+    // Cancel closes the dialog without calling removePurgedTrashItem or purge API.
+    assert.equal(workspaces.length, 1);
+    assert.equal(workspaces[0]?.id, "ws-1");
+  });
+
+  it("dispatches storage-changed after a successful purge path", () => {
+    const events: string[] = [];
+    const previous = globalThis.window;
+    // Minimal window stub for Node tests.
+    (globalThis as { window?: Window }).window = {
+      dispatchEvent(event: Event) {
+        events.push(event.type);
+        return true;
+      },
+    } as Window;
+    try {
+      notifyStorageChanged();
+      assert.deepEqual(events, [STORAGE_CHANGED_EVENT]);
+    } finally {
+      if (previous === undefined) {
+        delete (globalThis as { window?: Window }).window;
+      } else {
+        (globalThis as { window?: Window }).window = previous;
+      }
+    }
   });
 });

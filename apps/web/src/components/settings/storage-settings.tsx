@@ -135,7 +135,7 @@ export function StorageSettings() {
           Review Trash
         </Link>
         <p className="mt-1 text-[11.5px] text-ink-faint">
-          Permanently delete trashed documents to reclaim storage.
+          Permanently delete trashed workspaces and documents to reclaim storage.
         </p>
       </div>
 

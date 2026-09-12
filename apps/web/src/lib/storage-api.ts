@@ -74,3 +74,14 @@ export async function purgeTrashedDocument(documentId: string): Promise<void> {
   });
   if (!response.ok) throw await parseError(response);
 }
+
+/**
+ * Permanently delete a soft-deleted workspace owned by the current user.
+ * Only owned, already-trashed workspaces are accepted — do not call outside Trash.
+ */
+export async function purgeTrashedWorkspace(workspaceId: string): Promise<void> {
+  const response = await apiFetch(`/api/trash/workspaces/${workspaceId}`, {
+    method: "DELETE",
+  });
+  if (!response.ok) throw await parseError(response);
+}

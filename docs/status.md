@@ -11,21 +11,16 @@ _Read this before starting any work. Keep it a concise current-state handoff, no
 
 ## Just Completed
 
-* **Phase E3:** Permanent workspace purge.
-  - `DELETE /api/trash/workspaces/:workspaceId` requires an owned trashed workspace.
-  - Deletes workspace content, document state, and workspace agent threads/messages/runs/steps; preserves usage, trial, credentials, preferences, and user records.
-  - Object deletion is retry-safe; DB finalization atomically removes rows and releases recorded version bytes.
+* **Phase F2.1:** Trash workspace permanent delete UX.
+  - Trashed workspaces: Restore + Delete forever → `DELETE /api/trash/workspaces/:id`.
+  - ConfirmDialog with larger-scope product copy (workspace + docs + versions + conversation + stored data; storage reclaimed; irreversible); visually distinct from document purge.
+  - Success: drop workspace (+ its trash docs) from list, toast, `opensuite:storage-changed`; failure keeps row + toast, retryable.
+  - Permanent delete remains Trash-only.
 
+* **Phase E3:** Permanent workspace purge (backend).
 * **Phase F2:** Settings → Storage + Trash document permanent delete.
-  - Settings sections: Account / AI & Models / Storage / Appearance (`#storage`).
-  - `GET /api/storage` usage bar (used / quota / remaining); near ≥90% and full states; Review Trash → `/app/trash`.
-  - Trash documents: Restore + Delete forever → `DELETE /api/trash/documents/:id` with ConfirmDialog; notifies storage refresh.
-  - Workspace permanent-delete UI remains deferred (backend route is ready).
-  - Helpers: `storage-api.ts`, `storage-model.ts` (+ tests).
-
-* **Phase F1:** Settings → AI & Models UI (managed/BYOK, catalog picker, trial, credentials).
-* **Phase E2 / E1:** permanent document purge + storage accounting.
-* **Phase D1 / C1 / BYOK B2.1–A2:** trial, concurrency, catalog/cost/ledger/prefs/credentials.
+* **Phase F1:** Settings → AI & Models UI.
+* **Phase E2 / E1 / D1 / C1 / BYOK B2.1–A2:** storage accounting, trial, catalog/cost/ledger/prefs/credentials.
 
 ## Current Decisions
 
@@ -46,9 +41,10 @@ _Read this before starting any work. Keep it a concise current-state handoff, no
 | Check | Status |
 |---|---|
 | `pnpm --filter @opensuite/web typecheck` | **Pass** |
-| `pnpm --filter @opensuite/web test` | **Pass** (63; F1 + F2 storage/purge helpers) |
+| `pnpm --filter @opensuite/web test` | **Pass** (73; F2.1 workspace purge helpers/API) |
 | `git diff --check` | **Pass** |
-| Browser screenshots (F1/F2) | **Blocked** in agent sandbox (no GUI / headless Chrome SIGABRT) |
+| Browser screenshots (F1/F2/F2.1) | **Blocked** — headless Chrome SIGABRT / gstack browse daemon fails in agent env |
+| API `documents.integration` (incl. workspace purge) | **Skipped** — `DATABASE_URL` host unreachable from agent |
 
 ## Intentionally Deferred
 
@@ -59,7 +55,8 @@ _Read this before starting any work. Keep it a concise current-state handoff, no
 * Usage / billing UI; Stripe; paid storage plans
 * Version pruning / automatic cleanup
 * First-party OpenAI/Anthropic model catalogs
+* Hosted-alpha E2E visual acceptance (needs local GUI browser + reachable DB)
 
 ## Recommended Next Step
 
-Usage settings (trial + model usage ledger summary), or workspace permanent purge once retention rules are product-approved.
+Manual browser pass on F1/F2/F2.1 (light/dark/narrow) on a machine with working Chrome, or Usage settings (trial + model usage ledger summary).
