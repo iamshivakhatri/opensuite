@@ -11,36 +11,18 @@ _Read this before starting any work. Keep it a concise current-state handoff, no
 
 ## Just Completed
 
+* **Phase F1:** Settings → AI & Models UI.
+  - Settings sections: Account / AI & Models / Appearance (`#ai`, `#appearance`).
+  - Mode: OpenSuite managed vs bring-your-own-key; searchable managed model picker from `GET /api/ai-models/managed`.
+  - BYOK provider rows (OpenAI / Anthropic / OpenRouter): connect / replace / remove; password dialog; keys never re-rendered.
+  - Preference save via `PUT /api/ai-preferences`; trial strip from `GET /api/ai-trial`.
+  - Helpers: `apps/web/src/lib/ai-settings-api.ts`, `ai-settings-model.ts` (+ tests).
+
 * **Phase E2:** permanent purge for soft-deleted documents.
-  - `DELETE /api/trash/documents/:documentId` removes only an owned trashed document, its version objects and rows, then atomically releases the exact persisted bytes.
-  - The document row is locked through object deletion/finalization; retries after partial object or DB failure are safe, and storage accounting never goes negative.
-
-* **Phase E1:** per-user immutable-version storage accounting and quota enforcement.
-  - `USER_STORAGE_QUOTA_BYTES` defaults to 500 MiB; upload, blank DOCX, manual save, and agent version append reserve exact bytes atomically.
-  - Soft delete retains usage. Migration backfills from existing version ownership; `GET /api/storage` returns used, quota, and remaining bytes.
-
+* **Phase E1:** per-user immutable-version storage accounting and quota.
 * **Phase D1:** managed OpenRouter one-time trial credit.
-  - `MANAGED_AI_TRIAL_CREDIT_MICROS` grants lazily once; zero disables managed trial.
-  - Each managed model call is gated; durable provider-reported cost debits atomically through a unique usage-event record.
-  - Missing cost or durable accounting failure blocks later managed calls; BYOK never touches trial credit.
-  - A final allowed provider call may overshoot once; the next call is blocked.
-
-* **Phase C1:** one active agent execution per authenticated user, across API instances.
-  - PostgreSQL `agent_execution_lease` is atomically acquired before model resolution or run creation.
-  - Lease is token-checked on release, renewed every minute while active, and expires after five minutes if an API process crashes.
-
-* **BYOK Phase B2.1:** dynamic managed model catalog + OpenRouter provider-reported cost.
-  - `GET /api/ai-models/managed` — OpenRouter Models API (`text` + `tools`), 10m in-process TTL, stale-on-error.
-  - Managed prefs: `provider=openrouter` + exact OpenRouter model id; validated against catalog.
-  - OpenRouter `usage.cost` → integer `cost_micros` (half-up); source `openrouter_usage_cost`.
-  - Schema rename (pre-production): `estimated_cost_micros`→`cost_micros`, `pricing_version`→`cost_source`.
-  - B2 static registry remains empty/test-only; not used for managed OpenRouter billing.
-* **BYOK Phase B2:** immutable cost snapshot on `model_usage_event`.
-* **BYOK Phase B1:** append-only `model_usage_event` ledger at `AgentModel.complete`.
-* BYOK Phase A3: per-user provider/model/source preference + managed fallback.
-* BYOK Phase A2: provider-credential lifecycle APIs (safe metadata only).
-* DOCX agent surface covers the current 35-capability Node manifest.
-* Trash removes the file from open tabs; shell token lock; explorer rhythm tokens.
+* **Phase C1:** one active agent execution per authenticated user.
+* **BYOK B2.1 / B2 / B1 / A3 / A2:** catalog, cost, ledger, preferences, credentials.
 
 ## Current Decisions
 
@@ -59,12 +41,10 @@ _Read this before starting any work. Keep it a concise current-state handoff, no
 
 | Check | Status |
 |---|---|
-| `pnpm --filter @opensuite/db typecheck` | **Pass** |
-| `pnpm --filter @opensuite/db test` | **Pass** |
-| `pnpm --filter @opensuite/api typecheck` | **Pass** |
-| `pnpm --filter @opensuite/api test` | **Pass** (165; 20 skipped DB/integration) |
-| `pnpm --filter @opensuite/agent-core test` | **Pass** (194) |
+| `pnpm --filter @opensuite/web typecheck` | **Pass** |
+| `pnpm --filter @opensuite/web test` | **Pass** (51; includes AI settings model + API client) |
 | `git diff --check` | **Pass** |
+| Browser screenshots (F1) | **Blocked** in this agent environment (no GUI / headless Chrome SIGABRT under sandbox) |
 
 ## Intentionally Deferred
 
@@ -72,10 +52,11 @@ _Read this before starting any work. Keep it a concise current-state handoff, no
 * Confirmation bridge durable resume / Redis workers
 * Frontend Phase 3 panel file split
 * Further generic UI polish
-* Settings UI / model picker
-* Stripe, invoices, usage UI
+* Usage / Storage settings UI
+* Stripe, invoices
 * Static production price entries (not needed for managed OpenRouter)
+* First-party OpenAI/Anthropic model catalogs
 
 ## Recommended Next Step
 
-Settings UI wired to `GET /api/ai-models/managed`, `GET /api/ai-trial`, and `GET /api/storage`; workspace purge needs separate retention and agent-history rules.
+Settings → Storage (wire `GET /api/storage` + trash/purge UX), or Usage once product copy for trial/ledger is ready.
