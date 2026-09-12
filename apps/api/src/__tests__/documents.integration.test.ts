@@ -1235,6 +1235,151 @@ test(
 );
 
 test(
+  "permanently purging a trashed workspace removes its content and agent history but keeps accounting",
+  { skip: !runDbIntegrationTests || databaseUrl === undefined },
+  async () => {
+    const config = testConfig();
+    const dbClient = createDbClient({ databaseUrl: config.databaseUrl });
+    const emailSender = createStubEmailSender();
+    const auth = createAuth(config, dbClient.db, emailSender);
+    const storageBase = createMemoryObjectStorage();
+    let deleteCalls = 0;
+    let failDeleteCall: number | null = null;
+    const storage = {
+      objects: storageBase.objects,
+      putObject: storageBase.putObject,
+      getObject: storageBase.getObject,
+      async deleteObject(key: string) {
+        deleteCalls += 1;
+        if (deleteCalls === failDeleteCall) throw new Error("forced delete failure");
+        await storageBase.deleteObject(key);
+      },
+    };
+    const app = await buildApp(config, { auth, db: dbClient.db, storage });
+    await app.ready();
+
+    try {
+      const alice = await signUpVerifyAndSignIn(app, config, emailSender, "WorkspacePurgeAlice");
+      const bob = await signUpVerifyAndSignIn(app, config, emailSender, "WorkspacePurgeBob");
+      const workspaceId = await createWorkspace(app, config, alice.cookie, "Purge workspace");
+      const bytes = Buffer.from("PK workspace purge");
+      const file = multipartFilePayload("Purge.docx", bytes);
+      const upload = await app.inject({
+        method: "POST",
+        url: `/api/workspaces/${workspaceId}/documents`,
+        headers: { ...file.headers, cookie: alice.cookie, origin: config.webOrigin },
+        payload: file.payload,
+      });
+      assert.equal(upload.statusCode, 201, upload.body);
+      const uploaded = upload.json() as { document: { id: string }; version: { id: string } };
+      const versionBytes = Buffer.from("PK workspace purge v2");
+      const saveFile = multipartVersionSavePayload("Purge.docx", versionBytes, uploaded.version.id);
+      const save = await app.inject({
+        method: "POST",
+        url: `/api/documents/${uploaded.document.id}/versions`,
+        headers: { ...saveFile.headers, cookie: alice.cookie, origin: config.webOrigin },
+        payload: saveFile.payload,
+      });
+      assert.equal(save.statusCode, 201, save.body);
+      const saved = save.json() as { version: { id: string } };
+
+      const [thread] = await dbClient.db.insert(schema.agentThread).values({
+        workspaceId,
+        documentId: uploaded.document.id,
+        createdByUserId: alice.userId,
+      }).returning();
+      assert.ok(thread);
+      const [message] = await dbClient.db.insert(schema.agentMessage).values({
+        threadId: thread.id,
+        role: "user",
+        content: "remove me",
+      }).returning();
+      assert.ok(message);
+      const [run] = await dbClient.db.insert(schema.agentRun).values({
+        threadId: thread.id,
+        triggeringMessageId: message.id,
+        createdByUserId: alice.userId,
+        baseDocumentVersionId: saved.version.id,
+      }).returning();
+      assert.ok(run);
+      await dbClient.db.insert(schema.agentStep).values({
+        runId: run.id,
+        sequence: 0,
+        kind: "plan",
+        name: "plan",
+      });
+      const [usage] = await dbClient.db.insert(schema.modelUsageEvent).values({
+        userId: alice.userId,
+        provider: "openrouter",
+        model: "test",
+        credentialSource: "managed",
+        agentRunId: run.id,
+      }).returning();
+      assert.ok(usage);
+      await dbClient.db.insert(schema.managedAiTrialAccount).values({
+        userId: alice.userId,
+        originalGrantMicros: 100,
+        balanceMicros: 90,
+      });
+      await dbClient.db.insert(schema.managedAiTrialDebit).values({
+        userId: alice.userId,
+        modelUsageEventId: usage.id,
+        costMicros: 10,
+        balanceAfterMicros: 90,
+      });
+      await dbClient.db.insert(schema.aiPreference).values({
+        userId: alice.userId,
+        provider: "openrouter",
+        model: "test",
+        credentialSource: "managed",
+      });
+      await dbClient.db.insert(schema.providerCredential).values({
+        userId: alice.userId,
+        provider: "openrouter",
+        encryptedPayload: "test-envelope",
+        encryptionVersion: 1,
+      });
+
+      const active = await app.inject({ method: "DELETE", url: `/api/trash/workspaces/${workspaceId}`, headers: { cookie: alice.cookie, origin: config.webOrigin } });
+      assert.equal(active.statusCode, 409, active.body);
+      const trashed = await app.inject({ method: "DELETE", url: `/api/workspaces/${workspaceId}`, headers: { cookie: alice.cookie, origin: config.webOrigin } });
+      assert.equal(trashed.statusCode, 204, trashed.body);
+      const foreign = await app.inject({ method: "DELETE", url: `/api/trash/workspaces/${workspaceId}`, headers: { cookie: bob.cookie, origin: config.webOrigin } });
+      assert.equal(foreign.statusCode, 404, foreign.body);
+
+      failDeleteCall = 2;
+      const failed = await app.inject({ method: "DELETE", url: `/api/trash/workspaces/${workspaceId}`, headers: { cookie: alice.cookie, origin: config.webOrigin } });
+      assert.equal(failed.statusCode, 500, failed.body);
+      assert.equal((await dbClient.db.select().from(schema.workspace).where(eq(schema.workspace.id, workspaceId))).length, 1);
+
+      failDeleteCall = null;
+      const purged = await app.inject({ method: "DELETE", url: `/api/trash/workspaces/${workspaceId}`, headers: { cookie: alice.cookie, origin: config.webOrigin } });
+      assert.equal(purged.statusCode, 204, purged.body);
+      assert.equal(storage.objects.size, 0);
+      assert.equal((await dbClient.db.select().from(schema.workspace).where(eq(schema.workspace.id, workspaceId))).length, 0);
+      assert.equal((await dbClient.db.select().from(schema.document).where(eq(schema.document.id, uploaded.document.id))).length, 0);
+      assert.equal((await dbClient.db.select().from(schema.documentVersion).where(eq(schema.documentVersion.documentId, uploaded.document.id))).length, 0);
+      assert.equal((await dbClient.db.select().from(schema.agentThread).where(eq(schema.agentThread.id, thread.id))).length, 0);
+      assert.equal((await dbClient.db.select().from(schema.agentMessage).where(eq(schema.agentMessage.id, message.id))).length, 0);
+      assert.equal((await dbClient.db.select().from(schema.agentRun).where(eq(schema.agentRun.id, run.id))).length, 0);
+      assert.equal((await dbClient.db.select().from(schema.agentStep).where(eq(schema.agentStep.runId, run.id))).length, 0);
+      assert.equal((await dbClient.db.select().from(schema.modelUsageEvent).where(eq(schema.modelUsageEvent.id, usage.id))).length, 1);
+      assert.equal((await dbClient.db.select().from(schema.managedAiTrialDebit).where(eq(schema.managedAiTrialDebit.modelUsageEventId, usage.id))).length, 1);
+      assert.equal((await dbClient.db.select().from(schema.managedAiTrialAccount).where(eq(schema.managedAiTrialAccount.userId, alice.userId))).length, 1);
+      assert.equal((await dbClient.db.select().from(schema.aiPreference).where(eq(schema.aiPreference.userId, alice.userId))).length, 1);
+      assert.equal((await dbClient.db.select().from(schema.providerCredential).where(eq(schema.providerCredential.userId, alice.userId))).length, 1);
+      const [account] = await dbClient.db.select({ usedBytes: schema.userStorageAccount.usedBytes }).from(schema.userStorageAccount).where(eq(schema.userStorageAccount.userId, alice.userId));
+      assert.equal(account?.usedBytes, 0);
+      const retry = await app.inject({ method: "DELETE", url: `/api/trash/workspaces/${workspaceId}`, headers: { cookie: alice.cookie, origin: config.webOrigin } });
+      assert.equal(retry.statusCode, 404, retry.body);
+    } finally {
+      await app.close();
+      await dbClient.close();
+    }
+  },
+);
+
+test(
   "metadata search is owner-scoped, ranked, and excludes deleted resources",
   { skip: !runDbIntegrationTests || databaseUrl === undefined },
   async () => {

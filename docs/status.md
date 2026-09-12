@@ -11,11 +11,16 @@ _Read this before starting any work. Keep it a concise current-state handoff, no
 
 ## Just Completed
 
+* **Phase E3:** Permanent workspace purge.
+  - `DELETE /api/trash/workspaces/:workspaceId` requires an owned trashed workspace.
+  - Deletes workspace content, document state, and workspace agent threads/messages/runs/steps; preserves usage, trial, credentials, preferences, and user records.
+  - Object deletion is retry-safe; DB finalization atomically removes rows and releases recorded version bytes.
+
 * **Phase F2:** Settings → Storage + Trash document permanent delete.
   - Settings sections: Account / AI & Models / Storage / Appearance (`#storage`).
   - `GET /api/storage` usage bar (used / quota / remaining); near ≥90% and full states; Review Trash → `/app/trash`.
   - Trash documents: Restore + Delete forever → `DELETE /api/trash/documents/:id` with ConfirmDialog; notifies storage refresh.
-  - Workspace permanent purge still deferred (Restore only).
+  - Workspace permanent-delete UI remains deferred (backend route is ready).
   - Helpers: `storage-api.ts`, `storage-model.ts` (+ tests).
 
 * **Phase F1:** Settings → AI & Models UI (managed/BYOK, catalog picker, trial, credentials).
@@ -51,7 +56,6 @@ _Read this before starting any work. Keep it a concise current-state handoff, no
 * Confirmation bridge durable resume / Redis workers
 * Frontend Phase 3 panel file split
 * Further generic UI polish
-* Workspace permanent purge
 * Usage / billing UI; Stripe; paid storage plans
 * Version pruning / automatic cleanup
 * First-party OpenAI/Anthropic model catalogs

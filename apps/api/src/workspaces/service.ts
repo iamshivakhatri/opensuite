@@ -1,9 +1,11 @@
-import { and, desc, eq, inArray, isNotNull, isNull } from "drizzle-orm";
+import { and, desc, eq, inArray, isNotNull, isNull, sql } from "drizzle-orm";
 
 import type { Db } from "@opensuite/db";
 import { schema } from "@opensuite/db";
 
 import type { OfficeFormat } from "../documents/format.js";
+import { ObjectNotFoundError, type ObjectStorage } from "../storage/types.js";
+import type { StorageAccountingService } from "../storage-accounting/service.js";
 
 /**
  * OpenSuite-owned workspace shape returned by product API routes.
@@ -48,7 +50,27 @@ function toWorkspaceDto(row: {
  * Small workspace data-access helpers for the API. Ownership is always
  * scoped by `ownerUserId` — never taken from the client body.
  */
-export function createWorkspaceService(db: Db) {
+export type WorkspaceAccessErrorCode =
+  | "WORKSPACE_NOT_FOUND"
+  | "WORKSPACE_NOT_IN_TRASH"
+  | "PURGE_FAILED";
+
+export class WorkspaceAccessError extends Error {
+  constructor(
+    readonly statusCode: number,
+    readonly code: WorkspaceAccessErrorCode,
+    message: string,
+  ) {
+    super(message);
+    this.name = "WorkspaceAccessError";
+  }
+}
+
+export function createWorkspaceService(
+  db: Db,
+  storage: ObjectStorage,
+  storageAccounting: StorageAccountingService,
+) {
   return {
     /**
      * Returns the workspace only when it is owned by `ownerUserId` and not
@@ -275,6 +297,109 @@ export function createWorkspaceService(db: Db) {
         });
 
       return row ? toWorkspaceDto(row) : null;
+    },
+
+    /**
+     * Deletes a trashed workspace's object bytes first, then atomically
+     * removes its product rows and releases their recorded version bytes.
+     * Missing objects are a safe retry after a previous partial purge.
+     */
+    async purge(input: {
+      workspaceId: string;
+      ownerUserId: string;
+    }): Promise<void> {
+      try {
+        await db.transaction(async (tx) => {
+          const locked = await tx.execute(sql`
+            select ${schema.workspace.id}
+            from ${schema.workspace}
+            where ${schema.workspace.id} = ${input.workspaceId}
+              and ${schema.workspace.ownerUserId} = ${input.ownerUserId}
+            for update
+          `);
+          if (locked.rows.length === 0) {
+            throw new WorkspaceAccessError(404, "WORKSPACE_NOT_FOUND", "Workspace not found");
+          }
+
+          const [workspace] = await tx
+            .select({ deletedAt: schema.workspace.deletedAt })
+            .from(schema.workspace)
+            .where(eq(schema.workspace.id, input.workspaceId))
+            .limit(1);
+          if (workspace?.deletedAt == null) {
+            throw new WorkspaceAccessError(
+              409,
+              "WORKSPACE_NOT_IN_TRASH",
+              "Move the workspace to Trash before permanently deleting it",
+            );
+          }
+
+          // Locks serialize child document purge and preserve this exact byte set.
+          await tx.execute(sql`
+            select ${schema.document.id}
+            from ${schema.document}
+            where ${schema.document.workspaceId} = ${input.workspaceId}
+            for update
+          `);
+          const versions = await tx
+            .select({
+              storageKey: schema.documentVersion.storageKey,
+              sizeBytes: schema.documentVersion.sizeBytes,
+            })
+            .from(schema.documentVersion)
+            .innerJoin(
+              schema.document,
+              eq(schema.documentVersion.documentId, schema.document.id),
+            )
+            .where(eq(schema.document.workspaceId, input.workspaceId));
+          const reclaimedBytes = versions.reduce(
+            (total, version) => total + version.sizeBytes,
+            0,
+          );
+
+          for (const version of versions) {
+            try {
+              await storage.deleteObject(version.storageKey);
+            } catch (error) {
+              if (!(error instanceof ObjectNotFoundError)) throw error;
+            }
+          }
+
+          const threadIds = tx
+            .select({ id: schema.agentThread.id })
+            .from(schema.agentThread)
+            .where(eq(schema.agentThread.workspaceId, input.workspaceId));
+          const runIds = tx
+            .select({ id: schema.agentRun.id })
+            .from(schema.agentRun)
+            .where(sql`${schema.agentRun.threadId} in (${threadIds})`);
+
+          await tx.delete(schema.agentStep).where(sql`${schema.agentStep.runId} in (${runIds})`);
+          await tx.delete(schema.agentRun).where(sql`${schema.agentRun.threadId} in (${threadIds})`);
+          await tx.delete(schema.agentMessage).where(sql`${schema.agentMessage.threadId} in (${threadIds})`);
+          await tx.delete(schema.agentThread).where(eq(schema.agentThread.workspaceId, input.workspaceId));
+          await tx.delete(schema.documentUserState).where(sql`${schema.documentUserState.documentId} in (
+            select ${schema.document.id} from ${schema.document}
+            where ${schema.document.workspaceId} = ${input.workspaceId}
+          )`);
+          await tx.update(schema.documentVersion).set({ parentVersionId: null }).where(sql`${schema.documentVersion.documentId} in (
+            select ${schema.document.id} from ${schema.document}
+            where ${schema.document.workspaceId} = ${input.workspaceId}
+          )`);
+          await tx.delete(schema.documentVersion).where(sql`${schema.documentVersion.documentId} in (
+            select ${schema.document.id} from ${schema.document}
+            where ${schema.document.workspaceId} = ${input.workspaceId}
+          )`);
+          await tx.delete(schema.document).where(eq(schema.document.workspaceId, input.workspaceId));
+          await tx.delete(schema.workspace).where(eq(schema.workspace.id, input.workspaceId));
+          if (reclaimedBytes > 0) {
+            await storageAccounting.release(tx, input.ownerUserId, reclaimedBytes);
+          }
+        });
+      } catch (error) {
+        if (error instanceof WorkspaceAccessError) throw error;
+        throw new WorkspaceAccessError(500, "PURGE_FAILED", "Could not permanently delete workspace");
+      }
     },
 
     async listTrash(ownerUserId: string): Promise<

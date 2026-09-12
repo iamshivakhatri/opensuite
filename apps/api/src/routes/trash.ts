@@ -7,6 +7,7 @@ import {
   type DocumentService,
 } from "../documents/service.js";
 import type { WorkspaceService } from "../workspaces/service.js";
+import { WorkspaceAccessError } from "../workspaces/service.js";
 
 function unauthenticated() {
   return {
@@ -20,6 +21,9 @@ function unauthenticated() {
 
 const DocumentIdParams = z.object({
   documentId: z.uuid("documentId must be a UUID"),
+});
+const WorkspaceIdParams = z.object({
+  workspaceId: z.uuid("workspaceId must be a UUID"),
 });
 
 /**
@@ -71,6 +75,41 @@ export function registerTrashRoutes(
       return reply.status(204).send();
     } catch (error) {
       if (error instanceof DocumentAccessError) {
+        return reply.status(error.statusCode).send({
+          error: {
+            statusCode: error.statusCode,
+            message: error.message,
+            code: error.code,
+          },
+        });
+      }
+      throw error;
+    }
+  });
+
+  app.delete("/api/trash/workspaces/:workspaceId", async (request, reply) => {
+    const user = await getRequestUser(auth, request);
+    if (!user) return reply.status(401).send(unauthenticated());
+
+    const params = WorkspaceIdParams.safeParse(request.params);
+    if (!params.success) {
+      return reply.status(400).send({
+        error: {
+          statusCode: 400,
+          message: params.error.issues[0]?.message ?? "Invalid workspace id",
+          code: "INVALID_WORKSPACE_ID",
+        },
+      });
+    }
+
+    try {
+      await workspaces.purge({
+        workspaceId: params.data.workspaceId,
+        ownerUserId: user.id,
+      });
+      return reply.status(204).send();
+    } catch (error) {
+      if (error instanceof WorkspaceAccessError) {
         return reply.status(error.statusCode).send({
           error: {
             statusCode: error.statusCode,

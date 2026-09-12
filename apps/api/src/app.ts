@@ -183,7 +183,6 @@ export async function buildApp(
     });
   });
 
-  const workspaces = createWorkspaceService(deps.db);
   const credentials =
     deps.credentials ??
     (config.aiCredentialEncryptionKey
@@ -245,6 +244,11 @@ export async function buildApp(
   const storageAccounting = createStorageAccountingService(
     deps.db,
     config.userStorageQuotaBytes,
+  );
+  const workspaces = createWorkspaceService(
+    deps.db,
+    deps.storage,
+    storageAccounting,
   );
   const documents = createDocumentService(deps.db, deps.storage, {
     uploadMaxBytes: config.uploadMaxBytes,
