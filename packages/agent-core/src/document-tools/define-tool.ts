@@ -168,7 +168,7 @@ export async function executePersistedMutation(
   if (result.status === "error") {
     throw diagnosticError(result.diagnostics[0]!);
   }
-  ctx.advancePrimaryDocument?.(result.document);
+  ctx.advancePrimaryDocument?.(result.document, isFormattingOnlyMutation(toolName));
   // Domain event: emit here so AgentRunner stays mutation-result-agnostic.
   // Order relative to runner emits: tool.started → this → tool.completed.
   await ctx.events.emit({
@@ -192,6 +192,11 @@ export async function executePersistedMutation(
       : {}),
     baseVersionId: result.baseVersionId,
   };
+}
+
+function isFormattingOnlyMutation(toolName: string): boolean {
+  return toolName === "document.set_paragraph_style" || toolName === "document.set_paragraph_formatting" ||
+    toolName === "document.set_text_formatting" || toolName === "document.set_table_formatting";
 }
 
 /** PPTX/XLSX mock mutation path via DocumentRuntime.execute (not DocumentMutationExecutor). */

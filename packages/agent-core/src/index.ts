@@ -72,6 +72,7 @@ export {
 
 export {
   compactHistoricalToolCallArgs,
+  projectInspectionForWorkingState,
   projectToolResultForModel,
   summarizeExecutedToolArgs,
   transformContext,
@@ -224,6 +225,8 @@ export {
   createDocumentAgentRunnerPolicyOptions,
   createDocumentRunState,
   createDocumentToolContext,
+  advanceDocumentWorkingState,
+  recordDocumentInspection,
   createSlidesUpdateTextTool,
   createWorkbookSetCellsTool,
   discoverDocumentToolsFromRuntime,
@@ -271,6 +274,7 @@ export type {
   DocumentTurnToolSelectorOptions,
   DocumentAgentRunnerOptionsInput,
   DocumentRunState,
+  DocumentWorkingState,
   DocumentToolContextOptions,
   SlidesUpdateTextInput,
   WorkbookSetCellsInput,

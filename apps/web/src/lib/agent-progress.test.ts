@@ -488,10 +488,14 @@ test("recovered failure hidden from primary summary", () => {
     activities.map((a) => ({ label: a.label, status: a.status })),
     [{ label: "Structured sections", status: "done" }],
   );
-  // Technical details still retain the failure.
+  // Details keep the failure as a muted recovery entry, not a hard error.
   const details = presentAgentRun(lines).details;
-  assert.ok(details.some((g) => g.status === "error"));
-  assert.ok(details.some((g) => g.status === "done"));
+  const recovered = details.find((g) => g.recovered);
+  assert.ok(recovered);
+  assert.match(recovered!.label, /^Recovered ·/);
+  assert.equal(recovered!.status, "done");
+  assert.equal(details.some((g) => g.status === "error" && !g.recovered), false);
+  assert.ok(details.some((g) => g.status === "done" && !g.recovered));
 });
 
 test("unrecovered failure remains visible in primary summary", () => {
@@ -524,6 +528,8 @@ test("unrecovered failure remains visible in primary summary", () => {
     activities.some((a) => a.label.includes("TARGET_AMBIGUOUS")),
     false,
   );
+  const details = presentAgentRun(lines).details;
+  assert.ok(details.some((g) => g.status === "error" && !g.recovered));
 });
 
 test("completed run collapses to Done headline", () => {
@@ -556,20 +562,144 @@ test("completed run collapses to Done headline", () => {
   );
 });
 
-test("details affordance and finishing-up headline", () => {
+test("live status derives from activity — no premature Finishing up", () => {
   assert.equal(detailsAffordanceLabel(0), "View details");
   assert.equal(detailsAffordanceLabel(1), "View 1 action");
   assert.equal(detailsAffordanceLabel(16), "View 16 actions");
 
-  const lines = reduceAll([
+  // After create + content, model wait (Generating…) must NOT say Finishing up.
+  const betweenTools = reduceAll([
     {
       type: "tool.completed",
-      data: { toolCallId: "a", toolName: "document.insert_paragraphs" },
+      data: { toolCallId: "a", toolName: "workspace.create_blank_docx" },
+      at: 1,
+    },
+    {
+      type: "tool.completed",
+      data: { toolCallId: "b", toolName: "document.insert_paragraphs" },
+      at: 2,
+    },
+    { type: "message.started", at: 3 },
+  ]);
+  assert.equal(
+    presentAgentRun(betweenTools, { live: true }).headline,
+    "Drafting content…",
+  );
+  assert.notEqual(
+    presentAgentRun(betweenTools, { live: true }).headline,
+    "Finishing up…",
+  );
+
+  // Early after create only.
+  const afterCreate = reduceAll([
+    {
+      type: "tool.completed",
+      data: { toolCallId: "a", toolName: "workspace.create_blank_docx" },
       at: 1,
     },
     { type: "message.started", at: 2 },
   ]);
-  assert.equal(presentAgentRun(lines, { live: true }).headline, "Finishing up…");
+  assert.equal(
+    presentAgentRun(afterCreate, { live: true }).headline,
+    "Starting…",
+  );
+
+  // Finishing up only when the answer is actually streaming.
+  assert.equal(
+    presentAgentRun(betweenTools, {
+      live: true,
+      streamingAnswer: true,
+    }).headline,
+    "Finishing up…",
+  );
+});
+
+test("inspect activities use checks not changes", () => {
+  const lines = reduceAll([
+    {
+      type: "tool.completed",
+      data: { toolCallId: "a", toolName: "document.inspect" },
+      at: 1,
+    },
+    {
+      type: "tool.completed",
+      data: { toolCallId: "b", toolName: "document.find" },
+      at: 2,
+    },
+    {
+      type: "tool.completed",
+      data: { toolCallId: "c", toolName: "document.inspect" },
+      at: 3,
+    },
+  ]);
+  const activity = summarizeAgentActivities(lines).find(
+    (a) => a.family === "inspect",
+  );
+  assert.equal(activity?.label, "Reviewed document");
+  assert.equal(activity?.changeCount, 3);
+  assert.equal(activity?.countNoun, "checks");
+  assert.equal(
+    summarizeAgentActivities(
+      reduceAll([
+        {
+          type: "tool.completed",
+          data: {
+            toolCallId: "d",
+            toolName: "document.set_paragraph_formatting",
+          },
+          at: 1,
+        },
+        {
+          type: "tool.completed",
+          data: {
+            toolCallId: "e",
+            toolName: "document.set_text_formatting",
+          },
+          at: 2,
+        },
+      ]),
+    )[0]?.countNoun,
+    "changes",
+  );
+});
+
+test("recovered failures use recovered presentation in details", () => {
+  const lines = reduceAll([
+    {
+      type: "tool.failed",
+      data: {
+        toolCallId: "a",
+        toolName: "document.set_paragraph_style",
+        code: "INVALID_TOOL_INPUT",
+      },
+      at: 1,
+    },
+    {
+      type: "tool.failed",
+      data: {
+        toolCallId: "b",
+        toolName: "document.set_paragraph_style",
+        code: "TARGET_AMBIGUOUS",
+      },
+      at: 2,
+    },
+    {
+      type: "tool.completed",
+      data: { toolCallId: "c", toolName: "document.set_paragraph_style" },
+      at: 3,
+    },
+  ]);
+  const details = presentAgentRun(lines).details;
+  assert.ok(details.every((g) => g.status !== "error" || g.recovered));
+  assert.ok(details.some((g) => g.recovered && g.label.includes("Recovered")));
+  assert.ok(
+    details.some(
+      (g) =>
+        g.recovered &&
+        (g.label.includes("Invalid tool input") ||
+          g.label.includes("Paragraph target ambiguity")),
+    ),
+  );
 });
 
 test("shouldAcceptSubmit blocks empty and in-flight submits", () => {

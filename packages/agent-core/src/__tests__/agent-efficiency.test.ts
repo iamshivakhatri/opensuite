@@ -10,6 +10,7 @@ import {
   buildDocumentAgentSystemPrompt,
   createCapabilities,
   createDocumentAgentRunnerOptions,
+  createDocumentRunState,
   createDocumentAgentRunnerPolicyOptions,
   createDocumentCapabilitiesTool,
   createFakeTool,
@@ -27,6 +28,7 @@ import {
   readOnlyDocumentCapabilities,
   toolCallResponse,
   transformContext,
+  recordDocumentInspection,
   type DocumentRef,
   type DocumentRuntime,
   type ModelMessage,
@@ -317,6 +319,25 @@ test("transformContext projects tool results without mutating canonical transcri
     !JSON.stringify(modelFacing[2]).includes(prose),
     "model-facing drops prose echo",
   );
+});
+
+test("transformContext compacts old inspections and appends current working state", () => {
+  const state = createDocumentRunState(docxRef);
+  const oldParagraphs = Array.from({ length: 80 }, (_, index) => ({ text: `obsolete paragraph ${index} with enough text to measure context reduction` }));
+  recordDocumentInspection(state, docxRef, { kind: "headings" }, {
+    status: "success", payload: { headings: [{ text: "Current" }] },
+  });
+  const canonical: ModelMessage[] = [
+    { role: "user", content: "inspect" },
+    { role: "tool", toolCallId: "i1", toolName: "document.inspect", status: "succeeded", output: { status: "success", payload: { paragraphs: oldParagraphs } } },
+    { role: "tool", toolCallId: "i2", toolName: "document.inspect", status: "succeeded", output: { status: "success", payload: { headings: [{ text: "Current" }] } } },
+  ];
+  const modelFacing = transformContext(canonical, state.working);
+  assert.ok(JSON.stringify(canonical).includes("obsolete paragraph"));
+  assert.equal((modelFacing[1] as Extract<ModelMessage, { role: "tool" }>).output && JSON.stringify(modelFacing[1]), JSON.stringify({ role: "tool", toolCallId: "i1", toolName: "document.inspect", status: "succeeded", output: { status: "succeeded", compacted: true } }));
+  assert.ok(JSON.stringify(modelFacing[2]).includes("Current"));
+  assert.ok(JSON.stringify(modelFacing.at(-1)).includes("Current"));
+  assert.ok(JSON.stringify(modelFacing).length < JSON.stringify(canonical).length / 2);
 });
 
 test("AgentRunner sends transformed messages to the model", async () => {

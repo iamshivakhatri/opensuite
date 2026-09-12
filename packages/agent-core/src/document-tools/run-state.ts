@@ -23,20 +23,65 @@
 import { ArtifactHandleRegistry } from "../artifact-handles.js";
 import type { DocumentMutationExecutor } from "../document-mutation.js";
 import type { CreateToolExecutionContext } from "../model.js";
-import type { DocumentRuntime } from "../runtime.js";
+import type { DocumentInspectFocus, DocumentRuntime } from "../runtime.js";
 import type { DocumentRef } from "../types.js";
+
+export interface DocumentWorkingState {
+  readonly documentId: string;
+  readonly versionId: string;
+  readonly focus?: DocumentInspectFocus;
+  readonly inspection: unknown;
+  readonly freshness: "current" | "formatting-carried";
+}
 
 /** Run-scoped mutable pointer to the active primary document version + handles. */
 export interface DocumentRunState {
   primary: DocumentRef | null;
   readonly handles: ArtifactHandleRegistry;
+  working: DocumentWorkingState | null;
 }
 
 /** Create fresh per-run document state. Scoped to one `AgentRunner.run()` call. */
 export function createDocumentRunState(
   primary: DocumentRef | null = null,
 ): DocumentRunState {
-  return { primary, handles: new ArtifactHandleRegistry() };
+  return { primary, handles: new ArtifactHandleRegistry(), working: null };
+}
+
+export function recordDocumentInspection(
+  state: DocumentRunState,
+  document: DocumentRef,
+  focus: DocumentInspectFocus | undefined,
+  inspection: unknown,
+): void {
+  state.working = { documentId: document.documentId, versionId: document.versionId, focus, inspection, freshness: "current" };
+}
+
+export function advanceDocumentWorkingState(
+  state: DocumentRunState,
+  document: DocumentRef,
+  preservesStructure = false,
+): void {
+  const previous = state.primary;
+  state.primary = document;
+  if (!state.working || previous?.documentId !== document.documentId || !preservesStructure) {
+    state.working = null;
+    return;
+  }
+  state.working = {
+    ...state.working,
+    versionId: document.versionId,
+    inspection: removeOpaqueHandles(state.working.inspection),
+    freshness: "formatting-carried",
+  };
+}
+
+function removeOpaqueHandles(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(removeOpaqueHandles);
+  if (!value || typeof value !== "object") return value;
+  return Object.fromEntries(Object.entries(value as Record<string, unknown>)
+    .filter(([key]) => key !== "handle")
+    .map(([key, nested]) => [key, removeOpaqueHandles(nested)]));
 }
 
 export interface DocumentToolContextOptions {
@@ -63,9 +108,10 @@ export function createDocumentToolContext(
     primaryDocument: state.primary,
     runtime,
     mutations,
-    advancePrimaryDocument: (document: DocumentRef) => {
-      state.primary = document;
-    },
+    advancePrimaryDocument: (document, preservesStructure) =>
+      advanceDocumentWorkingState(state, document, preservesStructure),
+    recordInspection: (document, focus, inspection) =>
+      recordDocumentInspection(state, document, focus, inspection),
     handles: state.handles,
   });
 }

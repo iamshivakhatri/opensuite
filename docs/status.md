@@ -5,14 +5,14 @@ _Read this before starting any work. Keep it a concise current-state handoff, no
 ## What Exists
 
 * Workspace shell, Casual Docs DOCX, engine-backed inspect/mutate, blank create, workspace agent.
-* **Agent Efficiency v1–v5.3** + **AgentCore v2 Steps 1–5C**.
+* **Agent Efficiency v1–v6.1** + **AgentCore v2 Steps 1–5C**.
 * **Document Authoring Intelligence v1** + list≠grouping + **insert_paragraphs rejects embedded newlines**.
-* **Agent Panel UX v1** — semantic activity groups, compact live progress, collapsed completion, expandable technical details.
+* **Agent Panel UX v1.1** — live status from last activity (no premature Finishing up); inspect=`checks`; recovered details muted; slim composer.
 * Confirmation bridge; Frontend Phases 1–6B; hosted-alpha foundation.
 
 ## Just Completed
 
-* **Agent Panel UX v1:** primary view hides Thought/tool noise; `presentAgentRun` / `summarizeAgentActivities` map tools → families; recovered failures stay in details only. Preview: `/dev/agent-panel-ux` (dev only).
+* **Agent Efficiency v6.1:** run-local compact inspection state replaces superseded inspect context; structural writes invalidate it, formatting carries semantic knowledge without handles.
 
 ## Current Decisions
 
@@ -25,17 +25,18 @@ _Read this before starting any work. Keep it a concise current-state handoff, no
 
 | Check | Status |
 |---|---|
-| web tests | **Pass** (80) |
+| web tests | **Pass** (82) |
 | web typecheck | **Pass** |
 | `git diff --check` | **Pass** |
-| Visual fixtures `/dev/agent-panel-ux` | **Reviewed** |
-| Live authenticated agent run in browse | **Blocked** (no session) |
+| agent-core tests/typecheck | **Pass** (206) |
+| Visual `/dev/agent-panel-ux` | **Reviewed** (between-tools ≠ Finishing up; recovered muted) |
+| Live signed-in agent run | **Blocked** (auth 403) |
 
 ## Intentionally Deferred
 
 * Engine keepNext/keepLines/lineSpacing/indent fields
-* Live in-app agent screenshot pass (needs signed-in browse session)
+* Live in-app agent screenshot pass (needs signed-in session)
 
 ## Recommended Next Step
 
-Signed-in browser pass on a real agent run to confirm live SSE → new progress UI end-to-end.
+Measure v6.1 against the Product Launch Readiness Brief, then consider v6.2 tool working sets.

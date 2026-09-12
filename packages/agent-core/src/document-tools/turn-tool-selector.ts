@@ -43,6 +43,7 @@ import {
 } from "../types.js";
 import { filterDocumentToolsByCapabilities } from "./index.js";
 import {
+  advanceDocumentWorkingState,
   createDocumentRunState,
   createDocumentToolContext,
   type DocumentRunState,
@@ -252,7 +253,7 @@ export function createDocumentAgentRunnerOptions(
       mutations: input.mutations,
     }),
     toolTurnLifecycle: createDocumentToolTurnLifecycle(state, input.mutations),
-    ...createDocumentAgentRunnerPolicyOptions(),
+    ...createDocumentAgentRunnerPolicyOptions(state),
   };
 }
 
@@ -267,7 +268,7 @@ function createDocumentToolTurnLifecycle(
     const flushed = await pendingMutations.flushPendingFormatting!();
     if (flushed.status !== "success") return flushed;
     priorFlush = flushed;
-    state.primary = flushed.document;
+    advanceDocumentWorkingState(state, flushed.document, true);
     await context.events.emit({
       type: "document.version.advanced", runId: context.runId,
       documentId: flushed.document.documentId, versionId: flushed.document.versionId,
@@ -323,9 +324,10 @@ function isPendingOutcome(outcome: ToolBatchContext["toolOutcomes"][number]): bo
     (outcome.output as { status?: unknown }).status === "pending";
 }
 
-export function createDocumentAgentRunnerPolicyOptions() {
+export function createDocumentAgentRunnerPolicyOptions(state?: DocumentRunState) {
   return {
-    transformContext,
+    transformContext: (messages: Parameters<TransformAgentContext>[0]) =>
+      transformContext(messages, state?.working),
     shouldTerminalizeToolBatch: shouldTerminalizeDocumentToolBatch,
     getModelTimeoutRetryMessage: getDocumentModelTimeoutRetryMessage,
     requiredToolsNudgeMessage: USE_DOCUMENT_TOOLS_NUDGE_MESSAGE,

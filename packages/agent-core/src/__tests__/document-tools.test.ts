@@ -159,6 +159,7 @@ test("unsupported find capability returns structured failure", async () => {
 test("AgentRunner loop: FakeAgentModel + document.inspect observation", async () => {
   const runtime = createMockDocumentRuntime();
   const tools = createDocumentToolRegistry();
+  const state = createDocumentRunState(docxRef);
   const runner = new AgentRunner({
     model: createScriptedAgentModel([
       toolCallResponse("", [
@@ -182,7 +183,7 @@ test("AgentRunner loop: FakeAgentModel + document.inspect observation", async ()
     ]),
     tools,
     createToolContext: createDocumentToolContext({
-      state: createDocumentRunState(docxRef),
+      state,
       runtime,
     }),
     capabilities: readOnlyDocumentCapabilities(),
@@ -199,6 +200,9 @@ test("AgentRunner loop: FakeAgentModel + document.inspect observation", async ()
   assert.match(result.summary, /Sections: /);
   assert.equal(result.toolOutcomes[0]?.status, "succeeded");
   assert.equal(result.toolOutcomes[0]?.toolName, DOCUMENT_TOOL_NAMES.inspect);
+  assert.equal(state.working?.documentId, docxRef.documentId);
+  assert.equal(state.working?.versionId, docxRef.versionId);
+  assert.equal(state.working?.focus?.kind, "headings");
 });
 
 test("AgentRunner loop: document.find then grounded reply", async () => {

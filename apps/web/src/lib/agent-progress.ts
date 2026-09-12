@@ -44,6 +44,8 @@ export interface AgentActivity {
   readonly status: "active" | "done" | "error";
   /** Successful underlying operations collapsed into this row. */
   readonly changeCount: number;
+  /** How to phrase the count — reads are checks, mutations are changes. */
+  readonly countNoun: "changes" | "checks" | null;
 }
 
 export interface AgentRunPresentation {
@@ -597,6 +599,8 @@ export interface ProgressGroup {
   readonly label: string;
   readonly count: number;
   readonly status: ProgressLineStatus;
+  /** Recovered tool failure — show as muted warning, not destructive error. */
+  readonly recovered?: boolean;
   readonly startedAt?: number;
   readonly endedAt?: number;
 }
@@ -813,19 +817,19 @@ function activityLabels(family: ActivityFamily): {
   switch (family) {
     case "create":
       return {
-        active: "Creating document…",
+        active: "Starting…",
         done: "Created document",
         error: "Couldn't create document",
       };
     case "content":
       return {
-        active: "Writing content…",
+        active: "Drafting content…",
         done: "Added content",
         error: "Couldn't add content",
       };
     case "structure":
       return {
-        active: "Structuring sections…",
+        active: "Structuring document…",
         done: "Structured sections",
         error: "Couldn't structure one section",
       };
@@ -837,25 +841,25 @@ function activityLabels(family: ActivityFamily): {
       };
     case "table":
       return {
-        active: "Adding table…",
+        active: "Building document…",
         done: "Added table",
         error: "Couldn't update table",
       };
     case "list":
       return {
-        active: "Adding list…",
+        active: "Building document…",
         done: "Added list",
         error: "Couldn't add list",
       };
     case "media":
       return {
-        active: "Adding images…",
+        active: "Building document…",
         done: "Added images",
         error: "Couldn't add image",
       };
     case "layout":
       return {
-        active: "Setting up pages…",
+        active: "Building document…",
         done: "Updated page layout",
         error: "Couldn't update page layout",
       };
@@ -873,11 +877,30 @@ function activityLabels(family: ActivityFamily): {
       };
     case "other":
       return {
-        active: "Working…",
+        active: "Working on document…",
         done: "Completed step",
         error: "Couldn't finish a step",
       };
   }
+}
+
+/** Live headline for a semantic family (between tools, keep last stage). */
+export function liveStatusForFamily(family: ActivityFamily): string {
+  return activityLabels(family).active;
+}
+
+function countNounForFamily(
+  family: ActivityFamily,
+): AgentActivity["countNoun"] {
+  if (family === "inspect") return "checks";
+  if (family === "create" || family === "confirm") return null;
+  return "changes";
+}
+
+function lineFamily(line: AgentProgressLine): ActivityFamily | null {
+  if (line.id.startsWith("confirm:")) return "confirm";
+  if (line.toolName) return activityFamilyForTool(line.toolName);
+  return familyFromLabel(line.label);
 }
 
 type FamilyBucket = {
@@ -986,34 +1009,44 @@ export function summarizeAgentActivities(
       label,
       status,
       changeCount: bucket.successCount,
+      countNoun: countNounForFamily(family),
     });
   }
   return activities;
 }
 
-function liveHeadlineFromActivities(
+/**
+ * Live status from semantic activity — never treat inter-tool model waits
+ * as "Finishing up…" (that only applies once the answer is streaming).
+ */
+export function liveHeadlineFromActivities(
   activities: readonly AgentActivity[],
   lines: readonly AgentProgressLine[],
+  options?: { readonly streamingAnswer?: boolean },
 ): string {
   const active = [...activities].reverse().find((a) => a.status === "active");
-  if (active) return active.label;
+  if (active) return liveStatusForFamily(active.family);
 
-  const writing = lines.some(
-    (line) => line.id === "writing" && line.status === "active",
-  );
-  if (writing) return "Finishing up…";
+  // Final answer tokens are flowing — only then say Finishing up.
+  if (options?.streamingAnswer) return "Finishing up…";
+
+  // Between tools / model wait: keep the last meaningful stage visible.
+  const lastMeaningful = [...activities]
+    .reverse()
+    .find((a) => a.family !== "confirm" && a.status !== "error");
+  if (lastMeaningful) return liveStatusForFamily(lastMeaningful.family);
 
   const thinking = lines.some(
     (line) => line.id === "thinking" && line.status === "active",
   );
-  if (thinking) {
-    return activities.some((a) => a.family === "create")
-      ? "Creating document…"
-      : "Working…";
-  }
+  if (thinking) return "Starting…";
 
-  if (activities.length > 0) return "Working…";
-  return "Working…";
+  const writing = lines.some(
+    (line) => line.id === "writing" && line.status === "active",
+  );
+  if (writing) return "Working on document…";
+
+  return "Working on document…";
 }
 
 function completedHeadline(
@@ -1031,6 +1064,109 @@ function completedHeadline(
   return elapsed ? `Done in ${elapsed}` : "Done";
 }
 
+function recoveryDetailLabel(label: string): string {
+  if (label === "Paragraph target ambiguous") {
+    return "Paragraph target ambiguity";
+  }
+  if (label === "Table cell target ambiguous") {
+    return "Table cell target ambiguity";
+  }
+  if (label === "Table row target ambiguous") {
+    return "Table row target ambiguity";
+  }
+  return label;
+}
+
+/**
+ * Technical details with consecutive grouping + recovered-error marking.
+ * Recovered = error in a family that later succeeds.
+ */
+export function buildTechnicalDetails(
+  lines: readonly AgentProgressLine[],
+): ProgressGroup[] {
+  const technical = technicalProgressLines(visibleAgentProgress(lines));
+  const recoveredIds = new Set<string>();
+
+  for (let i = 0; i < technical.length; i += 1) {
+    const line = technical[i];
+    if (!line || line.status !== "error") continue;
+    const family = lineFamily(line);
+    for (let j = i + 1; j < technical.length; j += 1) {
+      const later = technical[j];
+      if (!later || later.status !== "done") continue;
+      if (line.toolName && later.toolName === line.toolName) {
+        recoveredIds.add(line.id);
+        break;
+      }
+      const laterFamily = lineFamily(later);
+      if (family && laterFamily === family) {
+        recoveredIds.add(line.id);
+        break;
+      }
+    }
+  }
+
+  const groups: ProgressGroup[] = [];
+  for (const line of technical) {
+    const recovered = line.status === "error" && recoveredIds.has(line.id);
+    const baseLabel = line.label
+      .replace(/…$/, "")
+      .replace(/^Inserting /, "Inserted ")
+      .replace(/^Inspecting /, "Inspected ")
+      .replace(/^Updating /, "Updated ")
+      .replace(/^Replacing /, "Replaced ")
+      .replace(/^Searching /, "Searched ")
+      .replace(/^Creating /, "Created ")
+      .replace(/^Setting /, "Set ")
+      .replace(/^Formatting /, "Formatted ")
+      .replace(/^Adding /, "Added ")
+      .replace(/^Removing /, "Removed ")
+      .replace(/^Sizing /, "Sized ")
+      .replace(/^Shading /, "Shaded ")
+      .trim();
+
+    const displayLabel = recovered
+      ? `Recovered · ${recoveryDetailLabel(baseLabel)}`
+      : line.status === "active"
+        ? line.label
+        : normalizeGroupLabel(baseLabel, 1);
+
+    const groupKey = recovered ? `recovered:${baseLabel}` : baseLabel;
+    const last = groups[groups.length - 1];
+    if (
+      last &&
+      last.key === groupKey &&
+      last.status !== "active" &&
+      line.status !== "active" &&
+      Boolean(last.recovered) === recovered
+    ) {
+      const nextCount = last.count + 1;
+      groups[groups.length - 1] = {
+        ...last,
+        count: nextCount,
+        label: recovered
+          ? `Recovered · ${recoveryDetailLabel(baseLabel)}`
+          : normalizeGroupLabel(baseLabel, nextCount),
+        status:
+          !recovered && line.status === "error" ? "error" : last.status,
+        endedAt: line.endedAt ?? last.endedAt,
+      };
+      continue;
+    }
+
+    groups.push({
+      key: groupKey,
+      label: displayLabel,
+      count: 1,
+      status: recovered ? "done" : line.status,
+      ...(recovered ? { recovered: true } : {}),
+      ...(line.startedAt !== undefined ? { startedAt: line.startedAt } : {}),
+      ...(line.endedAt !== undefined ? { endedAt: line.endedAt } : {}),
+    });
+  }
+  return groups;
+}
+
 /** Primary + details presentation from technical progress lines. */
 export function presentAgentRun(
   lines: readonly AgentProgressLine[],
@@ -1038,11 +1174,13 @@ export function presentAgentRun(
     readonly live?: boolean;
     readonly durationMs?: number | null;
     readonly outcome?: AgentTurnProgress["outcome"];
+    /** True when assistant tokens are streaming (final answer). */
+    readonly streamingAnswer?: boolean;
   },
 ): AgentRunPresentation {
   const activities = summarizeAgentActivities(lines);
+  const details = buildTechnicalDetails(lines);
   const technical = technicalProgressLines(visibleAgentProgress(lines));
-  const details = groupProgressLines(technical);
   const actionCount = technical.filter(
     (line) =>
       line.id.startsWith("tool:") ||
@@ -1052,7 +1190,9 @@ export function presentAgentRun(
   ).length;
 
   const headline = options?.live
-    ? liveHeadlineFromActivities(activities, lines)
+    ? liveHeadlineFromActivities(activities, lines, {
+        streamingAnswer: options.streamingAnswer,
+      })
     : completedHeadline(options?.outcome ?? "completed", options?.durationMs);
 
   return {
@@ -1070,6 +1210,7 @@ export function progressSummaryLabel(
     readonly live?: boolean;
     readonly durationMs?: number | null;
     readonly outcome?: AgentTurnProgress["outcome"];
+    readonly streamingAnswer?: boolean;
   },
 ): string {
   return presentAgentRun(lines, options).headline;

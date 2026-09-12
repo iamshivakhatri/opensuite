@@ -86,10 +86,12 @@ export function AgentRunProgress({
               </span>
               <span className="min-w-0 truncate">
                 {activity.label}
-                {activity.status === "done" && activity.changeCount > 1 ? (
+                {activity.status === "done" &&
+                activity.changeCount > 1 &&
+                activity.countNoun ? (
                   <span className="opacity-70">
                     {" "}
-                    · {activity.changeCount} changes
+                    · {activity.changeCount} {activity.countNoun}
                   </span>
                 ) : null}
               </span>
@@ -118,13 +120,23 @@ export function AgentRunProgress({
                   key={`${group.key}:${index}`}
                   className={cn(
                     "flex items-baseline gap-2 py-px text-[length:var(--text-2xs)] leading-[1.4]",
-                    group.status === "error"
-                      ? "text-danger"
-                      : group.status === "active"
-                        ? "text-ink-soft"
-                        : "text-ink-faint",
+                    group.recovered
+                      ? "text-ink-faint"
+                      : group.status === "error"
+                        ? "text-danger"
+                        : group.status === "active"
+                          ? "text-ink-soft"
+                          : "text-ink-faint",
                   )}
                 >
+                  {group.recovered ? (
+                    <span
+                      className="shrink-0 text-[length:var(--text-2xs)] text-accent opacity-70"
+                      aria-hidden
+                    >
+                      ↻
+                    </span>
+                  ) : null}
                   <span className="min-w-0 flex-1 truncate">
                     {group.label}
                     {group.count > 1 ? (

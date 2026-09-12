@@ -1,7 +1,7 @@
 import type { DocumentMutationExecutor } from "./document-mutation.js";
 import type { AgentEventSink } from "./events.js";
 import type { ArtifactHandleRegistry } from "./artifact-handles.js";
-import type { DocumentRuntime } from "./runtime.js";
+import type { DocumentInspectFocus, DocumentRuntime } from "./runtime.js";
 import type { Diagnostic, DocumentRef, RuntimeCapabilities } from "./types.js";
 
 /**
@@ -147,7 +147,8 @@ export interface ToolExecutionContext {
    * Run-local: advance the active primary DocumentRef after a persisted mutation
    * so subsequent tools in the same run read version N+1.
    */
-  readonly advancePrimaryDocument?: (document: DocumentRef) => void;
+  readonly advancePrimaryDocument?: (document: DocumentRef, preservesStructure?: boolean) => void;
+  readonly recordInspection?: (document: DocumentRef, focus: DocumentInspectFocus | undefined, inspection: unknown) => void;
   /**
    * Run-local opaque handle → inspected version registry.
    * Populated by document.inspect; validated before handle-based mutations.

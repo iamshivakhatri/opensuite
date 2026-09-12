@@ -9,6 +9,8 @@ import {
   createDocumentAgentRunnerOptions,
   createDocumentRunState,
   createDocumentToolContext,
+  advanceDocumentWorkingState,
+  recordDocumentInspection,
   createFakeTool,
   createInMemoryDocumentMutationExecutor,
   createMockDocumentRuntime,
@@ -26,6 +28,22 @@ const docxRef: DocumentRef = {
   versionId: "ver-1",
   format: "docx",
 };
+
+test("run-state: inspection working state follows safe formatting changes only", () => {
+  const state = createDocumentRunState(docxRef);
+  recordDocumentInspection(state, docxRef, { kind: "tables" }, {
+    payload: { tables: [{ handle: "t0", rows: [{ handle: "r0", cells: [{ handle: "c0", text: "A" }] }] }] },
+  });
+  assert.equal(state.working?.versionId, "ver-1");
+
+  advanceDocumentWorkingState(state, { ...docxRef, versionId: "ver-2" }, true);
+  assert.equal(state.working?.versionId, "ver-2");
+  assert.equal(state.working?.freshness, "formatting-carried");
+  assert.ok(!JSON.stringify(state.working).includes('"handle"'));
+
+  advanceDocumentWorkingState(state, { ...docxRef, versionId: "ver-3" });
+  assert.equal(state.working, null);
+});
 
 test("run-state: sequential writes observe N → N+1 → N+2 via createToolContext", async () => {
   const seenBaseVersions: string[] = [];

@@ -22,6 +22,7 @@ import {
   unwrapResult,
 } from "./define-tool.js";
 import { collectOpaqueHandles } from "../artifact-handles.js";
+import { projectInspectionForWorkingState } from "../model-context.js";
 import { DOCUMENT_TOOL_NAMES } from "./names.js";
 import { PAGING_PROPERTIES } from "./shared-schema.js";
 import { parseInspectFocus } from "./selectors.js";
@@ -162,6 +163,7 @@ export function createDocumentInspectTool(): AgentTool<
         document.versionId,
         collectOpaqueHandles(success.payload),
       );
+      ctx.recordInspection?.(document, input.focus, projectInspectionForWorkingState(success));
       return success;
     },
   });

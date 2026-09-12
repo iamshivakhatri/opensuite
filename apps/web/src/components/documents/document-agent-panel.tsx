@@ -1121,8 +1121,6 @@ export function DocumentAgentPanel({
   const visibleProgress = visibleAgentProgress(progress);
   const liveHeadline = latestProgressHeadline(visibleProgress);
   const isLiveTurn = showLiveDraft || liveHeadline !== null || busy;
-  const isGenerating =
-    liveHeadline?.id === "writing" || liveHeadline?.label === "Generating…";
   const wallClockMs =
     runStartedAtRef.current !== null
       ? Math.max(0, nowTick - runStartedAtRef.current)
@@ -1323,6 +1321,9 @@ export function DocumentAgentPanel({
                   <AgentRunProgress
                     presentation={presentAgentRun(visibleProgress, {
                       live: true,
+                      streamingAnswer: Boolean(
+                        liveDraft && liveDraft.content.length > 0,
+                      ),
                     })}
                     status="active"
                     totalElapsed={
@@ -1513,9 +1514,7 @@ export function DocumentAgentPanel({
               onKeyDown={onComposerKeyDown}
               aria-label="Message to agent"
               placeholder={
-                canStop
-                  ? "Agent is working… Stop to cancel"
-                  : "Ask OpenSuite… (@ to tag a file)"
+                canStop ? undefined : "Ask OpenSuite… (@ to tag a file)"
               }
               className={cn(
                 focusRingClass,
@@ -1526,7 +1525,7 @@ export function DocumentAgentPanel({
           <div className="mt-1 flex items-center justify-between gap-2">
             <div className="min-w-0 truncate text-[length:var(--text-2xs)] tabular-nums text-ink-faint">
               {canStop && wallClockMs !== null
-                ? `${isGenerating ? "Generating" : "Working"} · ${formatProgressElapsed(wallClockMs)}`
+                ? formatProgressElapsed(wallClockMs)
                 : null}
             </div>
             {canStop ? (

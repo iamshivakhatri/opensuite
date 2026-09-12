@@ -53,6 +53,19 @@ const activeRun = reduceAll([
   },
 ]);
 
+/** Mid-run model wait after content — must NOT show Finishing up. */
+const betweenTools = reduceAll([
+  {
+    type: "tool.completed",
+    data: { toolCallId: "a", toolName: "workspace.create_blank_docx" },
+  },
+  {
+    type: "tool.completed",
+    data: { toolCallId: "b", toolName: "document.insert_paragraphs" },
+  },
+  { type: "message.started" },
+]);
+
 const completedLines = reduceAll([
   {
     type: "tool.completed",
@@ -176,7 +189,7 @@ export default function AgentPanelUxPreviewPage() {
           />
         </FixtureCard>
 
-        <FixtureCard title="2 · Active run" width={320}>
+        <FixtureCard title="2 · Active formatting" width={320}>
           <UserBubble text="Create a short poem collection document" />
           <AgentRunProgress
             presentation={presentAgentRun(activeRun, { live: true })}
@@ -184,6 +197,18 @@ export default function AgentPanelUxPreviewPage() {
             totalElapsed="18s"
             expanded={openActive}
             onToggle={() => setOpenActive((v) => !v)}
+            live
+          />
+        </FixtureCard>
+
+        <FixtureCard title="2b · Between tools (not finishing)" width={320}>
+          <UserBubble text="Create a short poem collection document" />
+          <AgentRunProgress
+            presentation={presentAgentRun(betweenTools, { live: true })}
+            status="active"
+            totalElapsed="42s"
+            expanded={false}
+            onToggle={() => undefined}
             live
           />
         </FixtureCard>

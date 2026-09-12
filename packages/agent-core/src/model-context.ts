@@ -13,6 +13,7 @@ import {
   type PersistedDocumentMutationToolResult,
 } from "./document-mutation.js";
 import type { ModelMessage, ModelToolCall } from "./model.js";
+import type { DocumentWorkingState } from "./document-tools/run-state.js";
 import {
   shapeDiagnosticForToolResult,
   type Diagnostic,
@@ -29,6 +30,7 @@ const COMPACT_ARG_BYTE_THRESHOLD = 512;
  */
 export function transformContext(
   messages: readonly ModelMessage[],
+  workingState?: DocumentWorkingState | null,
 ): ModelMessage[] {
   const succeededCallIds = new Set<string>();
   for (const message of messages) {
@@ -37,7 +39,22 @@ export function transformContext(
     }
   }
 
-  return messages.map((message) => {
+  const latestFindIndex = messages.reduce(
+    (latest, message, index) =>
+      message.role === "tool" && message.toolName === "document.find" && message.status === "succeeded"
+        ? index : latest,
+    -1,
+  );
+  const latestInspectIndex = messages.reduce(
+    (latest, message, index) =>
+      message.role === "tool" && message.toolName === "document.inspect" && message.status === "succeeded"
+        ? index : latest,
+    -1,
+  );
+  const inspectionCount = messages.filter(
+    (message) => message.role === "tool" && message.toolName === "document.inspect" && message.status === "succeeded",
+  ).length;
+  const projected = messages.map((message, index) => {
     if (message.role === "assistant" && message.toolCalls) {
       return {
         role: "assistant" as const,
@@ -52,21 +69,50 @@ export function transformContext(
     if (message.role !== "tool") {
       return message;
     }
-    const projected = projectToolResultForModel(message);
+    if (isSupersededRead(message, index, latestFindIndex, latestInspectIndex, workingState)) {
+      return {
+        role: "tool" as const,
+        toolCallId: message.toolCallId,
+        toolName: message.toolName,
+        status: message.status,
+        output: { status: "succeeded", compacted: true },
+      };
+    }
+    const toolProjection = projectToolResultForModel(message);
     return {
       role: "tool" as const,
       toolCallId: message.toolCallId,
       toolName: message.toolName,
       status: message.status,
-      ...(projected.summary !== undefined
-        ? { summary: projected.summary }
+      ...(toolProjection.summary !== undefined
+        ? { summary: toolProjection.summary }
         : {}),
-      ...(projected.output !== undefined ? { output: projected.output } : {}),
-      ...(projected.diagnostic !== undefined
-        ? { diagnostic: projected.diagnostic }
+      ...(toolProjection.output !== undefined ? { output: toolProjection.output } : {}),
+      ...(toolProjection.diagnostic !== undefined
+        ? { diagnostic: toolProjection.diagnostic }
         : {}),
     };
   });
+  return workingState && (inspectionCount > 1 || workingState.freshness === "formatting-carried")
+    ? [...projected, workingStateMessage(workingState)] : projected;
+}
+
+function isSupersededRead(message: ModelMessage, index: number, latestFindIndex: number, latestInspectIndex: number, workingState: DocumentWorkingState | null | undefined): boolean {
+  if (message.role !== "tool" || message.status !== "succeeded") return false;
+  if (message.toolName === "document.inspect") return !!workingState && index !== latestInspectIndex;
+  return message.toolName === "document.find" && index !== latestFindIndex;
+}
+
+function workingStateMessage(working: DocumentWorkingState): ModelMessage {
+  return {
+    role: "assistant",
+    content: `Document working state (runtime, not user text): ${JSON.stringify({ focus: working.focus, freshness: working.freshness, inspection: working.inspection })}`,
+  };
+}
+
+/** Reuses the normal inspect shaping path before state stores its compact form. */
+export function projectInspectionForWorkingState(output: unknown): unknown {
+  return projectReadToolOutputForModel(output);
 }
 
 /**
