@@ -29,6 +29,7 @@ import type { DocumentRuntimeResolver } from "../documents/runtime.js";
 import type { CredentialSource } from "../ai-preferences/types.js";
 import type { ProviderCredentialProvider } from "../credentials/types.js";
 import { createMeteredAgentModel } from "../model-usage/meter.js";
+import type { ManagedTrialService } from "../managed-trial/service.js";
 import type { ModelUsageService } from "../model-usage/service.js";
 import { createAgentDocumentMutationExecutor } from "./document-mutation-executor.js";
 import {
@@ -134,6 +135,7 @@ export interface AgentExecutionServiceDeps {
   ) => Promise<AgentModel | ResolvedAgentExecutionModel>;
   /** Append-only model usage ledger (optional; tests may omit). */
   readonly modelUsage?: ModelUsageService;
+  readonly managedTrial?: ManagedTrialService;
   /** Required by the application; omitted only by existing isolated tests. */
   readonly lease?: AgentExecutionLeaseService;
   /**
@@ -260,6 +262,9 @@ export function createAgentExecutionService(deps: AgentExecutionServiceDeps) {
     }
 
     if (deps.modelUsage && usageAttribution) {
+      const isManagedOpenRouter =
+        usageAttribution.credentialSource === "managed" &&
+        usageAttribution.provider === "openrouter";
       model = createMeteredAgentModel(model, {
         attribution: {
           userId: input.userId,
@@ -269,12 +274,22 @@ export function createAgentExecutionService(deps: AgentExecutionServiceDeps) {
           agentRunId: run.id,
         },
         usage: deps.modelUsage,
-        onRecordError: (error) => {
+        ...(isManagedOpenRouter && deps.managedTrial
+          ? {
+              beforeComplete: () => deps.managedTrial!.beforeManagedCall(input.userId),
+              afterRecord: (event) => deps.managedTrial!.applyManagedUsage(event),
+              failClosed: true,
+            }
+          : {}),
+        async onRecordError(error) {
           devLog(
             `agent ${run.id.slice(0, 8)} model usage record failed: ${
               error instanceof Error ? error.message : String(error)
             }`,
           );
+          if (isManagedOpenRouter && deps.managedTrial) {
+            await deps.managedTrial.block(input.userId);
+          }
         },
       });
     }

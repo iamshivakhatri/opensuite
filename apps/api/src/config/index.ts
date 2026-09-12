@@ -65,6 +65,7 @@ const EnvSchema = z
     OPENROUTER_MODEL: z.string().optional(),
     /** 32-byte base64 or 64-character hex key, used only for BYOK secrets. */
     AI_CREDENTIAL_ENCRYPTION_KEY: z.string().optional(),
+    MANAGED_AI_TRIAL_CREDIT_MICROS: z.coerce.number().int().nonnegative().default(0),
   })
   .superRefine((data, ctx) => {
     if (data.AGENT_MODEL_PROVIDER === "fake" && data.NODE_ENV === "production") {
@@ -160,6 +161,7 @@ export interface AppConfig {
   readonly s3: S3Config;
   readonly uploadMaxBytes: number;
   readonly aiCredentialEncryptionKey: string | null;
+  readonly managedAiTrialCreditMicros: number;
   readonly agent: AgentModelConfig;
 }
 
@@ -226,6 +228,7 @@ export function loadConfig(
     uploadMaxBytes: result.data.UPLOAD_MAX_BYTES,
     aiCredentialEncryptionKey:
       result.data.AI_CREDENTIAL_ENCRYPTION_KEY?.trim() || null,
+    managedAiTrialCreditMicros: result.data.MANAGED_AI_TRIAL_CREDIT_MICROS,
     agent: {
       provider,
       anthropicApiKey: provider === "anthropic" ? anthropicKey : null,

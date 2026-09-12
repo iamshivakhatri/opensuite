@@ -26,6 +26,8 @@ import {
   type AgentRunManager,
 } from "./agent/run-manager.js";
 import { createAgentExecutionLeaseService } from "./agent/execution-lease.js";
+import { createManagedTrialRepository } from "./managed-trial/repository.js";
+import { createManagedTrialService } from "./managed-trial/service.js";
 import type { ConfirmationBridge } from "./agent/confirmation-bridge.js";
 import {
   createConfiguredAgentModel,
@@ -54,6 +56,7 @@ import type { AuthHandler } from "./routes/auth.js";
 import { registerAgentRoutes } from "./routes/agent.js";
 import { registerAuthRoutes } from "./routes/auth.js";
 import { registerAiModelRoutes } from "./routes/ai-models.js";
+import { registerAiTrialRoutes } from "./routes/ai-trial.js";
 import { registerAiPreferenceRoutes } from "./routes/ai-preferences.js";
 import { registerDocumentRoutes } from "./routes/documents.js";
 import { registerHealthRoutes } from "./routes/health.js";
@@ -254,6 +257,10 @@ export async function buildApp(
     },
   });
   const preferences = createDocumentPreferenceService(deps.db);
+  const managedTrial = createManagedTrialService(
+    createManagedTrialRepository(deps.db),
+    config.managedAiTrialCreditMicros,
+  );
   const search = createSearchService(deps.db);
 
   const agentPersistence =
@@ -294,6 +301,7 @@ export async function buildApp(
           }
         : {}),
       lease: createAgentExecutionLeaseService(deps.db),
+      managedTrial,
       tools: documentTools,
       runtime: documentRuntime,
       resolveRuntime,
@@ -314,6 +322,7 @@ export async function buildApp(
   registerAuthRoutes(app, deps.auth);
   registerMeRoutes(app, deps.auth);
   registerAiModelRoutes(app, deps.auth, managedModelCatalog);
+  registerAiTrialRoutes(app, deps.auth, managedTrial);
   registerAiPreferenceRoutes(app, deps.auth, aiPreferences, managedModelCatalog);
   registerWorkspaceRoutes(app, deps.auth, workspaces);
   registerProviderCredentialRoutes(app, deps.auth, credentials);

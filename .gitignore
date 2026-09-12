@@ -44,6 +44,7 @@ packages/db/migrations/*.sql
 !packages/db/migrations/0008_gigantic_leader.sql
 !packages/db/migrations/0009_cost_snapshot_rename.sql
 !packages/db/migrations/0011_certain_stellaris.sql
+!packages/db/migrations/0011_windy_vivisector.sql
 packages/db/migrations/meta/*.json
 !packages/db/migrations/meta/_journal.json
 !packages/db/migrations/meta/0005_snapshot.json

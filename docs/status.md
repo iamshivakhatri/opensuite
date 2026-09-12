@@ -11,6 +11,12 @@ _Read this before starting any work. Keep it a concise current-state handoff, no
 
 ## Just Completed
 
+* **Phase D1:** managed OpenRouter one-time trial credit.
+  - `MANAGED_AI_TRIAL_CREDIT_MICROS` grants lazily once; zero disables managed trial.
+  - Each managed model call is gated; durable provider-reported cost debits atomically through a unique usage-event record.
+  - Missing cost or durable accounting failure blocks later managed calls; BYOK never touches trial credit.
+  - A final allowed provider call may overshoot once; the next call is blocked.
+
 * **Phase C1:** one active agent execution per authenticated user, across API instances.
   - PostgreSQL `agent_execution_lease` is atomically acquired before model resolution or run creation.
   - Lease is token-checked on release, renewed every minute while active, and expires after five minutes if an API process crashes.
@@ -59,10 +65,9 @@ _Read this before starting any work. Keep it a concise current-state handoff, no
 * Frontend Phase 3 panel file split
 * Further generic UI polish
 * Settings UI / model picker
-* Managed trial credits, Stripe, invoices, usage UI
-* Concurrency-safe trial debit (Phase D)
+* Stripe, invoices, usage UI
 * Static production price entries (not needed for managed OpenRouter)
 
 ## Recommended Next Step
 
-Phase D managed trial debit over stored `managed` + `openrouter_usage_cost` snapshots (with one-active-run concurrency), or Settings UI wired to `GET /api/ai-models/managed`.
+Settings UI wired to `GET /api/ai-models/managed` and `GET /api/ai-trial`.

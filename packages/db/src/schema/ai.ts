@@ -70,6 +70,18 @@ export const aiPreference = pgTable("ai_preference", {
     .notNull(),
 });
 
+/** One-time managed-AI grant. A negative balance records actual final spend. */
+export const managedAiTrialAccount = pgTable("managed_ai_trial_account", {
+  userId: text("user_id")
+    .primaryKey()
+    .references(() => user.id, { onDelete: "cascade" }),
+  originalGrantMicros: bigint("original_grant_micros", { mode: "number" }).notNull(),
+  balanceMicros: bigint("balance_micros", { mode: "number" }).notNull(),
+  blockedAt: timestamp("blocked_at"),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().$onUpdate(() => new Date()).notNull(),
+});
+
 /**
  * Append-only ledger of completed model provider requests.
  * Independent of agent_run / agent_step accounting; agent_run_id is correlation only.
@@ -142,4 +154,23 @@ export const modelUsageEvent = pgTable(
       )`,
     ),
   ],
+);
+
+/** Application of one durable managed usage event to a trial account. */
+export const managedAiTrialDebit = pgTable(
+  "managed_ai_trial_debit",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    userId: text("user_id")
+      .notNull()
+      .references(() => user.id, { onDelete: "cascade" }),
+    modelUsageEventId: uuid("model_usage_event_id")
+      .notNull()
+      .unique()
+      .references(() => modelUsageEvent.id, { onDelete: "restrict" }),
+    costMicros: bigint("cost_micros", { mode: "number" }).notNull(),
+    balanceAfterMicros: bigint("balance_after_micros", { mode: "number" }).notNull(),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+  },
+  (table) => [index("managed_ai_trial_debit_user_id_idx").on(table.userId)],
 );

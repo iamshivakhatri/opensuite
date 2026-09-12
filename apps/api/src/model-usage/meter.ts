@@ -2,6 +2,7 @@ import type { AgentModel, ModelRequest, ModelResponse } from "@opensuite/agent-c
 
 import type { ModelUsageService } from "./service.js";
 import type { ModelUsageAttribution } from "./types.js";
+import type { ModelUsageEvent } from "./types.js";
 
 export interface MeteredAgentModelOptions {
   readonly attribution: Omit<ModelUsageAttribution, "agentRunId"> & {
@@ -12,7 +13,11 @@ export interface MeteredAgentModelOptions {
    * Persistence failures are logged via this hook and must not fail a
    * successful provider call. Matches telemetry isolation for model.turn.metrics.
    */
-  readonly onRecordError?: (error: unknown) => void;
+  readonly onRecordError?: (error: unknown) => unknown | Promise<unknown>;
+  readonly beforeComplete?: () => Promise<void>;
+  readonly afterRecord?: (event: ModelUsageEvent) => Promise<void>;
+  /** Managed accounting must stop the run when durable accounting fails. */
+  readonly failClosed?: boolean;
 }
 
 /**
@@ -25,9 +30,10 @@ export function createMeteredAgentModel(
 ): AgentModel {
   return {
     async complete(request: ModelRequest): Promise<ModelResponse> {
+      await options.beforeComplete?.();
       const response = await model.complete(request);
       try {
-        await options.usage.recordFromProviderResponse({
+        const event = await options.usage.recordFromProviderResponse({
           attribution: {
             userId: options.attribution.userId,
             provider: options.attribution.provider,
@@ -38,8 +44,10 @@ export function createMeteredAgentModel(
           usage: response.meta?.usage,
           providerReportedCostUsd: response.meta?.providerReportedCostUsd,
         });
+        await options.afterRecord?.(event);
       } catch (error) {
-        options.onRecordError?.(error);
+        await options.onRecordError?.(error);
+        if (options.failClosed) throw error;
       }
       return response;
     },
