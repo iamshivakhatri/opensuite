@@ -28,9 +28,17 @@ export const BENCH_SCENARIOS: readonly BenchScenario[] = [
   {
     id: "target-duplicate",
     label: "G. Duplicate paragraph target",
-    instruction: "Format only the second paragraph whose exact text is 'Note'. Inspect narrowly if needed, then use occurrence 2.",
+    instruction: "Format only the second body paragraph whose exact text is 'Note'. A table cell has the same text. Inspect narrowly if needed, then use occurrence 2.",
     seed(harness) {
-      return harness.seedDocument(buildMinimalDocx(["Title", "Note", "Note", "Closing"]));
+      return harness.seedDocument(
+        buildDocxBody([
+          { kind: "table", rows: [["Label"], ["Note"]] },
+          { kind: "paragraph", text: "Title" },
+          { kind: "paragraph", text: "Note" },
+          { kind: "paragraph", text: "Note" },
+          { kind: "paragraph", text: "Closing" },
+        ]),
+      );
     },
     check({ result, toolNames }) {
       const notes: string[] = [];

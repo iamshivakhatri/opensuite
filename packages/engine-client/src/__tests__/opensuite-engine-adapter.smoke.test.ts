@@ -15,7 +15,11 @@ import {
   assertNoEngineSourceIdentities,
   createOpenSuiteEngineAdapter,
 } from "../opensuite-engine-adapter.js";
-import { buildMinimalDocx, buildNameRoleTableDocx } from "../__fixtures__/minimal-docx.js";
+import {
+  buildDocxBody,
+  buildMinimalDocx,
+  buildNameRoleTableDocx,
+} from "../__fixtures__/minimal-docx.js";
 
 const SMOKE_OUTPUT = "/private/tmp/opensuite-app-engine-adapter-output.docx";
 
@@ -32,7 +36,13 @@ test("smoke: capabilities → find → inspect → replace → find/inspect outp
     return;
   }
 
-  const inputBytes = buildMinimalDocx(["old text", "Date:", "Date:"]);
+  const inputBytes = buildDocxBody([
+    { kind: "table", rows: [["The Lantern Moth"]] },
+    { kind: "paragraph", text: "The Lantern Moth" },
+    { kind: "paragraph", text: "old text" },
+    { kind: "paragraph", text: "Date:" },
+    { kind: "paragraph", text: "Date:" },
+  ]);
   const docRef: DocumentRef = {
     documentId: "smoke-doc",
     versionId: "smoke-ver-1",
@@ -88,7 +98,22 @@ test("smoke: capabilities → find → inspect → replace → find/inspect outp
   assert.equal(paragraphs.status, "success");
   if (paragraphs.status === "success" && paragraphs.payload.format === "docx") {
     assert.ok((paragraphs.payload.paragraphs?.length ?? 0) >= 1);
+    assert.equal(
+      paragraphs.payload.paragraphs?.find((item) => item.text === "The Lantern Moth")
+        ?.occurrence,
+      1,
+    );
   }
+
+  const styled = await runtime.execute!(docRef, {
+    type: "document.set_paragraph_style",
+    baseVersionId: "smoke-ver-1",
+    payload: {
+      target: { text: "The Lantern Moth" },
+      style: "Heading 1",
+    },
+  });
+  assert.equal(styled.status, "success");
 
   const tables = await runtime.inspect(docRef, {
     focus: { kind: "tables", offset: 0, limit: 10 },

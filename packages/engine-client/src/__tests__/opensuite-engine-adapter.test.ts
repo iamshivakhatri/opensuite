@@ -291,8 +291,20 @@ test("inspect maps overview/headings/paragraphs/tables/context without mock fall
           paragraphs: {
             page: { total: 4, offset: 1, returned: 2, hasMore: true },
             items: [
-              { occurrence: 1, text: "old text", styleName: "Body Text" },
-              { occurrence: 2, text: "more", styleName: "Body Text" },
+              {
+                index: 1,
+                handle: "b2",
+                targetOccurrence: 0,
+                text: "old text",
+                styleName: "Body Text",
+              },
+              {
+                index: 2,
+                handle: "b3",
+                targetOccurrence: 1,
+                text: "more",
+                styleName: "Body Text",
+              },
             ],
           },
           diagnostics: [],
@@ -397,6 +409,12 @@ test("inspect maps overview/headings/paragraphs/tables/context without mock fall
   assert.equal(paragraphs.status, "success");
   if (paragraphs.status === "success" && paragraphs.payload.format === "docx") {
     assert.equal(paragraphs.payload.paragraphs?.[0]?.text, "old text");
+    assert.deepEqual(paragraphs.payload.paragraphs?.[0], {
+      handle: "b2",
+      text: "old text",
+      occurrence: 1,
+      styleName: "Body Text",
+    });
     assert.equal(paragraphs.payload.page?.hasMore, true);
   }
 

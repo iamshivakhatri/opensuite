@@ -331,7 +331,13 @@ export interface DocxInspectHeadingItem {
 }
 
 export interface DocxInspectParagraphItem {
-  readonly occurrence: number;
+  /** Position among direct body paragraphs; not a mutation selector. */
+  readonly index?: number;
+  /** Zero-based selector occurrence among matching mutable body paragraphs. */
+  readonly targetOccurrence?: number;
+  readonly handle?: string;
+  /** @deprecated Older native bindings used a global paragraph index here. */
+  readonly occurrence?: number;
   readonly text: string;
   readonly styleName?: string;
 }

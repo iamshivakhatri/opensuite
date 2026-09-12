@@ -757,6 +757,38 @@ test("LIMITS: repeated same-tool failures force answer-only turn", async () => {
   assert.equal(result.summary, "ignored-tools");
 });
 
+test("LIMITS: failures for different tool inputs do not trip the circuit breaker", async () => {
+  let executeCount = 0;
+  const tool = createFakeTool({
+    name: "document.set_paragraph_style",
+    async execute() {
+      executeCount += 1;
+      throw new AgentCoreError("TOOL_FAILURE", "ambiguous target", {
+        diagnostic: {
+          code: "TARGET_AMBIGUOUS",
+          severity: "error",
+          message: "ambiguous target",
+        },
+      });
+    },
+  });
+  const runner = new AgentRunner({
+    model: createScriptedAgentModel([
+      toolCallResponse("first", [{ id: "a", name: tool.name, input: { text: "A" } }]),
+      toolCallResponse("second", [{ id: "b", name: tool.name, input: { text: "B" } }]),
+      toolCallResponse("third", [{ id: "c", name: tool.name, input: { text: "C" } }]),
+      assistantOnlyResponse("done"),
+    ]),
+    tools: ToolRegistry.create([tool]),
+  });
+
+  const result = await runner.run(baseRequest());
+  assert.equal(executeCount, 3);
+  assert.equal(result.summary, "done");
+  assert.equal(result.toolOutcomes.filter((outcome) => outcome.status === "failed").length, 3);
+  assert.ok(!result.toolOutcomes.some((outcome) => outcome.diagnostic?.code === "REPEATED_TOOL_FAILURE"));
+});
+
 test("GENERIC SELECTOR: AgentRunner defers entirely to an injected selectTurnTools with no document tool names", async () => {
   // Fake tool surface unrelated to documents — proves AgentRunner has no
   // baked-in knowledge of document/OpenSuite tool names for turn selection.

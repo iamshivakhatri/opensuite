@@ -49,13 +49,13 @@ import {
 } from "./types.js";
 
 const DEFAULT_MAX_TURNS = 20;
-/** Same tool failing this many times → block further calls and force an answer. */
+/** Same tool input failing this many times → block further calls and force an answer. */
 const MAX_FAILURES_PER_TOOL = 2;
 /** Hard cap on a single provider round-trip so chat essays cannot hang the UI for minutes. */
 const DEFAULT_MODEL_TURN_TIMEOUT_MS = 90_000;
 
 const REPEATED_FAILURE_STOP_MESSAGE =
-  "Runtime policy: stop calling tools. The same tool already failed twice in this run. " +
+  "Runtime policy: stop calling tools. The same tool call already failed twice in this run. " +
   "Summarize what succeeded, what failed (include the error codes if known), and ask the user how to proceed. " +
   "Do not invent workarounds or retry the failed tool.";
 
@@ -206,7 +206,7 @@ export class AgentRunner {
       { role: "user", content: request.instruction },
     ];
 
-    /** Failures per tool name in this run (circuit breaker). */
+    /** Failures per identical tool call in this run (circuit breaker). */
     const toolFailureCounts = new Map<string, number>();
     /**
      * Event/telemetry-sink failures observed AFTER a tool's side effect
@@ -637,7 +637,8 @@ export class AgentRunner {
       toolName: call.name,
     });
 
-    const priorFailures = toolFailureCounts.get(call.name) ?? 0;
+    const failureKey = toolFailureKey(call);
+    const priorFailures = toolFailureCounts.get(failureKey) ?? 0;
     if (priorFailures >= MAX_FAILURES_PER_TOOL) {
       const diagnostic: Diagnostic = {
         code: "REPEATED_TOOL_FAILURE",
@@ -684,8 +685,8 @@ export class AgentRunner {
         `Invalid input for tool ${tool.name}`,
       );
       toolFailureCounts.set(
-        call.name,
-        (toolFailureCounts.get(call.name) ?? 0) + 1,
+        failureKey,
+        (toolFailureCounts.get(failureKey) ?? 0) + 1,
       );
       await this.emitTelemetry({
         type: "tool.execution.metrics",
@@ -809,8 +810,8 @@ export class AgentRunner {
         `Tool ${tool.name} failed`,
       );
       toolFailureCounts.set(
-        call.name,
-        (toolFailureCounts.get(call.name) ?? 0) + 1,
+        failureKey,
+        (toolFailureCounts.get(failureKey) ?? 0) + 1,
       );
       await this.emitTelemetry({
         type: "tool.execution.metrics",
@@ -1043,6 +1044,24 @@ function createFixedTurnToolSelector(
     toolChoice: undefined,
     capabilities,
   });
+}
+
+function toolFailureKey(call: ModelToolCall): string {
+  return `${call.name}:${stableJson(call.input)}`;
+}
+
+function stableJson(value: unknown): string {
+  if (Array.isArray(value)) {
+    return `[${value.map(stableJson).join(",")}]`;
+  }
+  if (value !== null && typeof value === "object") {
+    return `{${Object.entries(value)
+      .filter(([, nested]) => nested !== undefined)
+      .sort(([left], [right]) => left.localeCompare(right))
+      .map(([key, nested]) => `${JSON.stringify(key)}:${stableJson(nested)}`)
+      .join(",")}}`;
+  }
+  return JSON.stringify(value) ?? "undefined";
 }
 
 function summarizeOutput(output: unknown): string | undefined {

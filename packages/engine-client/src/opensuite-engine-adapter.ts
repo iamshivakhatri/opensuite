@@ -858,9 +858,13 @@ function mapInspectPayload(
         },
         page: mapPage(response.paragraphs.page),
         paragraphs: response.paragraphs.items.map((item) => ({
-          handle: `docx:paragraph:${item.occurrence}`,
+          handle:
+            item.handle ??
+            `docx:paragraph:${item.index ?? item.occurrence ?? 0}`,
           text: item.text,
-          occurrence: item.occurrence,
+          ...(item.targetOccurrence !== undefined
+            ? { occurrence: item.targetOccurrence + 1 }
+            : {}),
           ...(item.styleName !== undefined
             ? { styleName: item.styleName }
             : {}),

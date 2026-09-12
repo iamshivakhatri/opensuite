@@ -14,6 +14,7 @@ _Read this before starting any work. Keep it a concise current-state handoff, no
 * **Agent Efficiency v4.2b3b2a:** lifecycle provides run/event context and a generic pre-tool hook for future document flush boundaries.
 * **Agent Efficiency v4.2b3b2b:** document lifecycle finalizes pending formatting at tool-turn end into one durable version/event/ref advancement.
 * **Agent Efficiency v5.2a:** local `PROVIDER=scripted` benchmarks run real document execution, persistence, and formatting batching without provider calls.
+* **Agent Efficiency v5.3:** paragraph inspection returns a 1-based selector occurrence from the same direct-body candidate set used by paragraph formatting; table-cell text no longer makes body styles ambiguous.
 * Confirmation bridge — real Approve/Deny over HTTP (in-memory pending map).
 * Frontend Phases 1–3 + **4A–4C** + **5A–5B** + **6A–6B** + readability + **shell/format unification**.
 * Hosted-alpha foundation: auth, workspaces/docs/versions, DOCX 35/35, BYOK, managed OpenRouter, catalog/cost/ledger, trial, storage quota, purge, Settings AI/Storage, Trash.
