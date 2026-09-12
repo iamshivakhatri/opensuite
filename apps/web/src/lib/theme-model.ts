@@ -54,7 +54,7 @@ export function applyResolvedTheme(resolved: ResolvedTheme): void {
   syncEmbeddedEditorColorTheme(resolved);
 }
 
-/** Keep Casual Docs (and future Sheets/Slides) as theme consumers only. */
+/** Keep Casual Docs (and future embedded editors) as theme consumers only. */
 export function syncEmbeddedEditorColorTheme(resolved: ResolvedTheme): void {
   if (typeof window !== "undefined") {
     try {

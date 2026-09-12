@@ -10,34 +10,26 @@ import {
   userFacingError,
 } from "@/components/files/format";
 import {
-  listLibraryDocuments,
   listRecentDocuments,
   listStarredDocuments,
-  listWorkspaces,
   setDocumentStarred,
-  uploadDocument,
-  type DocumentFormat,
   type LibraryDocument,
-  type Workspace,
 } from "@/lib/api";
 import { documentPath } from "@/lib/paths";
-import { focusRingClass } from "@/lib/focus-scope";
 import { useToast } from "@/lib/toast";
 import { cn } from "@/lib/utils";
 
-type LibraryKind = "recent" | "starred" | "format";
+type LibraryKind = "recent" | "starred";
 
 /**
- * Shared list surface for Recent, Starred, and format libraries.
+ * Shared list surface for Recent and Starred libraries.
  */
 export function DocumentLibraryView({
   kind,
-  format,
   title,
   description,
 }: {
   kind: LibraryKind;
-  format?: DocumentFormat;
   title: string;
   description: string;
 }) {
@@ -47,42 +39,23 @@ export function DocumentLibraryView({
   );
   const [error, setError] = React.useState<string | null>(null);
   const [starBusyId, setStarBusyId] = React.useState<string | null>(null);
-  const [workspaces, setWorkspaces] = React.useState<Workspace[]>([]);
-  const [uploadWorkspaceId, setUploadWorkspaceId] = React.useState("");
-  const [uploading, setUploading] = React.useState(false);
-  const [uploadError, setUploadError] = React.useState<string | null>(null);
-  const fileRef = React.useRef<HTMLInputElement>(null);
 
   const load = React.useCallback(async () => {
     setError(null);
     try {
       if (kind === "recent") {
         setDocuments(await listRecentDocuments());
-      } else if (kind === "starred") {
-        setDocuments(await listStarredDocuments());
       } else {
-        setDocuments(await listLibraryDocuments(format!));
+        setDocuments(await listStarredDocuments());
       }
     } catch (err) {
       setError(userFacingError(err, "Could not load documents."));
     }
-  }, [kind, format]);
+  }, [kind]);
 
   React.useEffect(() => {
     void load();
   }, [load]);
-
-  React.useEffect(() => {
-    if (kind !== "format") return;
-    void listWorkspaces()
-      .then((list) => {
-        setWorkspaces(list);
-        setUploadWorkspaceId((current) => current || list[0]?.id || "");
-      })
-      .catch(() => {
-        // upload picker optional
-      });
-  }, [kind]);
 
   async function toggleStar(doc: LibraryDocument) {
     if (starBusyId) return;
@@ -102,46 +75,13 @@ export function DocumentLibraryView({
     }
   }
 
-  async function handleUpload(file: File | undefined) {
-    if (!file || !uploadWorkspaceId || uploading) return;
-    setUploading(true);
-    setUploadError(null);
-    try {
-      await uploadDocument(uploadWorkspaceId, file);
-      await load();
-      toast({ tone: "success", title: "File uploaded" });
-    } catch (err) {
-      const message = userFacingError(err, "Upload failed.");
-      setUploadError(message);
-      toast({ tone: "error", title: "Upload failed", description: message });
-    } finally {
-      setUploading(false);
-      if (fileRef.current) fileRef.current.value = "";
-    }
-  }
-
-  const accept =
-    format === "docx"
-      ? ".docx"
-      : format === "pptx"
-        ? ".pptx"
-        : format === "xlsx"
-          ? ".xlsx"
-          : ".docx,.pptx,.xlsx";
-
   const emptyTitle =
-    kind === "recent"
-      ? "No recent documents"
-      : kind === "starred"
-        ? "No starred documents"
-        : "Nothing here yet";
+    kind === "recent" ? "No recent documents" : "No starred documents";
 
   const emptyDescription =
     kind === "recent"
       ? "Open a document from a workspace and it will appear here."
-      : kind === "starred"
-        ? "Star a file from a workspace and it will appear here."
-        : "Upload a matching Office file into a workspace.";
+      : "Star a file from a workspace and it will appear here.";
 
   function rowMeta(doc: LibraryDocument): string {
     const when =
@@ -161,49 +101,6 @@ export function DocumentLibraryView({
           {description}
         </p>
       </header>
-
-      {kind === "format" ? (
-        <div className="mb-5 flex flex-wrap items-center gap-2 rounded-[var(--radius-md)] border border-line bg-surface px-3 py-2.5">
-          <select
-            value={uploadWorkspaceId}
-            onChange={(event) => setUploadWorkspaceId(event.target.value)}
-            className={cn(
-              focusRingClass,
-              "h-8 rounded-[var(--radius-sm)] border border-line bg-surface px-2 text-[length:var(--text-xs)] text-ink",
-            )}
-          >
-            {workspaces.length === 0 ? (
-              <option value="">No workspaces</option>
-            ) : (
-              workspaces.map((workspace) => (
-                <option key={workspace.id} value={workspace.id}>
-                  {workspace.name}
-                </option>
-              ))
-            )}
-          </select>
-          <input
-            ref={fileRef}
-            type="file"
-            accept={accept}
-            className="hidden"
-            onChange={(event) =>
-              void handleUpload(event.target.files?.[0] ?? undefined)
-            }
-          />
-          <Button
-            type="button"
-            size="sm"
-            disabled={!uploadWorkspaceId || uploading}
-            onClick={() => fileRef.current?.click()}
-          >
-            {uploading ? "Uploading…" : "Upload"}
-          </Button>
-          {uploadError ? (
-            <p className="os-type-meta w-full text-danger">{uploadError}</p>
-          ) : null}
-        </div>
-      ) : null}
 
       {error ? (
         <div className="mb-4">

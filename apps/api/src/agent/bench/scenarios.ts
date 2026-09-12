@@ -130,6 +130,31 @@ export const BENCH_SCENARIOS: readonly BenchScenario[] = [
     },
   },
   {
+    id: "greenfield-poems",
+    label: "F. Greenfield poems and formatting",
+    instruction:
+      "Create a new DOCX with a title, a short introduction, five short poems with headings, readable formatting, and a closing section. Prefer batched writes in few model turns.",
+    seed() {
+      return null;
+    },
+    check({ result, toolNames }) {
+      const notes: string[] = [];
+      if (!toolNames.includes("workspace.create_blank_docx")) {
+        notes.push("expected workspace.create_blank_docx");
+      }
+      if (!toolNames.includes("document.insert_paragraphs")) {
+        notes.push("expected batched poem authoring");
+      }
+      if (!toolNames.includes("document.set_paragraph_style")) {
+        notes.push("expected title or heading formatting");
+      }
+      if (result.status !== "completed") {
+        notes.push(`run status=${result.status}`);
+      }
+      return { ok: notes.length === 0, notes };
+    },
+  },
+  {
     id: "reason-mutate",
     label: "E. Existing-document reasoning + mutation",
     instruction:
@@ -198,6 +223,7 @@ export function selectScenarios(
         C: "greenfield-small",
         D: "greenfield-large",
         E: "reason-mutate",
+        F: "greenfield-poems",
       };
       return scenarioById(map[letter] ?? id);
     })

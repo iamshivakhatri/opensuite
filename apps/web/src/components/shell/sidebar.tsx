@@ -98,35 +98,6 @@ function NavIcon({
   );
 }
 
-const appFilters = [
-  {
-    href: "/app/write",
-    label: "Write",
-    icon: <path d="M4 19h4l10-10a2.2 2.2 0 0 0-3-3L5 16v3z" />,
-  },
-  {
-    href: "/app/slides",
-    label: "Slides",
-    icon: (
-      <>
-        <rect x="3" y="5" width="18" height="12" rx="1.5" />
-        <line x1="12" y1="17" x2="12" y2="21" />
-      </>
-    ),
-  },
-  {
-    href: "/app/sheets",
-    label: "Sheets",
-    icon: (
-      <>
-        <rect x="3" y="3" width="18" height="18" rx="1.5" />
-        <line x1="3" y1="9" x2="21" y2="9" />
-        <line x1="10.5" y1="3" x2="10.5" y2="21" />
-      </>
-    ),
-  },
-];
-
 function isActive(
   pathname: string,
   href: string,
@@ -350,39 +321,6 @@ export function Sidebar() {
               No workspaces yet.
             </p>
           ) : null}
-        </div>
-      </div>
-
-      <div>
-        <div className="os-type-section mb-1.5 px-2.5">Apps</div>
-        <div className="grid grid-cols-3 gap-[7px] px-0.5">
-          {appFilters.map((item) => {
-            const active = isActive(pathname, item.href, "prefix");
-            return (
-              <Link
-                key={item.href}
-                href={item.href}
-                className={
-                  "flex h-[58px] flex-col items-center justify-center gap-[5px] rounded-[var(--radius-sm)] border text-[length:var(--text-sm)] shadow-[0_1px_2px_rgba(16,24,40,0.025)] " +
-                  (active
-                    ? "border-accent-line bg-accent-soft text-accent-hover"
-                    : "border-line bg-surface text-ink-soft hover:border-ink-faint")
-                }
-              >
-                <svg
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth={1.7}
-                  className="h-[17px] w-[17px]"
-                  aria-hidden
-                >
-                  {item.icon}
-                </svg>
-                {item.label}
-              </Link>
-            );
-          })}
         </div>
       </div>
 

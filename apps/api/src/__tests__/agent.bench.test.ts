@@ -14,11 +14,30 @@ import { identifyBottleneck } from "../agent/bench/report.js";
 import { selectScenarios } from "../agent/bench/scenarios.js";
 
 test("selectScenarios resolves ids and letter aliases", () => {
-  assert.equal(selectScenarios("all").length, 5);
+  assert.equal(selectScenarios("all").length, 6);
   assert.deepEqual(
     selectScenarios("A,C").map((s) => s.id),
     ["simple-read", "greenfield-small"],
   );
+});
+
+test("poem benchmark reports explicit efficiency counters", async () => {
+  const harness = await createBenchHarness();
+  const { result, events, totalPersistMs } = await harness.run({
+    model: createScriptedAgentModel([
+      toolCallResponse("", [{ id: "create", name: "workspace.create_blank_docx", input: { name: "Poems.docx" } }]),
+      toolCallResponse("Done — poems are ready.", [
+        { id: "body", name: DOCUMENT_TOOL_NAMES.insertParagraphs, input: { texts: ["Five Small Poems", "An introduction.", "First Poem", "A small line.", "Second Poem", "Another line.", "Third Poem", "Third line.", "Fourth Poem", "Fourth line.", "Fifth Poem", "Fifth line.", "A closing section."], placement: { kind: "end" } } },
+      ]),
+    ]),
+    instruction: "create poems",
+  });
+  const record = buildBenchmarkRecord({ scenario: "greenfield-poems", provider: "scripted", model: "scripted", startedAt: new Date().toISOString(), finishedAt: new Date().toISOString(), totalWallMs: 1, events, result, correctnessOk: true, totalPersistMs });
+  assert.equal(record.modelTurns, 2);
+  assert.equal(record.inspectCalls, 0);
+  assert.equal(record.readToolCalls, 0);
+  assert.equal(record.writeToolCalls, 2);
+  assert.equal(record.failedToolCalls, 0);
 });
 
 test("bench harness: scripted greenfield create→batch→terminalize (native engine)", async () => {

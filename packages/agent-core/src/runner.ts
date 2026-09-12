@@ -69,6 +69,13 @@ export interface ToolBatchContext {
   readonly tools: ToolRegistry;
 }
 
+/** Domain-owned lifecycle around one assistant response's tool calls. */
+export interface ToolTurnLifecycle {
+  begin(context: { readonly runId: string; readonly toolCalls: readonly ModelToolCall[] }): Promise<void> | void;
+  finalize(context: ToolBatchContext): Promise<readonly ToolOutcome[]> | readonly ToolOutcome[];
+  abandon?(context: { readonly runId: string; readonly toolCalls: readonly ModelToolCall[] }): Promise<void> | void;
+}
+
 export interface AgentRunnerOptions {
   readonly model: AgentModel;
   /** Tool registry used when `selectTurnTools` is omitted (fixed every turn). */
@@ -96,6 +103,8 @@ export interface AgentRunnerOptions {
   readonly transformContext?: TransformAgentContext;
   /** Decide whether assistant content plus this completed tool batch may finish the run. */
   readonly shouldTerminalizeToolBatch?: (context: ToolBatchContext) => boolean;
+  /** Optional domain finalizer, run before completion events and transcript updates. */
+  readonly toolTurnLifecycle?: ToolTurnLifecycle;
   /** Return a user message to retry one timed-out model turn, or nothing to fail. */
   readonly getModelTimeoutRetryMessage?: (
     context: ModelTimeoutContext,
@@ -136,6 +145,7 @@ export class AgentRunner {
   private readonly shouldTerminalizeToolBatch:
     | ((context: ToolBatchContext) => boolean)
     | undefined;
+  private readonly toolTurnLifecycle: ToolTurnLifecycle | undefined;
   private readonly getModelTimeoutRetryMessage:
     | ((context: ModelTimeoutContext) => string | undefined)
     | undefined;
@@ -163,6 +173,7 @@ export class AgentRunner {
     this.transformContext =
       options.transformContext ?? identityTransformContext;
     this.shouldTerminalizeToolBatch = options.shouldTerminalizeToolBatch;
+    this.toolTurnLifecycle = options.toolTurnLifecycle;
     this.getModelTimeoutRetryMessage = options.getModelTimeoutRetryMessage;
     this.requiredToolsNudgeMessage =
       options.requiredToolsNudgeMessage ?? USE_TOOLS_NUDGE_MESSAGE;
@@ -372,14 +383,27 @@ export class AgentRunner {
           };
         }
 
-        const turnOutcomes = await this.executeToolCalls(
-          toolCalls,
-          request,
-          signal,
-          toolFailureCounts,
-          activeTools,
-          infrastructureFailures,
-        );
+        await this.toolTurnLifecycle?.begin({ runId: request.runId, toolCalls });
+        let turnOutcomes: readonly ToolOutcome[];
+        try {
+          const executed = await this.executeToolCalls(
+            toolCalls, request, signal, toolFailureCounts, activeTools,
+            infrastructureFailures,
+          );
+          turnOutcomes = await this.toolTurnLifecycle?.finalize({
+            content: response.content, toolCalls, toolOutcomes: executed, tools: activeTools,
+          }) ?? executed;
+        } catch (error) {
+          await this.toolTurnLifecycle?.abandon?.({ runId: request.runId, toolCalls });
+          throw error;
+        }
+        if (this.toolTurnLifecycle) {
+          await this.emitFinalizedToolOutcomes(
+            turnOutcomes, request.runId, infrastructureFailures,
+          );
+        } else {
+          await this.emitFinalizedToolFailures(turnOutcomes, request.runId);
+        }
         toolOutcomes.push(...turnOutcomes);
 
         for (const outcome of turnOutcomes) {
@@ -606,14 +630,6 @@ export class AgentRunner {
           failureCount: priorFailures,
         },
       };
-      await this.emit({
-        type: "tool.failed",
-        runId: request.runId,
-        toolCallId: call.id,
-        toolName: call.name,
-        diagnostic,
-        at: this.timestamp(),
-      });
       return {
         toolCallId: call.id,
         toolName: call.name,
@@ -631,14 +647,6 @@ export class AgentRunner {
         message: `Unknown tool: ${call.name}`,
         details: { toolName: call.name },
       };
-      await this.emit({
-        type: "tool.failed",
-        runId: request.runId,
-        toolCallId: call.id,
-        toolName: call.name,
-        diagnostic,
-        at: this.timestamp(),
-      });
       return {
         toolCallId: call.id,
         toolName: call.name,
@@ -661,14 +669,6 @@ export class AgentRunner {
         call.name,
         (toolFailureCounts.get(call.name) ?? 0) + 1,
       );
-      await this.emit({
-        type: "tool.failed",
-        runId: request.runId,
-        toolCallId: call.id,
-        toolName: tool.name,
-        diagnostic,
-        at: this.timestamp(),
-      });
       await this.emitTelemetry({
         type: "tool.execution.metrics",
         runId: request.runId,
@@ -722,14 +722,6 @@ export class AgentRunner {
           "RUNTIME_FAILURE",
           "Confirmation gate failed",
         );
-        await this.emit({
-          type: "tool.failed",
-          runId: request.runId,
-          toolCallId: call.id,
-          toolName: tool.name,
-          diagnostic,
-          at: this.timestamp(),
-        });
         return {
           toolCallId: call.id,
           toolName: tool.name,
@@ -748,14 +740,6 @@ export class AgentRunner {
           message: `Confirmation denied for tool ${tool.name}`,
           details: { toolName: tool.name },
         };
-        await this.emit({
-          type: "tool.failed",
-          runId: request.runId,
-          toolCallId: call.id,
-          toolName: tool.name,
-          diagnostic,
-          at: this.timestamp(),
-        });
         return {
           toolCallId: call.id,
           toolName: tool.name,
@@ -810,14 +794,6 @@ export class AgentRunner {
         call.name,
         (toolFailureCounts.get(call.name) ?? 0) + 1,
       );
-      await this.emit({
-        type: "tool.failed",
-        runId: request.runId,
-        toolCallId: call.id,
-        toolName: tool.name,
-        diagnostic,
-        at: this.timestamp(),
-      });
       await this.emitTelemetry({
         type: "tool.execution.metrics",
         runId: request.runId,
@@ -851,30 +827,21 @@ export class AgentRunner {
       output,
     };
 
-    try {
-      await this.emit({
-        type: "tool.completed",
-        runId: request.runId,
-        toolCallId: call.id,
-        toolName: tool.name,
-        summary,
-        output,
-        at: this.timestamp(),
-      });
-    } catch (error) {
-      if (this.isCancellation(error, signal)) {
-        throw error;
-      }
-      // Required event failed to persist/deliver AFTER the tool already
-      // succeeded — an infrastructure fact, not a tool-execution fact.
-      // Do not touch `outcome` and do not emit tool.failed.
-      infrastructureFailures.push(
-        this.toDiagnostic(
-          error,
-          "EVENT_SINK_FAILURE",
+    // Existing runs retain immediate completion delivery. A lifecycle user
+    // owns deferred delivery so it can finalize every outcome first.
+    if (!this.toolTurnLifecycle) {
+      try {
+        await this.emit({
+          type: "tool.completed", runId: request.runId,
+          toolCallId: call.id, toolName: tool.name, summary, output,
+          at: this.timestamp(),
+        });
+      } catch (error) {
+        infrastructureFailures.push(this.toDiagnostic(
+          error, "EVENT_SINK_FAILURE",
           `Failed to record completion of tool ${tool.name}`,
-        ),
-      );
+        ));
+      }
     }
 
     await this.emitTelemetry({
@@ -890,6 +857,50 @@ export class AgentRunner {
     });
 
     return outcome;
+  }
+
+  private async emitFinalizedToolOutcomes(
+    outcomes: readonly ToolOutcome[],
+    runId: string,
+    infrastructureFailures: Diagnostic[],
+  ): Promise<void> {
+    for (const outcome of outcomes) {
+      if (outcome.status !== "succeeded") {
+        await this.emit({
+          type: "tool.failed", runId, toolCallId: outcome.toolCallId,
+          toolName: outcome.toolName,
+          diagnostic: outcome.diagnostic ?? { code: "TOOL_FAILURE", severity: "error", message: outcome.summary ?? "Tool did not complete" },
+          at: this.timestamp(),
+        });
+        continue;
+      }
+      try {
+        await this.emit({
+          type: "tool.completed", runId, toolCallId: outcome.toolCallId,
+          toolName: outcome.toolName, summary: outcome.summary,
+          output: outcome.output, at: this.timestamp(),
+        });
+      } catch (error) {
+        infrastructureFailures.push(this.toDiagnostic(
+          error, "EVENT_SINK_FAILURE",
+          `Failed to record completion of tool ${outcome.toolName}`,
+        ));
+      }
+    }
+  }
+
+  private async emitFinalizedToolFailures(
+    outcomes: readonly ToolOutcome[], runId: string,
+  ): Promise<void> {
+    for (const outcome of outcomes) {
+      if (outcome.status === "succeeded") continue;
+      await this.emit({
+        type: "tool.failed", runId, toolCallId: outcome.toolCallId,
+        toolName: outcome.toolName,
+        diagnostic: outcome.diagnostic ?? { code: "TOOL_FAILURE", severity: "error", message: outcome.summary ?? "Tool did not complete" },
+        at: this.timestamp(),
+      });
+    }
   }
 
   private async cancelled(

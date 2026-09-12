@@ -61,6 +61,43 @@ function eventTypes(events: { type: string }[]): string[] {
   return events.map((event) => event.type);
 }
 
+test("tool turn finalizes all outcomes before completion events", async () => {
+  const sink = createRecordingEventSink();
+  const order: string[] = [];
+  const runner = new AgentRunner({
+    model: createScriptedAgentModel([
+      toolCallResponse("", [
+        { id: "a", name: "one", input: {} },
+        { id: "b", name: "two", input: {} },
+      ]),
+      assistantOnlyResponse("done"),
+    ]),
+    tools: ToolRegistry.create([
+      createFakeTool({ name: "one", execute: async () => { order.push("one"); return { value: "one" }; } }),
+      createFakeTool({ name: "two", execute: async () => { order.push("two"); return { value: "two" }; } }),
+    ]),
+    events: sink,
+    toolTurnLifecycle: {
+      begin() { order.push("begin"); },
+      finalize({ toolOutcomes }) {
+        order.push("finalize");
+        assert.equal(sink.events.filter((event) => event.type === "tool.completed").length, 0);
+        return toolOutcomes.map((outcome) => ({ ...outcome, summary: `final:${outcome.toolName}` }));
+      },
+    },
+  });
+  const result = await runner.run(baseRequest());
+  assert.equal(result.status, "completed");
+  assert.deepEqual(order, ["begin", "one", "two", "finalize"]);
+  assert.deepEqual(
+    sink.events.filter((event) => event.type === "tool.completed").map((event) =>
+      event.type === "tool.completed" ? event.summary : undefined,
+    ),
+    ["final:one", "final:two"],
+  );
+  assert.deepEqual(result.toolOutcomes.map((outcome) => outcome.summary), ["final:one", "final:two"]);
+});
+
 test("BASIC: user request → model final response", async () => {
   const sink = createRecordingEventSink();
   const runner = new AgentRunner({

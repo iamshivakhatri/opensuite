@@ -324,13 +324,26 @@ test(
       assert.equal(success.assistantMessage?.content, "Revised intro ready.");
       assert.equal(success.result.status, "completed");
 
-      assert.deepEqual(capturedTurns, [
-        { role: "user", content: priorUser.content },
-        { role: "assistant", content: priorAssistant.content },
-        { role: "user", content: "Rewrite the intro" },
-      ]);
+      // Persisted user message stays raw; model-facing turn is enriched with
+      // the working-set label list (see enrichInstructionWithWorkingSet).
+      assert.equal(capturedTurns.length, 3);
+      assert.deepEqual(capturedTurns[0], {
+        role: "user",
+        content: priorUser.content,
+      });
+      assert.deepEqual(capturedTurns[1], {
+        role: "assistant",
+        content: priorAssistant.content,
+      });
+      assert.equal(capturedTurns[2]?.role, "user");
+      assert.match(
+        capturedTurns[2]!.content,
+        /^Attached documents for this turn:\n- .+\(primary\)\n\nRewrite the intro$/,
+      );
       assert.equal(
-        capturedTurns.filter((m) => m.content === "Rewrite the intro").length,
+        capturedTurns.filter((m) =>
+          m.content.includes("Rewrite the intro"),
+        ).length,
         1,
       );
 

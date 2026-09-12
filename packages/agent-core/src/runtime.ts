@@ -392,6 +392,15 @@ export interface DocumentRuntime {
     operation: DocumentOperation,
     options?: DocumentRuntimeOptions,
   ): Promise<OperationResult>;
+  /** Execute against caller-owned working bytes; never persists a version. */
+  executeWithBytes?(
+    document: DocumentRef,
+    operation: DocumentOperation,
+    bytes: Uint8Array,
+    options?: DocumentRuntimeOptions,
+  ): Promise<OperationResult>;
+  /** Load the exact durable artifact for an internal working-byte session. */
+  loadBytes?(document: DocumentRef): Promise<Uint8Array>;
 }
 
 /** Helper: unsupported capability error result for inspect/execute paths. */

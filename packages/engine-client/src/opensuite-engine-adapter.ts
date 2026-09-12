@@ -125,6 +125,9 @@ export function createOpenSuiteEngineAdapter(
     mapRustCapabilitiesToRuntime(binding.getDocxCapabilities());
 
   return {
+    async loadBytes(document) {
+      return artifactLoader.loadExactVersionBytes(document);
+    },
     capabilities() {
       return cachedCapabilities;
     },
@@ -482,6 +485,21 @@ export function createOpenSuiteEngineAdapter(
         mapped.operation,
       );
       return mapEngineMutationResult(engineResponse, operation.type);
+    },
+
+    // Reuse the identical adapter validation, mapping, and native dispatch
+    // with a caller-owned source. This layer has no persistence side effects.
+    async executeWithBytes(document, operation, bytes, executeOptions) {
+      const workingRuntime = createOpenSuiteEngineAdapter({
+        binding,
+        capabilities: cachedCapabilities,
+        artifactLoader: {
+          async loadExactVersionBytes() {
+            return bytes;
+          },
+        },
+      });
+      return workingRuntime.execute!(document, operation, executeOptions);
     },
   };
 }

@@ -5,6 +5,7 @@ import type {
   NonEmptyDiagnostics,
   OperationFailureCode,
   OperationResult,
+  DocumentOperation,
 } from "@opensuite/agent-core";
 
 import {
@@ -259,6 +260,26 @@ export interface DocumentMutationServiceOptions {
   }) => Promise<void>;
 }
 
+const FORMATTING_OPERATION_TYPES = new Set([
+  "document.set_paragraph_style",
+  "document.set_paragraph_formatting",
+  "document.set_text_formatting",
+]);
+
+export type FormattingMutationPendingResult =
+  | { readonly status: "pending"; readonly operation: string; readonly change?: DocumentChangeSummary; readonly diagnostics: readonly Diagnostic[] }
+  | { readonly status: "error"; readonly operation: string; readonly code: string; readonly diagnostics: NonEmptyDiagnostics };
+
+export interface FormattingMutationSession {
+  apply(operation: Omit<DocumentOperation, "baseVersionId">): Promise<FormattingMutationPendingResult>;
+  flush(): Promise<
+    | { readonly status: "success"; readonly document: ListedDocumentDto; readonly version: DocumentVersionDto; readonly pending: readonly FormattingMutationPendingResult[] }
+    | { readonly status: "noop"; readonly pending: readonly FormattingMutationPendingResult[] }
+    | { readonly status: "error"; readonly code: string; readonly diagnostics: NonEmptyDiagnostics; readonly pending: readonly FormattingMutationPendingResult[] }
+  >;
+  abandon(): void;
+}
+
 /**
  * Application-owned mutation lifecycle:
  *   exact version N → DocumentRuntime → verified bytes → immutable version N+1
@@ -428,6 +449,89 @@ export function createDocumentMutationService(
   }
 
   return {
+    async createFormattingSession(input: {
+      readonly documentId: string;
+      readonly ownerUserId: string;
+      readonly baseVersionId: string;
+      readonly runtime: DocumentRuntime;
+    }): Promise<FormattingMutationSession | ApplyDocumentMutationResult> {
+      let owned: ListedDocumentDto;
+      try {
+        owned = await documents.getOwnedDocument({
+          documentId: input.documentId,
+          ownerUserId: input.ownerUserId,
+        });
+      } catch (error) {
+        return mapAccessError(error);
+      }
+      if (owned.format !== "docx" || owned.latestVersion.id !== input.baseVersionId) {
+        return {
+          status: "error",
+          code: owned.format !== "docx" ? "UNSUPPORTED_FORMAT" : "VERSION_CONFLICT",
+          diagnostics: [{ code: owned.format !== "docx" ? "UNSUPPORTED_FORMAT" : "VERSION_CONFLICT", severity: "error", message: "Document is not the requested current DOCX version" }],
+        };
+      }
+      if (!input.runtime.loadBytes || !input.runtime.executeWithBytes) {
+        return { status: "error", code: "UNSUPPORTED_CAPABILITY", diagnostics: [{ code: "UNSUPPORTED_CAPABILITY", severity: "error", message: "Document runtime does not support formatting sessions" }] };
+      }
+      let workingBytes: Uint8Array;
+      try {
+        workingBytes = await input.runtime.loadBytes({ documentId: input.documentId, versionId: input.baseVersionId, format: "docx" });
+      } catch (error) {
+        return { status: "error", code: "STORAGE_OBJECT_MISSING", diagnostics: [{ code: "STORAGE_OBJECT_MISSING", severity: "error", message: error instanceof Error ? error.message : "Could not load document bytes" }] };
+      }
+      const pending: FormattingMutationPendingResult[] = [];
+      let state: "active" | "flushed" | "abandoned" = "active";
+      const document = { documentId: input.documentId, versionId: input.baseVersionId, format: "docx" as const };
+      return {
+        async apply(operation) {
+          if (state !== "active") {
+            throw new Error(`Formatting session is ${state}`);
+          }
+          if (!FORMATTING_OPERATION_TYPES.has(operation.type)) {
+            throw new Error(`Formatting session does not support ${operation.type}`);
+          }
+          const result = await input.runtime.executeWithBytes!(
+            document,
+            { ...operation, baseVersionId: input.baseVersionId },
+            workingBytes,
+          );
+          if (result.status === "error") {
+            const failed: FormattingMutationPendingResult = { status: "error", operation: operation.type, code: result.code, diagnostics: result.diagnostics };
+            pending.push(failed);
+            return failed;
+          }
+          if (!result.artifactBytes || result.artifactBytes.byteLength === 0) {
+            const failed: FormattingMutationPendingResult = { status: "error", operation: operation.type, code: "RUNTIME_MISSING_ARTIFACT", diagnostics: [{ code: "RUNTIME_MISSING_ARTIFACT", severity: "error", message: "Formatting mutation returned no verified bytes" }] };
+            pending.push(failed);
+            return failed;
+          }
+          workingBytes = result.artifactBytes;
+          const succeeded: FormattingMutationPendingResult = { status: "pending", operation: operation.type, ...(result.change ? { change: result.change } : {}), diagnostics: result.diagnostics };
+          pending.push(succeeded);
+          return succeeded;
+        },
+        async flush() {
+          if (state === "abandoned") throw new Error("Formatting session is abandoned");
+          if (state === "flushed") throw new Error("Formatting session is already flushed");
+          const successful = pending.some((result) => result.status === "pending");
+          if (!successful) { state = "flushed"; return { status: "noop" as const, pending }; }
+          try {
+            const appended = await documents.appendDocumentVersion({ documentId: input.documentId, ownerUserId: input.ownerUserId, baseVersionId: input.baseVersionId, source: "agent", bytes: Buffer.from(workingBytes) });
+            state = "flushed";
+            return { status: "success" as const, document: appended.document, version: appended.version, pending };
+          } catch (error) {
+            state = "flushed";
+            const failure = mapAccessError(error);
+            if (failure.status === "error") {
+              return { status: "error" as const, code: failure.code, diagnostics: failure.diagnostics, pending };
+            }
+            return { status: "error" as const, code: "VALIDATION_FAILED", diagnostics: [{ code: "VALIDATION_FAILED", severity: "error", message: "Could not persist formatting session" }] as NonEmptyDiagnostics, pending };
+          }
+        },
+        abandon() { if (state === "active") state = "abandoned"; },
+      };
+    },
     async applyOperation(input: {
       readonly documentId: string;
       readonly ownerUserId: string;

@@ -51,7 +51,7 @@ export function printBenchmarkReport(
     console.log("");
     console.log(`=== ${r.scenario} (${r.provider}/${r.model}) ===`);
     console.log(
-      `status=${r.status} success=${r.success} versions=${r.versionsCreated} retries=${r.retries}`,
+      `status=${r.status} success=${r.success} versions=${r.versionsCreated} reads=${r.readToolCalls} writes=${r.writeToolCalls} inspect=${r.inspectCalls} failedTools=${r.failedToolCalls} retries=${r.retries}`,
     );
     if (r.correctnessNotes.length > 0) {
       console.log(`correctness: ${r.correctnessNotes.join("; ")}`);

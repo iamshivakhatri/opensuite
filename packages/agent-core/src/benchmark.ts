@@ -61,6 +61,10 @@ export interface BenchmarkRunRecord {
   readonly correctnessNotes: readonly string[];
   readonly modelTurns: number;
   readonly toolCalls: number;
+  readonly readToolCalls: number;
+  readonly writeToolCalls: number;
+  readonly failedToolCalls: number;
+  readonly inspectCalls: number;
   readonly versionsCreated: number;
   readonly failures: number;
   readonly retries: number;
@@ -197,6 +201,13 @@ export function buildBenchmarkRecord(
   };
 
   const failures = countFailures(input.events, input.result);
+  const readToolCalls = tools.filter((tool) =>
+    tool.toolName === "document.inspect" || tool.toolName === "document.find",
+  ).length;
+  const inspectCalls = tools.filter(
+    (tool) => tool.toolName === "document.inspect",
+  ).length;
+  const failedToolCalls = tools.filter((tool) => !tool.success).length;
   const success =
     input.result.status === "completed" && input.correctnessOk;
 
@@ -214,6 +225,10 @@ export function buildBenchmarkRecord(
     correctnessNotes: input.correctnessNotes ?? [],
     modelTurns: turns.length,
     toolCalls: tools.length,
+    readToolCalls,
+    writeToolCalls: tools.length - readToolCalls,
+    failedToolCalls,
+    inspectCalls,
     versionsCreated,
     failures,
     retries: countRetries(input.events),

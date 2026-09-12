@@ -291,6 +291,7 @@ export type {
   AgentRunOptions,
   AgentRunnerOptions,
   ToolBatchContext,
+  ToolTurnLifecycle,
 } from "./runner.js";
 export { AgentRunner } from "./runner.js";
 export type {

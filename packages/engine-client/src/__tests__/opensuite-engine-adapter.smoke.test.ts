@@ -401,3 +401,34 @@ function mapRustLike(binding: Awaited<ReturnType<typeof createNapiDocxEngineBind
   return binding.getDocxCapabilities().formats.find((f) => f.format === "docx")
     ?.capabilities ?? [];
 }
+
+test("executeWithBytes chains formatting without changing the source artifact", async (t) => {
+  let binding;
+  try {
+    binding = await createNapiDocxEngineBinding();
+  } catch (error) {
+    t.skip(`Native binding unavailable: ${String(error)}`);
+    return;
+  }
+  const source = buildMinimalDocx(["Title", "Body text"]);
+  const document: DocumentRef = { documentId: "bytes-doc", versionId: "v1", format: "docx" };
+  const runtime = createOpenSuiteEngineAdapter({
+    artifactLoader: createMemoryArtifactLoader({ v1: source }), binding,
+  });
+  const styled = await runtime.executeWithBytes!(document, {
+    type: "document.set_paragraph_style", baseVersionId: "v1",
+    payload: { target: { text: "Title" }, style: "Heading 1" },
+  }, source);
+  assert.equal(styled.status, "success");
+  assert.ok(styled.status === "success" && styled.artifactBytes);
+  assert.notDeepEqual(styled.artifactBytes, source);
+  const formatted = await runtime.executeWithBytes!(document, {
+    type: "document.set_text_formatting", baseVersionId: "v1",
+    payload: { target: { text: "Body text" }, bold: true },
+  }, styled.status === "success" ? styled.artifactBytes! : source);
+  assert.equal(formatted.status, "success");
+  const invalid = await runtime.executeWithBytes!(document, {
+    type: "document.set_paragraph_style", baseVersionId: "other", payload: { target: { text: "Title" }, style: "Heading 1" },
+  }, source);
+  assert.equal(invalid.status, "error");
+});

@@ -321,19 +321,6 @@ export async function listStarredDocuments(): Promise<LibraryDocument[]> {
   return body.documents;
 }
 
-export async function listLibraryDocuments(
-  format: DocumentFormat,
-): Promise<LibraryDocument[]> {
-  const response = await apiFetch(
-    `/api/documents/library?format=${encodeURIComponent(format)}`,
-  );
-  if (!response.ok) {
-    throw await parseError(response);
-  }
-  const body = (await response.json()) as { documents: LibraryDocument[] };
-  return body.documents;
-}
-
 export async function setDocumentStarred(
   documentId: string,
   starred: boolean,

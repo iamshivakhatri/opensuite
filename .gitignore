@@ -58,3 +58,4 @@ packages/db/migrations/meta/*.json
 
 docs/future/
 notes.txt
+.gstack/
