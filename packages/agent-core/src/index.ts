@@ -155,6 +155,8 @@ export type {
   DocumentInsertTableRowsMutationRequest,
   DocumentMutationExecutor,
   DocumentMutationResult,
+  DocumentMutationExecutionResult,
+  PendingDocumentMutationResult,
   DocumentParagraphAlignment,
   DocumentParagraphPlacement,
   DocumentReplaceTextMutationRequest,

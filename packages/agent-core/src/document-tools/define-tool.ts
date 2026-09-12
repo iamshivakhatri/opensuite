@@ -1,7 +1,7 @@
 import { AgentCoreError } from "../errors.js";
 import type {
   DocumentMutationExecutor,
-  DocumentMutationResult,
+  DocumentMutationExecutionResult,
   PersistedDocumentMutationToolResult,
 } from "../document-mutation.js";
 import { requireCurrentArtifactHandles } from "../artifact-handles.js";
@@ -149,7 +149,7 @@ export async function executePersistedMutation(
   apply: (
     document: DocumentRef,
     mutations: DocumentMutationExecutor,
-  ) => Promise<DocumentMutationResult>,
+  ) => Promise<DocumentMutationExecutionResult>,
   toolInput?: unknown,
 ): Promise<PersistedDocumentMutationToolResult> {
   if (toolInput !== undefined) {
@@ -160,6 +160,11 @@ export async function executePersistedMutation(
   await requireRuntimeCapability(ctx, Capabilities.DocumentMutate);
 
   const result = await apply(document, mutations);
+  if (result.status === "pending") {
+    throw new Error(
+      "Pending document mutations require a tool-turn finalizer",
+    );
+  }
   if (result.status === "error") {
     throw diagnosticError(result.diagnostics[0]!);
   }

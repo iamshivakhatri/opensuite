@@ -1,5 +1,6 @@
 import type {
   DocumentMutationExecutor,
+  DocumentMutationExecutionResult,
   DocumentMutationResult,
   DocumentRuntime,
 } from "@opensuite/agent-core";
@@ -8,6 +9,7 @@ import {
   createDocumentMutationService,
   type DocumentMutationService,
   type ApplyDocumentMutationResult,
+  type FormattingMutationSession,
 } from "../documents/mutation.js";
 import type { DocumentService } from "../documents/service.js";
 
@@ -26,6 +28,32 @@ export function createAgentDocumentMutationExecutor(input: {
 }): DocumentMutationExecutor {
   const mutations =
     input.mutations ?? createDocumentMutationService(input.documents);
+  let formattingSession: FormattingMutationSession | undefined;
+  let formattingDocumentId: string | undefined;
+
+  async function applyFormatting(
+    document: { documentId: string; versionId: string },
+    type: string,
+    payload: Record<string, unknown>,
+  ): Promise<DocumentMutationExecutionResult> {
+    if (!formattingSession) {
+      const created = await mutations.createFormattingSession({
+        documentId: document.documentId, ownerUserId: input.ownerUserId,
+        baseVersionId: document.versionId, runtime: input.runtime,
+      });
+      if (!("apply" in created)) return toExecutorResult(created, document.versionId);
+      formattingSession = created;
+      formattingDocumentId = document.documentId;
+    }
+    if (formattingDocumentId !== document.documentId) {
+      return { status: "error", code: "VERSION_CONFLICT", diagnostics: [{ code: "VERSION_CONFLICT", severity: "error", message: "Formatting session belongs to another document" }] };
+    }
+    const result = await formattingSession.apply({ type, payload });
+    if (result.status === "error") {
+      return { status: "error", code: result.code, diagnostics: result.diagnostics };
+    }
+    return { status: "pending", operation: result.operation, diagnostics: result.diagnostics, ...(result.change ? { change: result.change } : {}) };
+  }
 
   function toExecutorResult(
     applied: ApplyDocumentMutationResult,
@@ -118,23 +146,14 @@ export function createAgentDocumentMutationExecutor(input: {
       return toExecutorResult(applied, request.document.versionId);
     },
 
-    async setParagraphStyle(request): Promise<DocumentMutationResult> {
-      const applied = await mutations.applySetParagraphStyle({
-        documentId: request.document.documentId,
-        ownerUserId: input.ownerUserId,
-        baseVersionId: request.document.versionId,
-        target: request.target,
-        ...(request.style !== undefined ? { style: request.style } : {}),
-        runtime: input.runtime,
+    async setParagraphStyle(request): Promise<DocumentMutationExecutionResult> {
+      return applyFormatting(request.document, "document.set_paragraph_style", {
+        target: request.target, ...(request.style !== undefined ? { style: request.style } : {}),
       });
-      return toExecutorResult(applied, request.document.versionId);
     },
 
-    async setParagraphFormatting(request): Promise<DocumentMutationResult> {
-      const applied = await mutations.applySetParagraphFormatting({
-        documentId: request.document.documentId,
-        ownerUserId: input.ownerUserId,
-        baseVersionId: request.document.versionId,
+    async setParagraphFormatting(request): Promise<DocumentMutationExecutionResult> {
+      return applyFormatting(request.document, "document.set_paragraph_formatting", {
         target: request.target,
         ...(request.alignment !== undefined
           ? { alignment: request.alignment }
@@ -145,16 +164,11 @@ export function createAgentDocumentMutationExecutor(input: {
         ...(request.spacingAfterTwips !== undefined
           ? { spacingAfterTwips: request.spacingAfterTwips }
           : {}),
-        runtime: input.runtime,
       });
-      return toExecutorResult(applied, request.document.versionId);
     },
 
-    async setTextFormatting(request): Promise<DocumentMutationResult> {
-      const applied = await mutations.applySetTextFormatting({
-        documentId: request.document.documentId,
-        ownerUserId: input.ownerUserId,
-        baseVersionId: request.document.versionId,
+    async setTextFormatting(request): Promise<DocumentMutationExecutionResult> {
+      return applyFormatting(request.document, "document.set_text_formatting", {
         target: request.target,
         ...(request.bold !== undefined ? { bold: request.bold } : {}),
         ...(request.italic !== undefined ? { italic: request.italic } : {}),
@@ -169,9 +183,7 @@ export function createAgentDocumentMutationExecutor(input: {
         ...(request.highlight !== undefined ? { highlight: request.highlight } : {}),
         ...(request.strikethrough !== undefined ? { strikethrough: request.strikethrough } : {}),
         ...(request.verticalAlignment !== undefined ? { verticalAlignment: request.verticalAlignment } : {}),
-        runtime: input.runtime,
       });
-      return toExecutorResult(applied, request.document.versionId);
     },
 
     async setTableCellsText(request): Promise<DocumentMutationResult> {

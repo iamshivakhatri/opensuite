@@ -9,6 +9,7 @@ _Read this before starting any work. Keep it a concise current-state handoff, no
 * **Agent Efficiency v4.2a:** tool-turn finalization hook allows a future document session to finalize outcomes before completion events and transcript updates.
 * **Agent Efficiency v4.2b1:** `executeWithBytes` runs verified DOCX mutations on caller-owned working bytes without persistence.
 * **Agent Efficiency v4.2b2:** API formatting session accumulates three safe formatting mutations in working bytes and flushes one immutable version.
+* **Agent Efficiency v4.2b3a:** executor can represent non-durable pending formatting results for later tool-turn finalization.
 * Confirmation bridge — real Approve/Deny over HTTP (in-memory pending map).
 * Frontend Phases 1–3 + **4A–4C** + **5A–5B** + **6A–6B** + readability + **shell/format unification**.
 * Hosted-alpha foundation: auth, workspaces/docs/versions, DOCX 35/35, BYOK, managed OpenRouter, catalog/cost/ledger, trial, storage quota, purge, Settings AI/Storage, Trash.

@@ -233,6 +233,18 @@ export type DocumentMutationResult =
       readonly diagnostics: NonEmptyDiagnostics;
     };
 
+/** Successful working-byte mutation that has not been persisted yet. */
+export interface PendingDocumentMutationResult {
+  readonly status: "pending";
+  readonly operation: string;
+  readonly diagnostics: readonly Diagnostic[];
+  readonly change?: DocumentChangeSummary;
+}
+
+export type DocumentMutationExecutionResult =
+  | DocumentMutationResult
+  | PendingDocumentMutationResult;
+
 export interface DocumentMutationExecutor {
   /** Typed tool schemas supply `type` and payload; this keeps new engine calls on the same persistence path. */
   mutate?(input: {
@@ -256,13 +268,13 @@ export interface DocumentMutationExecutor {
   ): Promise<DocumentMutationResult>;
   setParagraphStyle(
     input: DocumentSetParagraphStyleMutationRequest,
-  ): Promise<DocumentMutationResult>;
+  ): Promise<DocumentMutationExecutionResult>;
   setParagraphFormatting(
     input: DocumentSetParagraphFormattingMutationRequest,
-  ): Promise<DocumentMutationResult>;
+  ): Promise<DocumentMutationExecutionResult>;
   setTextFormatting(
     input: DocumentSetTextFormattingMutationRequest,
-  ): Promise<DocumentMutationResult>;
+  ): Promise<DocumentMutationExecutionResult>;
   setTableCellsText(
     input: DocumentSetTableCellsTextMutationRequest,
   ): Promise<DocumentMutationResult>;
