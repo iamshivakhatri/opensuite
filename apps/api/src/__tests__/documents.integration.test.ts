@@ -1090,6 +1090,151 @@ test(
 );
 
 test(
+  "permanently purging a trashed document deletes version objects and releases storage once",
+  { skip: !runDbIntegrationTests || databaseUrl === undefined },
+  async () => {
+    const config = testConfig();
+    const dbClient = createDbClient({ databaseUrl: config.databaseUrl });
+    const emailSender = createStubEmailSender();
+    const auth = createAuth(config, dbClient.db, emailSender);
+    const storageBase = createMemoryObjectStorage();
+    let deleteCalls = 0;
+    let failDeleteCall: number | null = null;
+    const storage = {
+      objects: storageBase.objects,
+      putObject: storageBase.putObject,
+      getObject: storageBase.getObject,
+      async deleteObject(key: string) {
+        deleteCalls += 1;
+        if (deleteCalls === failDeleteCall) throw new Error("forced delete failure");
+        await storageBase.deleteObject(key);
+      },
+    };
+    const app = await buildApp(config, { auth, db: dbClient.db, storage });
+    await app.ready();
+
+    try {
+      const alice = await signUpVerifyAndSignIn(app, config, emailSender, "PurgeAlice");
+      const bob = await signUpVerifyAndSignIn(app, config, emailSender, "PurgeBob");
+      const workspaceId = await createWorkspace(app, config, alice.cookie, "Purge WS");
+      const v1Bytes = Buffer.from("PK purge-v1");
+      const uploadFile = multipartFilePayload("Purge.docx", v1Bytes);
+      const upload = await app.inject({
+        method: "POST",
+        url: `/api/workspaces/${workspaceId}/documents`,
+        headers: { ...uploadFile.headers, cookie: alice.cookie, origin: config.webOrigin },
+        payload: uploadFile.payload,
+      });
+      assert.equal(upload.statusCode, 201, upload.body);
+      const uploaded = upload.json() as { document: { id: string }; version: { id: string } };
+      const v2Bytes = Buffer.from("PK purge-v2-larger");
+      const saveFile = multipartVersionSavePayload("Purge.docx", v2Bytes, uploaded.version.id);
+      const save = await app.inject({
+        method: "POST",
+        url: `/api/documents/${uploaded.document.id}/versions`,
+        headers: { ...saveFile.headers, cookie: alice.cookie, origin: config.webOrigin },
+        payload: saveFile.payload,
+      });
+      assert.equal(save.statusCode, 201, save.body);
+
+      const activePurge = await app.inject({
+        method: "DELETE",
+        url: `/api/trash/documents/${uploaded.document.id}`,
+        headers: { cookie: alice.cookie, origin: config.webOrigin },
+      });
+      assert.equal(activePurge.statusCode, 409, activePurge.body);
+      assert.equal(activePurge.json().error.code, "DOCUMENT_NOT_IN_TRASH");
+
+      const trash = await app.inject({
+        method: "DELETE",
+        url: `/api/documents/${uploaded.document.id}`,
+        headers: { cookie: alice.cookie, origin: config.webOrigin },
+      });
+      assert.equal(trash.statusCode, 204, trash.body);
+
+      const forbidden = await app.inject({
+        method: "DELETE",
+        url: `/api/trash/documents/${uploaded.document.id}`,
+        headers: { cookie: bob.cookie, origin: config.webOrigin },
+      });
+      assert.equal(forbidden.statusCode, 404, forbidden.body);
+
+      failDeleteCall = 2;
+      const failedPurge = await app.inject({
+        method: "DELETE",
+        url: `/api/trash/documents/${uploaded.document.id}`,
+        headers: { cookie: alice.cookie, origin: config.webOrigin },
+      });
+      assert.equal(failedPurge.statusCode, 500, failedPurge.body);
+      assert.equal(failedPurge.json().error.code, "PURGE_FAILED");
+      assert.equal(
+        (await dbClient.db.select({ id: schema.document.id }).from(schema.document).where(eq(schema.document.id, uploaded.document.id))).length,
+        1,
+      );
+
+      failDeleteCall = null;
+      await dbClient.db
+        .update(schema.userStorageAccount)
+        .set({ usedBytes: 0 })
+        .where(eq(schema.userStorageAccount.userId, alice.userId));
+      const failedFinalization = await app.inject({
+        method: "DELETE",
+        url: `/api/trash/documents/${uploaded.document.id}`,
+        headers: { cookie: alice.cookie, origin: config.webOrigin },
+      });
+      assert.equal(failedFinalization.statusCode, 500, failedFinalization.body);
+      assert.equal(failedFinalization.json().error.code, "PURGE_FAILED");
+      assert.equal(storage.objects.size, 0);
+      assert.equal(
+        (await dbClient.db.select({ id: schema.document.id }).from(schema.document).where(eq(schema.document.id, uploaded.document.id))).length,
+        1,
+      );
+
+      await dbClient.db
+        .update(schema.userStorageAccount)
+        .set({ usedBytes: v1Bytes.byteLength + v2Bytes.byteLength })
+        .where(eq(schema.userStorageAccount.userId, alice.userId));
+      const purged = await app.inject({
+        method: "DELETE",
+        url: `/api/trash/documents/${uploaded.document.id}`,
+        headers: { cookie: alice.cookie, origin: config.webOrigin },
+      });
+      assert.equal(purged.statusCode, 204, purged.body);
+      assert.equal(storage.objects.size, 0);
+      assert.equal(
+        (await dbClient.db.select({ id: schema.documentVersion.id }).from(schema.documentVersion).where(eq(schema.documentVersion.documentId, uploaded.document.id))).length,
+        0,
+      );
+      assert.equal(
+        (await dbClient.db.select({ id: schema.document.id }).from(schema.document).where(eq(schema.document.id, uploaded.document.id))).length,
+        0,
+      );
+      const [account] = await dbClient.db
+        .select({ usedBytes: schema.userStorageAccount.usedBytes })
+        .from(schema.userStorageAccount)
+        .where(eq(schema.userStorageAccount.userId, alice.userId));
+      assert.equal(account?.usedBytes, 0);
+
+      const restore = await app.inject({
+        method: "POST",
+        url: `/api/documents/${uploaded.document.id}/restore`,
+        headers: { cookie: alice.cookie, origin: config.webOrigin },
+      });
+      assert.equal(restore.statusCode, 404, restore.body);
+      const retry = await app.inject({
+        method: "DELETE",
+        url: `/api/trash/documents/${uploaded.document.id}`,
+        headers: { cookie: alice.cookie, origin: config.webOrigin },
+      });
+      assert.equal(retry.statusCode, 404, retry.body);
+    } finally {
+      await app.close();
+      await dbClient.close();
+    }
+  },
+);
+
+test(
   "metadata search is owner-scoped, ranked, and excludes deleted resources",
   { skip: !runDbIntegrationTests || databaseUrl === undefined },
   async () => {

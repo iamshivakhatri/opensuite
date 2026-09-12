@@ -19,7 +19,10 @@ import {
   type OfficeFormat,
 } from "./format.js";
 import { buildDocumentVersionStorageKey } from "./storage-key.js";
-import { StorageQuotaError, type StorageAccountingService } from "../storage-accounting/service.js";
+import {
+  StorageQuotaError,
+  type StorageAccountingService,
+} from "../storage-accounting/service.js";
 
 export interface DocumentDto {
   readonly id: string;
@@ -125,6 +128,8 @@ export class DocumentUploadError extends Error {
 
 export type DocumentAccessErrorCode =
   | "DOCUMENT_NOT_FOUND"
+  | "DOCUMENT_NOT_IN_TRASH"
+  | "PURGE_FAILED"
   | "STORAGE_OBJECT_MISSING"
   | "INVALID_DOCUMENT_NAME"
   | "WORKSPACE_DELETED"
@@ -667,6 +672,24 @@ export function createDocumentService(
                 for update`,
           );
 
+          const [activeDocument] = await tx
+            .select({ id: schema.document.id })
+            .from(schema.document)
+            .where(
+              and(
+                eq(schema.document.id, owned.id),
+                isNull(schema.document.deletedAt),
+              ),
+            )
+            .limit(1);
+          if (!activeDocument) {
+            throw new DocumentAccessError(
+              404,
+              "DOCUMENT_NOT_FOUND",
+              "Document not found",
+            );
+          }
+
           const [latest] = await tx
             .select({
               id: schema.documentVersion.id,
@@ -1208,6 +1231,111 @@ export function createDocumentService(
         documentId: input.documentId,
         ownerUserId: input.ownerUserId,
       });
+    },
+
+    /**
+     * Permanently removes a trashed document after its recorded storage
+     * objects are gone. The document row stays locked while deletion runs, so
+     * restore and version writes cannot race finalization.
+     */
+    async purge(input: {
+      documentId: string;
+      ownerUserId: string;
+    }): Promise<void> {
+      try {
+        await db.transaction(async (tx) => {
+          const locked = await tx.execute(sql`
+            select ${schema.document.id}
+            from ${schema.document}
+            inner join ${schema.workspace}
+              on ${schema.document.workspaceId} = ${schema.workspace.id}
+            where ${schema.document.id} = ${input.documentId}
+              and ${schema.workspace.ownerUserId} = ${input.ownerUserId}
+            for update
+          `);
+          if (locked.rows.length === 0) {
+            throw new DocumentAccessError(
+              404,
+              "DOCUMENT_NOT_FOUND",
+              "Document not found",
+            );
+          }
+
+          const [document] = await tx
+            .select({ deletedAt: schema.document.deletedAt })
+            .from(schema.document)
+            .where(eq(schema.document.id, input.documentId))
+            .limit(1);
+          if (document?.deletedAt == null) {
+            throw new DocumentAccessError(
+              409,
+              "DOCUMENT_NOT_IN_TRASH",
+              "Move the document to Trash before permanently deleting it",
+            );
+          }
+
+          const versions = await tx
+            .select({
+              id: schema.documentVersion.id,
+              storageKey: schema.documentVersion.storageKey,
+              sizeBytes: schema.documentVersion.sizeBytes,
+            })
+            .from(schema.documentVersion)
+            .where(eq(schema.documentVersion.documentId, input.documentId));
+          const reclaimedBytes = versions.reduce(
+            (total, version) => total + version.sizeBytes,
+            0,
+          );
+
+          for (const version of versions) {
+            try {
+              await storage.deleteObject(version.storageKey);
+            } catch (error) {
+              if (!(error instanceof ObjectNotFoundError)) throw error;
+            }
+          }
+
+          // Preserve agent history while removing references that deliberately
+          // use restrictive foreign keys.
+          await tx
+            .update(schema.agentRun)
+            .set({ baseDocumentVersionId: null })
+            .where(
+              sql`${schema.agentRun.baseDocumentVersionId} in (
+                select ${schema.documentVersion.id} from ${schema.documentVersion}
+                where ${schema.documentVersion.documentId} = ${input.documentId}
+              )`,
+            );
+          await tx
+            .update(schema.agentThread)
+            .set({ documentId: null, updatedAt: new Date() })
+            .where(eq(schema.agentThread.documentId, input.documentId));
+          await tx
+            .update(schema.documentVersion)
+            .set({ parentVersionId: null })
+            .where(eq(schema.documentVersion.documentId, input.documentId));
+          await tx
+            .delete(schema.documentVersion)
+            .where(eq(schema.documentVersion.documentId, input.documentId));
+          await tx
+            .delete(schema.document)
+            .where(eq(schema.document.id, input.documentId));
+          if (reclaimedBytes > 0) {
+            await options.storageAccounting?.release(
+              tx,
+              input.ownerUserId,
+              reclaimedBytes,
+            );
+          }
+        });
+      } catch (error) {
+        if (error instanceof DocumentAccessError) throw error;
+        throw new DocumentAccessError(
+          500,
+          "PURGE_FAILED",
+          "Could not permanently delete document",
+        );
+      }
     },
 
     /**

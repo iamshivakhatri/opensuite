@@ -11,6 +11,10 @@ _Read this before starting any work. Keep it a concise current-state handoff, no
 
 ## Just Completed
 
+* **Phase E2:** permanent purge for soft-deleted documents.
+  - `DELETE /api/trash/documents/:documentId` removes only an owned trashed document, its version objects and rows, then atomically releases the exact persisted bytes.
+  - The document row is locked through object deletion/finalization; retries after partial object or DB failure are safe, and storage accounting never goes negative.
+
 * **Phase E1:** per-user immutable-version storage accounting and quota enforcement.
   - `USER_STORAGE_QUOTA_BYTES` defaults to 500 MiB; upload, blank DOCX, manual save, and agent version append reserve exact bytes atomically.
   - Soft delete retains usage. Migration backfills from existing version ownership; `GET /api/storage` returns used, quota, and remaining bytes.
@@ -74,4 +78,4 @@ _Read this before starting any work. Keep it a concise current-state handoff, no
 
 ## Recommended Next Step
 
-Settings UI wired to `GET /api/ai-models/managed`, `GET /api/ai-trial`, and `GET /api/storage`; Phase E2 permanent purge with counter release.
+Settings UI wired to `GET /api/ai-models/managed`, `GET /api/ai-trial`, and `GET /api/storage`; workspace purge needs separate retention and agent-history rules.
