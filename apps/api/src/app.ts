@@ -271,6 +271,7 @@ export async function buildApp(
   const managedTrial = createManagedTrialService(
     createManagedTrialRepository(deps.db),
     config.managedAiTrialCreditMicros,
+    config.managedAiTrialDisplayCredits,
   );
   const search = createSearchService(deps.db);
 
@@ -334,7 +335,9 @@ export async function buildApp(
   registerMeRoutes(app, deps.auth);
   registerAiModelRoutes(app, deps.auth, managedModelCatalog);
   registerAiTrialRoutes(app, deps.auth, managedTrial);
-  registerAiPreferenceRoutes(app, deps.auth, aiPreferences, managedModelCatalog);
+  registerAiPreferenceRoutes(app, deps.auth, aiPreferences, managedModelCatalog, {
+    managedModel: config.agent.openrouterModel,
+  });
   registerWorkspaceRoutes(app, deps.auth, workspaces);
   registerProviderCredentialRoutes(app, deps.auth, credentials);
   registerDocumentRoutes(app, deps.auth, workspaces, documents, preferences);

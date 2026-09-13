@@ -78,7 +78,7 @@ export function DocumentHeader({
         aria-label="Back to Home"
         className={cn(
           focusRingClass,
-          "grid h-7 w-7 shrink-0 place-items-center rounded-[var(--radius-md)] text-[length:var(--text-md)] text-ink-faint hover:bg-sunken hover:text-ink",
+          "grid h-7 w-7 shrink-0 place-items-center rounded-[var(--radius-md)] text-[length:var(--text-md)] text-ink-faint hover:bg-primary-soft hover:text-primary",
         )}
       >
         ←
@@ -99,7 +99,7 @@ export function DocumentHeader({
             onClick={onRenameWorkspace}
             className={cn(
               focusRingClass,
-              "os-type-meta shrink-0 rounded-[var(--radius-sm)] px-1.5 py-0.5 text-ink-faint hover:bg-sunken hover:text-ink-soft",
+              "os-type-meta shrink-0 rounded-[var(--radius-sm)] px-1.5 py-0.5 text-ink-faint hover:bg-primary-soft hover:text-primary-soft",
             )}
           >
             Rename
@@ -131,7 +131,7 @@ export function DocumentHeader({
           {document.format === "docx" && onSave ? (
             <Button
               type="button"
-              variant={dirty || conflict ? "primary" : "outline"}
+              variant={dirty || conflict ? "primary" : "secondary"}
               size="sm"
               className="h-7 px-2.5 text-[length:var(--text-sm)]"
               disabled={!canSave || saving}
@@ -144,7 +144,7 @@ export function DocumentHeader({
           {onDownload ? (
             <Button
               type="button"
-              variant="outline"
+              variant="secondary"
               size="sm"
               className="h-7 px-2.5 text-[length:var(--text-sm)]"
               disabled={downloading}

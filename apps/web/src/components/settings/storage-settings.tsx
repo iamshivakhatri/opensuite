@@ -105,11 +105,7 @@ export function StorageSettings() {
           <div
             className={cn(
               "h-full rounded-full transition-[width]",
-              kind === "full"
-                ? "bg-danger"
-                : kind === "near"
-                  ? "bg-accent"
-                  : "bg-ink/70",
+              kind === "full" ? "bg-danger" : "bg-primary",
             )}
             style={{ width: `${Math.max(ratio > 0 ? 2 : 0, ratio * 100)}%` }}
           />

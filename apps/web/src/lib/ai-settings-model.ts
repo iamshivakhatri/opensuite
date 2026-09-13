@@ -47,6 +47,8 @@ export interface AiTrialStatus {
   readonly enabled: boolean;
   readonly originalGrantMicros: number;
   readonly balanceMicros: number;
+  /** Display units for the original grant (from backend env). */
+  readonly displayGrantCredits: number;
   readonly exhausted: boolean;
 }
 
@@ -70,16 +72,10 @@ export function modeFromPreference(
   return preference.credentialSource === "byok" ? "byok" : "managed";
 }
 
-export function buildManagedPreferencePayload(modelId: string): {
-  provider: "openrouter";
-  model: string;
+export function buildManagedPreferencePayload(): {
   credentialSource: "managed";
 } {
-  return {
-    provider: "openrouter",
-    model: modelId.trim(),
-    credentialSource: "managed",
-  };
+  return { credentialSource: "managed" };
 }
 
 export function buildByokPreferencePayload(
@@ -166,28 +162,53 @@ export type TrialDisplay = {
   readonly kind: "disabled" | "available" | "exhausted";
   readonly balanceLabel: string;
   readonly statusLabel: string;
+  readonly remainingCredits: number;
+  readonly totalCredits: number;
+  /** 0–100 fill for the credit bar. */
+  readonly fillPercent: number;
 };
 
+/** Map micro-USD balance onto display credits using the backend grant ratio. */
+export function trialCreditsRemaining(status: AiTrialStatus): number {
+  const total = Math.max(0, status.displayGrantCredits);
+  const grant = status.originalGrantMicros;
+  if (total <= 0 || grant <= 0) return 0;
+  const ratio = Math.max(0, status.balanceMicros) / grant;
+  return Math.min(total, Math.round(ratio * total));
+}
+
 export function trialDisplay(status: AiTrialStatus): TrialDisplay {
+  const totalCredits = Math.max(0, status.displayGrantCredits);
   if (!status.enabled) {
     return {
       kind: "disabled",
-      balanceLabel: "$0.00",
+      balanceLabel: "0 credits",
       statusLabel: "Managed AI unavailable",
+      remainingCredits: 0,
+      totalCredits,
+      fillPercent: 0,
     };
   }
-  const balanceLabel = formatUsdFromMicros(status.balanceMicros);
-  if (status.exhausted || status.balanceMicros <= 0) {
+  const remainingCredits = trialCreditsRemaining(status);
+  const fillPercent =
+    totalCredits <= 0 ? 0 : Math.min(100, (remainingCredits / totalCredits) * 100);
+  if (status.exhausted || status.balanceMicros <= 0 || remainingCredits <= 0) {
     return {
       kind: "exhausted",
-      balanceLabel: "$0.00 remaining",
+      balanceLabel: "0 credits remaining",
       statusLabel: "Trial exhausted",
+      remainingCredits: 0,
+      totalCredits,
+      fillPercent: 0,
     };
   }
   return {
     kind: "available",
-    balanceLabel: `${balanceLabel} remaining`,
+    balanceLabel: `${remainingCredits} of ${totalCredits} credits remaining`,
     statusLabel: "OpenSuite trial",
+    remainingCredits,
+    totalCredits,
+    fillPercent,
   };
 }
 
@@ -235,29 +256,22 @@ export function managedModelMetaLine(model: ManagedAiModel): string {
   return parts.join(" · ");
 }
 
-/** Active-mode summary for the settings page header strip. */
+/** Active-mode summary — reflects what agent runs will use (saved preference). */
 export function activeModeSummary(input: {
-  readonly mode: AiMode;
   readonly preference: AiPreference | null;
-  readonly managedModel: ManagedAiModel | null;
-  readonly managedUnavailable: boolean;
+  readonly credentials?: readonly PublicProviderCredential[] | null;
 }): string {
-  if (input.mode === "managed") {
-    if (input.managedUnavailable && input.preference?.model) {
-      return `OpenSuite managed · ${input.preference.model} (unavailable)`;
-    }
-    if (input.managedModel) {
-      return `OpenSuite managed · ${input.managedModel.name}`;
-    }
-    if (input.preference?.model) {
-      return `OpenSuite managed · ${input.preference.model}`;
-    }
-    return "OpenSuite managed · choose a model";
+  const preference = input.preference;
+  if (!preference || preference.credentialSource === "managed") {
+    return "OpenSuite managed";
   }
-  if (input.preference?.credentialSource === "byok") {
-    return `Your key · ${PROVIDER_LABELS[input.preference.provider]} · ${input.preference.model}`;
+  const keyOk =
+    input.credentials == null ||
+    isProviderConnected(input.credentials, preference.provider);
+  if (!keyOk) {
+    return `Your key unavailable · using OpenSuite managed`;
   }
-  return "Your key · choose provider and model";
+  return `Your key · ${PROVIDER_LABELS[preference.provider]} · ${preference.model}`;
 }
 
 /**

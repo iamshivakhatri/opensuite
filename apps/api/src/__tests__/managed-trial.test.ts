@@ -59,3 +59,11 @@ test("BYOK usage never creates or debits a trial account", async () => {
   await trial.applyManagedUsage({ id: "usage-byok", userId: "user-3", provider: "openrouter", model: "test", credentialSource: "byok", inputTokens: null, outputTokens: null, cachedInputTokens: null, reasoningTokens: null, costMicros: 400, costCurrency: "USD", costSource: "openrouter_usage_cost", agentRunId: null, createdAt: new Date().toISOString() });
   assert.equal(repository.accounts.size, 0);
 });
+
+test("managed trial status includes configurable display credits", async () => {
+  const trial = createManagedTrialService(memoryRepository(), 500_000, 100);
+  const status = await trial.status("user-credits");
+  assert.equal(status.displayGrantCredits, 100);
+  assert.equal(status.originalGrantMicros, 500_000);
+  assert.equal(status.balanceMicros, 500_000);
+});

@@ -3,7 +3,11 @@ import type { ModelUsageEvent } from "../model-usage/types.js";
 import type { ManagedTrialRepository } from "./repository.js";
 import { ManagedTrialError, type ManagedTrialAccount } from "./types.js";
 
-export function createManagedTrialService(repository: ManagedTrialRepository, grantMicros: number) {
+export function createManagedTrialService(
+  repository: ManagedTrialRepository,
+  grantMicros: number,
+  displayGrantCredits = 100,
+) {
   async function ensure(userId: string): Promise<ManagedTrialAccount> {
     if (grantMicros <= 0) throw new ManagedTrialError("MANAGED_TRIAL_DISABLED", "Managed AI trial is not available.");
     return repository.ensure(userId, grantMicros);
@@ -29,7 +33,13 @@ export function createManagedTrialService(repository: ManagedTrialRepository, gr
     async status(userId: string) {
       const value = await repository.get(userId);
       const balanceMicros = value?.balanceMicros ?? grantMicros;
-      return { enabled: grantMicros > 0, originalGrantMicros: value?.originalGrantMicros ?? grantMicros, balanceMicros, exhausted: grantMicros <= 0 || Boolean(value?.blockedAt) || balanceMicros <= 0 };
+      return {
+        enabled: grantMicros > 0,
+        originalGrantMicros: value?.originalGrantMicros ?? grantMicros,
+        balanceMicros,
+        displayGrantCredits,
+        exhausted: grantMicros <= 0 || Boolean(value?.blockedAt) || balanceMicros <= 0,
+      };
     },
   };
 }

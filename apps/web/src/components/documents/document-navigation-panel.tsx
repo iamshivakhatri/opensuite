@@ -14,16 +14,22 @@ import {
   type ListedDocument,
 } from "@/lib/api";
 import {
+  canCreateBlankDocument,
+  findPristineBlankDocument,
+} from "@/lib/blank-document-guard";
+import {
   encodeDocumentDragPayload,
   OPENSUITE_DOCUMENT_DRAG_MIME,
 } from "@/lib/document-drag";
 import { DocumentFormatIcon } from "@/components/files/document-format-icon";
 import { userFacingError } from "@/components/files/format";
+import { Button } from "@/components/ui/button";
 import {
   ConfirmDialog,
   ContextMenu,
   PromptDialog,
 } from "@/components/ui/context-menu";
+import { Dialog } from "@/components/ui/dialog";
 import { documentPath } from "@/lib/paths";
 import {
   queryKeys,
@@ -69,7 +75,6 @@ export function DocumentNavigationPanel({
   const queryClient = useQueryClient();
   const documentsQuery = useQuery({
     ...workspaceDocumentsQuery(workspaceId),
-    // refreshKey forces a refetch after agent/create events from the IDE.
   });
 
   React.useEffect(() => {
@@ -84,8 +89,10 @@ export function DocumentNavigationPanel({
   const loadError = documentsQuery.error
     ? userFacingError(documentsQuery.error, "Could not load workspace files.")
     : null;
+  const [addOpen, setAddOpen] = React.useState(false);
   const [uploading, setUploading] = React.useState(false);
   const [creating, setCreating] = React.useState(false);
+  const [dropActive, setDropActive] = React.useState(false);
   const [menuDocId, setMenuDocId] = React.useState<string | null>(null);
   const [renameDoc, setRenameDoc] = React.useState<ListedDocument | null>(null);
   const [trashDoc, setTrashDoc] = React.useState<ListedDocument | null>(null);
@@ -95,6 +102,9 @@ export function DocumentNavigationPanel({
   const menuAnchorRefs = React.useRef<Map<string, HTMLButtonElement>>(
     new Map(),
   );
+
+  const pristineBlank = findPristineBlankDocument(files);
+  const allowBlankCreate = canCreateBlankDocument(files);
 
   async function refresh() {
     await queryClient.invalidateQueries({
@@ -111,13 +121,16 @@ export function DocumentNavigationPanel({
     );
   }
 
-  async function handleUpload(fileList: FileList | null) {
-    if (!fileList?.length || uploading) return;
+  async function handleUpload(fileList: FileList | File[] | null) {
+    if (!fileList || uploading) return;
+    const list = Array.from(fileList as ArrayLike<File>);
+    if (list.length === 0) return;
     setUploading(true);
     try {
-      const result = await uploadOfficeFiles(workspaceId, Array.from(fileList));
+      const result = await uploadOfficeFiles(workspaceId, list);
       await refresh();
       if (result.uploaded.length > 0) {
+        setAddOpen(false);
         toast({
           tone: "success",
           title:
@@ -125,6 +138,11 @@ export function DocumentNavigationPanel({
               ? "File uploaded"
               : `${result.uploaded.length} files uploaded`,
         });
+        const first = result.uploaded[0]!;
+        const href = documentPath(workspaceId, first.id);
+        if (onRequestNavigate?.(href) !== false) {
+          router.push(href);
+        }
       }
       if (result.rejected.length > 0) {
         toast({
@@ -148,10 +166,27 @@ export function DocumentNavigationPanel({
 
   async function handleCreateBlank() {
     if (creating) return;
+    if (!allowBlankCreate) {
+      toast({
+        tone: "error",
+        title: "Finish your blank document first",
+        description:
+          "Rename it or make a small edit before creating another new document.",
+      });
+      if (pristineBlank) {
+        const href = documentPath(workspaceId, pristineBlank.id);
+        setAddOpen(false);
+        if (onRequestNavigate?.(href) !== false) {
+          router.push(href);
+        }
+      }
+      return;
+    }
     setCreating(true);
     try {
       const created = await createBlankDocument(workspaceId);
       await refresh();
+      setAddOpen(false);
       toast({ tone: "success", title: "Document created" });
       const href = documentPath(workspaceId, created.document.id);
       if (onRequestNavigate?.(href) === false) return;
@@ -232,7 +267,7 @@ export function DocumentNavigationPanel({
           "flex h-full w-10 shrink-0 flex-col items-center border-r border-line bg-sidebar pt-3",
         )}
       >
-        <span className="grid h-7 w-7 place-items-center rounded-[var(--radius-md)] text-[length:var(--text-sm)] text-ink-faint hover:bg-sunken hover:text-ink-soft">
+        <span className="grid h-7 w-7 place-items-center rounded-[var(--radius-md)] text-[length:var(--text-sm)] text-ink-faint hover:bg-primary-soft hover:text-primary-soft">
           ›
         </span>
       </button>
@@ -241,6 +276,7 @@ export function DocumentNavigationPanel({
 
   const menuDoc = files.find((file) => file.id === menuDocId) ?? null;
   const listLoading = documentsQuery.isPending && !documentsQuery.data;
+  const modalBusy = uploading || creating;
 
   return (
     <aside
@@ -248,41 +284,12 @@ export function DocumentNavigationPanel({
       style={{ width }}
       aria-label="Workspace files"
     >
-      <div className="os-workspace-rail flex items-center justify-end gap-0.5 px-2">
-        <input
-          ref={fileRef}
-          type="file"
-          accept=".docx,.pptx,.xlsx"
-          multiple
-          className="hidden"
-          onChange={(event) => void handleUpload(event.target.files)}
-        />
-        <button
-          type="button"
-          title="New Word document"
-          aria-label="New Word document"
-          disabled={creating}
-          onClick={() => void handleCreateBlank()}
-          className={cn(
-            focusRingClass,
-            "grid h-6 w-6 place-items-center rounded-[var(--radius-sm)] text-[length:var(--text-sm)] text-ink-faint hover:bg-sunken hover:text-ink disabled:opacity-50",
-          )}
-        >
-          {creating ? "…" : "+"}
-        </button>
-        <button
-          type="button"
-          title="Upload file (⌘O)"
-          aria-label="Upload file"
-          disabled={uploading}
-          onClick={() => fileRef.current?.click()}
-          className={cn(
-            focusRingClass,
-            "grid h-6 w-6 place-items-center rounded-[var(--radius-sm)] text-[length:var(--text-xs)] text-ink-faint hover:bg-sunken hover:text-ink disabled:opacity-50",
-          )}
-        >
-          {uploading ? "…" : "↑"}
-        </button>
+      <div className="os-workspace-rail flex items-center gap-1.5 px-2">
+        <div className="min-w-0 flex-1 px-1">
+          <p className="truncate text-[11px] font-semibold uppercase tracking-[0.07em] text-ink-faint">
+            {listLoading ? "Files" : `Files · ${files.length}`}
+          </p>
+        </div>
         <button
           type="button"
           onClick={onToggle}
@@ -290,7 +297,7 @@ export function DocumentNavigationPanel({
           aria-label="Hide files"
           className={cn(
             focusRingClass,
-            "grid h-6 w-6 place-items-center rounded-[var(--radius-sm)] text-[length:var(--text-xs)] text-ink-faint hover:bg-sunken hover:text-ink",
+            "grid h-7 w-7 shrink-0 place-items-center rounded-[var(--radius-md)] text-[length:var(--text-sm)] text-ink-faint hover:bg-primary-soft hover:text-primary",
           )}
         >
           ‹
@@ -364,10 +371,10 @@ export function DocumentNavigationPanel({
                 className={
                   cn(
                     focusRingClass,
-                    "flex w-full items-center gap-2.5 rounded-[var(--radius-md)] pl-2.5 pr-7 text-left os-type-label transition-colors",
+                    "group/file flex w-full items-center gap-2.5 rounded-[var(--radius-md)] pl-2.5 pr-7 text-left os-type-label transition-colors",
                     active
-                      ? "bg-accent-soft text-accent-hover"
-                      : "text-ink-soft hover:bg-sunken hover:text-ink",
+                      ? "bg-primary-soft text-primary-hover ring-1 ring-inset ring-primary-line"
+                      : "text-ink-soft hover:bg-primary-soft hover:text-primary",
                   )
                 }
                 style={{ height: "var(--explorer-row-h)" }}
@@ -376,7 +383,11 @@ export function DocumentNavigationPanel({
                 <DocumentFormatIcon
                   format={file.format}
                   size="sm"
-                  className={active ? "text-accent-hover" : "text-ink-faint"}
+                  className={
+                    active
+                      ? "text-primary"
+                      : "text-ink-faint group-hover/file:text-primary"
+                  }
                 />
                 <span className="min-w-0 flex-1 truncate leading-none">
                   {file.name}
@@ -401,7 +412,7 @@ export function DocumentNavigationPanel({
                 }}
                 className={cn(
                   focusRingClass,
-                  "absolute right-1 top-1/2 grid h-5 w-5 -translate-y-1/2 place-items-center rounded-[var(--radius-sm)] text-[length:var(--text-xs)] text-ink-faint opacity-0 hover:bg-sunken hover:text-ink focus-visible:opacity-100 group-hover:opacity-100",
+                  "absolute right-1 top-1/2 grid h-5 w-5 -translate-y-1/2 place-items-center rounded-[var(--radius-sm)] text-[length:var(--text-xs)] text-ink-faint opacity-0 hover:bg-primary-soft hover:text-primary focus-visible:opacity-100 group-hover:opacity-100",
                 )}
               >
                 ···
@@ -414,17 +425,112 @@ export function DocumentNavigationPanel({
           <div className="mt-1 rounded-[var(--radius-md)] border border-dashed border-line px-2.5 py-5 text-center">
             <p className="os-type-label text-ink-soft">No files yet</p>
             <p className="os-type-meta mt-1.5 leading-relaxed text-ink-faint">
-              Upload with ↑ or drag Office files here.
+              Press + to create or upload.
             </p>
           </div>
         ) : null}
       </div>
 
-      <div className="shrink-0 border-t border-line px-2.5 py-2">
-        <p className="os-type-meta text-ink-faint">
-          {listLoading ? "Files" : `Files · ${files.length}`}
-        </p>
+      <div className="shrink-0 px-2.5 py-2.5">
+        <div className="flex items-center justify-end">
+          <button
+            type="button"
+            title="Add file"
+            aria-label="Add file"
+            onClick={() => setAddOpen(true)}
+            className={cn(
+              focusRingClass,
+              "grid h-9 w-9 place-items-center rounded-[var(--radius-md)] bg-primary text-[22px] font-medium leading-none text-on-ink shadow-[0_1px_2px_color-mix(in_srgb,var(--primary)_30%,transparent)] hover:bg-primary-hover",
+            )}
+          >
+            +
+          </button>
+        </div>
       </div>
+
+      {addOpen ? (
+        <Dialog
+          title="Add to workspace"
+          onClose={() => {
+            if (modalBusy) return;
+            setDropActive(false);
+            setAddOpen(false);
+          }}
+          closeOnOverlayClick={!modalBusy}
+          className="max-w-[520px]"
+        >
+          <input
+            ref={fileRef}
+            type="file"
+            accept=".docx,.pptx,.xlsx"
+            multiple
+            className="hidden"
+            onChange={(event) => void handleUpload(event.target.files)}
+          />
+          <button
+            type="button"
+            disabled={modalBusy}
+            onClick={() => fileRef.current?.click()}
+            onDragEnter={(event) => {
+              event.preventDefault();
+              setDropActive(true);
+            }}
+            onDragOver={(event) => {
+              event.preventDefault();
+              event.dataTransfer.dropEffect = "copy";
+              setDropActive(true);
+            }}
+            onDragLeave={(event) => {
+              event.preventDefault();
+              setDropActive(false);
+            }}
+            onDrop={(event) => {
+              event.preventDefault();
+              setDropActive(false);
+              void handleUpload(event.dataTransfer.files);
+            }}
+            className={cn(
+              focusRingClass,
+              "flex w-full flex-col items-center justify-center rounded-[var(--radius-md)] border border-dashed px-5 py-10 text-center transition-colors",
+              dropActive
+                ? "border-primary bg-primary-soft"
+                : "border-line bg-sunken/40 hover:border-ink-faint hover:bg-primary-soft/70",
+              modalBusy && "opacity-60",
+            )}
+          >
+            <span className="text-[13px] font-medium text-ink">
+              {uploading ? "Uploading…" : "Drop Office files here"}
+            </span>
+            <span className="mt-1 text-[12px] text-ink-soft">
+              or click to choose .docx, .pptx, .xlsx
+            </span>
+          </button>
+
+          <div className="my-3 flex items-center gap-2">
+            <div className="h-px flex-1 bg-line" />
+            <span className="text-[11px] uppercase tracking-[0.06em] text-ink-faint">
+              or
+            </span>
+            <div className="h-px flex-1 bg-line" />
+          </div>
+
+          <Button
+            type="button"
+            size="sm"
+            className="w-full"
+            disabled={modalBusy}
+            onClick={() => void handleCreateBlank()}
+          >
+            {creating ? "Creating…" : "Create blank Word document"}
+          </Button>
+          {!allowBlankCreate ? (
+            <p className="mt-2 text-[11.5px] leading-snug text-ink-faint">
+              You already have an unused blank document. Rename it or edit it
+              before creating another.
+            </p>
+          ) : null}
+        </Dialog>
+      ) : null}
 
       {menuDoc ? (
         <ContextMenu
@@ -524,6 +630,7 @@ export function DocumentNavigationPanel({
             </>
           }
           confirmLabel="Move to Trash"
+          tone="danger"
           busy={busy}
           error={actionError}
           onCancel={() => setTrashDoc(null)}

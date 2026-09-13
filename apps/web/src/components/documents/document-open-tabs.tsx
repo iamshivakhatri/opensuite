@@ -186,8 +186,8 @@ export function DocumentOpenTabs({
                 focusRingClass,
                 "group relative flex h-8 min-w-[128px] max-w-[200px] shrink-0 items-center gap-1.5 rounded-[var(--radius-md)] px-2 text-[length:var(--text-sm)] transition-colors",
                 active
-                  ? "bg-surface font-medium text-ink shadow-[var(--elevation-xs)] ring-1 ring-line"
-                  : "text-ink-soft hover:bg-hover hover:text-ink",
+                  ? "bg-surface font-medium text-ink shadow-[var(--elevation-xs)] ring-1 ring-primary-line"
+                  : "text-ink-soft hover:bg-primary-soft hover:text-primary",
               )}
             >
               {dirty ? (
@@ -210,7 +210,7 @@ export function DocumentOpenTabs({
                 onClick={(event) => closeTab(event, tab.id)}
                 className={cn(
                   focusRingClass,
-                  "grid h-4 w-4 shrink-0 place-items-center rounded-[var(--radius-sm)] text-[length:var(--text-sm)] leading-none text-ink-faint hover:bg-sunken hover:text-ink",
+                  "grid h-4 w-4 shrink-0 place-items-center rounded-[var(--radius-sm)] text-[length:var(--text-sm)] leading-none text-ink-faint hover:bg-primary-soft hover:text-primary",
                   active
                     ? "opacity-100"
                     : "opacity-0 group-hover:opacity-100 group-focus-within:opacity-100",

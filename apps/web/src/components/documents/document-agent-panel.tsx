@@ -1098,7 +1098,7 @@ export function DocumentAgentPanel({
           "flex h-full w-10 shrink-0 flex-col items-center border-l border-line bg-sidebar pt-3",
         )}
       >
-        <span className="grid h-7 w-7 place-items-center rounded-[var(--radius-md)] text-[length:var(--text-2xs)] font-semibold text-accent hover:bg-sunken">
+        <span className="grid h-7 w-7 place-items-center rounded-[var(--radius-md)] text-[length:var(--text-2xs)] font-semibold text-accent hover:bg-primary-soft">
           AI
         </span>
       </button>
@@ -1221,7 +1221,7 @@ export function DocumentAgentPanel({
                   onClick={() => void handleSelectThread(thread.id)}
                   className={cn(
                     focusRingClass,
-                    "flex w-full flex-col gap-0.5 px-2.5 py-1.5 text-left hover:bg-sunken",
+                    "flex w-full flex-col gap-0.5 px-2.5 py-1.5 text-left hover:bg-primary-soft",
                     active && "bg-selected",
                   )}
                 >
@@ -1255,7 +1255,7 @@ export function DocumentAgentPanel({
 
         {phase.kind === "error" ? (
           <div className="text-center">
-            <p className="mb-2 border-l-2 border-danger bg-danger-soft/60 px-2.5 py-2 text-left text-[length:var(--text-sm)] text-danger">
+            <p className="mb-2 border-l-2 border-danger bg-danger-soft/60 px-2.5 py-2 text-left text-[length:var(--text-panel)] text-danger">
               {phase.message}
             </p>
             <button
@@ -1275,7 +1275,7 @@ export function DocumentAgentPanel({
           <>
             {showEmpty ? (
               <div className="flex h-full min-h-[120px] items-center justify-center px-2 text-center">
-                <p className="max-w-[240px] text-[length:var(--text-sm)] leading-relaxed text-ink-faint">
+                <p className="max-w-[240px] text-[length:var(--text-panel)] leading-relaxed text-ink-faint">
                   Ask OpenSuite to create or edit documents. Use @ to tag files,
                   or drag them from the explorer.
                 </p>
@@ -1289,7 +1289,7 @@ export function DocumentAgentPanel({
                   return (
                     <div
                       key={message.id}
-                      className="rounded-[var(--radius-md)] bg-sunken px-2.5 py-2 text-[length:var(--text-sm)] leading-[1.55] text-ink"
+                      className="rounded-[var(--radius-md)] bg-secondary-soft px-2.5 py-2 text-[length:var(--text-panel)] leading-[1.55] text-ink"
                     >
                       {message.content}
                     </div>
@@ -1383,7 +1383,7 @@ export function DocumentAgentPanel({
               ) : null}
 
               {runError ? (
-                <div className="flex items-start gap-2 border-l-2 border-danger bg-danger-soft/50 px-2.5 py-2 text-[length:var(--text-sm)] text-danger">
+                <div className="flex items-start gap-2 border-l-2 border-danger bg-danger-soft/50 px-2.5 py-2 text-[length:var(--text-panel)] text-danger">
                   <p className="min-w-0 flex-1 leading-snug">{runError}</p>
                   {canRetryRun ? (
                     <Button
@@ -1432,9 +1432,9 @@ export function DocumentAgentPanel({
       <div className="shrink-0 border-t border-line bg-sidebar px-3 py-2.5">
         <div
           className={cn(
-            "rounded-[var(--radius-md)] border bg-surface p-2 focus-within:border-accent-line",
+            "os-composer rounded-[var(--radius-md)] border bg-surface p-2",
             dragOverComposer
-              ? "border-accent border-dashed"
+              ? "border-primary border-dashed"
               : "border-line",
             canStop && "opacity-95",
           )}
@@ -1492,7 +1492,7 @@ export function DocumentAgentPanel({
                     onClick={() => applyMention(file)}
                     className={cn(
                       focusRingClass,
-                      "flex w-full items-center gap-2 px-2.5 py-1.5 text-left text-[length:var(--text-sm)] text-ink hover:bg-sunken",
+                      "flex w-full items-center gap-2 px-2.5 py-1.5 text-left text-[length:var(--text-sm)] text-ink hover:bg-primary-soft",
                     )}
                   >
                     <DocumentFormatIcon
@@ -1518,7 +1518,7 @@ export function DocumentAgentPanel({
               }
               className={cn(
                 focusRingClass,
-                "max-h-40 min-h-[36px] w-full resize-none overflow-y-auto border-none bg-transparent text-[length:var(--text-sm)] leading-[1.5] text-ink placeholder:text-ink-faint disabled:cursor-not-allowed disabled:text-ink-faint",
+                "max-h-40 min-h-[36px] w-full resize-none overflow-y-auto border-none bg-transparent text-[length:var(--text-panel)] leading-[1.5] text-ink placeholder:text-ink-faint disabled:cursor-not-allowed disabled:text-ink-faint",
               )}
             />
           </div>
@@ -1548,7 +1548,7 @@ export function DocumentAgentPanel({
             ) : (
               <Button
                 type="button"
-                variant="accent"
+                variant="primary"
                 size="icon"
                 disabled={
                   busy || phase.kind !== "ready" || draft.trim().length === 0
@@ -1556,7 +1556,7 @@ export function DocumentAgentPanel({
                 onClick={() => void handleSubmit()}
                 title="Send"
                 aria-label="Send message"
-                className="shrink-0 disabled:bg-accent-soft disabled:text-ink-faint disabled:opacity-100"
+                className="shrink-0 disabled:bg-primary-soft disabled:text-ink-faint disabled:opacity-100"
               >
                 ➤
               </Button>
@@ -1603,14 +1603,14 @@ function RunStatusHint({
       role="region"
       aria-label="Confirmation needed"
     >
-      <p className="text-[length:var(--text-sm)] font-semibold tracking-[-0.01em] text-ink">
+      <p className="text-[length:var(--text-panel)] font-semibold tracking-[-0.01em] text-ink">
         Confirmation needed
         {pendingConfirmation?.toolName
           ? ` · ${pendingConfirmation.toolName}`
           : ""}
       </p>
       {pendingConfirmation?.reason ? (
-        <p className="mt-1 text-[length:var(--text-sm)] leading-snug text-ink-soft">
+        <p className="mt-1 text-[length:var(--text-panel)] leading-snug text-ink-soft">
           {pendingConfirmation.reason}
         </p>
       ) : (

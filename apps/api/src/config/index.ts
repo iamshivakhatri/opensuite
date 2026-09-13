@@ -66,6 +66,8 @@ const EnvSchema = z
     /** 32-byte base64 or 64-character hex key, used only for BYOK secrets. */
     AI_CREDENTIAL_ENCRYPTION_KEY: z.string().optional(),
     MANAGED_AI_TRIAL_CREDIT_MICROS: z.coerce.number().int().nonnegative().default(0),
+    /** Display units for the trial grant (e.g. 100 credits ↔ $0.50 when micros=500000). */
+    MANAGED_AI_TRIAL_DISPLAY_CREDITS: z.coerce.number().int().positive().default(100),
     USER_STORAGE_QUOTA_BYTES: z.coerce.number().int().nonnegative().default(500 * 1024 * 1024),
   })
   .superRefine((data, ctx) => {
@@ -163,6 +165,7 @@ export interface AppConfig {
   readonly uploadMaxBytes: number;
   readonly aiCredentialEncryptionKey: string | null;
   readonly managedAiTrialCreditMicros: number;
+  readonly managedAiTrialDisplayCredits: number;
   readonly userStorageQuotaBytes: number;
   readonly agent: AgentModelConfig;
 }
@@ -231,6 +234,7 @@ export function loadConfig(
     aiCredentialEncryptionKey:
       result.data.AI_CREDENTIAL_ENCRYPTION_KEY?.trim() || null,
     managedAiTrialCreditMicros: result.data.MANAGED_AI_TRIAL_CREDIT_MICROS,
+    managedAiTrialDisplayCredits: result.data.MANAGED_AI_TRIAL_DISPLAY_CREDITS,
     userStorageQuotaBytes: result.data.USER_STORAGE_QUOTA_BYTES,
     agent: {
       provider,
@@ -238,9 +242,9 @@ export function loadConfig(
       anthropicModel: result.data.ANTHROPIC_MODEL,
       openaiApiKey: provider === "openai" ? openaiKey : null,
       openaiModel: result.data.OPENAI_MODEL,
-      // Always surface OpenRouter key when present — managed gateway + catalog.
+      // Always surface OpenRouter key/model when present — managed gateway + catalog.
       openrouterApiKey: openrouterKey,
-      openrouterModel: provider === "openrouter" ? openrouterModel : null,
+      openrouterModel,
     },
   };
 }

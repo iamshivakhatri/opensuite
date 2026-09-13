@@ -562,7 +562,7 @@ function CommandPalette({
                   onClick={() => void activate(item)}
                   className={
                     "flex w-full items-center gap-2.5 rounded-[10px] px-2.5 py-2 text-left " +
-                    (active ? "bg-accent-soft" : "hover:bg-sunken")
+                    (active ? "bg-accent-soft" : "hover:bg-primary-soft")
                   }
                 >
                   {item.kind === "document" ? (
@@ -640,7 +640,7 @@ function CommandPalette({
                 <button
                   key={ws.id}
                   type="button"
-                  className="block w-full rounded-[var(--radius-md)] px-3 py-2 text-left text-[12.5px] text-ink hover:bg-sunken"
+                  className="block w-full rounded-[var(--radius-md)] px-3 py-2 text-left text-[12.5px] text-ink hover:bg-primary-soft"
                   onClick={() => runUpload(ws.id)}
                 >
                   {ws.name}
@@ -677,7 +677,7 @@ function CommandPalette({
                 <button
                   key={ws.id}
                   type="button"
-                  className="block w-full rounded-[var(--radius-md)] px-3 py-2 text-left text-[12.5px] text-ink hover:bg-sunken"
+                  className="block w-full rounded-[var(--radius-md)] px-3 py-2 text-left text-[12.5px] text-ink hover:bg-primary-soft"
                   onClick={() => void runCreateBlank(ws.id)}
                 >
                   {ws.name}

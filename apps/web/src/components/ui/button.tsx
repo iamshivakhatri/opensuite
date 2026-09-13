@@ -12,11 +12,15 @@ const buttonVariants = cva(
   {
     variants: {
       variant: {
-        primary: "bg-ink text-on-ink hover:opacity-90",
-        accent: "bg-accent text-on-ink hover:bg-accent-hover",
+        primary: "bg-primary text-on-ink hover:bg-primary-hover",
+        /** Alias of primary — prefer `primary` for new CTAs. */
+        accent: "bg-primary text-on-ink hover:bg-primary-hover",
+        /** Quiet theme chrome — border/hover only, no full fill. */
+        secondary:
+          "border border-secondary-line bg-surface text-ink-soft hover:border-primary-line hover:bg-primary-soft hover:text-primary",
         outline:
-          "border border-line bg-surface text-ink-soft hover:border-ink-faint hover:text-ink",
-        ghost: "text-ink-soft hover:bg-sunken hover:text-ink",
+          "border border-line bg-surface text-ink-soft hover:border-primary-line hover:bg-primary-soft hover:text-primary",
+        ghost: "text-ink-soft hover:bg-primary-soft hover:text-primary",
       },
       size: {
         default: "h-9 px-4",

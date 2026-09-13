@@ -9,9 +9,10 @@ import type { OpenRouterManagedModelCatalog } from "../openrouter-models/catalog
 import { OpenRouterCatalogError } from "../openrouter-models/types.js";
 
 const bodySchema = z.object({
-  provider: z.enum(providerCredentialProviders),
-  model: z.string().trim().min(1, "Model is required"),
   credentialSource: z.enum(credentialSources),
+  /** Required for BYOK; ignored for managed (server chooses the model). */
+  provider: z.enum(providerCredentialProviders).optional(),
+  model: z.string().trim().min(1, "Model is required").optional(),
 });
 
 const unauthenticated = {
@@ -27,6 +28,7 @@ export function registerAiPreferenceRoutes(
   auth: SessionAuth,
   preferences: AiPreferenceService,
   catalog?: OpenRouterManagedModelCatalog | null,
+  options?: { readonly managedModel?: string | null },
 ): void {
   app.get("/api/ai-preferences", async (request, reply) => {
     const user = await getRequestUser(auth, request);
@@ -49,16 +51,16 @@ export function registerAiPreferenceRoutes(
       });
     }
 
-    const { provider, model, credentialSource } = parsed.data;
+    const { credentialSource } = parsed.data;
 
     if (credentialSource === "managed") {
-      if (provider !== "openrouter") {
-        return reply.status(400).send({
+      const model = options?.managedModel?.trim() || null;
+      if (!model) {
+        return reply.status(503).send({
           error: {
-            statusCode: 400,
-            message:
-              "Managed AI preferences must use provider openrouter with an OpenRouter model id",
-            code: "INVALID_MANAGED_PREFERENCE",
+            statusCode: 503,
+            message: "Managed AI model is not configured",
+            code: "MANAGED_MODEL_UNCONFIGURED",
           },
         });
       }
@@ -86,6 +88,26 @@ export function registerAiPreferenceRoutes(
         }
         throw error;
       }
+      return reply.send({
+        preference: await preferences.save({
+          userId: user.id,
+          provider: "openrouter",
+          model,
+          credentialSource: "managed",
+        }),
+      });
+    }
+
+    const provider = parsed.data.provider;
+    const model = parsed.data.model;
+    if (!provider || !model) {
+      return reply.status(400).send({
+        error: {
+          statusCode: 400,
+          message: "Provider and model are required for bring-your-own-key",
+          code: "INVALID_AI_PREFERENCE",
+        },
+      });
     }
 
     return reply.send({

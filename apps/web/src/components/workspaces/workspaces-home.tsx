@@ -256,7 +256,7 @@ export function WorkspacesHome() {
                 href="/app/recent"
                 className={cn(
                   focusRingClass,
-                  "os-type-meta rounded-[var(--radius-sm)] text-ink-faint hover:text-ink-soft",
+                  "os-type-meta rounded-[var(--radius-sm)] text-ink-faint hover:text-primary",
                 )}
               >
                 View all
@@ -300,7 +300,7 @@ export function WorkspacesHome() {
                     href={workspacePath(workspace.id)}
                     className={cn(
                       focusRingClass,
-                      "flex min-w-0 items-center gap-3 py-2.5 pr-10 pl-1 transition-colors hover:bg-hover",
+                      "flex min-w-0 items-center gap-3 py-2.5 pr-10 pl-1 transition-colors hover:bg-primary-soft",
                     )}
                   >
                     <span className="min-w-0 flex-1">
@@ -345,7 +345,7 @@ export function WorkspacesHome() {
                     }}
                     className={cn(
                       focusRingClass,
-                      "absolute right-1 top-1/2 grid h-7 w-7 -translate-y-1/2 place-items-center rounded-[var(--radius-sm)] text-[length:var(--text-xs)] text-ink-faint opacity-0 hover:bg-sunken hover:text-ink focus-visible:opacity-100 group-hover:opacity-100 group-focus-within:opacity-100",
+                      "absolute right-1 top-1/2 grid h-7 w-7 -translate-y-1/2 place-items-center rounded-[var(--radius-sm)] text-[length:var(--text-xs)] text-ink-faint opacity-0 hover:bg-primary-soft hover:text-primary focus-visible:opacity-100 group-hover:opacity-100 group-focus-within:opacity-100",
                     )}
                     onClick={(event) => {
                       event.preventDefault();
@@ -620,7 +620,7 @@ function UploadDestinationDialog({
             "os-type-label flex-1 rounded-[var(--radius-sm)] px-2 py-1.5 font-medium disabled:opacity-40",
             mode === "existing"
               ? "bg-surface text-ink shadow-[var(--elevation-xs)]"
-              : "text-ink-soft hover:text-ink",
+              : "text-ink-soft hover:text-primary",
           )}
           onClick={() => setMode("existing")}
         >
@@ -633,7 +633,7 @@ function UploadDestinationDialog({
             "os-type-label flex-1 rounded-[var(--radius-sm)] px-2 py-1.5 font-medium",
             mode === "new"
               ? "bg-surface text-ink shadow-[var(--elevation-xs)]"
-              : "text-ink-soft hover:text-ink",
+              : "text-ink-soft hover:text-primary",
           )}
           onClick={() => setMode("new")}
         >
@@ -652,7 +652,7 @@ function UploadDestinationDialog({
                 "os-type-label block w-full rounded-[var(--radius-sm)] px-3 py-2 text-left",
                 workspaceId === workspace.id
                   ? "bg-accent-soft font-medium text-accent-hover"
-                  : "text-ink hover:bg-sunken",
+                  : "text-ink hover:bg-primary-soft",
               )}
               onClick={() => setWorkspaceId(workspace.id)}
             >

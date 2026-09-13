@@ -77,9 +77,9 @@ export async function fetchAiPreference(): Promise<AiPreference | null> {
 }
 
 export async function saveAiPreference(input: {
-  readonly provider: AiProvider;
-  readonly model: string;
   readonly credentialSource: "byok" | "managed";
+  readonly provider?: AiProvider;
+  readonly model?: string;
 }): Promise<AiPreference> {
   const response = await apiFetch("/api/ai-preferences", {
     method: "PUT",

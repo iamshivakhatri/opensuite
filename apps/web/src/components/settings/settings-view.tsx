@@ -112,7 +112,7 @@ export function SettingsView() {
                 "rounded-[var(--radius-sm)] px-2 py-2 text-[12px]",
                 active
                   ? "bg-accent-soft font-semibold text-accent-hover"
-                  : "text-ink-soft hover:bg-sunken hover:text-ink",
+                  : "text-ink-soft hover:bg-primary-soft hover:text-primary",
               )}
             >
               {item.label}
@@ -174,7 +174,7 @@ export function SettingsView() {
                       "rounded-[var(--radius-sm)] px-3 py-2.5 text-[12px] " +
                       (active
                         ? "bg-accent-soft font-semibold text-accent-hover"
-                        : "text-ink-soft hover:bg-sunken hover:text-ink")
+                        : "text-ink-soft hover:bg-primary-soft hover:text-primary")
                     }
                   >
                     {option.label}

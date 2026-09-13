@@ -107,7 +107,7 @@ export function ContextMenu({
             "os-type-label block w-full px-3 py-1.5 text-left disabled:opacity-40",
             item.danger
               ? "text-danger hover:bg-danger-soft"
-              : "text-ink hover:bg-sunken",
+              : "text-ink hover:bg-primary-soft",
           )}
           onClick={() => {
             if (item.disabled) return;
@@ -130,6 +130,7 @@ export function ConfirmDialog({
   busy,
   error,
   className,
+  tone = "primary",
   onCancel,
   onConfirm,
 }: {
@@ -140,6 +141,8 @@ export function ConfirmDialog({
   error?: string | null;
   /** Optional panel class — e.g. wider / danger-bordered for high-impact confirms. */
   className?: string;
+  /** Destructive confirms use red; everything else uses primary. */
+  tone?: "primary" | "danger";
   onCancel: () => void;
   onConfirm: () => void;
 }) {
@@ -199,7 +202,7 @@ export function ConfirmDialog({
             type="button"
             className={cn(
               focusRingClass,
-              "os-type-label inline-flex h-8 items-center rounded-[var(--radius-sm)] border border-line bg-surface px-3 font-medium text-ink-soft hover:text-ink",
+              "os-type-label inline-flex h-8 items-center rounded-[var(--radius-sm)] border border-line bg-surface px-3 font-medium text-ink-soft hover:text-primary",
             )}
             onClick={onCancel}
           >
@@ -210,7 +213,10 @@ export function ConfirmDialog({
             disabled={busy}
             className={cn(
               focusRingClass,
-              "os-type-label inline-flex h-8 items-center rounded-[var(--radius-sm)] bg-danger px-3 font-medium text-on-ink hover:opacity-90 disabled:opacity-50",
+              "os-type-label inline-flex h-8 items-center rounded-[var(--radius-sm)] px-3 font-medium text-on-ink hover:opacity-90 disabled:opacity-50",
+              tone === "danger"
+                ? "bg-danger hover:opacity-90"
+                : "bg-primary hover:bg-primary-hover",
             )}
             onClick={onConfirm}
           >
@@ -317,7 +323,7 @@ export function PromptDialog({
             type="button"
             className={cn(
               focusRingClass,
-              "os-type-label inline-flex h-8 items-center rounded-[var(--radius-sm)] border border-line bg-surface px-3 font-medium text-ink-soft hover:text-ink",
+              "os-type-label inline-flex h-8 items-center rounded-[var(--radius-sm)] border border-line bg-surface px-3 font-medium text-ink-soft hover:text-primary",
             )}
             onClick={onCancel}
           >
@@ -328,7 +334,7 @@ export function PromptDialog({
             disabled={busy || !value.trim()}
             className={cn(
               focusRingClass,
-              "os-type-label inline-flex h-8 items-center rounded-[var(--radius-sm)] bg-ink px-3 font-medium text-on-ink disabled:opacity-50",
+              "os-type-label inline-flex h-8 items-center rounded-[var(--radius-sm)] bg-primary px-3 font-medium text-on-ink hover:bg-primary-hover disabled:opacity-50",
             )}
           >
             {busy ? "Saving…" : "Save"}

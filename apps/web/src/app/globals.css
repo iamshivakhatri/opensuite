@@ -22,17 +22,33 @@ html[data-opensuite-theme] {
   --ink-soft: #4f5563;
   --ink-faint: #6e7480;
   --line: #d8dce3;
-  --hover: rgba(20, 22, 26, 0.055);
-  --selected: #f0f0ff;
+  --selected: #eff6ff;
   --overlay: rgba(15, 18, 24, 0.4);
-  --accent: #5b5ce2;
-  --accent-hover: #4d4ed0;
-  --accent-soft: #f0f0ff;
-  --accent-line: #dcddfc;
+
+  /*
+   * Brand — change these to retheme the whole app.
+   * primary = fills / strong CTAs; secondary = quieter borders & hover chrome
+   * (resize rails, outline buttons, selected tab ring).
+   */
+  --primary: #2563eb;
+  --primary-hover: #1d4ed8;
+  --primary-soft: #eff6ff;
+  --primary-line: #93c5fd;
+  --secondary: #3b82f6;
+  --secondary-hover: #2563eb;
+  --secondary-soft: #f0f7ff;
+  --secondary-line: #bfdbfe;
+  --hover: color-mix(in srgb, var(--primary) 9%, transparent);
+  /* Back-compat aliases (prefer --primary* / --secondary* in new code). */
+  --accent: var(--primary);
+  --accent-hover: var(--primary-hover);
+  --accent-soft: var(--primary-soft);
+  --accent-line: var(--primary-line);
+
   --success: #238a63;
   --success-soft: #eaf7f1;
-  --danger: #c45245;
-  --danger-soft: #fff0ed;
+  --danger: #dc2626;
+  --danger-soft: #fef2f2;
   --on-ink: #ffffff;
   --radius-sm: 6px;
   --radius-md: 8px;
@@ -69,6 +85,7 @@ html[data-opensuite-theme] {
    */
   --text-2xs: 11px;
   --text-xs: 12px;
+  --text-panel: 13px;
   --text-sm: 13.5px;
   --text-md: 14.5px;
   --text-lg: 18px;
@@ -95,17 +112,25 @@ html[data-opensuite-theme="dark"] {
   --ink-soft: #a0a6b2;
   --ink-faint: #757b88;
   --line: #2c313b;
-  --hover: rgba(255, 255, 255, 0.06);
-  --selected: #22243a;
+  --selected: #1e3a5f;
   --overlay: rgba(0, 0, 0, 0.55);
-  --accent: #7b7cf0;
-  --accent-hover: #8d8ef5;
-  --accent-soft: #22243a;
-  --accent-line: #3a3c5c;
+  --primary: #60a5fa;
+  --primary-hover: #93c5fd;
+  --primary-soft: #1e3a5f;
+  --primary-line: #3b82f6;
+  --secondary: #93c5fd;
+  --secondary-hover: #bfdbfe;
+  --secondary-soft: #1a2740;
+  --secondary-line: #2563eb;
+  --hover: color-mix(in srgb, var(--primary) 16%, transparent);
+  --accent: var(--primary);
+  --accent-hover: var(--primary-hover);
+  --accent-soft: var(--primary-soft);
+  --accent-line: var(--primary-line);
   --success: #3da87a;
   --success-soft: #1a2c24;
-  --danger: #e07166;
-  --danger-soft: #33201e;
+  --danger: #f87171;
+  --danger-soft: #3f1d1d;
   --on-ink: #0e1014;
   --sidebar: #161920;
   --shell-main: #101218;
@@ -128,6 +153,14 @@ html[data-opensuite-theme="dark"] {
   --color-accent-hover: var(--accent-hover);
   --color-accent-soft: var(--accent-soft);
   --color-accent-line: var(--accent-line);
+  --color-primary: var(--primary);
+  --color-primary-hover: var(--primary-hover);
+  --color-primary-soft: var(--primary-soft);
+  --color-primary-line: var(--primary-line);
+  --color-secondary: var(--secondary);
+  --color-secondary-hover: var(--secondary-hover);
+  --color-secondary-soft: var(--secondary-soft);
+  --color-secondary-line: var(--secondary-line);
   --color-success: var(--success);
   --color-success-soft: var(--success-soft);
   --color-danger: var(--danger);
@@ -165,6 +198,14 @@ html[data-opensuite-theme] {
   --color-accent-hover: var(--accent-hover);
   --color-accent-soft: var(--accent-soft);
   --color-accent-line: var(--accent-line);
+  --color-primary: var(--primary);
+  --color-primary-hover: var(--primary-hover);
+  --color-primary-soft: var(--primary-soft);
+  --color-primary-line: var(--primary-line);
+  --color-secondary: var(--secondary);
+  --color-secondary-hover: var(--secondary-hover);
+  --color-secondary-soft: var(--secondary-soft);
+  --color-secondary-line: var(--secondary-line);
   --color-success: var(--success);
   --color-success-soft: var(--success-soft);
   --color-danger: var(--danger);
@@ -298,6 +339,41 @@ html[data-opensuite-modal] .opensuite-docx-host [data-testid="toolbar"] {
   100% {
     background-position: -100% 0;
   }
+}
+
+/* Minimal moving highlight on agent composer focus. */
+@property --os-composer-shine {
+  syntax: "<angle>";
+  inherits: false;
+  initial-value: 0deg;
+}
+
+@keyframes os-composer-shine {
+  to {
+    --os-composer-shine: 360deg;
+  }
+}
+
+.os-composer:focus-within {
+  border-color: transparent;
+  background:
+    linear-gradient(var(--surface), var(--surface)) padding-box,
+    conic-gradient(
+      from var(--os-composer-shine),
+      var(--line) 0%,
+      var(--primary) 10%,
+      var(--secondary-line) 18%,
+      var(--line) 32%
+    )
+    border-box;
+  animation: os-composer-shine 2.6s linear infinite;
+}
+
+.os-composer.border-dashed:focus-within {
+  /* Keep drag-over dashed primary without the shine fight. */
+  border-color: var(--primary);
+  background: var(--surface);
+  animation: none;
 }
 
 /* Visually hidden text for icon-only controls (Tailwind sr-only fallback). */

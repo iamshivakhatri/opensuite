@@ -200,12 +200,7 @@ export function TrashView() {
   return (
     <div className="mx-auto max-w-[920px] px-8 py-8">
       <div className="mb-6">
-        <div className="os-type-section mb-1 flex items-center gap-2">
-          <TrashIcon className="h-3 w-3" />
-          Library
-        </div>
-        <h1 className="flex items-center gap-2 text-[length:var(--text-xl)] font-semibold tracking-[-0.03em] text-ink">
-          <TrashIcon className="h-[18px] w-[18px] text-ink-soft" />
+        <h1 className="text-[length:var(--text-xl)] font-semibold tracking-[-0.03em] text-ink">
           Trash
         </h1>
         <p className="os-type-secondary mt-1 text-ink-soft">
@@ -367,6 +362,7 @@ export function TrashView() {
           title="Delete forever?"
           body={permanentDeleteConfirmBody(purgeTarget.item.name)}
           confirmLabel="Delete forever"
+          tone="danger"
           busy={purgeBusy}
           error={purgeError}
           onCancel={closePurgeDialog}
@@ -379,6 +375,7 @@ export function TrashView() {
           title="Delete workspace forever?"
           body={<WorkspacePurgeConfirmBody name={purgeTarget.item.name} />}
           confirmLabel="Delete forever"
+          tone="danger"
           busy={purgeBusy}
           error={purgeError}
           className="max-w-[440px] border-danger/30"

@@ -33,7 +33,7 @@ export function DocumentLibraryRow({
         prefetch
         className={cn(
           focusRingClass,
-          "flex min-w-0 flex-1 items-center gap-2.5 px-1 py-2.5 transition-colors hover:bg-hover",
+          "flex min-w-0 flex-1 items-center gap-2.5 px-1 py-2.5 transition-colors hover:bg-primary-soft hover:text-primary",
           trailing ? "pr-10" : undefined,
         )}
       >

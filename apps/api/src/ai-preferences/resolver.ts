@@ -61,40 +61,98 @@ export function createAiModelResolver(input: {
   /** Required to validate managed OpenRouter model availability at resolve time. */
   catalog?: OpenRouterManagedModelCatalog | null;
 }) {
+  async function resolveManagedOpenRouter(): Promise<ResolvedAiModel | null> {
+    const apiKey = managedKey(input.managed, "openrouter");
+    const model = input.managed.openrouterModel;
+    if (!apiKey || !model) return null;
+    if (input.catalog) {
+      try {
+        await input.catalog.requireManagedModel(model);
+      } catch (error) {
+        if (
+          error instanceof OpenRouterCatalogError &&
+          error.code === "MODEL_UNAVAILABLE"
+        ) {
+          throw new AiConfigurationError(
+            "MODEL_UNAVAILABLE",
+            "The selected managed model is not available",
+          );
+        }
+        if (
+          error instanceof OpenRouterCatalogError &&
+          error.code === "CATALOG_UNAVAILABLE"
+        ) {
+          throw new AiConfigurationError(
+            "MANAGED_PROVIDER_UNCONFIGURED",
+            "Managed model catalog is temporarily unavailable",
+          );
+        }
+        throw error;
+      }
+    }
+    return {
+      provider: "openrouter",
+      model,
+      credentialSource: "managed",
+      apiKey,
+    };
+  }
+
+  async function resolveManagedDefault(): Promise<ResolvedAiModel> {
+    const openrouter = await resolveManagedOpenRouter();
+    if (openrouter) return openrouter;
+
+    const provider = input.managed.provider;
+    if (provider === "unconfigured" || provider === "fake") {
+      throw new AiConfigurationError(
+        "MANAGED_PROVIDER_UNCONFIGURED",
+        "No managed AI provider is configured",
+      );
+    }
+    const apiKey = managedKey(input.managed, provider);
+    const model = managedDefaultModel(input.managed, provider);
+    if (!apiKey || !model) {
+      throw new AiConfigurationError(
+        "MANAGED_PROVIDER_UNCONFIGURED",
+        "Managed AI provider is not configured",
+      );
+    }
+    return { provider, model, credentialSource: "managed", apiKey };
+  }
+
   return {
     async resolve(userId: string): Promise<ResolvedAiModel> {
       const preference = await input.preferences.get(userId);
-      if (!preference) {
-        const provider = input.managed.provider;
-        if (provider === "unconfigured" || provider === "fake") {
-          throw new AiConfigurationError(
-            "MANAGED_PROVIDER_UNCONFIGURED",
-            "No managed AI provider is configured",
-          );
-        }
-        const apiKey = managedKey(input.managed, provider);
-        const model = managedDefaultModel(input.managed, provider);
-        if (!apiKey || !model) {
-          throw new AiConfigurationError(
-            "MANAGED_PROVIDER_UNCONFIGURED",
-            "Managed AI provider is not configured",
-          );
-        }
-        return { provider, model, credentialSource: "managed", apiKey };
-      }
 
-      if (preference.credentialSource === "byok") {
+      // Prefer a complete BYOK setup when the user has one.
+      if (preference?.credentialSource === "byok") {
         const apiKey = input.credentials
           ? await input.credentials.getSecret({
               userId,
               provider: preference.provider,
             })
           : null;
+        if (apiKey) {
+          return {
+            provider: preference.provider,
+            model: preference.model,
+            credentialSource: "byok",
+            apiKey,
+          };
+        }
+        // Key missing/invalid → fall back to managed trial.
+        return resolveManagedDefault();
+      }
+
+      // Explicit managed preference, or no preference yet.
+      if (!preference || preference.credentialSource === "managed") {
+        if (preference?.provider === "openrouter" || !preference) {
+          return resolveManagedDefault();
+        }
+        // Legacy managed openai/anthropic preferences (pre-B2.1).
+        const apiKey = managedKey(input.managed, preference.provider);
         if (!apiKey) {
-          throw new AiConfigurationError(
-            "BYOK_CREDENTIAL_MISSING",
-            "A credential is required for the selected BYOK provider",
-          );
+          return resolveManagedDefault();
         }
         return {
           provider: preference.provider,
@@ -104,63 +162,7 @@ export function createAiModelResolver(input: {
         };
       }
 
-      // Managed preference: OpenRouter is the managed gateway.
-      if (preference.provider === "openrouter") {
-        const apiKey = managedKey(input.managed, "openrouter");
-        if (!apiKey) {
-          throw new AiConfigurationError(
-            "MANAGED_PROVIDER_UNCONFIGURED",
-            "Managed OpenRouter provider is not configured",
-          );
-        }
-        if (input.catalog) {
-          try {
-            await input.catalog.requireManagedModel(preference.model);
-          } catch (error) {
-            if (
-              error instanceof OpenRouterCatalogError &&
-              error.code === "MODEL_UNAVAILABLE"
-            ) {
-              throw new AiConfigurationError(
-                "MODEL_UNAVAILABLE",
-                "The selected managed model is not available",
-              );
-            }
-            if (
-              error instanceof OpenRouterCatalogError &&
-              error.code === "CATALOG_UNAVAILABLE"
-            ) {
-              throw new AiConfigurationError(
-                "MANAGED_PROVIDER_UNCONFIGURED",
-                "Managed model catalog is temporarily unavailable",
-              );
-            }
-            throw error;
-          }
-        }
-        return {
-          provider: "openrouter",
-          model: preference.model,
-          credentialSource: "managed",
-          apiKey,
-        };
-      }
-
-      // Legacy managed openai/anthropic preferences (pre-B2.1) still resolve
-      // against the configured default provider key when present.
-      const apiKey = managedKey(input.managed, preference.provider);
-      if (!apiKey) {
-        throw new AiConfigurationError(
-          "MANAGED_PROVIDER_UNCONFIGURED",
-          "Managed AI provider is not configured for the selected provider",
-        );
-      }
-      return {
-        provider: preference.provider,
-        model: preference.model,
-        credentialSource: preference.credentialSource,
-        apiKey,
-      };
+      return resolveManagedDefault();
     },
   };
 }

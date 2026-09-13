@@ -69,10 +69,8 @@ describe("credential status", () => {
 });
 
 describe("preference payloads", () => {
-  it("saves managed preference with exact OpenRouter model id", () => {
-    assert.deepEqual(buildManagedPreferencePayload("openai/gpt-4.1"), {
-      provider: "openrouter",
-      model: "openai/gpt-4.1",
+  it("saves managed preference without a client model id", () => {
+    assert.deepEqual(buildManagedPreferencePayload(), {
       credentialSource: "managed",
     });
   });
@@ -130,28 +128,34 @@ describe("managed catalog", () => {
 });
 
 describe("trial status", () => {
-  it("renders available balance from micros", () => {
+  it("maps micro-USD balance onto display credits", () => {
     const display = trialDisplay({
       enabled: true,
-      originalGrantMicros: 5_000_000,
-      balanceMicros: 2_500_000,
+      originalGrantMicros: 500_000,
+      balanceMicros: 260_000,
+      displayGrantCredits: 100,
       exhausted: false,
     });
     assert.equal(display.kind, "available");
-    assert.match(display.balanceLabel, /\$2\.50 remaining/);
+    assert.equal(display.remainingCredits, 52);
+    assert.equal(display.totalCredits, 100);
+    assert.equal(display.fillPercent, 52);
+    assert.match(display.balanceLabel, /52 of 100 credits remaining/);
     assert.equal(formatUsdFromMicros(1_000_000), "$1.00");
   });
 
-  it("renders exhausted / overshoot as $0.00", () => {
+  it("renders exhausted / overshoot as 0 credits", () => {
     const display = trialDisplay({
       enabled: true,
-      originalGrantMicros: 1_000_000,
+      originalGrantMicros: 500_000,
       balanceMicros: -40_000,
+      displayGrantCredits: 100,
       exhausted: true,
     });
     assert.equal(display.kind, "exhausted");
-    assert.equal(display.balanceLabel, "$0.00 remaining");
+    assert.equal(display.balanceLabel, "0 credits remaining");
     assert.equal(display.statusLabel, "Trial exhausted");
+    assert.equal(display.fillPercent, 0);
   });
 
   it("renders disabled managed trial", () => {
@@ -159,6 +163,7 @@ describe("trial status", () => {
       enabled: false,
       originalGrantMicros: 0,
       balanceMicros: 0,
+      displayGrantCredits: 100,
       exhausted: true,
     });
     assert.equal(display.kind, "disabled");

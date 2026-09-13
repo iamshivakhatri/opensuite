@@ -20,7 +20,7 @@ export function AgentMarkdown({
   return (
     <div
       className={cn(
-        "agent-md text-[length:var(--text-sm)] leading-[1.55]",
+        "agent-md text-[length:var(--text-panel)] leading-[1.55]",
         streaming ? "text-ink-soft" : "text-ink",
       )}
     >
@@ -41,10 +41,10 @@ function Block({ block }: { block: MdBlock }) {
       const Tag = block.level === 1 ? "h3" : block.level === 2 ? "h4" : "h5";
       const size =
         block.level === 1
-          ? "text-[length:var(--text-md)]"
+          ? "text-[length:var(--text-sm)]"
           : block.level === 2
-            ? "text-[length:var(--text-sm)]"
-            : "text-[length:var(--text-sm)]";
+            ? "text-[length:var(--text-panel)]"
+            : "text-[length:var(--text-panel)]";
       return (
         <Tag
           className={cn(

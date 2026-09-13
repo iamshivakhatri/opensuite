@@ -11,7 +11,7 @@ const managed = {
   openaiApiKey: "managed-openai-key",
   openaiModel: "managed-model",
   openrouterApiKey: "managed-openrouter-key",
-  openrouterModel: null,
+  openrouterModel: "openai/gpt-4.1",
 };
 
 const catalog = createOpenRouterManagedModelCatalog({
@@ -32,7 +32,7 @@ const catalog = createOpenRouterManagedModelCatalog({
     ),
 });
 
-test("BYOK resolution uses the selected user's credential and never falls back", async () => {
+test("BYOK resolution uses the selected user's credential when present", async () => {
   const users: string[] = [];
   const resolver = createAiModelResolver({
     preferences: { get: async () => ({ provider: "anthropic", model: "claude-user", credentialSource: "byok", createdAt: "", updatedAt: "" }) } as never,
@@ -43,7 +43,13 @@ test("BYOK resolution uses the selected user's credential and never falls back",
   assert.deepEqual(await resolver.resolve("user-a"), {
     provider: "anthropic", model: "claude-user", credentialSource: "byok", apiKey: "user-key",
   });
-  await assert.rejects(() => resolver.resolve("user-b"), { code: "BYOK_CREDENTIAL_MISSING" });
+  // Missing key falls back to managed trial (OpenRouter gateway).
+  assert.deepEqual(await resolver.resolve("user-b"), {
+    provider: "openrouter",
+    model: "openai/gpt-4.1",
+    credentialSource: "managed",
+    apiKey: "managed-openrouter-key",
+  });
   assert.deepEqual(users, ["user-a", "user-b"]);
 });
 
@@ -61,23 +67,26 @@ test("managed resolution does not read a user's BYOK credential", async () => {
   assert.equal(readCredential, false);
 });
 
-test("no preference preserves the configured managed provider", async () => {
+test("no preference uses OpenRouter managed gateway when configured", async () => {
   const resolver = createAiModelResolver({
     preferences: { get: async () => null } as never,
     credentials: null,
     managed,
   });
   assert.deepEqual(await resolver.resolve("user-a"), {
-    provider: "openai", model: "managed-model", credentialSource: "managed", apiKey: "managed-openai-key",
+    provider: "openrouter",
+    model: "openai/gpt-4.1",
+    credentialSource: "managed",
+    apiKey: "managed-openrouter-key",
   });
 });
 
-test("managed OpenRouter preference resolves exact model id via OpenRouter key", async () => {
+test("managed OpenRouter preference uses server OPENROUTER_MODEL, not the saved id", async () => {
   const resolver = createAiModelResolver({
     preferences: {
       get: async () => ({
         provider: "openrouter",
-        model: "openai/gpt-4.1",
+        model: "openai/stale-saved-model",
         credentialSource: "managed",
         createdAt: "",
         updatedAt: "",
@@ -100,19 +109,19 @@ test("managed OpenRouter preference resolves exact model id via OpenRouter key",
   });
 });
 
-test("managed OpenRouter unavailable model fails without silent fallback", async () => {
+test("managed OpenRouter unavailable server model fails without silent fallback", async () => {
   const resolver = createAiModelResolver({
     preferences: {
       get: async () => ({
         provider: "openrouter",
-        model: "openai/retired-model",
+        model: "openai/gpt-4.1",
         credentialSource: "managed",
         createdAt: "",
         updatedAt: "",
       }),
     } as never,
     credentials: null,
-    managed,
+    managed: { ...managed, openrouterModel: "openai/retired-model" },
     catalog,
   });
 

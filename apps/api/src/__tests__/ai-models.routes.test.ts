@@ -1,5 +1,4 @@
 import assert from "node:assert/strict";
-import { randomUUID } from "node:crypto";
 import { test } from "node:test";
 
 import type { Db } from "@opensuite/db";
@@ -176,16 +175,16 @@ test("GET /api/ai-models/managed requires auth and maps upstream failure", async
   await failing.app.close();
 });
 
-test("managed preference accepts catalog model and rejects nonexistent", async () => {
+test("managed preference saves server OPENROUTER_MODEL and ignores client model id", async () => {
   const { app, preferenceStore } = await buildTestApp();
 
   const ok = await app.inject({
     method: "PUT",
     url: "/api/ai-preferences",
     payload: {
-      provider: "openrouter",
-      model: "openai/gpt-4.1",
       credentialSource: "managed",
+      provider: "openrouter",
+      model: "openai/client-picked-ignored",
     },
   });
   assert.equal(ok.statusCode, 200);
@@ -194,19 +193,13 @@ test("managed preference accepts catalog model and rejects nonexistent", async (
   assert.equal(ok.json().preference.credentialSource, "managed");
   assert.equal(preferenceStore.row?.model, "openai/gpt-4.1");
 
-  const bad = await app.inject({
+  const bare = await app.inject({
     method: "PUT",
     url: "/api/ai-preferences",
-    payload: {
-      provider: "openrouter",
-      model: "openai/not-a-real-model",
-      credentialSource: "managed",
-    },
+    payload: { credentialSource: "managed" },
   });
-  assert.equal(bad.statusCode, 400);
-  assert.equal(bad.json().error.code, "MODEL_UNAVAILABLE");
-  // No silent rewrite of the previously saved preference.
-  assert.equal(preferenceStore.row?.model, "openai/gpt-4.1");
+  assert.equal(bare.statusCode, 200);
+  assert.equal(bare.json().preference.model, "openai/gpt-4.1");
   await app.close();
 });
 
@@ -229,8 +222,8 @@ test("BYOK preferences remain unconstrained by managed catalog", async () => {
   await app.close();
 });
 
-test("managed preference rejects non-openrouter provider", async () => {
-  const { app } = await buildTestApp();
+test("managed preference rejects non-openrouter provider hints", async () => {
+  const { app, preferenceStore } = await buildTestApp();
   const response = await app.inject({
     method: "PUT",
     url: "/api/ai-preferences",
@@ -240,23 +233,24 @@ test("managed preference rejects non-openrouter provider", async () => {
       credentialSource: "managed",
     },
   });
-  assert.equal(response.statusCode, 400);
-  assert.equal(response.json().error.code, "INVALID_MANAGED_PREFERENCE");
+  // Managed always uses OpenRouter + server model; client provider is ignored.
+  assert.equal(response.statusCode, 200);
+  assert.equal(response.json().preference.provider, "openrouter");
+  assert.equal(response.json().preference.model, "openai/gpt-4.1");
+  assert.equal(preferenceStore.row?.provider, "openrouter");
   await app.close();
 });
 
-test("managed preference does not invent a fallback model id", async () => {
+test("BYOK preference requires provider and model", async () => {
   const { app } = await buildTestApp();
   const response = await app.inject({
     method: "PUT",
     url: "/api/ai-preferences",
     payload: {
-      provider: "openrouter",
-      model: `missing/${randomUUID()}`,
-      credentialSource: "managed",
+      credentialSource: "byok",
     },
   });
   assert.equal(response.statusCode, 400);
-  assert.equal(response.json().preference, undefined);
+  assert.equal(response.json().error.code, "INVALID_AI_PREFERENCE");
   await app.close();
 });

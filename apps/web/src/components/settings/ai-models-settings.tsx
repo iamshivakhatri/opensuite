@@ -14,7 +14,6 @@ import {
   deleteProviderCredential,
   fetchAiPreference,
   fetchAiTrial,
-  fetchManagedAiModels,
   listProviderCredentials,
   saveAiPreference,
 } from "@/lib/ai-settings-api";
@@ -26,8 +25,6 @@ import {
   buildByokPreferencePayload,
   buildManagedPreferencePayload,
   clearedApiKeyAfterSuccess,
-  findManagedModel,
-  isManagedModelUnavailable,
   isProviderConnected,
   modeFromPreference,
   trialDisplay,
@@ -35,15 +32,10 @@ import {
   type AiPreference,
   type AiProvider,
   type AiTrialStatus,
-  type ManagedAiModel,
   type PublicProviderCredential,
 } from "@/lib/ai-settings-model";
 import { useToast } from "@/lib/toast";
 import { cn } from "@/lib/utils";
-import {
-  ManagedModelPicker,
-  ManagedModelPickerError,
-} from "./managed-model-picker";
 
 type ConnectTarget = {
   readonly provider: AiProvider;
@@ -67,18 +59,11 @@ export function AiModelsSettings() {
     null,
   );
 
-  const [models, setModels] = React.useState<ManagedAiModel[] | null>(null);
-  const [catalogLoading, setCatalogLoading] = React.useState(true);
-  const [catalogError, setCatalogError] = React.useState<string | null>(null);
-
   const [trial, setTrial] = React.useState<AiTrialStatus | null>(null);
   const [trialLoading, setTrialLoading] = React.useState(true);
   const [trialError, setTrialError] = React.useState<string | null>(null);
 
   const [mode, setMode] = React.useState<AiMode>("managed");
-  const [draftManagedModelId, setDraftManagedModelId] = React.useState<
-    string | null
-  >(null);
   const [draftByokProvider, setDraftByokProvider] =
     React.useState<AiProvider>("openai");
   const [draftByokModel, setDraftByokModel] = React.useState("");
@@ -105,9 +90,7 @@ export function AiModelsSettings() {
       setPreference(next);
       const nextMode = modeFromPreference(next);
       setMode(nextMode);
-      if (next?.credentialSource === "managed") {
-        setDraftManagedModelId(next.model);
-      } else if (next?.credentialSource === "byok") {
+      if (next?.credentialSource === "byok") {
         setDraftByokProvider(next.provider);
         setDraftByokModel(next.model);
       }
@@ -132,21 +115,6 @@ export function AiModelsSettings() {
     }
   }, []);
 
-  const loadCatalog = React.useCallback(async () => {
-    setCatalogLoading(true);
-    setCatalogError(null);
-    try {
-      setModels(await fetchManagedAiModels());
-    } catch (error) {
-      setModels(null);
-      setCatalogError(
-        userFacingError(error, "Could not load managed models."),
-      );
-    } finally {
-      setCatalogLoading(false);
-    }
-  }, []);
-
   const loadTrial = React.useCallback(async () => {
     setTrialLoading(true);
     setTrialError(null);
@@ -162,52 +130,58 @@ export function AiModelsSettings() {
   React.useEffect(() => {
     void loadPreference();
     void loadCredentials();
-    void loadCatalog();
     void loadTrial();
-  }, [loadPreference, loadCredentials, loadCatalog, loadTrial]);
+  }, [loadPreference, loadCredentials, loadTrial]);
 
-  const catalogLoaded = models !== null && !catalogLoading;
-  const managedUnavailable = isManagedModelUnavailable(
-    models ?? [],
-    catalogLoaded,
-    draftManagedModelId ?? preference?.model,
-  );
-  const selectedManaged = findManagedModel(
-    models ?? [],
-    draftManagedModelId,
-  );
   const byokConnected =
     credentials !== null &&
     isProviderConnected(credentials, draftByokProvider);
 
-  async function handleSavePreference() {
+  const activeIsManaged =
+    !preference || preference.credentialSource === "managed";
+
+  async function switchToManaged() {
+    setMode("managed");
+    if (activeIsManaged || savingPreference) return;
+    setSavingPreference(true);
+    try {
+      const saved = await saveAiPreference(buildManagedPreferencePayload());
+      setPreference(saved);
+      toast({
+        tone: "success",
+        title: "Using OpenSuite managed",
+      });
+    } catch (error) {
+      toast({
+        tone: "error",
+        title: "Could not switch to managed AI",
+        description: userFacingError(error, "Please try again."),
+      });
+      // Keep the BYOK form visible if the switch failed.
+      setMode("byok");
+    } finally {
+      setSavingPreference(false);
+    }
+  }
+
+  async function handleSaveByokPreference() {
     if (savingPreference) return;
     setSavingPreference(true);
     try {
-      let payload;
-      if (mode === "managed") {
-        const modelId = draftManagedModelId?.trim() ?? "";
-        if (!modelId) {
-          throw new Error("Choose a managed model before saving.");
-        }
-        if (managedUnavailable) {
-          throw new Error("Choose a model from the current catalog.");
-        }
-        payload = buildManagedPreferencePayload(modelId);
-      } else {
-        if (!byokConnected) {
-          throw new Error(
-            `Connect a ${PROVIDER_LABELS[draftByokProvider]} key before saving.`,
-          );
-        }
-        const model = draftByokModel.trim();
-        if (!model) {
-          throw new Error("Enter a model id for your provider.");
-        }
-        payload = buildByokPreferencePayload(draftByokProvider, model);
+      if (!byokConnected) {
+        throw new Error(
+          `Connect a ${PROVIDER_LABELS[draftByokProvider]} key before saving.`,
+        );
       }
-      const saved = await saveAiPreference(payload);
+      const model = draftByokModel.trim();
+      if (!model) {
+        throw new Error("Enter a model id for your provider.");
+      }
+      const saved = await saveAiPreference(
+        buildByokPreferencePayload(draftByokProvider, model),
+      );
       setPreference(saved);
+      setMode("byok");
       toast({
         tone: "success",
         title: "AI preference saved",
@@ -281,12 +255,7 @@ export function AiModelsSettings() {
   }
 
   const trialUi = trial ? trialDisplay(trial) : null;
-  const summary = activeModeSummary({
-    mode,
-    preference,
-    managedModel: selectedManaged,
-    managedUnavailable,
-  });
+  const summary = activeModeSummary({ preference, credentials });
 
   return (
     <div className="space-y-8">
@@ -299,7 +268,6 @@ export function AiModelsSettings() {
         </div>
       </div>
 
-      {/* Mode */}
       <section>
         <h2 className="mb-1 text-[12px] font-semibold uppercase tracking-[0.06em] text-ink-faint">
           AI mode
@@ -311,69 +279,86 @@ export function AiModelsSettings() {
           <ModeCard
             selected={mode === "managed"}
             title="OpenSuite managed"
-            description="No personal API key required. Uses your OpenSuite trial credit and managed models."
-            onSelect={() => setMode("managed")}
+            description="No personal API key required. Uses your OpenSuite trial credits."
+            disabled={savingPreference || preferenceLoading}
+            onSelect={() => void switchToManaged()}
           />
           <ModeCard
             selected={mode === "byok"}
             title="Bring your own key"
-            description="You pay your model provider directly. Does not use OpenSuite trial credit."
+            description="You pay your model provider directly. Does not use OpenSuite trial credits."
+            disabled={savingPreference || preferenceLoading}
             onSelect={() => setMode("byok")}
           />
         </div>
+        {preferenceError ? (
+          <div className="mt-3">
+            <PageError
+              message={preferenceError}
+              onRetry={() => void loadPreference()}
+            />
+          </div>
+        ) : null}
       </section>
 
-      {/* Managed model */}
       {mode === "managed" ? (
         <section>
           <h2 className="mb-1 text-[12px] font-semibold uppercase tracking-[0.06em] text-ink-faint">
-            Managed model
+            Trial credits
           </h2>
           <p className="mb-3 text-[12px] text-ink-soft">
-            Models and estimated pricing come from the live catalog. Billing uses
-            actual provider usage.
+            OpenSuite picks the model. Credits apply only to managed AI.
           </p>
-          {catalogLoading ? (
+          {trialLoading ? (
             <PageLoading variant="inline" />
-          ) : catalogError ? (
-            <ManagedModelPickerError
-              message={catalogError}
-              onRetry={() => void loadCatalog()}
-            />
-          ) : models ? (
-            <div className="space-y-2">
-              {managedUnavailable ? (
-                <p className="text-[12px] text-danger">
-                  Your saved model is no longer in the catalog. Choose another
-                  before saving.
-                </p>
-              ) : null}
-              <ManagedModelPicker
-                models={models}
-                value={selectedManaged?.id ?? null}
-                unavailableId={
-                  managedUnavailable
-                    ? (draftManagedModelId ?? preference?.model ?? null)
-                    : null
-                }
-                onChange={setDraftManagedModelId}
-                disabled={savingPreference}
-              />
+          ) : trialError ? (
+            <PageError message={trialError} onRetry={() => void loadTrial()} />
+          ) : trialUi ? (
+            <div className="rounded-[var(--radius-md)] border border-line bg-surface px-3.5 py-3">
+              <div className="flex flex-wrap items-baseline justify-between gap-2">
+                <div className="text-[13px] font-medium text-ink">
+                  {trialUi.statusLabel}
+                </div>
+                <div
+                  className={cn(
+                    "text-[13px] font-semibold tabular-nums",
+                    trialUi.kind === "available"
+                      ? "text-ink"
+                      : trialUi.kind === "exhausted"
+                        ? "text-danger"
+                        : "text-ink-soft",
+                  )}
+                >
+                  {trialUi.balanceLabel}
+                </div>
+              </div>
+              <div
+                className="mt-3 h-2 overflow-hidden rounded-full bg-sunken"
+                role="progressbar"
+                aria-valuemin={0}
+                aria-valuemax={trialUi.totalCredits}
+                aria-valuenow={trialUi.remainingCredits}
+                aria-label="Trial credits remaining"
+              >
+                <div
+                  className="h-full rounded-full bg-primary transition-[width] duration-300"
+                  style={{ width: `${trialUi.fillPercent}%` }}
+                />
+              </div>
             </div>
           ) : null}
         </section>
       ) : null}
 
-      {/* BYOK preference */}
       {mode === "byok" ? (
         <section>
           <h2 className="mb-1 text-[12px] font-semibold uppercase tracking-[0.06em] text-ink-faint">
             Your provider & model
           </h2>
           <p className="mb-3 text-[12px] text-ink-soft">
-            Enter the exact model id your provider expects.
+            Connect a provider key, then enter the model id to use.
           </p>
-          <div className="space-y-3">
+          <div className="space-y-4">
             <div>
               <Label className="mb-1.5 block">Provider</Label>
               <div className="grid grid-cols-3 gap-1 rounded-[var(--radius-md)] border border-line bg-surface p-1">
@@ -394,7 +379,7 @@ export function AiModelsSettings() {
                         "rounded-[var(--radius-sm)] px-2 py-2 text-[12px]",
                         active
                           ? "bg-accent-soft font-semibold text-accent-hover"
-                          : "text-ink-soft hover:bg-sunken hover:text-ink",
+                          : "text-ink-soft hover:bg-primary-soft hover:text-primary",
                       )}
                     >
                       {PROVIDER_LABELS[provider]}
@@ -403,94 +388,29 @@ export function AiModelsSettings() {
                 })}
               </div>
             </div>
-            {!credentialsLoading && credentials && !byokConnected ? (
-              <div className="rounded-[var(--radius-sm)] border border-line bg-sunken/50 px-3 py-2.5 text-[12px] text-ink-soft">
-                Connect a {PROVIDER_LABELS[draftByokProvider]} key below before
-                saving this preference.
-              </div>
-            ) : null}
+
             <div>
-              <Label htmlFor="byok-model" className="mb-1.5 block">
-                Model id
-              </Label>
-              <Input
-                id="byok-model"
-                value={draftByokModel}
-                disabled={savingPreference}
-                placeholder={BYOK_MODEL_PLACEHOLDERS[draftByokProvider]}
-                onChange={(event) => setDraftByokModel(event.target.value)}
-                autoComplete="off"
-                spellCheck={false}
-              />
-              <p className="mt-1.5 text-[11px] text-ink-faint">
-                Example: {BYOK_MODEL_PLACEHOLDERS[draftByokProvider]}
-              </p>
-            </div>
-          </div>
-        </section>
-      ) : null}
-
-      {/* Save preference */}
-      <div className="space-y-2">
-        <Button
-          type="button"
-          size="sm"
-          disabled={
-            savingPreference ||
-            preferenceLoading ||
-            (mode === "managed" && (catalogLoading || Boolean(catalogError)))
-          }
-          onClick={() => void handleSavePreference()}
-        >
-          {savingPreference ? "Saving…" : "Save preference"}
-        </Button>
-        {preferenceError ? (
-          <PageError
-            message={preferenceError}
-            onRetry={() => void loadPreference()}
-          />
-        ) : null}
-      </div>
-
-      {/* Providers */}
-      <section>
-        <h2 className="mb-1 text-[12px] font-semibold uppercase tracking-[0.06em] text-ink-faint">
-          Provider keys
-        </h2>
-        <p className="mb-3 text-[12px] text-ink-soft">
-          Keys stay on the server. OpenSuite never shows them again after you
-          connect.
-        </p>
-        {credentialsLoading ? (
-          <PageLoading variant="inline" />
-        ) : credentialsError ? (
-          <PageError
-            message={credentialsError}
-            onRetry={() => void loadCredentials()}
-          />
-        ) : (
-          <div className="divide-y divide-line rounded-[var(--radius-md)] border border-line bg-surface">
-            {AI_PROVIDERS.map((provider) => {
-              const connected = isProviderConnected(
-                credentials ?? [],
-                provider,
-              );
-              return (
-                <div
-                  key={provider}
-                  className="flex flex-wrap items-center gap-2 px-3.5 py-3"
-                >
+              <Label className="mb-1.5 block">API key</Label>
+              {credentialsLoading ? (
+                <PageLoading variant="inline" />
+              ) : credentialsError ? (
+                <PageError
+                  message={credentialsError}
+                  onRetry={() => void loadCredentials()}
+                />
+              ) : (
+                <div className="flex flex-wrap items-center gap-2 rounded-[var(--radius-md)] border border-line bg-surface px-3.5 py-3">
                   <div className="min-w-0 flex-1">
                     <div className="text-[13px] font-medium text-ink">
-                      {PROVIDER_LABELS[provider]}
+                      {PROVIDER_LABELS[draftByokProvider]}
                     </div>
                     <div
                       className={cn(
                         "text-[11.5px]",
-                        connected ? "text-success" : "text-ink-faint",
+                        byokConnected ? "text-success" : "text-ink-faint",
                       )}
                     >
-                      {connected ? "Connected" : "Not connected"}
+                      {byokConnected ? "Connected" : "Not connected"}
                     </div>
                   </div>
                   <div className="flex shrink-0 flex-wrap gap-1.5">
@@ -502,14 +422,14 @@ export function AiModelsSettings() {
                         setApiKeyDraft("");
                         setConnectError(null);
                         setConnectTarget({
-                          provider,
-                          replacing: connected,
+                          provider: draftByokProvider,
+                          replacing: byokConnected,
                         });
                       }}
                     >
-                      {connected ? "Replace key" : "Connect key"}
+                      {byokConnected ? "Replace key" : "Connect key"}
                     </Button>
-                    {connected ? (
+                    {byokConnected ? (
                       <Button
                         type="button"
                         variant="ghost"
@@ -517,7 +437,7 @@ export function AiModelsSettings() {
                         className="text-danger hover:bg-danger-soft hover:text-danger"
                         onClick={() => {
                           setRemoveError(null);
-                          setRemoveProvider(provider);
+                          setRemoveProvider(draftByokProvider);
                         }}
                       >
                         Remove
@@ -525,46 +445,47 @@ export function AiModelsSettings() {
                     ) : null}
                   </div>
                 </div>
-              );
-            })}
-          </div>
-        )}
-      </section>
+              )}
+            </div>
 
-      {/* Trial */}
-      <section>
-        <h2 className="mb-1 text-[12px] font-semibold uppercase tracking-[0.06em] text-ink-faint">
-          OpenSuite trial
-        </h2>
-        <p className="mb-3 text-[12px] text-ink-soft">
-          Applies only when using OpenSuite managed AI.
-        </p>
-        {trialLoading ? (
-          <PageLoading variant="inline" />
-        ) : trialError ? (
-          <PageError message={trialError} onRetry={() => void loadTrial()} />
-        ) : trialUi ? (
-          <div className="rounded-[var(--radius-md)] border border-line bg-surface px-3.5 py-3">
-            <div className="flex flex-wrap items-baseline justify-between gap-2">
-              <div className="text-[13px] font-medium text-ink">
-                {trialUi.statusLabel}
-              </div>
-              <div
-                className={cn(
-                  "text-[13px] font-semibold tabular-nums",
-                  trialUi.kind === "available"
-                    ? "text-ink"
-                    : trialUi.kind === "exhausted"
-                      ? "text-danger"
-                      : "text-ink-soft",
-                )}
+            <div>
+              <Label htmlFor="byok-model" className="mb-1.5 block">
+                Model id
+              </Label>
+              <Input
+                id="byok-model"
+                value={draftByokModel}
+                disabled={savingPreference || !byokConnected}
+                placeholder={BYOK_MODEL_PLACEHOLDERS[draftByokProvider]}
+                onChange={(event) => setDraftByokModel(event.target.value)}
+                autoComplete="off"
+                spellCheck={false}
+              />
+              <p className="mt-1.5 text-[11px] text-ink-faint">
+                {byokConnected
+                  ? `Example: ${BYOK_MODEL_PLACEHOLDERS[draftByokProvider]}`
+                  : `Connect a ${PROVIDER_LABELS[draftByokProvider]} key before entering a model id.`}
+              </p>
+            </div>
+
+            <div>
+              <Button
+                type="button"
+                size="sm"
+                disabled={
+                  savingPreference ||
+                  preferenceLoading ||
+                  !byokConnected ||
+                  !draftByokModel.trim()
+                }
+                onClick={() => void handleSaveByokPreference()}
               >
-                {trialUi.balanceLabel}
-              </div>
+                {savingPreference ? "Saving…" : "Save preference"}
+              </Button>
             </div>
           </div>
-        ) : null}
-      </section>
+        </section>
+      ) : null}
 
       {connectTarget ? (
         <Dialog
@@ -635,6 +556,7 @@ export function AiModelsSettings() {
             </>
           }
           confirmLabel={removeBusy ? "Removing…" : "Remove key"}
+          tone="danger"
           busy={removeBusy}
           error={removeError}
           onCancel={() => {
@@ -653,21 +575,25 @@ function ModeCard({
   title,
   description,
   onSelect,
+  disabled = false,
 }: {
   selected: boolean;
   title: string;
   description: string;
   onSelect: () => void;
+  disabled?: boolean;
 }) {
   return (
     <button
       type="button"
+      disabled={disabled}
       onClick={onSelect}
       className={cn(
         "rounded-[var(--radius-md)] border px-3.5 py-3 text-left transition-colors",
         selected
           ? "border-accent bg-accent-soft/60"
           : "border-line bg-surface hover:border-ink-faint",
+        disabled && "opacity-60",
       )}
     >
       <div className="flex items-center gap-2">

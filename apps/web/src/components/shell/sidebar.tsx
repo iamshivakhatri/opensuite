@@ -211,7 +211,7 @@ export function Sidebar() {
         <button
           type="button"
           onClick={() => openPalette(true)}
-          className="os-type-label mb-3 flex w-full items-center gap-2 rounded-[var(--radius-sm)] border border-line bg-surface px-2.5 py-2 text-left text-ink-faint shadow-[0_1px_2px_rgba(16,24,40,0.025)] hover:border-ink-faint hover:text-ink"
+          className="os-type-label mb-3 flex w-full items-center gap-2 rounded-[var(--radius-sm)] border border-line bg-surface px-2.5 py-2 text-left text-ink-faint shadow-[0_1px_2px_rgba(16,24,40,0.025)] hover:border-primary-line hover:text-primary"
         >
           <span className="text-[length:var(--text-sm)]">⌕</span>
           <span className="min-w-0 flex-1">Search</span>
@@ -232,8 +232,8 @@ export function Sidebar() {
                 className={
                   "os-type-label flex items-center gap-2.5 rounded-[var(--radius-sm)] px-2.5 py-2 transition-colors " +
                   (active
-                    ? "bg-accent-soft font-semibold text-accent-hover shadow-[inset_0_0_0_1px_rgba(91,92,226,0.05)]"
-                    : "text-ink-soft hover:bg-sunken hover:text-ink")
+                      ? "bg-primary-soft font-semibold text-primary-hover shadow-[inset_0_0_0_1px_color-mix(in_srgb,var(--primary)_10%,transparent)]"
+                    : "text-ink-soft hover:bg-primary-soft hover:text-primary")
                 }
               >
                 <span
@@ -262,7 +262,7 @@ export function Sidebar() {
               setCreateOpen(true);
               setCreateError(null);
             }}
-            className="grid h-5 w-5 place-items-center rounded text-[length:var(--text-xs)] text-ink-faint hover:bg-sunken hover:text-ink"
+            className="grid h-5 w-5 place-items-center rounded text-[length:var(--text-xs)] text-ink-faint hover:bg-primary-soft hover:text-primary"
           >
             +
           </button>
@@ -290,7 +290,7 @@ export function Sidebar() {
                     "os-type-label flex items-center gap-2 rounded-[var(--radius-sm)] py-1.5 pl-2.5 pr-7 " +
                     (active
                       ? "bg-accent-soft font-medium text-accent-hover"
-                      : "text-ink-soft hover:bg-sunken hover:text-ink")
+                      : "text-ink-soft hover:bg-primary-soft hover:text-primary")
                   }
                 >
                   <span className="min-w-0 flex-1 truncate">{workspace.name}</span>
@@ -309,7 +309,7 @@ export function Sidebar() {
                       current === workspace.id ? null : workspace.id,
                     );
                   }}
-                  className="absolute right-1 top-1/2 grid h-6 w-6 -translate-y-1/2 place-items-center rounded text-[length:var(--text-xs)] text-ink-faint hover:bg-sunken hover:text-ink"
+                  className="absolute right-1 top-1/2 grid h-6 w-6 -translate-y-1/2 place-items-center rounded text-[length:var(--text-xs)] text-ink-faint hover:bg-primary-soft hover:text-primary"
                 >
                   ···
                 </button>
@@ -331,7 +331,7 @@ export function Sidebar() {
             "os-type-label flex items-center gap-2.5 rounded-[var(--radius-sm)] px-2.5 py-2 " +
             (isActive(pathname, "/app/settings", "prefix")
               ? "bg-accent-soft font-semibold text-accent-hover"
-              : "text-ink-soft hover:bg-sunken hover:text-ink")
+              : "text-ink-soft hover:bg-primary-soft hover:text-primary")
           }
         >
           <span className="w-4 text-center text-[length:var(--text-sm)] text-ink-faint">

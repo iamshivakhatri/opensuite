@@ -128,7 +128,7 @@ export function ManagedModelPicker({
                     <button
                       type="button"
                       className={cn(
-                        "flex w-full flex-col items-start gap-0.5 px-3 py-2 text-left hover:bg-sunken",
+                        "flex w-full flex-col items-start gap-0.5 px-3 py-2 text-left hover:bg-primary-soft",
                         active && "bg-accent-soft",
                       )}
                       onClick={() => {

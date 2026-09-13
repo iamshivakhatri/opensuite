@@ -151,12 +151,9 @@ describe("AI settings API client", () => {
     const models = await api.fetchManagedAiModels();
     assert.equal(models[0]?.id, "openai/gpt-4.1");
     const preference = await api.saveAiPreference({
-      provider: "openrouter",
-      model: "openai/gpt-4.1",
       credentialSource: "managed",
     });
     assert.equal(preference.model, "openai/gpt-4.1");
-    assert.match(bodies[0] ?? "", /"model":"openai\/gpt-4.1"/);
     assert.match(bodies[0] ?? "", /"credentialSource":"managed"/);
   });
 
@@ -169,6 +166,7 @@ describe("AI settings API client", () => {
             enabled: true,
             originalGrantMicros: 5_000_000,
             balanceMicros: 1_250_000,
+            displayGrantCredits: 100,
             exhausted: false,
           }),
           { status: 200, headers: { "Content-Type": "application/json" } },
@@ -198,6 +196,7 @@ describe("AI settings API client", () => {
     assert.equal(preference.credentialSource, "byok");
     const trial = await api.fetchAiTrial();
     assert.equal(trial.balanceMicros, 1_250_000);
+    assert.equal(trial.displayGrantCredits, 100);
     assert.equal(trial.exhausted, false);
   });
 

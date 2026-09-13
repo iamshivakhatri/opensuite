@@ -108,7 +108,7 @@ export function AgentRunProgress({
             aria-expanded={expanded}
             className={cn(
               focusRingClass,
-              "rounded-[var(--radius-sm)] py-0.5 text-left text-[length:var(--text-2xs)] text-ink-faint transition-colors hover:text-ink-soft",
+              "rounded-[var(--radius-sm)] py-0.5 text-left text-[length:var(--text-2xs)] text-ink-faint transition-colors hover:text-primary",
             )}
           >
             {detailsLabel}

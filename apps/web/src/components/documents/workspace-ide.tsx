@@ -543,6 +543,7 @@ export function WorkspaceIde({
             </>
           }
           confirmLabel="Move to Trash"
+          tone="danger"
           busy={busy}
           error={actionError}
           onCancel={() => setTrashOpen(false)}
@@ -695,7 +696,7 @@ function ResizeHandle({
       title="Drag to resize"
       className={cn(
         focusRingClass,
-        "group relative z-10 w-1 shrink-0 cursor-col-resize bg-transparent hover:bg-accent/25",
+        "group relative z-10 w-1 shrink-0 cursor-col-resize bg-transparent hover:bg-primary/20",
       )}
       tabIndex={0}
       onKeyDown={(event) => {
@@ -731,7 +732,7 @@ function ResizeHandle({
     >
       <div
         className={
-          "absolute inset-y-0 w-px bg-transparent group-hover:bg-accent/40 " +
+          "absolute inset-y-0 w-px bg-transparent transition-colors group-hover:bg-primary group-focus-visible:bg-primary " +
           (side === "left" ? "right-0" : "left-0")
         }
       />
@@ -763,7 +764,7 @@ function WorkspaceHomeCanvas({
             onClick={onUpload}
             className={cn(
               focusRingClass,
-              "os-type-label inline-flex h-8 items-center rounded-[var(--radius-sm)] bg-ink px-3 font-medium text-on-ink hover:opacity-90",
+              "os-type-label inline-flex h-8 items-center rounded-[var(--radius-sm)] bg-primary px-3 font-medium text-on-ink hover:bg-primary-hover",
             )}
           >
             Upload file
@@ -773,7 +774,7 @@ function WorkspaceHomeCanvas({
             onClick={onSearch}
             className={cn(
               focusRingClass,
-              "os-type-label inline-flex h-8 items-center rounded-[var(--radius-sm)] border border-line bg-surface px-3 font-medium text-ink-soft hover:text-ink",
+              "os-type-label inline-flex h-8 items-center rounded-[var(--radius-sm)] border border-line bg-surface px-3 font-medium text-ink-soft hover:text-primary",
             )}
           >
             Quick Open

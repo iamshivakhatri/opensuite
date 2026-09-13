@@ -174,7 +174,7 @@ export function WorkspaceRouteShell({ workspaceId }: { workspaceId: string }) {
         </p>
         <Link
           href="/app"
-          className="os-type-label inline-flex h-9 items-center justify-center rounded-[var(--radius-md)] bg-ink px-4 font-medium text-on-ink hover:opacity-90"
+          className="os-type-label inline-flex h-9 items-center justify-center rounded-[var(--radius-md)] bg-primary px-4 font-medium text-on-ink hover:bg-primary-hover"
         >
           Back to Home
         </Link>
@@ -190,7 +190,7 @@ export function WorkspaceRouteShell({ workspaceId }: { workspaceId: string }) {
         </p>
         <Link
           href="/app"
-          className="os-type-label inline-flex h-8 items-center justify-center rounded-[var(--radius-md)] border border-line bg-surface px-3 font-medium text-ink-soft hover:text-ink"
+          className="os-type-label inline-flex h-8 items-center justify-center rounded-[var(--radius-md)] border border-line bg-surface px-3 font-medium text-ink-soft hover:text-primary"
         >
           Home
         </Link>
@@ -218,7 +218,7 @@ export function WorkspaceRouteShell({ workspaceId }: { workspaceId: string }) {
             <span className="min-w-0 flex-1">{docError}</span>
             <Link
               href={`/app/workspaces/${workspaceId}`}
-              className="os-type-label shrink-0 rounded-[var(--radius-md)] border border-line bg-surface px-2.5 py-1 font-medium text-ink-soft hover:text-ink"
+              className="os-type-label shrink-0 rounded-[var(--radius-md)] border border-line bg-surface px-2.5 py-1 font-medium text-ink-soft hover:text-primary"
             >
               Back
             </Link>

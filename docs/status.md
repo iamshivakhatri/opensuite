@@ -9,11 +9,11 @@ _Read this before starting any work. Keep it a concise current-state handoff, no
 * **Document Authoring Intelligence v1** + list≠grouping + **insert_paragraphs rejects embedded newlines**.
 * **Agent Panel UX v1.1** — live status from last activity (no premature Finishing up); inspect=`checks`; recovered details muted; slim composer.
 * Confirmation bridge; Frontend Phases 1–6B; hosted-alpha foundation.
+* **AI Settings** — managed = credits bar only (card click applies); BYOK = provider → key → model → save; active strip shows what agent runs use.
 
 ## Just Completed
 
-* **Agent Efficiency v6.6:** benchmark target checks now assert requested document behavior, and `launch-brief` inspects its completed DOCX for required sections, headings, and a readiness table.
-* Focused OpenRouter runs passed for target checks and normal authoring. The full suite and two `launch-brief` attempts still exited before a usable final record.
+* **Theme hover:** sidebar (Home→Trash), lists, menus, and chrome use `primary-soft` / primary text — not grey. `--hover` token is primary-tinted.
 
 ## Current Decisions
 
@@ -21,12 +21,14 @@ _Read this before starting any work. Keep it a concise current-state handoff, no
 * Managed AI gateway = OpenRouter; **AgentCore v2 frozen** unless evidence-backed fixes.
 * Engine keep*/indent deferred until visible multi-page need.
 * Agent progress presentation stays in `apps/web` (not agent-core).
+* Managed model is server-chosen (`OPENROUTER_MODEL`); users do not pick it.
+* Agent runs: valid BYOK preference wins; otherwise OpenSuite managed trial.
 
 ## Verification Status
 
 | Check | Status |
 |---|---|
-| web tests | **Pass** (82) |
+| web tests | **Pass** (85) |
 | web typecheck | **Pass** |
 | `git diff --check` | **Pass** |
 | agent-core tests/typecheck | **Pass** (214) |
@@ -41,4 +43,4 @@ _Read this before starting any work. Keep it a concise current-state handoff, no
 
 ## Recommended Next Step
 
-Diagnose the provider benchmark's silent early exit before treating complex real-provider acceptance as complete.
+Smoke workspace explorer + modal (create blank once, rename/edit unlocks another; upload drop), then resume provider-benchmark early-exit diagnosis.
