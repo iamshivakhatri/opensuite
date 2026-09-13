@@ -1,9 +1,11 @@
 import { randomUUID } from "node:crypto";
 
 import type {
+  AgentEvent,
   AgentResult,
   BenchmarkRunRecord,
   DocumentRef,
+  DocumentRuntime,
 } from "@opensuite/agent-core";
 import { buildDocxBody, buildMinimalDocx } from "@opensuite/engine-client";
 
@@ -18,7 +20,10 @@ export interface BenchScenario {
   readonly check: (ctx: {
     readonly result: AgentResult;
     readonly toolNames: readonly string[];
-  }) => { ok: boolean; notes: string[] };
+    readonly events: readonly AgentEvent[];
+    readonly document: DocumentRef | null;
+    readonly runtime: DocumentRuntime;
+  }) => { ok: boolean; notes: string[] } | Promise<{ ok: boolean; notes: string[] }>;
 }
 
 const SECOND_PARAGRAPH =
@@ -28,7 +33,7 @@ export const BENCH_SCENARIOS: readonly BenchScenario[] = [
   {
     id: "target-duplicate",
     label: "G. Duplicate paragraph target",
-    instruction: "Format only the second body paragraph whose exact text is 'Note'. A table cell has the same text. Inspect narrowly if needed, then use occurrence 2.",
+    instruction: "Apply bold text formatting only to the second body paragraph whose exact text is 'Note'. A table cell has the same text. Inspect narrowly if needed.",
     seed(harness) {
       return harness.seedDocument(
         buildDocxBody([
@@ -40,11 +45,18 @@ export const BENCH_SCENARIOS: readonly BenchScenario[] = [
         ]),
       );
     },
-    check({ result, toolNames }) {
+    check({ result, events }) {
       const notes: string[] = [];
-      if (!toolNames.includes("document.set_paragraph_style")) notes.push("expected paragraph style mutation");
+      const correctBodyTarget = events.some((event) =>
+        event.type === "tool.started" &&
+        event.toolName === "document.set_text_formatting" &&
+        (event.input as { target?: { text?: unknown; occurrence?: unknown }; bold?: unknown } | undefined)?.target?.text === "Note" &&
+        (event.input as { target?: { occurrence?: unknown } } | undefined)?.target?.occurrence === 2 &&
+        (event.input as { bold?: unknown } | undefined)?.bold === true,
+      );
+      if (!correctBodyTarget) notes.push("expected bold formatting for body Note occurrence 2");
       if (result.toolOutcomes.some((o) => o.diagnostic?.code === "TARGET_AMBIGUOUS")) notes.push("normal path must avoid TARGET_AMBIGUOUS");
-      if (result.toolOutcomes.some((o) => o.toolName === "document.set_paragraph_style" && o.status !== "succeeded")) notes.push("paragraph style mutation failed");
+      if (result.toolOutcomes.some((o) => o.toolName === "document.set_text_formatting" && o.status !== "succeeded")) notes.push("text formatting mutation failed");
       if (result.status !== "completed") notes.push(`run status=${result.status}`);
       return { ok: notes.length === 0, notes };
     },
@@ -52,17 +64,22 @@ export const BENCH_SCENARIOS: readonly BenchScenario[] = [
   {
     id: "target-recovery",
     label: "H. Target ambiguity recovery",
-    instruction: "If a paragraph style target is ambiguous, inspect only the matching paragraphs, retry once using the returned occurrence, then finish.",
+    instruction: "Make the body paragraph 'Note' immediately before 'Closing' use Heading 1. There are two body paragraphs named 'Note'; inspect the document as needed to identify the correct one.",
     seed(harness) {
       return harness.seedDocument(buildMinimalDocx(["Title", "Note", "Note", "Closing"]));
     },
-    check({ result, toolNames }) {
+    check({ result, toolNames, events }) {
       const notes: string[] = [];
-      const failures = result.toolOutcomes.filter((o) => o.diagnostic?.code === "TARGET_AMBIGUOUS");
-      if (failures.length !== 1) notes.push("expected exactly one ambiguous target failure");
-      if (!toolNames.includes("document.inspect")) notes.push("expected focused recovery inspection");
-      if (!toolNames.includes("document.set_paragraph_style")) notes.push("expected corrected style mutation");
-      if (result.toolOutcomes.at(-1)?.status !== "succeeded") notes.push("corrected style mutation failed");
+      const correctedTarget = events.some((event) =>
+        event.type === "tool.started" &&
+        event.toolName === "document.set_paragraph_style" &&
+        (event.input as { target?: { text?: unknown; occurrence?: unknown }; style?: unknown } | undefined)?.target?.text === "Note" &&
+        (event.input as { target?: { occurrence?: unknown } } | undefined)?.target?.occurrence === 2 &&
+        (event.input as { style?: unknown } | undefined)?.style === "Heading 1",
+      );
+      if (!correctedTarget) notes.push("expected Heading 1 for the body Note before Closing");
+      if (!toolNames.includes("document.inspect")) notes.push("expected focused inspection for duplicate body paragraphs");
+      if (result.toolOutcomes.some((o) => o.toolName === "document.set_paragraph_style" && o.status !== "succeeded" && o.diagnostic?.code !== "TARGET_AMBIGUOUS")) notes.push("paragraph style mutation failed");
       if (result.status !== "completed") notes.push(`run status=${result.status}`);
       return { ok: notes.length === 0, notes };
     },
@@ -330,6 +347,43 @@ export const BENCH_SCENARIOS: readonly BenchScenario[] = [
       return { ok: notes.length === 0, notes };
     },
   },
+  {
+    id: "launch-brief",
+    label: "L. Complex Product Launch Readiness Brief",
+    instruction:
+      "Create a new Product Launch Readiness Brief for a fictional SaaS product with a title, executive summary, Product, Engineering, Marketing, Support, and Risks sections, a readiness table, a prioritized checklist, and a final recommendation. Use professional semantic formatting, sensible page layout, and page numbers if supported.",
+    seed() {
+      return null;
+    },
+    async check({ result, toolNames, document, runtime }) {
+      const notes: string[] = [];
+      if (!toolNames.includes("workspace.create_blank_docx")) notes.push("expected a new document");
+      if (result.status !== "completed") notes.push(`run status=${result.status}`);
+      if (result.toolOutcomes.some((outcome) => outcome.status === "failed")) notes.push("unresolved failed tool state");
+      if (!document) return { ok: false, notes: [...notes, "missing final document"] };
+
+      const [paragraphInspection, headingInspection, tableInspection] = await Promise.all([
+        runtime.inspect(document, { focus: { kind: "paragraphs", offset: 0, limit: 100 } }),
+        runtime.inspect(document, { focus: { kind: "headings", offset: 0, limit: 100 } }),
+        runtime.inspect(document, { focus: { kind: "tables", offset: 0, limit: 20 } }),
+      ]);
+      if (paragraphInspection.status !== "success" || headingInspection.status !== "success" || tableInspection.status !== "success") {
+        return { ok: false, notes: [...notes, "could not inspect completed document"] };
+      }
+      if (paragraphInspection.payload.format !== "docx" || headingInspection.payload.format !== "docx" || tableInspection.payload.format !== "docx") {
+        return { ok: false, notes: [...notes, "completed document is not DOCX"] };
+      }
+
+      const paragraphText = paragraphInspection.payload.paragraphs?.map((paragraph) => paragraph.text).join("\n") ?? "";
+      for (const required of ["executive summary", "product", "engineering", "marketing", "support", "risks", "checklist", "recommendation"]) {
+        if (!paragraphText.toLowerCase().includes(required)) notes.push(`missing ${required} content`);
+      }
+      if ((headingInspection.payload.headings?.length ?? 0) < 3) notes.push("expected reasonable heading hierarchy");
+      const tables = tableInspection.payload.tables ?? [];
+      if (!tables.some((table) => table.rowCount >= 2 && table.cols >= 2)) notes.push("missing readiness table");
+      return { ok: notes.length === 0, notes };
+    },
+  },
 ];
 
 export function scenarioById(id: string): BenchScenario | undefined {
@@ -359,6 +413,7 @@ export function selectScenarios(
         I: "authoring-memo",
         J: "authoring-guide",
         K: "authoring-creative",
+        L: "launch-brief",
       };
       return scenarioById(map[letter] ?? id);
     })

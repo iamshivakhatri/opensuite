@@ -529,7 +529,23 @@ export interface BenchHarness {
     readonly result: AgentResult;
     readonly events: ReturnType<typeof createRecordingEventSink>["events"];
     readonly totalPersistMs: number;
+    readonly document: DocumentRef | null;
   }>;
+}
+
+function finalDocument(
+  initial: DocumentRef | null | undefined,
+  events: readonly ReturnType<typeof createRecordingEventSink>["events"][number][],
+): DocumentRef | null {
+  const latestVersion = [...events].reverse().find((event) => event.type === "document.version.advanced");
+  if (latestVersion) {
+    return { documentId: latestVersion.documentId, versionId: latestVersion.versionId, format: initial?.format ?? "docx" };
+  }
+  const created = [...events].reverse().find((event) => event.type === "document.created");
+  if (created?.format === "docx") {
+    return { documentId: created.documentId, versionId: created.versionId, format: "docx" };
+  }
+  return initial ?? null;
 }
 
 export async function createBenchHarness(): Promise<BenchHarness> {
@@ -582,6 +598,7 @@ export async function createBenchHarness(): Promise<BenchHarness> {
         result,
         events: sink.events,
         totalPersistMs: store.totalPersistMs,
+        document: finalDocument(input.primaryDocument, sink.events),
       };
     },
   };
@@ -637,7 +654,12 @@ export async function createProductionBenchHarness(): Promise<BenchHarness> {
         runId: input.runId ?? `bench-${randomUUID()}`,
         ...(input.primaryDocument ? { primaryDocument: input.primaryDocument } : {}),
       });
-      return { result, events: sink.events, totalPersistMs: store.totalPersistMs };
+      return {
+        result,
+        events: sink.events,
+        totalPersistMs: store.totalPersistMs,
+        document: finalDocument(input.primaryDocument, sink.events),
+      };
     },
   };
 }

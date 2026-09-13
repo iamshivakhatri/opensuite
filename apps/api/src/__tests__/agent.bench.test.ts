@@ -18,7 +18,7 @@ import { selectScenarios, scenarioById } from "../agent/bench/scenarios.js";
 import { createScriptedBenchmarkModel } from "../agent/bench/scripted-model.js";
 
 test("selectScenarios resolves ids and letter aliases", () => {
-  assert.equal(selectScenarios("all").length, 11);
+  assert.equal(selectScenarios("all").length, 12);
   assert.deepEqual(
     selectScenarios("A,C").map((s) => s.id),
     ["simple-read", "greenfield-small"],
@@ -140,16 +140,23 @@ test("production benchmark harness runs deterministic targeting and formatting p
     "authoring-memo",
     "authoring-guide",
     "authoring-creative",
+    "launch-brief",
   ] as const) {
     const scenario = scenarioById(id)!;
     const primary = scenario.seed(harness);
-    const { result, events } = await harness.run({
+    const { result, events, document } = await harness.run({
       model: createScriptedBenchmarkModel(id),
       instruction: scenario.instruction,
       primaryDocument: primary,
       runId: `scripted-${id}`,
     });
-    const check = scenario.check({ result, toolNames: result.toolOutcomes.map((outcome) => outcome.toolName) });
+    const check = await scenario.check({
+      result,
+      toolNames: result.toolOutcomes.map((outcome) => outcome.toolName),
+      events,
+      document,
+      runtime: harness.runtime,
+    });
     assert.deepEqual(check, { ok: true, notes: [] }, id);
     const ambiguous = result.toolOutcomes.filter((outcome) => outcome.diagnostic?.code === "TARGET_AMBIGUOUS");
     assert.equal(ambiguous.length, id === "target-recovery" ? 1 : 0);

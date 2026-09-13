@@ -125,7 +125,7 @@ async function runOneScenario(
   const startedAtDate = new Date();
   const wallStart = Date.now();
 
-  const { result, events, totalPersistMs } = await harness.run({
+  const { result, events, totalPersistMs, document } = await harness.run({
     model: options.createModel?.(scenario.id) ?? options.model,
     instruction: scenario.instruction,
     primaryDocument: primary,
@@ -134,7 +134,7 @@ async function runOneScenario(
 
   const finishedAtDate = new Date();
   const toolNames = result.toolOutcomes.map((o) => o.toolName);
-  const check = scenario.check({ result, toolNames });
+  const check = await scenario.check({ result, toolNames, events, document, runtime: harness.runtime });
 
   return buildBenchmarkRecord({
     scenario: scenario.id,

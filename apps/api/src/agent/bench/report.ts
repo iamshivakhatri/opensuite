@@ -53,6 +53,16 @@ export function printBenchmarkReport(
     console.log(
       `status=${r.status} success=${r.success} versions=${r.versionsCreated} reads=${r.readToolCalls} writes=${r.writeToolCalls} inspect=${r.inspectCalls} failedTools=${r.failedToolCalls} retries=${r.retries}`,
     );
+    const finalTurn = r.turns.at(-1);
+    console.log(
+      `terminalization=${
+        r.status !== "completed"
+          ? "not completed"
+          : finalTurn?.toolCallCount
+            ? "completed after final tool batch"
+            : "completed with final answer turn"
+      }`,
+    );
     if (r.correctnessNotes.length > 0) {
       console.log(`correctness: ${r.correctnessNotes.join("; ")}`);
     }

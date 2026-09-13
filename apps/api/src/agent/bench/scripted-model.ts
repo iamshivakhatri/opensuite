@@ -11,9 +11,9 @@ export function createScriptedBenchmarkModel(scenario: string): AgentModel {
     case "target-duplicate":
       return createScriptedAgentModel([
         toolCallResponse("", [{
-          id: "style-second-note",
-          name: "document.set_paragraph_style",
-          input: { target: { text: "Note", occurrence: 2 }, style: "Heading 1" },
+          id: "bold-second-note",
+          name: "document.set_text_formatting",
+          input: { target: { text: "Note", occurrence: 2 }, bold: true },
         }]),
         assistantOnlyResponse("Done."),
       ]);
@@ -207,6 +207,86 @@ export function createScriptedBenchmarkModel(scenario: string): AgentModel {
             id: "creative-space-b",
             name: "document.set_paragraph_formatting",
             input: { target: { text: "Soft drumming." }, spacingAfterTwips: 60 },
+          },
+        ]),
+      ]);
+    case "launch-brief":
+      return createScriptedAgentModel([
+        toolCallResponse("", [{
+          id: "create-launch-brief",
+          name: "workspace.create_blank_docx",
+          input: { name: "Product Launch Readiness Brief.docx" },
+        }]),
+        toolCallResponse("Done — Product Launch Readiness Brief is ready.", [
+          {
+            id: "brief-content",
+            name: "document.insert_paragraphs",
+            input: {
+              texts: [
+                "Product Launch Readiness Brief",
+                "Executive Summary",
+                "NimbusDesk is ready for a controlled SaaS launch after final cross-functional checks.",
+                "Product Readiness",
+                "The core workflow, onboarding, and billing experience meet launch criteria.",
+                "Engineering Readiness",
+                "Reliability monitoring, incident response, and release controls are in place.",
+                "Marketing Readiness",
+                "Positioning, launch content, and campaign tracking are prepared.",
+                "Support Readiness",
+                "Support coverage, escalation paths, and knowledge-base articles are ready.",
+                "Launch Risks",
+                "The main risks are launch-week demand spikes and incomplete customer feedback loops.",
+                "Prioritized Checklist",
+                "Complete final production monitoring review",
+                "Confirm support on-call coverage",
+                "Approve launch communications",
+                "Final Recommendation",
+                "Proceed with a phased launch while tracking readiness risks daily.",
+              ],
+              placement: { kind: "end" },
+            },
+          },
+          {
+            id: "readiness-table",
+            name: "document.create_table",
+            input: {
+              rows: [
+                ["Readiness Area", "Owner", "Status"],
+                ["Product", "Product Lead", "Ready"],
+                ["Engineering", "Engineering Lead", "Ready"],
+                ["Marketing", "Marketing Lead", "Ready"],
+                ["Support", "Support Lead", "Ready"],
+              ],
+              placement: { kind: "end" },
+            },
+          },
+          ...[
+            ["Product Launch Readiness Brief", "Heading 1"],
+            ["Executive Summary", "Heading 2"],
+            ["Product Readiness", "Heading 2"],
+            ["Engineering Readiness", "Heading 2"],
+            ["Marketing Readiness", "Heading 2"],
+            ["Support Readiness", "Heading 2"],
+            ["Launch Risks", "Heading 2"],
+            ["Prioritized Checklist", "Heading 2"],
+            ["Final Recommendation", "Heading 2"],
+          ].map(([text, style], index) => ({
+            id: `brief-style-${index}`,
+            name: "document.set_paragraph_style",
+            input: { target: { text }, style },
+          })),
+          {
+            id: "brief-checklist",
+            name: "document.set_paragraphs_list",
+            input: {
+              targets: [
+                { text: "Complete final production monitoring review" },
+                { text: "Confirm support on-call coverage" },
+                { text: "Approve launch communications" },
+              ],
+              kind: "numbered",
+              level: 0,
+            },
           },
         ]),
       ]);
