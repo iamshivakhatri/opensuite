@@ -176,6 +176,7 @@ export type {
   PersistedReplaceTextToolResult,
 } from "./document-mutation.js";
 export {
+  FORMATTING_MUTATION_TYPES,
   createInMemoryDocumentMutationExecutor,
   isPersistedDocumentMutationToolResult,
   isPersistedReplaceTextToolResult,

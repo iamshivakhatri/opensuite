@@ -14,7 +14,7 @@ _Read this before starting any work. Keep it a concise current-state handoff, no
 
 ## Just Completed
 
-* **Protocol hardening v7.1:** deterministic inspect-focus, occurrence, and RGB-hex normalization; extended tools reuse shared selectors without semantic guessing.
+* **Protocol hardening v7.2:** table formatting, widths, and cell shading share the existing formatting transaction; one table presentation turn persists one version and then expires old handles.
 
 ## Current Decisions
 
@@ -35,7 +35,7 @@ _Read this before starting any work. Keep it a concise current-state handoff, no
 | web typecheck | **Pass** |
 | web tests | **Pass** (85) prior |
 | agent-core tests/typecheck | **Pass** (218) |
-| api tests (full) | **Pass** (180; 23 skipped) |
+| api tests (full) | **Pass** (182; 23 skipped) |
 | Provider benchmark | **Partially complete** |
 | Visual `/dev/agent-panel-ux` | **Reviewed** prior |
 | Live signed-in agent run | **Blocked** (auth 403) prior |

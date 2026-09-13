@@ -13,7 +13,10 @@
  * interpret capability ids or tool names itself.
  */
 
-import type { DocumentMutationExecutor } from "../document-mutation.js";
+import {
+  FORMATTING_MUTATION_TYPES,
+  type DocumentMutationExecutor,
+} from "../document-mutation.js";
 import type {
   AgentTool,
   CreateToolExecutionContext,
@@ -308,7 +311,7 @@ function createDocumentToolTurnLifecycle(
   return {
     begin() { priorFlush = undefined; },
     async beforeTool(context) {
-      if (FORMATTER_TOOL_NAMES.has(context.toolName)) return;
+      if (FORMATTING_MUTATION_TYPES.has(context.toolName)) return;
       const flushed = await flush(context);
       if (flushed.status === "error") throw new Error(flushed.diagnostics[0].message);
     },
@@ -340,12 +343,6 @@ function createDocumentToolTurnLifecycle(
     abandon() { pendingMutations.abandonPendingFormatting?.(); },
   };
 }
-
-const FORMATTER_TOOL_NAMES = new Set([
-  "document.set_paragraph_style",
-  "document.set_paragraph_formatting",
-  "document.set_text_formatting",
-]);
 
 function isPendingOutcome(outcome: ToolBatchContext["toolOutcomes"][number]): boolean {
   return !!outcome.output && typeof outcome.output === "object" &&

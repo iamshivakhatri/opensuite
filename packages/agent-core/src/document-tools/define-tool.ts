@@ -4,6 +4,7 @@ import type {
   DocumentMutationExecutionResult,
   PersistedDocumentMutationToolResult,
 } from "../document-mutation.js";
+import { FORMATTING_MUTATION_TYPES } from "../document-mutation.js";
 import { requireCurrentArtifactHandles } from "../artifact-handles.js";
 import type {
   AgentTool,
@@ -207,8 +208,7 @@ function recentParagraphTexts(toolName: string, input: unknown): readonly string
 }
 
 function isFormattingOnlyMutation(toolName: string): boolean {
-  return toolName === "document.set_paragraph_style" || toolName === "document.set_paragraph_formatting" ||
-    toolName === "document.set_text_formatting" || toolName === "document.set_table_formatting";
+  return FORMATTING_MUTATION_TYPES.has(toolName);
 }
 
 /** PPTX/XLSX mock mutation path via DocumentRuntime.execute (not DocumentMutationExecutor). */

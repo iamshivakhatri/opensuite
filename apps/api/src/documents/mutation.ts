@@ -7,6 +7,7 @@ import type {
   OperationResult,
   DocumentOperation,
 } from "@opensuite/agent-core";
+import { FORMATTING_MUTATION_TYPES } from "@opensuite/agent-core";
 
 import {
   DocumentAccessError,
@@ -260,12 +261,6 @@ export interface DocumentMutationServiceOptions {
   }) => Promise<void>;
 }
 
-const FORMATTING_OPERATION_TYPES = new Set([
-  "document.set_paragraph_style",
-  "document.set_paragraph_formatting",
-  "document.set_text_formatting",
-]);
-
 export type FormattingMutationPendingResult =
   | { readonly status: "pending"; readonly operation: string; readonly change?: DocumentChangeSummary; readonly diagnostics: readonly Diagnostic[] }
   | { readonly status: "error"; readonly operation: string; readonly code: string; readonly diagnostics: NonEmptyDiagnostics };
@@ -488,7 +483,7 @@ export function createDocumentMutationService(
           if (state !== "active") {
             throw new Error(`Formatting session is ${state}`);
           }
-          if (!FORMATTING_OPERATION_TYPES.has(operation.type)) {
+          if (!FORMATTING_MUTATION_TYPES.has(operation.type)) {
             throw new Error(`Formatting session does not support ${operation.type}`);
           }
           const result = await input.runtime.executeWithBytes!(

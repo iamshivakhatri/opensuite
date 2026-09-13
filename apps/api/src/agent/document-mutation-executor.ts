@@ -4,6 +4,7 @@ import type {
   DocumentMutationResult,
   DocumentRuntime,
 } from "@opensuite/agent-core";
+import { FORMATTING_MUTATION_TYPES } from "@opensuite/agent-core";
 
 import {
   createDocumentMutationService,
@@ -105,7 +106,10 @@ export function createAgentDocumentMutationExecutor(input: {
       formattingSession = undefined;
       formattingDocumentId = undefined;
     },
-    async mutate(request): Promise<DocumentMutationResult> {
+    async mutate(request): Promise<DocumentMutationExecutionResult> {
+      if (FORMATTING_MUTATION_TYPES.has(request.type)) {
+        return applyFormatting(request.document, request.type, request.payload);
+      }
       const applied = await mutations.applyOperation({
         documentId: request.document.documentId,
         ownerUserId: input.ownerUserId,
@@ -305,11 +309,8 @@ export function createAgentDocumentMutationExecutor(input: {
       return toExecutorResult(applied, request.document.versionId);
     },
 
-    async setTableFormatting(request): Promise<DocumentMutationResult> {
-      const applied = await mutations.applySetTableFormatting({
-        documentId: request.document.documentId,
-        ownerUserId: input.ownerUserId,
-        baseVersionId: request.document.versionId,
+    async setTableFormatting(request): Promise<DocumentMutationExecutionResult> {
+      return applyFormatting(request.document, "document.set_table_formatting", {
         table: request.table,
         ...(request.alignment !== undefined
           ? { alignment: request.alignment }
@@ -327,9 +328,7 @@ export function createAgentDocumentMutationExecutor(input: {
         ...(request.cellMarginLeftTwips !== undefined
           ? { cellMarginLeftTwips: request.cellMarginLeftTwips }
           : {}),
-        runtime: input.runtime,
       });
-      return toExecutorResult(applied, request.document.versionId);
     },
   };
 }

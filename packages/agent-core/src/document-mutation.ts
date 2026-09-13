@@ -245,6 +245,16 @@ export type DocumentMutationExecutionResult =
   | DocumentMutationResult
   | PendingDocumentMutationResult;
 
+/** Operations that can safely share one in-memory formatting byte chain. */
+export const FORMATTING_MUTATION_TYPES: ReadonlySet<string> = new Set([
+  "document.set_paragraph_style",
+  "document.set_paragraph_formatting",
+  "document.set_text_formatting",
+  "document.set_table_formatting",
+  "document.set_table_column_widths",
+  "document.set_table_cell_shading",
+]);
+
 export interface DocumentMutationExecutor {
   /** Finalize the executor-owned formatting session, if one is active. */
   flushPendingFormatting?(): Promise<DocumentMutationResult | { readonly status: "noop" }>;
@@ -257,7 +267,7 @@ export interface DocumentMutationExecutor {
     readonly payload: Record<string, unknown>;
     readonly signal?: AbortSignal;
     readonly runId?: string;
-  }): Promise<DocumentMutationResult>;
+  }): Promise<DocumentMutationExecutionResult>;
   replaceText(
     input: DocumentReplaceTextMutationRequest,
   ): Promise<DocumentMutationResult>;
@@ -302,7 +312,7 @@ export interface DocumentMutationExecutor {
   ): Promise<DocumentMutationResult>;
   setTableFormatting(
     input: DocumentSetTableFormattingMutationRequest,
-  ): Promise<DocumentMutationResult>;
+  ): Promise<DocumentMutationExecutionResult>;
 }
 
 /**

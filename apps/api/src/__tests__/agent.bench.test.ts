@@ -8,6 +8,7 @@ import {
   toolCallResponse,
   assistantOnlyResponse,
 } from "@opensuite/agent-core";
+import { buildNameRoleTableDocx } from "@opensuite/engine-client";
 
 import {
   createBenchHarness,
@@ -164,4 +165,117 @@ test("production benchmark harness runs deterministic targeting and formatting p
       assert.equal(events.filter((event) => event.type === "document.version.advanced").length, 2);
     }
   }
+});
+
+test("table presentation shares one formatting transaction and expires handles after flush", async () => {
+  const harness = await createProductionBenchHarness();
+  const initialBytes = buildNameRoleTableDocx({ withGrid: true });
+  const document = harness.seedDocument(initialBytes);
+  const inspection = await harness.runtime.inspect(document, {
+    focus: { kind: "tables" },
+  });
+  assert.equal(inspection.status, "success");
+  if (inspection.status !== "success" || inspection.payload.format !== "docx") {
+    throw new Error("table inspection failed");
+  }
+  const table = inspection.payload.tables?.[0];
+  const cell = table?.rows?.[0]?.cells[0];
+  if (!table || !cell) throw new Error("table inspection did not return handles");
+  const tableHandle = table.handle;
+  const cellHandle = cell.handle;
+
+  const { result, events, document: finalDocument } = await harness.run({
+    instruction: "format the table",
+    primaryDocument: document,
+    model: createScriptedAgentModel([
+      toolCallResponse("", [{
+        id: "inspect-table",
+        name: DOCUMENT_TOOL_NAMES.inspect,
+        input: { focus: { kind: "tables" } },
+      }]),
+      toolCallResponse("", [
+          {
+            id: "format-table",
+            name: DOCUMENT_TOOL_NAMES.setTableFormatting,
+            input: { table: { handle: tableHandle }, alignment: "center", borders: "grid" },
+          },
+          {
+            id: "set-widths",
+            name: DOCUMENT_TOOL_NAMES.setTableColumnWidths,
+            input: { table: { handle: tableHandle }, widthsTwips: [1800, 2400] },
+          },
+          {
+            id: "shade-header",
+            name: DOCUMENT_TOOL_NAMES.setTableCellShading,
+            input: { table: { handle: tableHandle }, updates: [{ target: { handle: cellHandle }, fill: "D9EAF7" }] },
+          },
+        ]),
+      toolCallResponse("", [{
+        id: "stale-table",
+        name: DOCUMENT_TOOL_NAMES.setTableFormatting,
+        input: { table: { handle: tableHandle }, borders: "none" },
+      }]),
+      assistantOnlyResponse("Done."),
+    ]),
+  });
+
+  const presentation = result.toolOutcomes.filter((outcome) =>
+    ["format-table", "set-widths", "shade-header"].includes(outcome.toolCallId),
+  );
+  assert.equal(presentation.length, 3);
+  assert.ok(presentation.every((outcome) => outcome.status === "succeeded"));
+  assert.equal(events.filter((event) => event.type === "document.version.advanced").length, 1);
+  assert.ok(finalDocument);
+  assert.notEqual(finalDocument!.versionId, document.versionId);
+  assert.notDeepEqual(harness.store.versions.get(finalDocument!.versionId), initialBytes);
+
+  const stale = result.toolOutcomes.find((outcome) => outcome.toolCallId === "stale-table");
+  assert.equal(stale?.status, "failed");
+  assert.equal(stale?.diagnostic?.code, "STALE_HANDLE");
+});
+
+test("a structural tool flushes pending table formatting first", async () => {
+  const harness = await createProductionBenchHarness();
+  const document = harness.seedDocument(buildNameRoleTableDocx({ withGrid: true }));
+  const inspection = await harness.runtime.inspect(document, {
+    focus: { kind: "tables" },
+  });
+  assert.equal(inspection.status, "success");
+  if (inspection.status !== "success" || inspection.payload.format !== "docx") {
+    throw new Error("table inspection failed");
+  }
+  const tableHandle = inspection.payload.tables?.[0]?.handle;
+  if (!tableHandle) throw new Error("table inspection did not return a handle");
+
+  const { result, events } = await harness.run({
+    instruction: "format the table and add a note",
+    primaryDocument: document,
+    model: createScriptedAgentModel([
+      toolCallResponse("", [{
+        id: "inspect-table",
+        name: DOCUMENT_TOOL_NAMES.inspect,
+        input: { focus: { kind: "tables" } },
+      }]),
+      toolCallResponse("", [
+        {
+          id: "format-table",
+          name: DOCUMENT_TOOL_NAMES.setTableFormatting,
+          input: { table: { handle: tableHandle }, borders: "grid" },
+        },
+        {
+          id: "insert-note",
+          name: DOCUMENT_TOOL_NAMES.insertParagraph,
+          input: { text: "Formatting complete.", placement: { kind: "end" } },
+        },
+      ]),
+      assistantOnlyResponse("Done."),
+    ]),
+  });
+
+  assert.ok(result.toolOutcomes.every((outcome) => outcome.status === "succeeded"));
+  const advances = events.filter((event) => event.type === "document.version.advanced");
+  assert.equal(advances.length, 2);
+  const note = result.toolOutcomes.find((outcome) => outcome.toolCallId === "insert-note");
+  assert.equal(note?.status, "succeeded");
+  assert.equal((note?.output as { baseVersionId?: string }).baseVersionId, advances[0]?.versionId);
 });
