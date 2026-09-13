@@ -232,6 +232,7 @@ export function createDocumentToolContext(
       });
     },
     recordInspection: (document, focus, inspection) => {
+      const evidenceBefore = state.progress.recovery?.evidenceObtained === true;
       recordDocumentInspection(state, document, focus, inspection);
       const coverage = state.progress.knownInspectCoverage.at(-1);
       emitProgressEvent(base.events, {
@@ -245,6 +246,20 @@ export function createDocumentToolContext(
           : {}),
         ledger: state.progress,
       });
+      if (
+        state.progress.recovery?.active &&
+        state.progress.recovery.evidenceObtained &&
+        !evidenceBefore
+      ) {
+        emitProgressEvent(base.events, {
+          runId: base.runId,
+          classification: "RECOVERY_EVIDENCE",
+          document,
+          recoveryClass: state.progress.recovery.recoveryClass,
+          failureCode: state.progress.recovery.failureCode,
+          ledger: state.progress,
+        });
+      }
     },
     recordRecentParagraphTargets: (document, texts) =>
       recordRecentParagraphTargets(state, document, texts),

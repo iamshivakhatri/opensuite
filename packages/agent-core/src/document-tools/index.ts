@@ -150,16 +150,24 @@ export {
   createProgressLedger,
   inspectReadSignature,
   isInspectKnowledgeSatisfied,
+  isRecoveryActivatingFailure,
+  isRecoveryActive,
   normalizeInspectFocus,
   noteKnowledgeProgress,
   noteRedundantInspect,
   noteStateProgress,
+  activateRecovery,
+  clearRecovery,
+  classifyRecovery,
+  toolCallSignature,
   stableJson,
 } from "./progress-ledger.js";
 export type {
   DocumentProgressLedger,
+  DocumentRecoveryState,
   InspectCoverageEntry,
   ProgressClassification,
+  RecoveryClass,
   RedundantInspectOutput,
 } from "./progress-ledger.js";
 

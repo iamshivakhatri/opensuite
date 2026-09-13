@@ -36,6 +36,7 @@ export function transformContext(
   currentDocument?: DocumentRef | null,
   handles?: ArtifactHandleRegistry,
   stagnationGuidance?: string | null,
+  recoveryGuidance?: string | null,
 ): ModelMessage[] {
   const succeededCallIds = new Set<string>();
   for (const message of messages) {
@@ -116,16 +117,14 @@ export function transformContext(
   ) {
     withWorking = [...projected, workingStateMessage(workingState)];
   }
-  if (stagnationGuidance && stagnationGuidance.length > 0) {
-    return [
-      ...withWorking,
-      {
-        role: "user" as const,
-        content: stagnationGuidance,
-      },
-    ];
+  const extras: ModelMessage[] = [];
+  if (recoveryGuidance && recoveryGuidance.length > 0) {
+    extras.push({ role: "user", content: recoveryGuidance });
   }
-  return withWorking;
+  if (stagnationGuidance && stagnationGuidance.length > 0) {
+    extras.push({ role: "user", content: stagnationGuidance });
+  }
+  return extras.length > 0 ? [...withWorking, ...extras] : withWorking;
 }
 
 function isSupersededRead(message: ModelMessage, index: number, latestFindIndex: number, latestInspectIndex: number, workingState: DocumentWorkingState | null | undefined): boolean {
@@ -308,7 +307,12 @@ export function projectToolResultForModel(
       message.status === "skipped" &&
       message.output &&
       typeof message.output === "object" &&
-      (message.output as { progress?: unknown }).progress === "REDUNDANT_READ"
+      typeof (message.output as { progress?: unknown }).progress === "string" &&
+      (
+        (message.output as { progress: string }).progress === "REDUNDANT_READ" ||
+        (message.output as { progress: string }).progress === "RECOVERY_DEFERRED" ||
+        (message.output as { progress: string }).progress === "RECOVERY_REPEAT_BLOCKED"
+      )
     ) {
       return {
         summary: message.summary,

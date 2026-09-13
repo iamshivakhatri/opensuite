@@ -171,7 +171,15 @@ a bounded, exact-text-only run-local hint; paragraph occurrence remains unknown 
 When an assistant response includes a short
 Done confirmation **plus** successful document writes, OpenSuite policy may terminalize without
 a third final-answer-only model call (read-only / failed / confirmation batches never do).
-`model.turn.metrics` / `tool.execution.metrics` provide lightweight run observability.
+`model.turn.metrics` / `tool.execution.metrics` / `agent.progress` provide lightweight run observability.
+**Progress Ledger + Stagnation Guard + One-Failure Recovery Mode v1** (`DocumentRunState.progress`):
+classifies STATE_PROGRESS / KNOWLEDGE_PROGRESS / REDUNDANT_READ / recovery events.
+Proven-identical `document.inspect` scopes on the current version are skipped (no engine re-read)
+with compact REDUNDANT_READ + stagnation steering. First eligible document tool failure activates
+recovery: later same-response mutations are deferred (`RECOVERY_DEFERRED`); exact failed call
+signatures are blocked (`RECOVERY_REPEAT_BLOCKED`); next turn gets class-based recovery guidance
+(TARGET / STALE_STATE / INPUT_CONTRACT / UNSUPPORTED). Clears on corrected mutation success.
+Provider/timeout failures do not activate document recovery. `maxTurns` stays only the final fuse.
 Developer benchmark: `pnpm agent:bench` (PROVIDER/MODEL/SCENARIO overrides) aggregates those
 events into `.agent-bench/*.json` — not a product analytics platform.
 Never claim an edit succeeded without a successful mutation tool result.

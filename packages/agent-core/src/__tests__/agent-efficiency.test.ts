@@ -1570,8 +1570,17 @@ test("v2 write-terminalization failure: optimistic content not final; model cont
   assert.equal(result.summary, "Recovered after the failed write.");
   assert.notEqual(result.summary, "Done — should not stick.");
   assert.ok(result.toolOutcomes.some((o) => o.status === "failed"));
-  // Third write still executes under existing sequential batch semantics.
+  // Recovery Mode: later same-response mutations after the first failure are deferred.
   assert.equal(result.toolOutcomes.length, 3);
+  assert.equal(result.toolOutcomes[0]?.status, "succeeded");
+  assert.equal(result.toolOutcomes[1]?.status, "failed");
+  assert.equal(result.toolOutcomes[2]?.status, "skipped");
+  assert.equal(
+    (result.toolOutcomes[2]?.output as { progress?: string } | undefined)?.progress,
+    "RECOVERY_DEFERRED",
+  );
+  // Only the successful write + the one real failure hit the engine.
+  assert.equal(writes, 2);
 });
 
 test("v2 read-only batch never terminalizes from pre-tool content", async () => {

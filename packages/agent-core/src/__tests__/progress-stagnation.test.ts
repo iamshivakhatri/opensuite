@@ -34,13 +34,22 @@ const INSPECT_PAGE = {
 
 function paragraphsPayload(offset: number, limit: number, total: number) {
   const items = Array.from({ length: Math.min(limit, Math.max(0, total - offset)) }, (_, i) => ({
+    handle: `p${offset + i}`,
     text: `Paragraph ${offset + i + 1}`,
   }));
+  const focus = {
+    kind: "paragraphs" as const,
+    offset,
+    limit,
+  };
   return {
     status: "success" as const,
+    format: "docx" as const,
+    capabilities: mutableDocumentCapabilities(),
+    focus,
     payload: {
       format: "docx" as const,
-      summary: { title: null, outline: [], warnings: [] },
+      summary: { title: null, unitKind: "page" as const, unitCount: total },
       page: {
         total,
         offset,
@@ -49,7 +58,7 @@ function paragraphsPayload(offset: number, limit: number, total: number) {
       },
       paragraphs: items,
     },
-    diagnostics: [],
+    diagnostics: [] as const,
   };
 }
 
@@ -62,7 +71,7 @@ test("stagnation guard: repeated identical paragraph inspect is REDUNDANT_READ w
     ...base,
     async inspect(document, options) {
       inspectCalls += 1;
-      const focus = options.focus;
+      const focus = options?.focus;
       const offset =
         focus && "offset" in focus && typeof focus.offset === "number"
           ? focus.offset
@@ -85,6 +94,12 @@ test("stagnation guard: repeated identical paragraph inspect is REDUNDANT_READ w
           { id: "i1", name: DOCUMENT_TOOL_NAMES.inspect, input: INSPECT_PAGE },
         ]);
       },
+      () => {
+        modelCalls += 1;
+        return toolCallResponse("", [
+          { id: "i2", name: DOCUMENT_TOOL_NAMES.inspect, input: INSPECT_PAGE },
+        ]);
+      },
       (request) => {
         modelCalls += 1;
         const stagnation = request.messages.some(
@@ -103,19 +118,14 @@ test("stagnation guard: repeated identical paragraph inspect is REDUNDANT_READ w
         );
         assert.equal(stagnation, true);
         assert.equal(redundantTool, true);
-        return toolCallResponse("", [
-          { id: "i2", name: DOCUMENT_TOOL_NAMES.inspect, input: INSPECT_PAGE },
-        ]);
-      },
-      (request) => {
-        modelCalls += 1;
-        const redundantCount = request.messages.filter(
+        const nextOffsetMessage = request.messages.find(
           (m) =>
-            m.role === "tool" &&
-            (m.output as { progress?: string } | undefined)?.progress ===
-              "REDUNDANT_READ",
-        ).length;
-        assert.ok(redundantCount >= 1);
+            m.role === "user" &&
+            typeof m.content === "string" &&
+            /Next unread/i.test(m.content),
+        );
+        assert.ok(nextOffsetMessage && nextOffsetMessage.role === "user");
+        assert.match(nextOffsetMessage.content, /offset:\s*20/i);
         return assistantOnlyResponse(
           "Document already inspected; here is the answer from known paragraphs.",
         );
@@ -184,7 +194,7 @@ test("stagnation guard: different offset remains knowledge progress; mutation cl
     ...base,
     async inspect(_document, options) {
       inspectCalls += 1;
-      const focus = options.focus;
+      const focus = options?.focus;
       const offset =
         focus && "offset" in focus && typeof focus.offset === "number"
           ? focus.offset

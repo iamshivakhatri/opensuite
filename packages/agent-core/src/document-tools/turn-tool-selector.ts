@@ -50,10 +50,17 @@ import {
 import { filterDocumentToolsByCapabilities } from "./index.js";
 import { DOCUMENT_TOOL_NAMES } from "./names.js";
 import {
+  activateRecovery,
+  buildRecoveryDeferredOutput,
+  buildRecoveryRepeatBlockedOutput,
+  clearRecovery,
   emitProgressEvent,
   isInspectKnowledgeSatisfied,
+  isRecoveryActivatingFailure,
+  isRecoveryActive,
   noteModelTurn,
   noteRedundantInspect,
+  toolCallSignature,
 } from "./progress-ledger.js";
 import { parseInspectFocus } from "./selectors.js";
 import {
@@ -332,6 +339,10 @@ function createDocumentToolTurnLifecycle(
         const skip = maybeSkipRedundantInspect(state, context);
         if (skip) return skip;
       }
+
+      const recoverySkip = maybeSkipRecoveryMutation(state, context);
+      if (recoverySkip) return recoverySkip;
+
       if (pendingMutations && !FORMATTING_MUTATION_TYPES.has(context.toolName)) {
         const flushed = await flush(context);
         if (flushed.status === "error") throw new Error(flushed.diagnostics[0].message);
@@ -350,6 +361,48 @@ function createDocumentToolTurnLifecycle(
       return {
         summary: "Not executed because an earlier tool call advanced the document version",
       } satisfies ToolCallDeferral;
+    },
+    async afterTool(context) {
+      const { outcome } = context;
+      if (
+        outcome.status === "succeeded" &&
+        isDocumentMutationToolName(outcome.toolName) &&
+        isRecoveryActive(state.progress)
+      ) {
+        clearRecovery(state.progress);
+        emitProgressEvent(context.events, {
+          runId: context.runId,
+          classification: "RECOVERY_CLEARED",
+          document: state.primary,
+          ledger: state.progress,
+        });
+        return;
+      }
+      if (outcome.status !== "failed" || !outcome.diagnostic) return;
+      if (!isDocumentToolName(outcome.toolName)) return;
+      if (!isRecoveryActivatingFailure(outcome.diagnostic.code)) return;
+      if (isRecoveryActive(state.progress)) return;
+      const recovery = activateRecovery(state.progress, {
+        failureCode: outcome.diagnostic.code,
+        ...(outcome.diagnostic.reasonCode !== undefined
+          ? { reasonCode: outcome.diagnostic.reasonCode }
+          : {}),
+        failedToolName: outcome.toolName,
+        failedCallSignature: toolCallSignature(
+          context.toolCall.name,
+          context.toolCall.input,
+        ),
+        versionId: state.primary?.versionId ?? null,
+      });
+      emitProgressEvent(context.events, {
+        runId: context.runId,
+        classification: "RECOVERY_ACTIVATED",
+        document: state.primary,
+        failedTool: recovery.failedToolName,
+        recoveryClass: recovery.recoveryClass,
+        failureCode: recovery.failureCode,
+        ledger: state.progress,
+      });
     },
     async finalize(context) {
       if (!pendingMutations) return context.toolOutcomes;
@@ -385,6 +438,86 @@ function createDocumentToolTurnLifecycle(
     },
     abandon() { pendingMutations?.abandonPendingFormatting?.(); },
   };
+}
+
+function maybeSkipRecoveryMutation(
+  state: DocumentRunState,
+  context: {
+    readonly runId: string;
+    readonly events: AgentEventSink;
+    readonly toolName: string;
+    readonly toolCall: { readonly name: string; readonly input?: unknown };
+  },
+): ToolCallSkip | undefined {
+  const recovery = state.progress.recovery;
+  if (!recovery?.active) return undefined;
+  if (!isDocumentMutationToolName(context.toolName)) return undefined;
+
+  const signature = toolCallSignature(
+    context.toolCall.name,
+    context.toolCall.input,
+  );
+  if (signature === recovery.failedCallSignature) {
+    recovery.failedStrategyBlocked = true;
+    const output = buildRecoveryRepeatBlockedOutput(recovery.failureCode);
+    emitProgressEvent(context.events, {
+      runId: context.runId,
+      classification: "RECOVERY_REPEAT_BLOCKED",
+      document: state.primary,
+      failedTool: recovery.failedToolName,
+      recoveryClass: recovery.recoveryClass,
+      failureCode: recovery.failureCode,
+      ledger: state.progress,
+    });
+    return {
+      skip: true,
+      summary: output.message,
+      output,
+    };
+  }
+
+  // Same-response speculative writes generated before the failure was known.
+  // Also covers later turns' non-exact mutations (allowed) — only block exact
+  // retry above. Sibling cascade uses recovery activated mid-batch: any later
+  // mutation in the same response after activation should defer.
+  // ponytail: same-response barrier = recovery activated this turn before this call.
+  if (recovery.activatedTurn === state.progress.turnIndex) {
+    const output = buildRecoveryDeferredOutput(recovery.failureCode);
+    emitProgressEvent(context.events, {
+      runId: context.runId,
+      classification: "RECOVERY_DEFERRED",
+      document: state.primary,
+      failedTool: recovery.failedToolName,
+      recoveryClass: recovery.recoveryClass,
+      failureCode: recovery.failureCode,
+      ledger: state.progress,
+    });
+    return {
+      skip: true,
+      summary: output.message,
+      output,
+    };
+  }
+
+  return undefined;
+}
+
+function isDocumentToolName(name: string): boolean {
+  return (
+    name.startsWith("document.") ||
+    name.startsWith("slides.") ||
+    name.startsWith("workbook.")
+  );
+}
+
+function isDocumentMutationToolName(name: string): boolean {
+  if (name === CREATE_BLANK_TOOL) return true;
+  if (!isDocumentToolName(name)) return false;
+  return (
+    name !== "document.inspect" &&
+    name !== "document.find" &&
+    name !== "document.capabilities"
+  );
 }
 
 function maybeSkipRedundantInspect(
@@ -441,6 +574,7 @@ export function createDocumentAgentRunnerPolicyOptions(state?: DocumentRunState)
         state?.primary,
         state?.handles,
         state?.progress.pendingStagnationGuidance,
+        state?.progress.recovery?.pendingGuidance,
       ),
     shouldTerminalizeToolBatch: shouldTerminalizeDocumentToolBatch,
     getModelTimeoutRetryMessage: getDocumentModelTimeoutRetryMessage,
@@ -570,6 +704,7 @@ function selectToolsForModel(
     if (family) families.add(family);
     if (outcome.status === "failed") families.add("read");
   }
+  if (isRecoveryActive(state.progress)) families.add("read");
   if (workingStateShowsTables(state.working?.inspection)) families.add("tables");
   const narrowed = defs.filter((tool) => {
     const family = DOCUMENT_TOOL_FAMILIES[tool.name];

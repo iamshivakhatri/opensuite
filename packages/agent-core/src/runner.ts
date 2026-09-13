@@ -88,6 +88,15 @@ export interface ToolTurnLifecycle {
       readonly toolCall: ModelToolCall;
     },
   ): Promise<void | ToolCallDeferral | ToolCallSkip> | void | ToolCallDeferral | ToolCallSkip;
+  /** Called after each tool outcome is produced (including skips); domain may update run policy. */
+  afterTool?(
+    context: ToolTurnLifecycleContext & {
+      readonly toolCallId: string;
+      readonly toolName: string;
+      readonly toolCall: ModelToolCall;
+      readonly outcome: ToolOutcome;
+    },
+  ): Promise<void> | void;
   finalize(context: ToolBatchContext & Omit<ToolTurnLifecycleContext, "toolCalls">): Promise<readonly ToolOutcome[]> | readonly ToolOutcome[];
   abandon?(context: ToolTurnLifecycleContext): Promise<void> | void;
 }
@@ -768,6 +777,34 @@ export class AgentRunner {
   }
 
   private async executeOneToolCall(
+    call: ModelToolCall,
+    request: AgentRequest,
+    signal: AbortSignal,
+    toolFailureCounts: Map<string, number>,
+    activeTools: ToolRegistry,
+    infrastructureFailures: Diagnostic[],
+  ): Promise<ToolOutcome> {
+    const outcome = await this.runOneToolCall(
+      call,
+      request,
+      signal,
+      toolFailureCounts,
+      activeTools,
+      infrastructureFailures,
+    );
+    await this.toolTurnLifecycle?.afterTool?.({
+      runId: request.runId,
+      toolCalls: [call],
+      events: this.events,
+      toolCallId: call.id,
+      toolName: call.name,
+      toolCall: call,
+      outcome,
+    });
+    return outcome;
+  }
+
+  private async runOneToolCall(
     call: ModelToolCall,
     request: AgentRequest,
     signal: AbortSignal,

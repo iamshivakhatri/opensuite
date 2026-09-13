@@ -178,7 +178,12 @@ export type AgentEvent =
         | "STATE_PROGRESS"
         | "KNOWLEDGE_PROGRESS"
         | "REDUNDANT_READ"
-        | "FAILURE";
+        | "FAILURE"
+        | "RECOVERY_ACTIVATED"
+        | "RECOVERY_DEFERRED"
+        | "RECOVERY_REPEAT_BLOCKED"
+        | "RECOVERY_EVIDENCE"
+        | "RECOVERY_CLEARED";
       readonly documentId?: string;
       readonly versionId?: string;
       readonly readSignature?: string;
@@ -191,6 +196,11 @@ export type AgentEvent =
         readonly hasMore?: boolean;
       };
       readonly nextOffset?: number;
+      readonly failedTool?: string;
+      readonly recoveryClass?: string;
+      readonly failureCode?: string;
+      readonly recoveryActive?: boolean;
+      readonly recoveryEvidenceObtained?: boolean;
       readonly turnsSinceStateProgress?: number | null;
       readonly turnsSinceKnowledgeProgress?: number | null;
       readonly redundantReadCount?: number;
