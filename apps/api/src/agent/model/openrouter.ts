@@ -1,4 +1,5 @@
 import {
+  AgentCoreError,
   type AgentModel,
   type ModelMessage,
   type ModelRequest,
@@ -150,7 +151,6 @@ export function createOpenRouterAgentModel(
 
       const system = resolveAgentSystemPrompt(request, systemOverride);
       const startedAt = Date.now();
-      let timeToFirstTokenMs: number | undefined;
       // Limitation: ModelRequest has no runId/turnIndex — correlate via MODEL_START chronology.
       const corr = { model: options.model };
 
@@ -174,220 +174,325 @@ export function createOpenRouterAgentModel(
         ? { signal: request.signal }
         : undefined;
 
-      // TEMP: agent lifecycle diagnosis
-      agentDebugLifecycle("OPENROUTER_REQUEST_START", {
-        ...corr,
-        stream: Boolean(request.onTextDelta),
-        toolCount: request.tools.length,
-        messageCount: request.messages.length,
-        abort: request.signal?.aborted ?? false,
-      });
       watchAbortSignal(request.signal, "provider-request", corr);
 
-      try {
-        if (request.onTextDelta) {
-          const stream = (await options.client.chat.completions.create(
-            {
-              ...baseParams,
-              stream: true,
-              stream_options: { include_usage: true },
-            },
-            callOptions,
-          )) as AsyncIterable<OpenAIChatCompletionChunk>;
+      for (let attempt = 1; attempt <= 2; attempt += 1) {
+        const attemptCorr = { ...corr, attempt };
+        let timeToFirstTokenMs: number | undefined;
+        /** True once a user-visible assistant text delta was forwarded this attempt. */
+        let hasEmittedVisibleText = false;
+        // TEMP: agent lifecycle diagnosis
+        agentDebugLifecycle("OPENROUTER_REQUEST_START", {
+          ...attemptCorr,
+          stream: Boolean(request.onTextDelta),
+          toolCount: request.tools.length,
+          messageCount: request.messages.length,
+          abort: request.signal?.aborted ?? false,
+        });
 
-          // TEMP: agent lifecycle diagnosis — HTTP accepted + stream body opened
+        try {
+          if (request.onTextDelta) {
+            const stream = (await options.client.chat.completions.create(
+              {
+                ...baseParams,
+                stream: true,
+                stream_options: { include_usage: true },
+              },
+              callOptions,
+            )) as AsyncIterable<OpenAIChatCompletionChunk>;
+
+            // TEMP: agent lifecycle diagnosis — HTTP accepted + stream body opened
+            agentDebugLifecycle("OPENROUTER_HTTP", {
+              ...attemptCorr,
+              status: "ok",
+              elapsedMs: Date.now() - startedAt,
+              mode: "stream",
+            });
+            agentDebugLifecycle("OPENROUTER_STREAM_START", {
+              ...attemptCorr,
+              elapsedMs: Date.now() - startedAt,
+            });
+
+            let content = "";
+            let finishReason: string | null | undefined;
+            let streamUsage: OpenAIChatCompletion["usage"] | undefined;
+            const toolAcc = new Map<
+              number,
+              { id: string; name: string; arguments: string }
+            >();
+            let sawFirstChunk = false;
+
+            try {
+              for await (const chunk of stream) {
+                if (request.signal?.aborted) {
+                  agentDebugLifecycle("OPENROUTER_REQUEST_ABORTED", {
+                    ...attemptCorr,
+                    source: "mid-stream",
+                    elapsedMs: Date.now() - startedAt,
+                    sawFirstChunk,
+                  });
+                  throw cancelledError();
+                }
+                if (!sawFirstChunk) {
+                  sawFirstChunk = true;
+                  timeToFirstTokenMs = Date.now() - startedAt;
+                  agentDebugLifecycle("OPENROUTER_FIRST_CHUNK", {
+                    ...attemptCorr,
+                    ttftMs: timeToFirstTokenMs,
+                  });
+                }
+                if (chunk.usage) {
+                  streamUsage = chunk.usage;
+                }
+                const choice = chunk.choices[0];
+                if (choice?.finish_reason) {
+                  finishReason = choice.finish_reason;
+                }
+                const delta = choice?.delta;
+                if (!delta) continue;
+
+                if (
+                  typeof delta.content === "string" &&
+                  delta.content.length > 0
+                ) {
+                  if (timeToFirstTokenMs === undefined) {
+                    timeToFirstTokenMs = Date.now() - startedAt;
+                  }
+                  content += delta.content;
+                  hasEmittedVisibleText = true;
+                  await request.onTextDelta(delta.content);
+                }
+
+                for (const toolDelta of delta.tool_calls ?? []) {
+                  if (timeToFirstTokenMs === undefined) {
+                    timeToFirstTokenMs = Date.now() - startedAt;
+                  }
+                  const index = toolDelta.index ?? 0;
+                  const current = toolAcc.get(index) ?? {
+                    id: "",
+                    name: "",
+                    arguments: "",
+                  };
+                  if (toolDelta.id) {
+                    current.id = toolDelta.id;
+                  }
+                  if (toolDelta.function?.name) {
+                    current.name += toolDelta.function.name;
+                  }
+                  if (toolDelta.function?.arguments) {
+                    current.arguments += toolDelta.function.arguments;
+                  }
+                  toolAcc.set(index, current);
+                }
+              }
+            } catch (error) {
+              // Log only — outer catch still owns abort/normalize behavior.
+              if (request.signal?.aborted || isAbortLike(error)) {
+                agentDebugLifecycle("OPENROUTER_STREAM_ERROR", {
+                  ...attemptCorr,
+                  kind: "abort",
+                  elapsedMs: Date.now() - startedAt,
+                  ...summarizeDebugError(error),
+                });
+              } else {
+                agentDebugLifecycle("OPENROUTER_STREAM_ERROR", {
+                  ...attemptCorr,
+                  kind: "throw",
+                  elapsedMs: Date.now() - startedAt,
+                  ...summarizeDebugError(error),
+                });
+              }
+              throw error;
+            }
+
+            // Stream may end quietly when AbortSignal fires — treat as cancel so
+            // AgentRunner timeouts fail the run instead of "completing" empty.
+            if (request.signal?.aborted) {
+              agentDebugLifecycle("OPENROUTER_REQUEST_ABORTED", {
+                ...attemptCorr,
+                source: "post-stream",
+                elapsedMs: Date.now() - startedAt,
+                sawFirstChunk,
+              });
+              throw cancelledError();
+            }
+
+            agentDebugLifecycle("OPENROUTER_STREAM_DONE", {
+              ...attemptCorr,
+              elapsedMs: Date.now() - startedAt,
+              ttftMs: timeToFirstTokenMs,
+              toolCalls: toolAcc.size,
+              contentChars: content.length,
+              finishReason: finishReason ?? null,
+            });
+
+            const toolCalls: ModelToolCall[] = [...toolAcc.entries()]
+              .sort((a, b) => a[0] - b[0])
+              .map(([, call]) => ({
+                id: call.id || `tool_${call.name || "call"}`,
+                name: call.name,
+                input: parseJsonObject(call.arguments),
+              }))
+              .filter((call) => call.name.length > 0);
+
+            const response = withOpenRouterMeta(
+              {
+                content: content.trim(),
+                toolCalls,
+              },
+              options.model,
+              startedAt,
+              timeToFirstTokenMs,
+              {
+                choices: [{ finish_reason: finishReason ?? null }],
+                ...(streamUsage ? { usage: streamUsage } : {}),
+              },
+            );
+            if (attempt > 1) {
+              agentDebugLifecycle("PROVIDER_RETRY_SUCCESS", attemptCorr);
+            }
+            return response;
+          }
+
+          const completion = (await options.client.chat.completions.create(
+            { ...baseParams, stream: false },
+            callOptions,
+          )) as OpenAIChatCompletion;
           agentDebugLifecycle("OPENROUTER_HTTP", {
-            ...corr,
+            ...attemptCorr,
             status: "ok",
             elapsedMs: Date.now() - startedAt,
-            mode: "stream",
+            mode: "non-stream",
           });
-          agentDebugLifecycle("OPENROUTER_STREAM_START", {
-            ...corr,
-            elapsedMs: Date.now() - startedAt,
-          });
-
-          let content = "";
-          let finishReason: string | null | undefined;
-          let streamUsage: OpenAIChatCompletion["usage"] | undefined;
-          const toolAcc = new Map<
-            number,
-            { id: string; name: string; arguments: string }
-          >();
-          let sawFirstChunk = false;
-
-          try {
-            for await (const chunk of stream) {
-              if (request.signal?.aborted) {
-                agentDebugLifecycle("OPENROUTER_REQUEST_ABORTED", {
-                  ...corr,
-                  source: "mid-stream",
-                  elapsedMs: Date.now() - startedAt,
-                  sawFirstChunk,
-                });
-                throw cancelledError();
-              }
-              if (!sawFirstChunk) {
-                sawFirstChunk = true;
-                timeToFirstTokenMs = Date.now() - startedAt;
-                agentDebugLifecycle("OPENROUTER_FIRST_CHUNK", {
-                  ...corr,
-                  ttftMs: timeToFirstTokenMs,
-                });
-              }
-              if (chunk.usage) {
-                streamUsage = chunk.usage;
-              }
-              const choice = chunk.choices[0];
-              if (choice?.finish_reason) {
-                finishReason = choice.finish_reason;
-              }
-              const delta = choice?.delta;
-              if (!delta) continue;
-
-              if (typeof delta.content === "string" && delta.content.length > 0) {
-                if (timeToFirstTokenMs === undefined) {
-                  timeToFirstTokenMs = Date.now() - startedAt;
-                }
-                content += delta.content;
-                await request.onTextDelta(delta.content);
-              }
-
-              for (const toolDelta of delta.tool_calls ?? []) {
-                if (timeToFirstTokenMs === undefined) {
-                  timeToFirstTokenMs = Date.now() - startedAt;
-                }
-                const index = toolDelta.index ?? 0;
-                const current = toolAcc.get(index) ?? {
-                  id: "",
-                  name: "",
-                  arguments: "",
-                };
-                if (toolDelta.id) {
-                  current.id = toolDelta.id;
-                }
-                if (toolDelta.function?.name) {
-                  current.name += toolDelta.function.name;
-                }
-                if (toolDelta.function?.arguments) {
-                  current.arguments += toolDelta.function.arguments;
-                }
-                toolAcc.set(index, current);
-              }
-            }
-          } catch (error) {
-            // Log only — outer catch still owns abort/normalize behavior.
-            if (request.signal?.aborted || isAbortLike(error)) {
-              agentDebugLifecycle("OPENROUTER_STREAM_ERROR", {
-                ...corr,
-                kind: "abort",
-                elapsedMs: Date.now() - startedAt,
-                ...summarizeDebugError(error),
-              });
-            } else {
-              agentDebugLifecycle("OPENROUTER_STREAM_ERROR", {
-                ...corr,
-                kind: "throw",
-                elapsedMs: Date.now() - startedAt,
-                ...summarizeDebugError(error),
-              });
-            }
-            throw error;
-          }
-
-          // Stream may end quietly when AbortSignal fires — treat as cancel so
-          // AgentRunner timeouts fail the run instead of "completing" empty.
-          if (request.signal?.aborted) {
-            agentDebugLifecycle("OPENROUTER_REQUEST_ABORTED", {
-              ...corr,
-              source: "post-stream",
-              elapsedMs: Date.now() - startedAt,
-              sawFirstChunk,
-            });
-            throw cancelledError();
-          }
-
-          agentDebugLifecycle("OPENROUTER_STREAM_DONE", {
-            ...corr,
-            elapsedMs: Date.now() - startedAt,
-            ttftMs: timeToFirstTokenMs,
-            toolCalls: toolAcc.size,
-            contentChars: content.length,
-            finishReason: finishReason ?? null,
-          });
-
-          const toolCalls: ModelToolCall[] = [...toolAcc.entries()]
-            .sort((a, b) => a[0] - b[0])
-            .map(([, call]) => ({
-              id: call.id || `tool_${call.name || "call"}`,
-              name: call.name,
-              input: parseJsonObject(call.arguments),
-            }))
-            .filter((call) => call.name.length > 0);
-
-          return withOpenRouterMeta(
-            {
-              content: content.trim(),
-              toolCalls,
-            },
+          const response = withOpenRouterMeta(
+            fromOpenAIChatCompletion(completion),
             options.model,
             startedAt,
             timeToFirstTokenMs,
-            {
-              choices: [{ finish_reason: finishReason ?? null }],
-              ...(streamUsage ? { usage: streamUsage } : {}),
-            },
+            completion,
           );
-        }
-
-        const completion = (await options.client.chat.completions.create(
-          { ...baseParams, stream: false },
-          callOptions,
-        )) as OpenAIChatCompletion;
-        agentDebugLifecycle("OPENROUTER_HTTP", {
-          ...corr,
-          status: "ok",
-          elapsedMs: Date.now() - startedAt,
-          mode: "non-stream",
-        });
-        return withOpenRouterMeta(
-          fromOpenAIChatCompletion(completion),
-          options.model,
-          startedAt,
-          timeToFirstTokenMs,
-          completion,
-        );
-      } catch (error) {
-        if (request.signal?.aborted || isAbortLike(error)) {
-          agentDebugLifecycle("OPENROUTER_REQUEST_ABORTED", {
-            ...corr,
-            source: "outer-catch",
+          if (attempt > 1) {
+            agentDebugLifecycle("PROVIDER_RETRY_SUCCESS", attemptCorr);
+          }
+          return response;
+        } catch (error) {
+          if (request.signal?.aborted || isAbortLike(error)) {
+            agentDebugLifecycle("OPENROUTER_REQUEST_ABORTED", {
+              ...attemptCorr,
+              source: "outer-catch",
+              elapsedMs: Date.now() - startedAt,
+              ...summarizeDebugError(error),
+            });
+            throw cancelledError(error);
+          }
+          const retryDelayMs = transientRetryDelayMs(error);
+          // Retry only while no user-visible assistant text escaped this attempt.
+          if (
+            retryDelayMs !== undefined &&
+            attempt === 1 &&
+            !hasEmittedVisibleText
+          ) {
+            agentDebugLifecycle("PROVIDER_RETRY_SCHEDULED", {
+              ...attemptCorr,
+              delayMs: retryDelayMs,
+              ...providerFailureFields(error),
+            });
+            await waitForRetryDelay(request.signal, retryDelayMs);
+            agentDebugLifecycle("PROVIDER_RETRY_START", {
+              ...corr,
+              attempt: attempt + 1,
+            });
+            continue;
+          }
+          if (retryDelayMs !== undefined) {
+            agentDebugLifecycle("PROVIDER_RETRY_FAILED", {
+              ...attemptCorr,
+              ...providerFailureFields(error),
+            });
+          }
+          const status =
+            error && typeof error === "object" && "status" in error
+              ? Number((error as { status?: unknown }).status)
+              : undefined;
+          if (status !== undefined && (status < 200 || status >= 300)) {
+            agentDebugLifecycle("OPENROUTER_HTTP", {
+              ...attemptCorr,
+              status,
+              elapsedMs: Date.now() - startedAt,
+              mode: "error",
+            });
+          }
+          agentDebugLifecycle("OPENROUTER_ADAPTER_ERROR", {
+            ...attemptCorr,
             elapsedMs: Date.now() - startedAt,
             ...summarizeDebugError(error),
           });
-          throw cancelledError(error);
+          throw normalizeProviderError(error, providerLabel);
         }
-        const status =
-          error && typeof error === "object" && "status" in error
-            ? Number((error as { status?: unknown }).status)
-            : undefined;
-        if (status !== undefined && (status < 200 || status >= 300)) {
-          agentDebugLifecycle("OPENROUTER_HTTP", {
-            ...corr,
-            status,
-            elapsedMs: Date.now() - startedAt,
-            mode: "error",
-          });
-        }
-        agentDebugLifecycle("OPENROUTER_ADAPTER_ERROR", {
-          ...corr,
-          elapsedMs: Date.now() - startedAt,
-          ...summarizeDebugError(error),
-        });
-        throw normalizeProviderError(error, providerLabel);
       }
+
+      throw new Error("OpenRouter retry loop ended unexpectedly");
     },
   };
+}
+
+const RETRY_DELAY_MS = 500;
+const MAX_RETRY_AFTER_MS = 1_500;
+
+function transientRetryDelayMs(error: unknown): number | undefined {
+  if (!error || typeof error !== "object" || error instanceof AgentCoreError) {
+    return undefined;
+  }
+  const status = "status" in error ? Number(error.status) : undefined;
+  if (status === 429) {
+    return retryAfterMs(error);
+  }
+  if (status === 408 || (status !== undefined && status >= 500 && status < 600)) {
+    return RETRY_DELAY_MS;
+  }
+  const code = "code" in error ? String(error.code) : "";
+  return /^(ECONNRESET|ECONNREFUSED|ETIMEDOUT|EPIPE|UND_ERR_CONNECT_TIMEOUT)$/.test(code)
+    ? RETRY_DELAY_MS
+    : undefined;
+}
+
+function retryAfterMs(error: object): number | undefined {
+  const headers = "headers" in error ? error.headers : undefined;
+  const value = headers instanceof Headers
+    ? headers.get("retry-after")
+    : headers && typeof headers === "object" && "retry-after" in headers
+      ? String(headers["retry-after"])
+      : undefined;
+  if (!value || !/^\d+(?:\.\d+)?$/.test(value)) return undefined;
+  const delayMs = Math.round(Number(value) * 1_000);
+  return delayMs >= 0 && delayMs <= MAX_RETRY_AFTER_MS ? delayMs : undefined;
+}
+
+function providerFailureFields(error: unknown): Record<string, unknown> {
+  if (!error || typeof error !== "object") return {};
+  return {
+    ...("status" in error ? { status: String(error.status) } : {}),
+    ...("code" in error ? { code: String(error.code) } : {}),
+  };
+}
+
+async function waitForRetryDelay(
+  signal: AbortSignal | undefined,
+  delayMs: number,
+): Promise<void> {
+  if (signal?.aborted) throw cancelledError();
+  await new Promise<void>((resolve, reject) => {
+    const timer = setTimeout(done, delayMs);
+    const onAbort = () => {
+      clearTimeout(timer);
+      reject(cancelledError());
+    };
+    function done(): void {
+      signal?.removeEventListener("abort", onAbort);
+      resolve();
+    }
+    signal?.addEventListener("abort", onAbort, { once: true });
+  });
 }
 
 export function toOpenAIChatTool(tool: ModelToolDefinition): OpenAIChatTool {

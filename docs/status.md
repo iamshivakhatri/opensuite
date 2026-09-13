@@ -14,10 +14,9 @@ _Read this before starting any work. Keep it a concise current-state handoff, no
 
 ## Just Completed
 
+* **v7.7 streaming regression fix** — OpenRouter forwards assistant text deltas live again; retry only while `hasEmittedVisibleText` is false for that attempt (tool fragments remain discardable).
 * **TEMP agent lifecycle debug** — `AGENT_DEBUG_LIFECYCLE=1` logs `[agent-debug]` turn/OpenRouter/abort/SSE/status (remove after diagnosis).
-* **Protocol hardening v7.4:** same-turn calls with handles made stale by an earlier version advance are deferred as a clean barrier; semantic selectors and formatting transactions continue normally.
-* **Protocol hardening v7.5:** model-facing context hides registry-backed handles from older document versions while preserving semantic inspection knowledge and canonical audit history.
-* **Protocol hardening v7.6:** durable failed-run status and deferred terminal SSE use the final AgentRunner diagnostic, while earlier recovered tool failures remain in step history.
+* **Protocol hardening v7.4–v7.7** — stale-handle barrier; version-aware context; terminal attribution; one safe pre-visible-text OpenRouter retry.
 
 ## Current Decisions
 
@@ -38,7 +37,7 @@ _Read this before starting any work. Keep it a concise current-state handoff, no
 | web typecheck | **Pass** |
 | web tests | **Pass** (85) prior |
 | agent-core tests/typecheck | **Pass** (223) |
-| api tests (full) | **Pass** (183; 23 skipped) |
+| api tests (full) | **Pass** (189; 23 skipped) |
 | Provider benchmark | **Partially complete** |
 | Visual `/dev/agent-panel-ux` | **Reviewed** prior |
 | Live signed-in agent run | **Blocked** (auth 403) prior |

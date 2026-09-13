@@ -1,7 +1,14 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { AgentCoreError, transformContext } from "@opensuite/agent-core";
+import {
+  AgentCoreError,
+  AgentRunner,
+  ToolRegistry,
+  createFakeTool,
+  createRecordingEventSink,
+  transformContext,
+} from "@opensuite/agent-core";
 
 import {
   createOpenRouterAgentModel,
@@ -146,19 +153,23 @@ test("fromOpenAIChatCompletion extracts text and tool calls", () => {
   assert.equal(response.toolCalls.length, 2);
 });
 
-test("OpenRouter adapter: streams text deltas", async () => {
+test("OpenRouter adapter: streams text deltas live before stream completes", async () => {
   const deltas: string[] = [];
+  const timeline: string[] = [];
+  let providerCalls = 0;
   const model = createOpenRouterAgentModel({
     model: "meta-llama/test",
     client: {
       chat: {
         completions: {
           async create(params) {
+            providerCalls += 1;
             assert.equal(params.stream, true);
             async function* chunks() {
-              yield { choices: [{ delta: { content: "Hel" } }] };
-              yield { choices: [{ delta: { content: "lo" } }] };
-              yield { choices: [{ delta: {} }] };
+              yield { choices: [{ delta: { content: "Hello " } }] };
+              timeline.push("after-hello-yield");
+              yield { choices: [{ delta: { content: "world" } }] };
+              timeline.push("stream-complete");
             }
             return chunks();
           },
@@ -171,15 +182,270 @@ test("OpenRouter adapter: streams text deltas", async () => {
     messages: [{ role: "user", content: "Hi" }],
     tools: [],
     onTextDelta: (delta) => {
+      timeline.push(`delta:${delta}`);
       deltas.push(delta);
     },
   });
 
-  assert.deepEqual(deltas, ["Hel", "lo"]);
-  assert.equal(result.content, "Hello");
+  assert.deepEqual(deltas, ["Hello ", "world"]);
+  assert.deepEqual(timeline, [
+    "delta:Hello ",
+    "after-hello-yield",
+    "delta:world",
+    "stream-complete",
+  ]);
+  assert.equal(result.content, "Hello world");
   assert.deepEqual(result.toolCalls, []);
+  assert.equal(providerCalls, 1);
   assert.equal(result.meta?.provider, "openrouter");
   assert.equal(result.meta?.modelId, "meta-llama/test");
+});
+
+test("OpenRouter adapter: retries transient failure before visible text (tool fragments only)", async () => {
+  let providerAttempts = 0;
+  let toolExecutions = 0;
+  const model = createOpenRouterAgentModel({
+    model: "meta-llama/test",
+    client: {
+      chat: {
+        completions: {
+          async create() {
+            providerAttempts += 1;
+            if (providerAttempts === 1) {
+              async function* failedStream() {
+                // Partial tool-call JSON only — never user-visible.
+                yield {
+                  choices: [{
+                    delta: {
+                      tool_calls: [{
+                        index: 0,
+                        id: "partial-1",
+                        function: { name: "widgets.write", arguments: '{"x"' },
+                      }],
+                    },
+                  }],
+                };
+                throw Object.assign(new Error("upstream failed"), { status: 520 });
+              }
+              return failedStream();
+            }
+            async function* recoveredStream() {
+              yield { choices: [{ delta: { content: "Done — " } }] };
+              yield {
+                choices: [{
+                  delta: {
+                    content: "saved",
+                    tool_calls: [{
+                      index: 0,
+                      id: "write-1",
+                      function: { name: "widgets.write", arguments: "{}" },
+                    }],
+                  },
+                }],
+              };
+              yield { choices: [{ finish_reason: "tool_calls" }] };
+            }
+            return recoveredStream();
+          },
+        },
+      },
+    },
+  });
+  const events = createRecordingEventSink();
+  const runner = new AgentRunner({
+    model,
+    tools: ToolRegistry.create([
+      createFakeTool({
+        name: "widgets.write",
+        effect: "write",
+        async execute() {
+          toolExecutions += 1;
+          return { summary: "saved" };
+        },
+      }),
+    ]),
+    shouldTerminalizeToolBatch: () => true,
+    events,
+  });
+
+  const result = await runner.run({
+    instruction: "Save it",
+    threadId: "retry-thread",
+    runId: "retry-run",
+  });
+
+  assert.equal(providerAttempts, 2);
+  assert.equal(toolExecutions, 1);
+  assert.equal(result.status, "completed");
+  assert.equal(result.toolOutcomes.length, 1);
+  assert.equal(result.toolOutcomes[0]?.status, "succeeded");
+  assert.equal(result.diagnostics.length, 0);
+  assert.equal(
+    events.events.filter((event) => event.type === "message.completed").length,
+    1,
+  );
+  assert.deepEqual(
+    events.events
+      .filter((event) => event.type === "message.delta")
+      .map((event) => event.delta),
+    ["Done — ", "saved"],
+  );
+});
+
+test("OpenRouter adapter: does not retry after visible text was streamed", async () => {
+  let providerAttempts = 0;
+  const deltas: string[] = [];
+  const model = createOpenRouterAgentModel({
+    model: "meta-llama/test",
+    client: {
+      chat: {
+        completions: {
+          async create() {
+            providerAttempts += 1;
+            async function* failedStream() {
+              yield { choices: [{ delta: { content: "Partial answer" } }] };
+              throw Object.assign(new Error("upstream failed"), { status: 520 });
+            }
+            return failedStream();
+          },
+        },
+      },
+    },
+  });
+
+  await assert.rejects(
+    () =>
+      model.complete({
+        messages: [{ role: "user", content: "Hi" }],
+        tools: [],
+        onTextDelta: (delta) => {
+          deltas.push(delta);
+        },
+      }),
+    (error: unknown) =>
+      error instanceof AgentCoreError &&
+      error.code === "MODEL_FAILURE" &&
+      error.message === "OpenRouter service unavailable",
+  );
+  assert.equal(providerAttempts, 1);
+  assert.deepEqual(deltas, ["Partial answer"]);
+});
+
+test("OpenRouter adapter: tool-call fragments are not emitted as text deltas", async () => {
+  const deltas: string[] = [];
+  const model = createOpenRouterAgentModel({
+    model: "meta-llama/test",
+    client: {
+      chat: {
+        completions: {
+          async create() {
+            async function* chunks() {
+              yield {
+                choices: [{
+                  delta: {
+                    tool_calls: [{
+                      index: 0,
+                      id: "call_1",
+                      function: {
+                        name: "document.inspect",
+                        arguments: '{"q":"board"}',
+                      },
+                    }],
+                  },
+                }],
+              };
+              yield { choices: [{ finish_reason: "tool_calls" }] };
+            }
+            return chunks();
+          },
+        },
+      },
+    },
+  });
+
+  const result = await model.complete({
+    messages: [{ role: "user", content: "Inspect" }],
+    tools: [
+      {
+        name: "document.inspect",
+        description: "Inspect",
+        inputSchema: { type: "object" },
+      },
+    ],
+    onTextDelta: (delta) => {
+      deltas.push(delta);
+    },
+  });
+
+  assert.deepEqual(deltas, []);
+  assert.equal(result.content, "");
+  assert.equal(result.toolCalls.length, 1);
+  assert.equal(result.toolCalls[0]?.id, "call_1");
+  assert.equal(result.toolCalls[0]?.name, "document.inspect");
+  assert.deepEqual(result.toolCalls[0]?.input, { q: "board" });
+});
+
+test("OpenRouter adapter: stops after two transient provider failures", async () => {
+  let providerAttempts = 0;
+  const model = createOpenRouterAgentModel({
+    model: "meta-llama/test",
+    client: mockClient(async () => {
+      providerAttempts += 1;
+      throw { status: 520, message: "upstream failed" };
+    }),
+  });
+
+  await assert.rejects(
+    () => model.complete({ messages: [{ role: "user", content: "Hi" }], tools: [] }),
+    (error: unknown) =>
+      error instanceof AgentCoreError &&
+      error.code === "MODEL_FAILURE" &&
+      error.message === "OpenRouter service unavailable",
+  );
+  assert.equal(providerAttempts, 2);
+});
+
+test("OpenRouter adapter: does not retry non-retryable provider errors", async () => {
+  let providerAttempts = 0;
+  const model = createOpenRouterAgentModel({
+    model: "meta-llama/test",
+    client: mockClient(async () => {
+      providerAttempts += 1;
+      throw { status: 400, message: "invalid request" };
+    }),
+  });
+
+  await assert.rejects(
+    () => model.complete({ messages: [{ role: "user", content: "Hi" }], tools: [] }),
+    (error: unknown) =>
+      error instanceof AgentCoreError && error.code === "MODEL_FAILURE",
+  );
+  assert.equal(providerAttempts, 1);
+});
+
+test("OpenRouter adapter: cancellation during retry delay prevents attempt two", async () => {
+  const controller = new AbortController();
+  let providerAttempts = 0;
+  const model = createOpenRouterAgentModel({
+    model: "meta-llama/test",
+    client: mockClient(async () => {
+      providerAttempts += 1;
+      throw { status: 520, message: "upstream failed" };
+    }),
+  });
+  const pending = model.complete({
+    messages: [{ role: "user", content: "Hi" }],
+    tools: [],
+    signal: controller.signal,
+  });
+  setTimeout(() => controller.abort(), 10);
+
+  await assert.rejects(
+    () => pending,
+    (error: unknown) =>
+      error instanceof AgentCoreError && error.code === "CANCELLED",
+  );
+  assert.equal(providerAttempts, 1);
 });
 
 test("OpenRouter adapter: text-only response", async () => {

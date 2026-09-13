@@ -50,6 +50,10 @@ AgentRequest
   request preparation, timeout/abort mechanics, streaming message events,
   model metrics, and normalized model-turn results. `AgentRunner` retains the
   canonical transcript and outer model/tool loop.
+* The OpenRouter adapter retries one raw transient request failure (5xx/520,
+  408, selected connection failures, or bounded `Retry-After` 429) within the
+  same model-turn timeout signal. It buffers streaming deltas until a complete
+  response, so a failed attempt never reaches the runner or executes tools.
 
 OpenSuite document runs wire these via `createDocumentAgentRunnerOptions` /
 `createDocumentAgentRunnerPolicyOptions` (selector + per-tool context +
