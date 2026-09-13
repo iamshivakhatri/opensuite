@@ -127,6 +127,17 @@ function toLiveAgentEvent(
           ...(event.summary !== undefined ? { summary: event.summary } : {}),
         },
       };
+    case "tool.deferred":
+      return {
+        runId: event.runId,
+        type: event.type,
+        at: event.at,
+        data: {
+          toolCallId: event.toolCallId,
+          toolName: event.toolName,
+          summary: event.summary,
+        },
+      };
     case "tool.failed":
       return {
         runId: event.runId,

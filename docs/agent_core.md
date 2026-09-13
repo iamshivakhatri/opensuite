@@ -120,6 +120,12 @@ After a persisted mutation, the run advances its active `DocumentRef` N → N+1
 `executePersistedMutation` emits `document.version.advanced` for SSE/UI refresh.
 Raw `artifactBytes` alone is **not** tool success.
 
+If a later call in the same model response uses a handle registered for the
+turn's earlier version after a write advances it, OpenSuite defers that call
+and the remaining response calls without executing them. The next model turn
+receives the current document state. Semantic selectors and unflushed
+formatting transactions are unaffected; handles are never rebound.
+
 Write tools use `effect: "write"` and `executionMode: "sequential"`.
 Table/paragraph tools are gated on Rust capability ids.
 

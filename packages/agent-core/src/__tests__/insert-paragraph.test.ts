@@ -14,6 +14,8 @@ import {
   createDocumentAgentRunnerOptions,
   createDocumentInsertParagraphTool,
   createDocumentInspectTool,
+  createFakeAgentModel,
+  createRecordingEventSink,
   createFakeToolExecutionContext,
   createInMemoryDocumentMutationExecutor,
   createScriptedAgentModel,
@@ -241,4 +243,96 @@ test("stale body-block handle after insert is STALE_HANDLE", async () => {
     (error: unknown) =>
       error instanceof AgentCoreError && error.code === "STALE_HANDLE",
   );
+});
+
+test("same-turn stale structural handles defer without blocking the next model turn", async () => {
+  const seenVersions: string[] = [];
+  const modelRequests: unknown[] = [];
+  const runtime: DocumentRuntime = {
+    async capabilities() { return mutableDocumentCapabilities(); },
+    async inspect() {
+      return {
+        status: "success", format: "docx", capabilities: mutableDocumentCapabilities(), diagnostics: [],
+        focus: { kind: "body_blocks" },
+        payload: { format: "docx", summary: { title: null, unitKind: "page", unitCount: 1 }, bodyBlocks: [{ handle: "b0", kind: "paragraph", text: "Anchor" }] },
+      };
+    },
+    async execute(document) {
+      seenVersions.push(document.versionId);
+      return { status: "success", diagnostics: [], artifactBytes: new Uint8Array([1]) };
+    },
+  };
+  let turn = 0;
+  const events = createRecordingEventSink();
+  const mutations = {
+    ...createInMemoryDocumentMutationExecutor(runtime),
+    async flushPendingFormatting() { return { status: "noop" as const }; },
+  };
+  const runner = new AgentRunner({
+    model: createFakeAgentModel({
+      respond(request) {
+        modelRequests.push({ messages: request.messages });
+        turn += 1;
+        if (turn === 1) return toolCallResponse("", [{ id: "inspect", name: DOCUMENT_TOOL_NAMES.inspect, input: { focus: { kind: "body_blocks" } } }]);
+        if (turn === 2) return toolCallResponse("", [
+          { id: "first", name: DOCUMENT_TOOL_NAMES.insertParagraph, input: { text: "First", placement: { kind: "after", handle: "b0" } } },
+          { id: "stale", name: DOCUMENT_TOOL_NAMES.insertParagraph, input: { text: "Stale", placement: { kind: "after", handle: "b0" } } },
+          { id: "after-barrier", name: DOCUMENT_TOOL_NAMES.insertParagraph, input: { text: "Also deferred", placement: { kind: "end" } } },
+        ]);
+        if (turn === 3) return toolCallResponse("", [{ id: "semantic", name: DOCUMENT_TOOL_NAMES.insertParagraph, input: { text: "Current", placement: { kind: "end" } } }]);
+        return assistantOnlyResponse("Done.");
+      },
+    }),
+    ...createDocumentAgentRunnerOptions({
+      tools: ToolRegistry.create([]), documentToolCatalog: listDocumentToolDescriptors(), runtime, mutations, primaryDocument: docxRef,
+    }),
+    capabilities: mutableDocumentCapabilities(),
+    events,
+  });
+  const result = await runner.run({ instruction: "insert", threadId: "t1", runId: "run-barrier", primaryDocument: docxRef });
+  assert.equal(result.status, "completed");
+  assert.deepEqual(result.toolOutcomes.map((outcome) => outcome.status), ["succeeded", "succeeded", "deferred", "deferred", "succeeded"]);
+  assert.deepEqual(seenVersions, ["ver-1", "ver-1+1"]);
+  assert.equal(events.events.filter((event) => event.type === "tool.deferred").length, 2);
+  assert.equal(events.events.filter((event) => event.type === "tool.failed").length, 0);
+  const barrierRequest = modelRequests[2] as { readonly messages: readonly { readonly role: string; readonly toolCallId?: string; readonly status?: string }[] };
+  assert.deepEqual(
+    barrierRequest.messages.filter((message) => message.role === "tool").slice(-3).map((message) => [message.toolCallId, message.status]),
+    [["first", "succeeded"], ["stale", "skipped"], ["after-barrier", "skipped"]],
+  );
+});
+
+test("same-turn semantic targets run after a structural handle mutation", async () => {
+  const seenVersions: string[] = [];
+  const runtime: DocumentRuntime = {
+    async capabilities() { return mutableDocumentCapabilities(); },
+    async inspect() {
+      return {
+        status: "success", format: "docx", capabilities: mutableDocumentCapabilities(), diagnostics: [],
+        focus: { kind: "body_blocks" },
+        payload: { format: "docx", summary: { title: null, unitKind: "page", unitCount: 1 }, bodyBlocks: [{ handle: "b0", kind: "paragraph", text: "Anchor" }] },
+      };
+    },
+    async execute(document) {
+      seenVersions.push(document.versionId);
+      return { status: "success", diagnostics: [], artifactBytes: new Uint8Array([1]) };
+    },
+  };
+  const mutations = { ...createInMemoryDocumentMutationExecutor(runtime), async flushPendingFormatting() { return { status: "noop" as const }; } };
+  const runner = new AgentRunner({
+    model: createScriptedAgentModel([
+      toolCallResponse("", [{ id: "inspect", name: DOCUMENT_TOOL_NAMES.inspect, input: { focus: { kind: "body_blocks" } } }]),
+      toolCallResponse("", [
+        { id: "structural", name: DOCUMENT_TOOL_NAMES.insertParagraph, input: { text: "First", placement: { kind: "after", handle: "b0" } } },
+        { id: "semantic", name: DOCUMENT_TOOL_NAMES.deleteParagraph, input: { target: { text: "Known" } } },
+      ]),
+      assistantOnlyResponse("Done."),
+    ]),
+    ...createDocumentAgentRunnerOptions({ tools: ToolRegistry.create([]), documentToolCatalog: listDocumentToolDescriptors(), runtime, mutations, primaryDocument: docxRef }),
+    capabilities: mutableDocumentCapabilities(),
+  });
+  const result = await runner.run({ instruction: "edit", threadId: "t1", runId: "run-semantic", primaryDocument: docxRef });
+  assert.equal(result.status, "completed");
+  assert.deepEqual(result.toolOutcomes.map((outcome) => outcome.status), ["succeeded", "succeeded", "succeeded"]);
+  assert.deepEqual(seenVersions, ["ver-1", "ver-1+1"]);
 });

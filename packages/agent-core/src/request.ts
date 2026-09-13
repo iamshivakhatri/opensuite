@@ -63,6 +63,7 @@ export interface ToolOutcome {
     | "succeeded"
     | "failed"
     | "skipped"
+    | "deferred"
     | "awaiting_confirmation";
   readonly summary?: string;
   /** Structured tool output when status is succeeded (not persisted by agent-core). */

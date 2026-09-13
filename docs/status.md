@@ -14,7 +14,7 @@ _Read this before starting any work. Keep it a concise current-state handoff, no
 
 ## Just Completed
 
-* **Protocol hardening v7.3:** one bullet-list request can safely target separate direct-body runs in source order; decimal lists remain consecutive-only.
+* **Protocol hardening v7.4:** same-turn calls with handles made stale by an earlier version advance are deferred as a clean barrier; semantic selectors and formatting transactions continue normally.
 
 ## Current Decisions
 
@@ -34,7 +34,7 @@ _Read this before starting any work. Keep it a concise current-state handoff, no
 | db errors + package tests | **Pass** (17; 1 skipped live connect) |
 | web typecheck | **Pass** |
 | web tests | **Pass** (85) prior |
-| agent-core tests/typecheck | **Pass** (219) |
+| agent-core tests/typecheck | **Pass** (221) |
 | api tests (full) | **Pass** (183; 23 skipped) |
 | Provider benchmark | **Partially complete** |
 | Visual `/dev/agent-panel-ux` | **Reviewed** prior |

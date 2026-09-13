@@ -76,6 +76,15 @@ export type AgentEvent =
       readonly at: string;
     }
   | {
+      /** The call was not executed because an earlier same-turn dependency advanced state. */
+      readonly type: "tool.deferred";
+      readonly runId: string;
+      readonly toolCallId: string;
+      readonly toolName: string;
+      readonly summary: string;
+      readonly at: string;
+    }
+  | {
       readonly type: "confirmation.required";
       readonly runId: string;
       readonly toolCallId: string;

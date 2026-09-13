@@ -72,9 +72,14 @@ export interface ToolBatchContext {
 /** Domain-owned lifecycle around one assistant response's tool calls. */
 export interface ToolTurnLifecycle {
   begin(context: ToolTurnLifecycleContext): Promise<void> | void;
-  beforeTool?(context: ToolTurnLifecycleContext & { readonly toolCallId: string; readonly toolName: string }): Promise<void> | void;
+  beforeTool?(context: ToolTurnLifecycleContext & { readonly toolCallId: string; readonly toolName: string; readonly toolCall: ModelToolCall }): Promise<void | ToolCallDeferral> | void | ToolCallDeferral;
   finalize(context: ToolBatchContext & Omit<ToolTurnLifecycleContext, "toolCalls">): Promise<readonly ToolOutcome[]> | readonly ToolOutcome[];
   abandon?(context: ToolTurnLifecycleContext): Promise<void> | void;
+}
+
+/** Domain-owned reason to stop executing the remaining calls in this response. */
+export interface ToolCallDeferral {
+  readonly summary: string;
 }
 
 export interface ToolTurnLifecycleContext {
@@ -599,6 +604,12 @@ export class AgentRunner {
         activeTools,
         infrastructureFailures,
       );
+      if (outcomes[index]!.status === "deferred") {
+        for (let deferred = index + 1; deferred < toolCalls.length; deferred += 1) {
+          outcomes[deferred] = deferredToolOutcome(toolCalls[deferred]!);
+        }
+        break;
+      }
       index += 1;
     }
 
@@ -629,13 +640,17 @@ export class AgentRunner {
   ): Promise<ToolOutcome> {
     this.throwIfAborted(signal);
 
-    await this.toolTurnLifecycle?.beforeTool?.({
+    const deferral = await this.toolTurnLifecycle?.beforeTool?.({
       runId: request.runId,
       toolCalls: [call],
       events: this.events,
       toolCallId: call.id,
       toolName: call.name,
+      toolCall: call,
     });
+    if (deferral) {
+      return { ...deferredToolOutcome(call), summary: deferral.summary };
+    }
 
     const failureKey = toolFailureKey(call);
     const priorFailures = toolFailureCounts.get(failureKey) ?? 0;
@@ -884,6 +899,14 @@ export class AgentRunner {
     infrastructureFailures: Diagnostic[],
   ): Promise<void> {
     for (const outcome of outcomes) {
+      if (outcome.status === "deferred") {
+        await this.emit({
+          type: "tool.deferred", runId, toolCallId: outcome.toolCallId,
+          toolName: outcome.toolName, summary: outcome.summary ?? "Tool call deferred",
+          at: this.timestamp(),
+        });
+        continue;
+      }
       if (outcome.status !== "succeeded") {
         await this.emit({
           type: "tool.failed", runId, toolCallId: outcome.toolCallId,
@@ -912,6 +935,14 @@ export class AgentRunner {
     outcomes: readonly ToolOutcome[], runId: string,
   ): Promise<void> {
     for (const outcome of outcomes) {
+      if (outcome.status === "deferred") {
+        await this.emit({
+          type: "tool.deferred", runId, toolCallId: outcome.toolCallId,
+          toolName: outcome.toolName, summary: outcome.summary ?? "Tool call deferred",
+          at: this.timestamp(),
+        });
+        continue;
+      }
       if (outcome.status === "succeeded") continue;
       await this.emit({
         type: "tool.failed", runId, toolCallId: outcome.toolCallId,
@@ -1009,7 +1040,9 @@ export class AgentRunner {
 
 function toolOutcomeToMessage(outcome: ToolOutcome): ModelMessage {
   const status =
-    outcome.status === "awaiting_confirmation" ? "skipped" : outcome.status;
+    outcome.status === "awaiting_confirmation" || outcome.status === "deferred"
+      ? "skipped"
+      : outcome.status;
   return {
     role: "tool",
     toolCallId: outcome.toolCallId,
@@ -1018,6 +1051,15 @@ function toolOutcomeToMessage(outcome: ToolOutcome): ModelMessage {
     summary: outcome.summary,
     output: outcome.output,
     diagnostic: outcome.diagnostic,
+  };
+}
+
+function deferredToolOutcome(call: ModelToolCall): ToolOutcome {
+  return {
+    toolCallId: call.id,
+    toolName: call.name,
+    status: "deferred",
+    summary: "Not executed because an earlier tool call advanced the document version",
   };
 }
 

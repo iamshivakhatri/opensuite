@@ -717,6 +717,9 @@ function logAgentTurn(shortRun: string, event: AgentEvent): void {
       devLog(`agent ${shortRun} ✓ ${event.toolName}${note}`);
       return;
     }
+    case "tool.deferred":
+      devLog(`agent ${shortRun} deferred ${event.toolName}`);
+      return;
     case "tool.failed":
       devLog(
         `agent ${shortRun} ✗ ${event.toolName} ${event.diagnostic.code}: ${event.diagnostic.message}`,
@@ -1079,6 +1082,8 @@ function createRunEventBridge(input: {
         });
         return;
       }
+      case "tool.deferred":
+        return;
       case "tool.failed": {
         const binding = byToolCallId.get(event.toolCallId);
         const output = {

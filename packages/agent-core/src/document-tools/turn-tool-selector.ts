@@ -17,6 +17,7 @@ import {
   FORMATTING_MUTATION_TYPES,
   type DocumentMutationExecutor,
 } from "../document-mutation.js";
+import { collectOpaqueHandlesFromToolInput } from "../artifact-handles.js";
 import type {
   AgentTool,
   CreateToolExecutionContext,
@@ -28,6 +29,7 @@ import { transformContext } from "../model-context.js";
 import type {
   ModelTimeoutContext,
   ToolBatchContext,
+  ToolCallDeferral,
   ToolTurnLifecycle,
   TransformAgentContext,
 } from "../runner.js";
@@ -292,11 +294,14 @@ function createDocumentToolTurnLifecycle(
   state: DocumentRunState,
   mutations: DocumentMutationExecutor | undefined,
 ): ToolTurnLifecycle | undefined {
-  if (!mutations?.flushPendingFormatting) return undefined;
+  if (!mutations) return undefined;
   const pendingMutations = mutations;
   let priorFlush: Exclude<Awaited<ReturnType<NonNullable<DocumentMutationExecutor["flushPendingFormatting"]>>>, { status: "noop" }> | undefined;
+  let turnBaseVersionId: string | undefined;
   async function flush(context: { readonly runId: string; readonly events: AgentEventSink }) {
-    const flushed = await pendingMutations.flushPendingFormatting!();
+    const flushed = pendingMutations.flushPendingFormatting
+      ? await pendingMutations.flushPendingFormatting()
+      : { status: "noop" as const };
     if (flushed.status !== "success") return flushed;
     priorFlush = flushed;
     advanceDocumentWorkingState(state, flushed.document, true);
@@ -309,11 +314,21 @@ function createDocumentToolTurnLifecycle(
     return flushed;
   }
   return {
-    begin() { priorFlush = undefined; },
+    begin() {
+      priorFlush = undefined;
+      turnBaseVersionId = state.primary?.versionId;
+    },
     async beforeTool(context) {
-      if (FORMATTING_MUTATION_TYPES.has(context.toolName)) return;
-      const flushed = await flush(context);
-      if (flushed.status === "error") throw new Error(flushed.diagnostics[0].message);
+      if (!FORMATTING_MUTATION_TYPES.has(context.toolName)) {
+        const flushed = await flush(context);
+        if (flushed.status === "error") throw new Error(flushed.diagnostics[0].message);
+      }
+      if (!turnBaseVersionId || state.primary?.versionId === turnBaseVersionId) return;
+      const handles = collectOpaqueHandlesFromToolInput(context.toolCall.input);
+      if (!handles.some((handle) => state.handles.origin(handle) === turnBaseVersionId)) return;
+      return {
+        summary: "Not executed because an earlier tool call advanced the document version",
+      } satisfies ToolCallDeferral;
     },
     async finalize(context) {
       const flushed = priorFlush ?? await flush(context);
