@@ -20,6 +20,7 @@ import {
   assistantOnlyResponse,
   toolCallResponse,
   type DocumentRef,
+  type DocumentRuntime,
 } from "../index.js";
 
 const docxRef: DocumentRef = {
@@ -129,6 +130,32 @@ test("document tools require primary document", async () => {
       error instanceof AgentCoreError &&
       error.diagnostic?.code === "PRIMARY_DOCUMENT_MISSING",
   );
+});
+
+test("document.inspect reuses an exact current inspection", async () => {
+  const mock = createMockDocumentRuntime();
+  let inspectCalls = 0;
+  const runtime: DocumentRuntime = {
+    ...mock,
+    async inspect(document, options) {
+      inspectCalls += 1;
+      return mock.inspect(document, options);
+    },
+  };
+  const state = createDocumentRunState(docxRef);
+  const inspect = createDocumentToolRegistry().require(DOCUMENT_TOOL_NAMES.inspect);
+  const context = createDocumentToolContext({ state, runtime })({
+    runId: "r-inspect-reuse",
+    signal: new AbortController().signal,
+    events: { emit() {} },
+  });
+  const input = inspect.parseInput({ focus: { kind: "headings" } });
+
+  await inspect.execute(input, context);
+  const reused = await inspect.execute(input, context);
+
+  assert.equal(inspectCalls, 1);
+  assert.equal((reused as { reused?: boolean }).reused, true);
 });
 
 test("unsupported find capability returns structured failure", async () => {

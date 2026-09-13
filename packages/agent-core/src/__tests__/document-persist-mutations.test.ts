@@ -172,7 +172,7 @@ test("sequential writes in one model response: one version event each, ordered",
 
   const runner = new AgentRunner({
     model: createScriptedAgentModel([
-      toolCallResponse("Applied three edits.", [
+      toolCallResponse("Done — Applied three edits.", [
         {
           id: "r1",
           name: DOCUMENT_TOOL_NAMES.replaceText,

@@ -149,6 +149,7 @@ export interface ToolExecutionContext {
    */
   readonly advancePrimaryDocument?: (document: DocumentRef, preservesStructure?: boolean) => void;
   readonly recordInspection?: (document: DocumentRef, focus: DocumentInspectFocus | undefined, inspection: unknown) => void;
+  readonly reuseInspection?: (focus: DocumentInspectFocus | undefined) => unknown | undefined;
   /**
    * Run-local opaque handle → inspected version registry.
    * Populated by document.inspect; validated before handle-based mutations.

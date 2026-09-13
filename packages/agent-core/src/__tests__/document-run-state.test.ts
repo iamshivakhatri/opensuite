@@ -11,6 +11,7 @@ import {
   createDocumentToolContext,
   advanceDocumentWorkingState,
   recordDocumentInspection,
+  findDocumentInspection,
   createFakeTool,
   createInMemoryDocumentMutationExecutor,
   createMockDocumentRuntime,
@@ -43,6 +44,15 @@ test("run-state: inspection working state follows safe formatting changes only",
 
   advanceDocumentWorkingState(state, { ...docxRef, versionId: "ver-3" });
   assert.equal(state.working, null);
+});
+
+test("run-state: same-version inspections merge by exact coverage", () => {
+  const state = createDocumentRunState(docxRef);
+  recordDocumentInspection(state, docxRef, { kind: "paragraphs", offset: 0, limit: 20 }, { payload: { paragraphs: ["A"] } });
+  recordDocumentInspection(state, docxRef, { kind: "headings" }, { payload: { headings: ["H"] } });
+  assert.equal(state.working?.inspections.length, 2);
+  assert.ok(findDocumentInspection(state, { kind: "headings" }));
+  assert.equal(findDocumentInspection(state, { kind: "paragraphs", offset: 20, limit: 20 }), undefined);
 });
 
 test("run-state: sequential writes observe N → N+1 → N+2 via createToolContext", async () => {

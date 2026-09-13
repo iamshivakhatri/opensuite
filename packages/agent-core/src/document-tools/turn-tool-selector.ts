@@ -368,8 +368,7 @@ function shouldTerminalizeDocumentToolBatch({
   toolOutcomes,
   tools,
 }: ToolBatchContext): boolean {
-  const trimmed = content.trim();
-  if (!trimmed || trimmed.length < 12) return false;
+  if (!hasExplicitCompletionSignal(content)) return false;
   if (toolCalls.length === 0 || toolOutcomes.length !== toolCalls.length) {
     return false;
   }
@@ -386,6 +385,11 @@ function shouldTerminalizeDocumentToolBatch({
     const tool = tools.get(call.name);
     return tool !== undefined && toolEffect(tool) === "write";
   });
+}
+
+/** Exact, user-visible completion convention — never infer completion from prose. */
+function hasExplicitCompletionSignal(content: string): boolean {
+  return /^Done\s+[—-]\s+\S/.test(content.trim());
 }
 
 function getDocumentModelTimeoutRetryMessage({

@@ -153,6 +153,10 @@ export function createDocumentInspectTool(): AgentTool<
     },
     async execute(input, ctx) {
       const { document, runtime } = requireDocumentRuntime(ctx);
+      const reused = ctx.reuseInspection?.(input.focus);
+      if (reused !== undefined) {
+        return { ...(reused as object), reused: true } as unknown as InspectionResult;
+      }
       const result = await runtime.inspect(document, {
         focus: input.focus,
         signal: ctx.signal,

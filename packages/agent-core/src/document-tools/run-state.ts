@@ -32,6 +32,19 @@ export interface DocumentWorkingState {
   readonly focus?: DocumentInspectFocus;
   readonly inspection: unknown;
   readonly freshness: "current" | "formatting-carried";
+  readonly inspections: readonly DocumentInspectionKnowledge[];
+}
+
+export interface DocumentInspectionKnowledge {
+  readonly focus?: DocumentInspectFocus;
+  readonly coverage: DocumentInspectionCoverage;
+  readonly inspection: unknown;
+}
+
+export interface DocumentInspectionCoverage {
+  readonly kind: string;
+  readonly offset?: number;
+  readonly limit?: number;
 }
 
 /** Run-scoped mutable pointer to the active primary document version + handles. */
@@ -54,7 +67,25 @@ export function recordDocumentInspection(
   focus: DocumentInspectFocus | undefined,
   inspection: unknown,
 ): void {
-  state.working = { documentId: document.documentId, versionId: document.versionId, focus, inspection, freshness: "current" };
+  const knowledge: DocumentInspectionKnowledge = {
+    focus,
+    coverage: coverageForFocus(focus),
+    inspection,
+  };
+  const prior = state.working;
+  const inspections = prior?.documentId === document.documentId && prior.versionId === document.versionId
+    ? [...prior.inspections.filter((item) => !sameFocus(item.focus, focus)), knowledge].slice(-8)
+    : [knowledge];
+  state.working = { documentId: document.documentId, versionId: document.versionId, focus, inspection, freshness: "current", inspections };
+}
+
+export function findDocumentInspection(
+  state: DocumentRunState,
+  focus: DocumentInspectFocus | undefined,
+): unknown | undefined {
+  const working = state.working;
+  if (!working || working.documentId !== state.primary?.documentId || working.versionId !== state.primary?.versionId) return undefined;
+  return working.inspections.find((item) => sameFocus(item.focus, focus))?.inspection;
 }
 
 export function advanceDocumentWorkingState(
@@ -72,7 +103,21 @@ export function advanceDocumentWorkingState(
     ...state.working,
     versionId: document.versionId,
     inspection: removeOpaqueHandles(state.working.inspection),
+    inspections: state.working.inspections.map((item) => ({ ...item, inspection: removeOpaqueHandles(item.inspection) })),
     freshness: "formatting-carried",
+  };
+}
+
+function sameFocus(a: DocumentInspectFocus | undefined, b: DocumentInspectFocus | undefined): boolean {
+  return JSON.stringify(a ?? { kind: "overview" }) === JSON.stringify(b ?? { kind: "overview" });
+}
+
+function coverageForFocus(focus: DocumentInspectFocus | undefined): DocumentInspectionCoverage {
+  if (!focus) return { kind: "overview" };
+  return {
+    kind: focus.kind,
+    ...("offset" in focus && focus.offset !== undefined ? { offset: focus.offset } : {}),
+    ...("limit" in focus && focus.limit !== undefined ? { limit: focus.limit } : {}),
   };
 }
 
@@ -112,6 +157,7 @@ export function createDocumentToolContext(
       advanceDocumentWorkingState(state, document, preservesStructure),
     recordInspection: (document, focus, inspection) =>
       recordDocumentInspection(state, document, focus, inspection),
+    reuseInspection: (focus) => findDocumentInspection(state, focus),
     handles: state.handles,
   });
 }

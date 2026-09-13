@@ -106,7 +106,7 @@ function isSupersededRead(message: ModelMessage, index: number, latestFindIndex:
 function workingStateMessage(working: DocumentWorkingState): ModelMessage {
   return {
     role: "assistant",
-    content: `Document working state (runtime, not user text): ${JSON.stringify({ focus: working.focus, freshness: working.freshness, inspection: working.inspection })}`,
+    content: `Document working state (runtime, not user text): ${JSON.stringify({ freshness: working.freshness, coverage: working.inspections.map((item) => item.coverage), inspections: working.inspections.map((item) => ({ focus: item.focus, inspection: item.inspection })) })}`,
   };
 }
 
@@ -297,6 +297,9 @@ function projectInspectionOrFindForModel(
   const projected: Record<string, unknown> = {
     status: record.status,
   };
+  if (record.reused === true) {
+    projected.reused = true;
+  }
   if (record.focus !== undefined) {
     projected.focus = jsonSafe(record.focus);
   }

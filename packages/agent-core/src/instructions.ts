@@ -37,8 +37,9 @@ export function buildDocumentAgentSystemPrompt(
       "title + short intro/outline first, then body sections across later turns. " +
       "Never stall building one giant insert_paragraphs payload.",
     "Chat text is only a short final confirmation — never dump document content into chat. " +
-      "When a write batch fully satisfies the request, include a short Done sentence " +
-      "(≥12 chars) in the SAME response as those writes to avoid an extra turn. " +
+      "Only when a write batch fully satisfies the request and no more document tools are needed, " +
+      "start the short final confirmation with exactly `Done — ` in the SAME response to avoid an extra turn. " +
+      "Never use that completion form for progress or a plan; continue with later tool turns instead. " +
       "Inspect/find answers must wait for tool results.",
     "NEW DOCUMENT: " +
       "(1) workspace.create_blank_docx alone. " +
@@ -59,6 +60,7 @@ export function buildDocumentAgentSystemPrompt(
   if (canInspect) {
     parts.push(
       "Inspect only when you need structure or targets — not as ritual. " +
+        "Reuse current inspection knowledge when it already covers the target; for related targets prefer one appropriately scoped inspection, and inspect again after structural writes or when knowledge is missing. " +
         "Prefer the narrowest focus: headings | paragraphs | tables | body_blocks | context " +
         "(page with offset/limit). " +
         "For simple content questions: inspect once, then answer. " +

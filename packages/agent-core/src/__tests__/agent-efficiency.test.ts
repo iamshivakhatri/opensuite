@@ -338,7 +338,19 @@ test("transformContext compacts old inspections and appends current working stat
   assert.equal((modelFacing[1] as Extract<ModelMessage, { role: "tool" }>).output && JSON.stringify(modelFacing[1]), JSON.stringify({ role: "tool", toolCallId: "i1", toolName: "document.inspect", status: "succeeded", output: { status: "succeeded", compacted: true } }));
   assert.ok(JSON.stringify(modelFacing[2]).includes("Current"));
   assert.ok(JSON.stringify(modelFacing.at(-1)).includes("Current"));
+  assert.match((modelFacing.at(-1) as Extract<ModelMessage, { role: "assistant" }>).content, /"coverage":\[{"kind":"headings"}\]/);
   assert.ok(JSON.stringify(modelFacing).length < JSON.stringify(canonical).length / 2);
+});
+
+test("reused inspect output stays visible to the model", () => {
+  const projected = projectToolResultForModel({
+    role: "tool",
+    toolCallId: "i1",
+    toolName: DOCUMENT_TOOL_NAMES.inspect,
+    status: "succeeded",
+    output: { status: "success", reused: true, payload: { headings: [{ text: "Current" }] } },
+  });
+  assert.equal((projected.output as { reused?: boolean }).reused, true);
 });
 
 test("AgentRunner sends transformed messages to the model", async () => {
@@ -524,7 +536,7 @@ test("system prompt with mutate caps encourages multi-tool batching", () => {
   assert.match(prompt, /need no inspect before append/i);
   assert.match(prompt, /do not retry the same call unchanged/i);
   assert.match(prompt, /create_blank_docx alone/i);
-  assert.match(prompt, /short Done/i);
+  assert.match(prompt, /exactly `Done — `/i);
   assert.match(prompt, /NEW DOCUMENT/i);
   assert.match(prompt, /Heading 1/i);
   assert.match(prompt, /AUTHORING:/i);
@@ -1376,6 +1388,61 @@ test("v2 write-terminalization: content + successful writes finishes without thi
     result.toolOutcomes.map((o) => o.status),
     ["succeeded", "succeeded", "succeeded", "succeeded"],
   );
+});
+
+test("v6.3 write terminalization requires an explicit completion signal", async () => {
+  const write = createFakeTool({
+    name: "document.insert_paragraphs",
+    effect: "write",
+    executionMode: "sequential",
+    execute: async () => ({ ok: true }),
+  });
+  for (const content of [
+    "Added the introduction. Next I'll create the table and format the document.",
+    "The introduction was added successfully.",
+  ]) {
+    let calls = 0;
+    const runner = new AgentRunner({
+      model: createScriptedAgentModel([
+        () => {
+          calls += 1;
+          return toolCallResponse(content, [{ id: "w1", name: "document.insert_paragraphs", input: {} }]);
+        },
+        () => {
+          calls += 1;
+          return assistantOnlyResponse("Continued after the write.");
+        },
+      ]),
+      tools: ToolRegistry.create([write]),
+      ...createDocumentAgentRunnerPolicyOptions(),
+    });
+    const result = await runner.run({ instruction: "write", threadId: "t1", runId: `r-explicit-${calls}` });
+    assert.equal(result.status, "completed");
+    assert.equal(calls, 2);
+  }
+});
+
+test("v6.3 final formatting batch terminalizes with Done dash", async () => {
+  const format = createFakeTool({
+    name: "document.set_paragraph_formatting",
+    effect: "write",
+    executionMode: "sequential",
+    execute: async () => ({ ok: true }),
+  });
+  let calls = 0;
+  const runner = new AgentRunner({
+    model: createScriptedAgentModel([
+      () => {
+        calls += 1;
+        return toolCallResponse("Done — The document is formatted.", [{ id: "f1", name: "document.set_paragraph_formatting", input: {} }]);
+      },
+    ]),
+    tools: ToolRegistry.create([format]),
+    ...createDocumentAgentRunnerPolicyOptions(),
+  });
+  const result = await runner.run({ instruction: "format", threadId: "t1", runId: "r-format-done" });
+  assert.equal(result.status, "completed");
+  assert.equal(calls, 1);
 });
 
 test("v2 write-terminalization failure: optimistic content not final; model continues", async () => {
