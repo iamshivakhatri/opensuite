@@ -93,7 +93,7 @@ export function transformContext(
         : {}),
     };
   });
-  return workingState && (inspectionCount > 1 || workingState.freshness === "formatting-carried")
+  return workingState && (inspectionCount > 1 || workingState.freshness === "formatting-carried" || workingState.recentParagraphTargets.length > 0)
     ? [...projected, workingStateMessage(workingState)] : projected;
 }
 
@@ -104,10 +104,24 @@ function isSupersededRead(message: ModelMessage, index: number, latestFindIndex:
 }
 
 function workingStateMessage(working: DocumentWorkingState): ModelMessage {
+  const recentParagraphTargets = working.recentParagraphTargets.filter(
+    (candidate) => candidate.duplicateInBatch || !hasAuthoritativeParagraphTarget(working, candidate.text),
+  );
   return {
     role: "assistant",
-    content: `Document working state (runtime, not user text): ${JSON.stringify({ freshness: working.freshness, coverage: working.inspections.map((item) => item.coverage), inspections: working.inspections.map((item) => ({ focus: item.focus, inspection: item.inspection })) })}`,
+    content: `Document working state (runtime, not user text): recently authored paragraph targets were successfully inserted in the current document version. They are exact text only; occurrence is unknown unless inspection provides it. A duplicateInBatch target needs inspection before targeting. ${JSON.stringify({ freshness: working.freshness, coverage: working.inspections.map((item) => item.coverage), inspections: working.inspections.map((item) => ({ focus: item.focus, inspection: item.inspection })), recentParagraphTargets })}`,
   };
+}
+
+function hasAuthoritativeParagraphTarget(working: DocumentWorkingState, text: string): boolean {
+  return working.inspections.some((item) => {
+    const paragraphs = (item.inspection as { payload?: { paragraphs?: unknown } })?.payload?.paragraphs;
+    return Array.isArray(paragraphs) && paragraphs.some((paragraph) =>
+      !!paragraph && typeof paragraph === "object" &&
+      (paragraph as { text?: unknown }).text === text &&
+      typeof (paragraph as { occurrence?: unknown }).occurrence === "number",
+    );
+  });
 }
 
 /** Reuses the normal inspect shaping path before state stores its compact form. */

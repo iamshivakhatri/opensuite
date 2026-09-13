@@ -29,6 +29,7 @@ import {
   toolCallResponse,
   transformContext,
   recordDocumentInspection,
+  recordRecentParagraphTargets,
   type DocumentRef,
   type DocumentRuntime,
   type ModelMessage,
@@ -351,6 +352,33 @@ test("reused inspect output stays visible to the model", () => {
     output: { status: "success", reused: true, payload: { headings: [{ text: "Current" }] } },
   });
   assert.equal((projected.output as { reused?: boolean }).reused, true);
+});
+
+test("large paragraph inserts keep compact history and recent exact targets", () => {
+  const state = createDocumentRunState(docxRef);
+  const document = { ...docxRef, versionId: "ver-2" };
+  state.primary = document;
+  const texts = ["Heading", "Body ".repeat(140), "Repeat", "Repeat"];
+  recordRecentParagraphTargets(state, document, texts);
+  const canonical: ModelMessage[] = [
+    { role: "assistant", content: "", toolCalls: [{ id: "w1", name: DOCUMENT_TOOL_NAMES.insertParagraphs, input: { texts, placement: { kind: "end" } } }] },
+    { role: "tool", toolCallId: "w1", toolName: DOCUMENT_TOOL_NAMES.insertParagraphs, status: "succeeded", output: { status: "success" } },
+  ];
+
+  const projected = transformContext(canonical, state.working);
+  const compactedInput = (projected[0] as Extract<ModelMessage, { role: "assistant" }>).toolCalls?.[0]?.input as Record<string, unknown>;
+  const working = (projected.at(-1) as Extract<ModelMessage, { role: "assistant" }>).content;
+  assert.equal(compactedInput.paragraphCount, texts.length);
+  assert.equal(compactedInput.texts, undefined);
+  assert.match(working, /recently authored paragraph targets were successfully inserted/);
+  assert.match(working, /"Heading"/);
+  assert.match(working, /"duplicateInBatch":true/);
+
+  recordDocumentInspection(state, document, { kind: "paragraphs" }, {
+    payload: { paragraphs: [{ text: "Heading", occurrence: 1 }] },
+  });
+  const afterInspection = (transformContext(canonical, state.working).at(-1) as Extract<ModelMessage, { role: "assistant" }>).content;
+  assert.doesNotMatch(afterInspection, /recentParagraphTargets.*Heading/);
 });
 
 test("AgentRunner sends transformed messages to the model", async () => {

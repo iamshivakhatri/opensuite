@@ -11,6 +11,7 @@ import {
   createDocumentToolContext,
   advanceDocumentWorkingState,
   recordDocumentInspection,
+  recordRecentParagraphTargets,
   findDocumentInspection,
   createFakeTool,
   createInMemoryDocumentMutationExecutor,
@@ -53,6 +54,32 @@ test("run-state: same-version inspections merge by exact coverage", () => {
   assert.equal(state.working?.inspections.length, 2);
   assert.ok(findDocumentInspection(state, { kind: "headings" }));
   assert.equal(findDocumentInspection(state, { kind: "paragraphs", offset: 20, limit: 20 }), undefined);
+});
+
+test("run-state: recent paragraph targets are bounded, versioned, and formatting-safe", () => {
+  const state = createDocumentRunState(docxRef);
+  const authoredVersion = { ...docxRef, versionId: "ver-2" };
+  advanceDocumentWorkingState(state, authoredVersion);
+  recordRecentParagraphTargets(state, authoredVersion, ["Unique", "Repeat", "Repeat"]);
+
+  assert.equal(state.working?.versionId, "ver-2");
+  assert.deepEqual(state.working?.recentParagraphTargets, [
+    { text: "Unique", duplicateInBatch: false },
+    { text: "Repeat", duplicateInBatch: true },
+    { text: "Repeat", duplicateInBatch: true },
+  ]);
+  assert.ok(!JSON.stringify(state.working).includes("occurrence"));
+
+  advanceDocumentWorkingState(state, { ...docxRef, versionId: "ver-3" }, true);
+  assert.equal(state.working?.recentParagraphTargets.length, 3);
+  advanceDocumentWorkingState(state, { ...docxRef, versionId: "ver-4" });
+  assert.equal(state.working, null);
+
+  const boundedVersion = { ...docxRef, versionId: "ver-5" };
+  const boundedState = createDocumentRunState(boundedVersion);
+  recordRecentParagraphTargets(boundedState, boundedVersion, Array.from({ length: 20 }, (_, index) => `paragraph-${index}`));
+  assert.equal(boundedState.working?.recentParagraphTargets.length, 16);
+  assert.equal(boundedState.working?.recentParagraphTargets[0]?.text, "paragraph-4");
 });
 
 test("run-state: sequential writes observe N → N+1 → N+2 via createToolContext", async () => {

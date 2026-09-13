@@ -92,6 +92,7 @@ export function buildDocumentAgentSystemPrompt(
         "use semantic rowLabel+columnHeader targets — prior-turn handles go stale after any write. " +
         "set_paragraph_style needs a stylesheet style name that exists (e.g. Heading 1) and exact title text. " +
         "Paragraph style/text-formatting targets accept exact visible text and optional 1-based occurrence; opaque handles are only valid for tools whose schema explicitly accepts a handle. " +
+        "Reuse exact recently authored paragraph text for immediate styling instead of paraphrasing it; if occurrence is unknown and targeting is ambiguous, inspect once. " +
         "Never claim an edit succeeded without a successful mutation tool result.",
     );
   } else if (caps) {

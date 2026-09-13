@@ -169,6 +169,10 @@ export async function executePersistedMutation(
     throw diagnosticError(result.diagnostics[0]!);
   }
   ctx.advancePrimaryDocument?.(result.document, isFormattingOnlyMutation(toolName));
+  const recentParagraphs = recentParagraphTexts(toolName, toolInput);
+  if (recentParagraphs) {
+    ctx.recordRecentParagraphTargets?.(result.document, recentParagraphs);
+  }
   // Domain event: emit here so AgentRunner stays mutation-result-agnostic.
   // Order relative to runner emits: tool.started → this → tool.completed.
   await ctx.events.emit({
@@ -192,6 +196,14 @@ export async function executePersistedMutation(
       : {}),
     baseVersionId: result.baseVersionId,
   };
+}
+
+function recentParagraphTexts(toolName: string, input: unknown): readonly string[] | undefined {
+  if (!input || typeof input !== "object") return undefined;
+  const record = input as Record<string, unknown>;
+  if (toolName === "document.insert_paragraph" && typeof record.text === "string") return [record.text];
+  if (toolName === "document.insert_paragraphs" && Array.isArray(record.texts) && record.texts.every((text) => typeof text === "string")) return record.texts as string[];
+  return undefined;
 }
 
 function isFormattingOnlyMutation(toolName: string): boolean {

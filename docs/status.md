@@ -5,14 +5,15 @@ _Read this before starting any work. Keep it a concise current-state handoff, no
 ## What Exists
 
 * Workspace shell, Casual Docs DOCX, engine-backed inspect/mutate, blank create, workspace agent.
-* **Agent Efficiency v1–v6.4** + **AgentCore v2 Steps 1–5C**.
+* **Agent Efficiency v1–v6.5** + **AgentCore v2 Steps 1–5C**.
 * **Document Authoring Intelligence v1** + list≠grouping + **insert_paragraphs rejects embedded newlines**.
 * **Agent Panel UX v1.1** — live status from last activity (no premature Finishing up); inspect=`checks`; recovered details muted; slim composer.
 * Confirmation bridge; Frontend Phases 1–6B; hosted-alpha foundation.
 
 ## Just Completed
 
-* **Agent Efficiency v6.4:** current-version inspection knowledge merges by scope; exact covered re-inspects reuse it, formatting drops stale handles, and structural writes clear it.
+* **Agent Efficiency v6.5:** successful paragraph inserts retain a bounded run-local list of exact texts for immediate styling. It has no invented occurrence; inspected paragraph data remains authoritative.
+* Focused OpenRouter checks passed: `greenfield-poems` 5 turns / 13 tools / 0 failures, and `authoring-guide` 4 turns / 7 tools / 0 failures.
 
 ## Current Decisions
 

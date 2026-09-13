@@ -10,11 +10,13 @@ import {
   createDocumentRunState,
   createDocumentToolContext,
   createDocumentToolRegistry,
+  createInMemoryDocumentMutationExecutor,
   createFakeToolExecutionContext,
   createMockDocumentRuntime,
   createScriptedAgentModel,
   DOCUMENT_TOOL_NAMES,
   mockFixtureTitle,
+  mutableDocumentCapabilities,
   readOnlyDocumentCapabilities,
   ToolRegistry,
   assistantOnlyResponse,
@@ -156,6 +158,38 @@ test("document.inspect reuses an exact current inspection", async () => {
 
   assert.equal(inspectCalls, 1);
   assert.equal((reused as { reused?: boolean }).reused, true);
+});
+
+test("successful paragraph authoring records exact recent targets", async () => {
+  const runtime: DocumentRuntime = {
+    async capabilities() { return mutableDocumentCapabilities(); },
+    async inspect() { throw new Error("unused"); },
+    async execute() { return { status: "success", diagnostics: [], artifactBytes: new Uint8Array([1]) }; },
+  };
+  const state = createDocumentRunState(docxRef);
+  const context = createDocumentToolContext({
+    state,
+    runtime,
+    mutations: createInMemoryDocumentMutationExecutor(runtime),
+  })({ runId: "r-recent-targets", signal: new AbortController().signal, events: { emit() {} } });
+  const tools = createDocumentToolRegistry(mutableDocumentCapabilities());
+
+  const batch = tools.require(DOCUMENT_TOOL_NAMES.insertParagraphs);
+  await batch.execute(batch.parseInput({ texts: ["First", "Second"], placement: { kind: "end" } }), context);
+  assert.deepEqual(state.working?.recentParagraphTargets, [
+    { text: "First", duplicateInBatch: false },
+    { text: "Second", duplicateInBatch: false },
+  ]);
+
+  const single = tools.require(DOCUMENT_TOOL_NAMES.insertParagraph);
+  await single.execute(single.parseInput({ text: "Third", placement: { kind: "end" } }), createDocumentToolContext({
+    state,
+    runtime,
+    mutations: createInMemoryDocumentMutationExecutor(runtime),
+  })({ runId: "r-recent-targets", signal: new AbortController().signal, events: { emit() {} } }));
+  assert.deepEqual(state.working?.recentParagraphTargets, [
+    { text: "Third", duplicateInBatch: false },
+  ]);
 });
 
 test("unsupported find capability returns structured failure", async () => {

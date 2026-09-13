@@ -144,8 +144,8 @@ export type {
   DocumentAgentRunnerOptionsInput,
   DocumentTurnToolSelectorOptions,
 } from "./turn-tool-selector.js";
-export { advanceDocumentWorkingState, createDocumentRunState, createDocumentToolContext, findDocumentInspection, recordDocumentInspection } from "./run-state.js";
-export type { DocumentInspectionCoverage, DocumentInspectionKnowledge, DocumentRunState, DocumentToolContextOptions, DocumentWorkingState } from "./run-state.js";
+export { advanceDocumentWorkingState, createDocumentRunState, createDocumentToolContext, findDocumentInspection, recordDocumentInspection, recordRecentParagraphTargets } from "./run-state.js";
+export type { DocumentInspectionCoverage, DocumentInspectionKnowledge, DocumentRunState, DocumentToolContextOptions, DocumentWorkingState, RecentParagraphTarget } from "./run-state.js";
 
 /**
  * Full model-facing document tool catalog (unfiltered).

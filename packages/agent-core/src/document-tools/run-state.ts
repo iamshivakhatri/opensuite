@@ -26,6 +26,9 @@ import type { CreateToolExecutionContext } from "../model.js";
 import type { DocumentInspectFocus, DocumentRuntime } from "../runtime.js";
 import type { DocumentRef } from "../types.js";
 
+const MAX_RECENT_PARAGRAPH_TARGETS = 16;
+const MAX_RECENT_PARAGRAPH_TARGET_BYTES = 2048;
+
 export interface DocumentWorkingState {
   readonly documentId: string;
   readonly versionId: string;
@@ -33,6 +36,12 @@ export interface DocumentWorkingState {
   readonly inspection: unknown;
   readonly freshness: "current" | "formatting-carried";
   readonly inspections: readonly DocumentInspectionKnowledge[];
+  readonly recentParagraphTargets: readonly RecentParagraphTarget[];
+}
+
+export interface RecentParagraphTarget {
+  readonly text: string;
+  readonly duplicateInBatch: boolean;
 }
 
 export interface DocumentInspectionKnowledge {
@@ -76,7 +85,44 @@ export function recordDocumentInspection(
   const inspections = prior?.documentId === document.documentId && prior.versionId === document.versionId
     ? [...prior.inspections.filter((item) => !sameFocus(item.focus, focus)), knowledge].slice(-8)
     : [knowledge];
-  state.working = { documentId: document.documentId, versionId: document.versionId, focus, inspection, freshness: "current", inspections };
+  state.working = {
+    documentId: document.documentId,
+    versionId: document.versionId,
+    focus,
+    inspection,
+    freshness: "current",
+    inspections,
+    recentParagraphTargets: prior?.documentId === document.documentId && prior.versionId === document.versionId
+      ? prior.recentParagraphTargets
+      : [],
+  };
+}
+
+/** Exact text from the just-persisted authoring input, never a resolver selector. */
+export function recordRecentParagraphTargets(
+  state: DocumentRunState,
+  document: DocumentRef,
+  texts: readonly string[],
+): void {
+  const counts = new Map<string, number>();
+  for (const text of texts) counts.set(text, (counts.get(text) ?? 0) + 1);
+  const targets: RecentParagraphTarget[] = [];
+  let bytes = 0;
+  for (const text of [...texts].reverse()) {
+    const size = Buffer.byteLength(text, "utf8");
+    if (targets.length === MAX_RECENT_PARAGRAPH_TARGETS || bytes + size > MAX_RECENT_PARAGRAPH_TARGET_BYTES) break;
+    targets.unshift({ text, duplicateInBatch: (counts.get(text) ?? 0) > 1 });
+    bytes += size;
+  }
+  state.working = {
+    documentId: document.documentId,
+    versionId: document.versionId,
+    focus: undefined,
+    inspection: undefined,
+    freshness: "current",
+    inspections: [],
+    recentParagraphTargets: targets,
+  };
 }
 
 export function findDocumentInspection(
@@ -157,6 +203,8 @@ export function createDocumentToolContext(
       advanceDocumentWorkingState(state, document, preservesStructure),
     recordInspection: (document, focus, inspection) =>
       recordDocumentInspection(state, document, focus, inspection),
+    recordRecentParagraphTargets: (document, texts) =>
+      recordRecentParagraphTargets(state, document, texts),
     reuseInspection: (focus) => findDocumentInspection(state, focus),
     handles: state.handles,
   });
