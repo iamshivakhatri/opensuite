@@ -7,6 +7,7 @@ import { AgentCoreError, isAbortError } from "./errors.js";
 import type { AgentEvent, AgentEventSink } from "./events.js";
 import type {
   AgentModel,
+  ModelActivityKind,
   ModelMessage,
   ModelResponse,
   ModelToolCall,
@@ -41,6 +42,9 @@ export function identityTransformContext(
   return [...transcript];
 }
 
+/** Why a model-turn liveness abort fired (never user/external cancel). */
+export type ModelTurnTimeoutSource = "startup" | "idle" | "hard";
+
 export interface ExecuteModelTurnOptions {
   readonly model: AgentModel;
   readonly transformContext: TransformAgentContext;
@@ -50,7 +54,18 @@ export interface ExecuteModelTurnOptions {
   readonly capabilities: RuntimeCapabilities;
   readonly forceAnswerOnly: boolean;
   readonly signal: AbortSignal;
+  /**
+   * Startup + stream-idle budget (ms). Compatibility: historically a single
+   * wall-clock model-turn timeout; now interpreted as first-activity and
+   * between-activity liveness, not total stream duration.
+   */
   readonly timeoutMs: number;
+  /**
+   * Absolute hard ceiling for one model turn (ms). Defaults to 10× timeoutMs.
+   * Final fuse for pathological endless trickle; healthy streams should finish
+   * well under this.
+   */
+  readonly hardTimeoutMs?: number;
   readonly timeoutRetryUsed: boolean;
   readonly getTimeoutRetryMessage?: (
     context: ModelTimeoutContext,
@@ -93,6 +108,8 @@ export async function executeModelTurn(
   options: ExecuteModelTurnOptions,
 ): Promise<ModelTurnResult> {
   const timestamp = () => options.now().toISOString();
+  const hardTimeoutMs =
+    options.hardTimeoutMs ?? defaultHardTimeoutMs(options.timeoutMs);
 
   try {
     await options.events.emit({
@@ -111,9 +128,14 @@ export async function executeModelTurn(
     const contextMessageBytes = measureMessagesBytes(modelMessages);
     const toolCatalogBytes = measureToolCatalogBytes(toolsForModel);
     const modelStartedAt = Date.now();
-    const timeout = createTimeoutSignal(options.signal, options.timeoutMs, {
-      run: options.runId,
-      turn: options.turnIndex,
+    const timeout = createActivityAwareTimeout(options.signal, {
+      startupTimeoutMs: options.timeoutMs,
+      idleTimeoutMs: options.timeoutMs,
+      hardTimeoutMs,
+      debugFields: {
+        run: options.runId,
+        turn: options.turnIndex,
+      },
     });
 
     // TEMP: agent lifecycle diagnosis
@@ -126,6 +148,7 @@ export async function executeModelTurn(
       catalogBytes: toolCatalogBytes,
       abort: options.signal.aborted,
       modelTurnTimeoutMs: options.timeoutMs,
+      modelTurnHardTimeoutMs: hardTimeoutMs,
       timeoutRetryUsed: options.timeoutRetryUsed,
       forceAnswerOnly: options.forceAnswerOnly,
     });
@@ -133,8 +156,8 @@ export async function executeModelTurn(
       run: options.runId,
       turn: options.turnIndex,
     });
-    // Combined timeout.signal is watched via createTimeoutSignal timer
-    // (source=model-turn-timeout) — do not attach here or parent aborts
+    // Combined timeout.signal is watched via createActivityAwareTimeout
+    // (source=model-turn-timeout-*) — do not attach here or parent aborts
     // would be mis-attributed.
 
     let response: ModelResponse;
@@ -145,8 +168,13 @@ export async function executeModelTurn(
         signal: timeout.signal,
         capabilities: options.capabilities,
         ...(toolChoice !== undefined ? { toolChoice } : {}),
+        onModelActivity: (kind) => {
+          timeout.onActivity(kind);
+        },
         onTextDelta: async (delta) => {
           if (!delta) return;
+          // Text is always meaningful activity (even if adapter forgot to report).
+          timeout.onActivity("text_delta");
           await options.events.emit({
             type: "message.delta",
             runId: options.runId,
@@ -159,6 +187,7 @@ export async function executeModelTurn(
       });
     } catch (error) {
       const modelElapsedMs = Date.now() - modelStartedAt;
+      const liveness = timeout.snapshot(modelStartedAt);
       if (options.signal.aborted) {
         // TEMP: agent lifecycle diagnosis
         agentDebugLifecycle("MODEL_ABORT", {
@@ -166,24 +195,35 @@ export async function executeModelTurn(
           turn: options.turnIndex,
           modelElapsedMs,
           source: "run-controller",
+          timeoutSource: "external",
+          ...liveness,
           ...summarizeDebugError(error),
         });
         throw error;
       }
-      if (timeout.timedOut) {
-        const retryMessage = !options.timeoutRetryUsed
-          ? options.getTimeoutRetryMessage?.({
-              toolOutcomes: options.toolOutcomes,
-            })
-          : undefined;
+      if (timeout.timedOut && timeout.timeoutSource) {
+        const source = timeout.timeoutSource;
+        // Safe outer-loop retry only before any visible assistant text escaped.
+        const retryMessage =
+          !options.timeoutRetryUsed && !liveness.visibleTextEmitted
+            ? options.getTimeoutRetryMessage?.({
+                toolOutcomes: options.toolOutcomes,
+              })
+            : undefined;
         // TEMP: agent lifecycle diagnosis
-        agentDebugLifecycle(retryMessage ? "MODEL_TIMEOUT_RETRY" : "MODEL_TIMEOUT", {
-          run: options.runId,
-          turn: options.turnIndex,
-          modelElapsedMs,
-          timeoutMs: options.timeoutMs,
-          ...summarizeDebugError(error),
-        });
+        agentDebugLifecycle(
+          retryMessage ? "MODEL_TIMEOUT_RETRY" : "MODEL_TIMEOUT",
+          {
+            run: options.runId,
+            turn: options.turnIndex,
+            modelElapsedMs,
+            timeoutSource: source,
+            timeoutMs: options.timeoutMs,
+            hardTimeoutMs,
+            ...liveness,
+            ...summarizeDebugError(error),
+          },
+        );
         if (retryMessage) {
           return { status: "retry", retryMessage };
         }
@@ -192,10 +232,18 @@ export async function executeModelTurn(
           diagnostic: {
             code: "MODEL_FAILURE",
             severity: "error",
-            message: `Model turn exceeded ${options.timeoutMs}ms without completing`,
-            details: {
+            message: timeoutFailureMessage(source, {
               timeoutMs: options.timeoutMs,
+              hardTimeoutMs,
+            }),
+            details: {
+              timeoutSource: source,
+              timeoutMs: options.timeoutMs,
+              hardTimeoutMs,
               turnIndex: options.turnIndex,
+              sawFirstMeaningfulActivity: liveness.sawFirstMeaningfulActivity,
+              visibleTextEmitted: liveness.visibleTextEmitted,
+              toolCallActivitySeen: liveness.toolCallActivitySeen,
             },
           },
         };
@@ -205,6 +253,7 @@ export async function executeModelTurn(
         run: options.runId,
         turn: options.turnIndex,
         modelElapsedMs,
+        ...liveness,
         ...summarizeDebugError(error),
       });
       throw error;
@@ -274,6 +323,7 @@ export async function executeModelTurn(
       finishReason: response.meta?.finishReason,
       provider: response.meta?.provider,
       modelId: response.meta?.modelId,
+      ...timeout.snapshot(modelStartedAt),
     });
 
     return {
@@ -289,6 +339,7 @@ export async function executeModelTurn(
         run: options.runId,
         turn: options.turnIndex,
         source: "outer-catch",
+        timeoutSource: "external",
         ...summarizeDebugError(error),
       });
       return { status: "cancelled" };
@@ -307,6 +358,11 @@ export async function executeModelTurn(
   }
 }
 
+/** Default hard ceiling: 10× the startup/idle budget (90s → 15m). */
+export function defaultHardTimeoutMs(timeoutMs: number): number {
+  return timeoutMs * 10;
+}
+
 async function emitTelemetry(
   events: AgentEventSink,
   event: AgentEvent,
@@ -318,13 +374,45 @@ async function emitTelemetry(
   }
 }
 
-function createTimeoutSignal(
+interface ActivityTimeoutOptions {
+  readonly startupTimeoutMs: number;
+  readonly idleTimeoutMs: number;
+  readonly hardTimeoutMs: number;
+  readonly debugFields?: Record<string, unknown>;
+}
+
+interface ActivityTimeoutSnapshot {
+  readonly sawFirstMeaningfulActivity: boolean;
+  readonly timeToFirstActivityMs: number | undefined;
+  readonly lastActivityElapsedMs: number | undefined;
+  readonly lastActivityKind: ModelActivityKind | undefined;
+  readonly idleDurationMs: number | undefined;
+  readonly visibleTextEmitted: boolean;
+  readonly toolCallActivitySeen: boolean;
+}
+
+function createActivityAwareTimeout(
   parent: AbortSignal,
-  timeoutMs: number,
-  debugFields: Record<string, unknown> = {},
-): { signal: AbortSignal; timedOut: boolean; clear: () => void } {
+  options: ActivityTimeoutOptions,
+): {
+  signal: AbortSignal;
+  timedOut: boolean;
+  timeoutSource: ModelTurnTimeoutSource | undefined;
+  onActivity: (kind: ModelActivityKind) => void;
+  snapshot: (modelStartedAt: number) => ActivityTimeoutSnapshot;
+  clear: () => void;
+} {
   const controller = new AbortController();
   let timedOut = false;
+  let timeoutSource: ModelTurnTimeoutSource | undefined;
+  let sawFirstMeaningfulActivity = false;
+  let firstActivityAt: number | undefined;
+  let lastActivityAt: number | undefined;
+  let lastActivityKind: ModelActivityKind | undefined;
+  let visibleTextEmitted = false;
+  let toolCallActivitySeen = false;
+  let idleTimer: ReturnType<typeof setTimeout> | undefined;
+
   const onParentAbort = () => {
     // Parent (run-controller) fired first — do not mark as model-turn timeout.
     controller.abort();
@@ -334,17 +422,56 @@ function createTimeoutSignal(
   } else {
     parent.addEventListener("abort", onParentAbort, { once: true });
   }
-  const timer = setTimeout(() => {
+
+  const fireTimeout = (source: ModelTurnTimeoutSource) => {
+    if (timedOut || parent.aborted || controller.signal.aborted) {
+      return;
+    }
     timedOut = true;
+    timeoutSource = source;
+    const now = Date.now();
     // TEMP: agent lifecycle diagnosis
     agentDebugLifecycle("ABORT", {
-      source: "model-turn-timeout",
-      reason: `timeoutMs=${timeoutMs}`,
-      timeoutMs,
-      ...debugFields,
+      source: `model-turn-timeout-${source}`,
+      timeoutSource: source,
+      startupMs: options.startupTimeoutMs,
+      idleMs: options.idleTimeoutMs,
+      hardMs: options.hardTimeoutMs,
+      sawFirst: sawFirstMeaningfulActivity,
+      lastKind: lastActivityKind,
+      idleForMs:
+        lastActivityAt !== undefined ? now - lastActivityAt : undefined,
+      visibleText: visibleTextEmitted,
+      toolStream: toolCallActivitySeen,
+      ...options.debugFields,
     });
-    controller.abort();
-  }, timeoutMs);
+    controller.abort(
+      Object.assign(new Error(`model-turn-timeout:${source}`), {
+        name: "TimeoutError",
+        timeoutSource: source,
+      }),
+    );
+  };
+
+  const startupTimer = setTimeout(() => {
+    if (!sawFirstMeaningfulActivity) {
+      fireTimeout("startup");
+    }
+  }, options.startupTimeoutMs);
+
+  const hardTimer = setTimeout(() => {
+    fireTimeout("hard");
+  }, options.hardTimeoutMs);
+
+  const armIdleTimer = () => {
+    if (idleTimer !== undefined) {
+      clearTimeout(idleTimer);
+    }
+    idleTimer = setTimeout(() => {
+      fireTimeout("idle");
+    }, options.idleTimeoutMs);
+  };
+
   return {
     get signal() {
       return controller.signal;
@@ -352,11 +479,75 @@ function createTimeoutSignal(
     get timedOut() {
       return timedOut;
     },
+    get timeoutSource() {
+      return timeoutSource;
+    },
+    onActivity(kind: ModelActivityKind) {
+      if (timedOut || parent.aborted || controller.signal.aborted) {
+        return;
+      }
+      const now = Date.now();
+      if (!sawFirstMeaningfulActivity) {
+        sawFirstMeaningfulActivity = true;
+        firstActivityAt = now;
+        clearTimeout(startupTimer);
+      }
+      lastActivityAt = now;
+      lastActivityKind = kind;
+      if (kind === "text_delta") {
+        visibleTextEmitted = true;
+      }
+      if (
+        kind === "tool_call_start" ||
+        kind === "tool_call_name_delta" ||
+        kind === "tool_call_arguments_delta"
+      ) {
+        toolCallActivitySeen = true;
+      }
+      armIdleTimer();
+    },
+    snapshot(modelStartedAt: number): ActivityTimeoutSnapshot {
+      const now = Date.now();
+      return {
+        sawFirstMeaningfulActivity,
+        timeToFirstActivityMs:
+          firstActivityAt !== undefined
+            ? firstActivityAt - modelStartedAt
+            : undefined,
+        lastActivityElapsedMs:
+          lastActivityAt !== undefined
+            ? lastActivityAt - modelStartedAt
+            : undefined,
+        lastActivityKind,
+        idleDurationMs:
+          lastActivityAt !== undefined ? now - lastActivityAt : undefined,
+        visibleTextEmitted,
+        toolCallActivitySeen,
+      };
+    },
     clear() {
-      clearTimeout(timer);
+      clearTimeout(startupTimer);
+      clearTimeout(hardTimer);
+      if (idleTimer !== undefined) {
+        clearTimeout(idleTimer);
+      }
       parent.removeEventListener("abort", onParentAbort);
     },
   };
+}
+
+function timeoutFailureMessage(
+  source: ModelTurnTimeoutSource,
+  budgets: { timeoutMs: number; hardTimeoutMs: number },
+): string {
+  switch (source) {
+    case "startup":
+      return `Model turn startup timeout: no model activity within ${budgets.timeoutMs}ms`;
+    case "idle":
+      return `Model turn idle timeout: no model activity for ${budgets.timeoutMs}ms`;
+    case "hard":
+      return `Model turn exceeded hard ceiling of ${budgets.hardTimeoutMs}ms`;
+  }
 }
 
 function toDiagnostic(

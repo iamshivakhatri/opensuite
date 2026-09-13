@@ -14,8 +14,10 @@ _Read this before starting any work. Keep it a concise current-state handoff, no
 
 ## Just Completed
 
-* **v7.7 streaming regression fix** — OpenRouter forwards assistant text deltas live again; retry only while `hasEmittedVisibleText` is false for that attempt (tool fragments remain discardable).
-* **TEMP agent lifecycle debug** — `AGENT_DEBUG_LIFECYCLE=1` logs `[agent-debug]` turn/OpenRouter/abort/SSE/status (remove after diagnosis).
+* **Model-turn activity-aware timeout** — `modelTurnTimeoutMs` = startup + stream-idle liveness (not wall-clock stream duration); hard ceiling = 10×; providers report via `onModelActivity`; timeout retry skipped after visible text.
+* **OpenRouter mid-stream 5xx retry** — numeric `code`/`statusCode` for 408/429/5xx paths; visible-text gate unchanged.
+* **v7.7 streaming regression fix** — live assistant text deltas; retry only while no visible text escaped.
+* **TEMP agent lifecycle debug** — `AGENT_DEBUG_LIFECYCLE=1` (remove after diagnosis).
 * **Protocol hardening v7.4–v7.7** — stale-handle barrier; version-aware context; terminal attribution; one safe pre-visible-text OpenRouter retry.
 
 ## Current Decisions
@@ -27,6 +29,7 @@ _Read this before starting any work. Keep it a concise current-state handoff, no
 * Managed model is server-chosen (`OPENROUTER_MODEL`); users do not pick it.
 * Agent runs: valid BYOK preference wins; otherwise OpenSuite managed trial.
 * `/health` stays HTTP 200 while the API process is up; clients read `database` / `status` for outages (not process kill).
+* `modelTurnTimeoutMs` (default 90s): first-activity + idle-between-activity; hard fuse 10× (15m default).
 
 ## Verification Status
 
@@ -36,8 +39,8 @@ _Read this before starting any work. Keep it a concise current-state handoff, no
 | db errors + package tests | **Pass** (17; 1 skipped live connect) |
 | web typecheck | **Pass** |
 | web tests | **Pass** (85) prior |
-| agent-core tests/typecheck | **Pass** (223) |
-| api tests (full) | **Pass** (189; 23 skipped) |
+| agent-core tests/typecheck | **Pass** (231) |
+| api tests (full) | **Pass** (194; 23 skipped) |
 | Provider benchmark | **Partially complete** |
 | Visual `/dev/agent-panel-ux` | **Reviewed** prior |
 | Live signed-in agent run | **Blocked** (auth 403) prior |
@@ -49,4 +52,4 @@ _Read this before starting any work. Keep it a concise current-state handoff, no
 
 ## Recommended Next Step
 
-Reproduce the nex fitness-routine failure with `AGENT_DEBUG_LIFECYCLE=1` (API console) and capture the `[agent-debug]` sequence through `RUN_FAILED` / `RUN_END`.
+Dogfood a long actively-streaming tool-call turn with `AGENT_DEBUG_LIFECYCLE=1` and confirm idle resets (`ABORT source=model-turn-timeout-*` absent while chunks continue).

@@ -54,6 +54,18 @@ export type ModelMessage =
       readonly diagnostic?: Diagnostic;
     };
 
+/**
+ * Meaningful model-generation activity for turn liveness.
+ * Transport heartbeats / empty SSE keepalives must not use these kinds.
+ */
+export type ModelActivityKind =
+  | "text_delta"
+  | "reasoning_delta"
+  | "tool_call_start"
+  | "tool_call_name_delta"
+  | "tool_call_arguments_delta"
+  | "response_payload";
+
 export interface ModelRequest {
   readonly messages: readonly ModelMessage[];
   readonly tools: readonly ModelToolDefinition[];
@@ -71,6 +83,12 @@ export interface ModelRequest {
    * completion normally.
    */
   readonly onTextDelta?: (delta: string) => void | Promise<void>;
+  /**
+   * Report meaningful model-generation progress (text, reasoning, tool-call
+   * fragments). The model-turn executor uses this for idle/startup liveness;
+   * adapters must not report transport-only heartbeats.
+   */
+  readonly onModelActivity?: (kind: ModelActivityKind) => void;
 }
 
 /**

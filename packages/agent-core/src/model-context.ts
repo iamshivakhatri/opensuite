@@ -35,6 +35,7 @@ export function transformContext(
   workingState?: DocumentWorkingState | null,
   currentDocument?: DocumentRef | null,
   handles?: ArtifactHandleRegistry,
+  stagnationGuidance?: string | null,
 ): ModelMessage[] {
   const succeededCallIds = new Set<string>();
   for (const message of messages) {
@@ -106,8 +107,25 @@ export function transformContext(
         : {}),
     };
   });
-  return workingState && (inspectionCount > 1 || workingState.freshness === "formatting-carried" || workingState.recentParagraphTargets.length > 0)
-    ? [...projected, workingStateMessage(workingState)] : projected;
+  let withWorking = projected;
+  if (
+    workingState &&
+    (inspectionCount > 1 ||
+      workingState.freshness === "formatting-carried" ||
+      workingState.recentParagraphTargets.length > 0)
+  ) {
+    withWorking = [...projected, workingStateMessage(workingState)];
+  }
+  if (stagnationGuidance && stagnationGuidance.length > 0) {
+    return [
+      ...withWorking,
+      {
+        role: "user" as const,
+        content: stagnationGuidance,
+      },
+    ];
+  }
+  return withWorking;
 }
 
 function isSupersededRead(message: ModelMessage, index: number, latestFindIndex: number, latestInspectIndex: number, workingState: DocumentWorkingState | null | undefined): boolean {
@@ -284,6 +302,17 @@ export function projectToolResultForModel(
           ...shapeDiagnosticForToolResult(message.diagnostic),
         },
         diagnostic: message.diagnostic,
+      };
+    }
+    if (
+      message.status === "skipped" &&
+      message.output &&
+      typeof message.output === "object" &&
+      (message.output as { progress?: unknown }).progress === "REDUNDANT_READ"
+    ) {
+      return {
+        summary: message.summary,
+        output: message.output,
       };
     }
     return {

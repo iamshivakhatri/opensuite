@@ -45,11 +45,15 @@ AgentRequest
   decides whether successful writes plus assistant content may finish the run.
 * On model timeout, an injected policy may supply one retry message; the runner
   runtime owns the timer and one-retry limit but does not interpret authoring
-  state.
+  state. `modelTurnTimeoutMs` is startup + stream-idle liveness (not wall-clock
+  stream duration); a 10× hard ceiling is the runaway fuse. Timeout retry is
+  skipped once visible assistant text has streamed.
 * Generic `executeModelTurn` owns model-facing transformation timing, tool
-  request preparation, timeout/abort mechanics, streaming message events,
-  model metrics, and normalized model-turn results. `AgentRunner` retains the
-  canonical transcript and outer model/tool loop.
+  request preparation, activity-aware timeout/abort mechanics, streaming
+  message events, model metrics, and normalized model-turn results.
+  `AgentRunner` retains the canonical transcript and outer model/tool loop.
+* Providers report meaningful generation via `onModelActivity` (text,
+  reasoning, tool-call fragments). Transport heartbeats do not count.
 * The OpenRouter adapter retries one raw transient request failure (5xx/520,
   408, selected connection failures, or bounded `Retry-After` 429) within the
   same model-turn timeout signal. It buffers streaming deltas until a complete

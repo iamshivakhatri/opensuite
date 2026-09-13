@@ -168,6 +168,33 @@ export type AgentEvent =
       readonly inputBytes: number;
       readonly resultBytes: number;
       readonly success: boolean;
+    }
+  | {
+      /** Document-policy progress classification — not product analytics. */
+      readonly type: "agent.progress";
+      readonly runId: string;
+      readonly at: string;
+      readonly classification:
+        | "STATE_PROGRESS"
+        | "KNOWLEDGE_PROGRESS"
+        | "REDUNDANT_READ"
+        | "FAILURE";
+      readonly documentId?: string;
+      readonly versionId?: string;
+      readonly readSignature?: string;
+      readonly knownCoverage?: {
+        readonly kind: string;
+        readonly offset: number;
+        readonly limit: number;
+        readonly total?: number;
+        readonly returned?: number;
+        readonly hasMore?: boolean;
+      };
+      readonly nextOffset?: number;
+      readonly turnsSinceStateProgress?: number | null;
+      readonly turnsSinceKnowledgeProgress?: number | null;
+      readonly redundantReadCount?: number;
+      readonly turnIndex?: number;
     };
 
 /**

@@ -875,6 +875,16 @@ function logAgentTurn(shortRun: string, event: AgentEvent): void {
         `agent ${shortRun} tool ${event.toolName} ${event.wallMs}ms in=${event.inputBytes}B out=${event.resultBytes}B ${event.success ? "ok" : "fail"}`,
       );
       return;
+    case "agent.progress":
+      devLog(
+        `agent ${shortRun} progress ${event.classification}` +
+          (event.readSignature ? ` sig=${event.readSignature}` : "") +
+          (event.nextOffset !== undefined ? ` next=${event.nextOffset}` : "") +
+          (event.redundantReadCount !== undefined
+            ? ` redundant=${event.redundantReadCount}`
+            : ""),
+      );
+      return;
     case "tool.completed": {
       const note = event.summary ? ` — ${event.summary}` : "";
       devLog(`agent ${shortRun} ✓ ${event.toolName}${note}`);
@@ -1332,6 +1342,7 @@ function createRunEventBridge(input: {
       case "message.completed":
       case "model.turn.metrics":
       case "tool.execution.metrics":
+      case "agent.progress":
         return;
       default: {
         const _exhaustive: never = event;

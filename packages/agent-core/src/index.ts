@@ -49,6 +49,7 @@ export type {
 export type {
   AgentModel,
   AgentTool,
+  ModelActivityKind,
   ModelMessage,
   ModelRequest,
   ModelResponse,
@@ -303,6 +304,8 @@ export type {
   AgentRunOptions,
   AgentRunnerOptions,
   ToolBatchContext,
+  ToolCallDeferral,
+  ToolCallSkip,
   ToolTurnLifecycle,
   ToolTurnLifecycleContext,
 } from "./runner.js";
@@ -311,9 +314,11 @@ export type {
   ExecuteModelTurnOptions,
   ModelTimeoutContext,
   ModelTurnResult,
+  ModelTurnTimeoutSource,
   TransformAgentContext,
 } from "./model-turn-executor.js";
 export {
+  defaultHardTimeoutMs,
   executeModelTurn,
   identityTransformContext,
 } from "./model-turn-executor.js";

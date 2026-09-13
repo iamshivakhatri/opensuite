@@ -161,6 +161,7 @@ export function createOpenAIAgentModel(
                 timeToFirstTokenMs = Date.now() - startedAt;
               }
               streamed += event.delta;
+              request.onModelActivity?.("text_delta");
               await request.onTextDelta(event.delta);
             }
             if (

@@ -161,7 +161,15 @@ export function createAnthropicAgentModel(
                 if (timeToFirstTokenMs === undefined) {
                   timeToFirstTokenMs = Date.now() - startedAt;
                 }
+                request.onModelActivity?.("text_delta");
                 await request.onTextDelta(delta.text);
+              } else if (
+                delta &&
+                typeof delta === "object" &&
+                "type" in delta &&
+                delta.type === "input_json_delta"
+              ) {
+                request.onModelActivity?.("tool_call_arguments_delta");
               }
             }
           }

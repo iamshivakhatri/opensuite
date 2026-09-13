@@ -208,11 +208,10 @@ test("MODEL TURN: timeout without retry returns normalized failure", async () =>
   assert.equal(result.status, "failed");
   if (result.status !== "failed") return;
   assert.equal(result.diagnostic.code, "MODEL_FAILURE");
-  assert.match(result.diagnostic.message, /exceeded 10ms/);
-  assert.deepEqual(result.diagnostic.details, {
-    timeoutMs: 10,
-    turnIndex: 0,
-  });
+  assert.match(result.diagnostic.message, /startup timeout/i);
+  assert.equal(result.diagnostic.details?.timeoutSource, "startup");
+  assert.equal(result.diagnostic.details?.timeoutMs, 10);
+  assert.equal(result.diagnostic.details?.turnIndex, 0);
 });
 
 test("MODEL TURN: model errors return normalized failures", async () => {
@@ -347,3 +346,240 @@ async function waitForAbort(signal: AbortSignal | undefined): Promise<void> {
 function abortError(): Error {
   return Object.assign(new Error("aborted"), { name: "AbortError" });
 }
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+test("MODEL TURN A: continuous tool-call activity survives past idle budget", async () => {
+  let toolCallsSeen = 0;
+  const result = await executeModelTurn(
+    options({
+      timeoutMs: 80,
+      hardTimeoutMs: 2_000,
+      model: {
+        async complete(request) {
+          // Wall clock > idle budget, but fragments keep arriving.
+          for (let i = 0; i < 8; i += 1) {
+            request.onModelActivity?.("tool_call_arguments_delta");
+            await sleep(25);
+          }
+          toolCallsSeen += 1;
+          return {
+            content: "",
+            toolCalls: [
+              { id: "c1", name: "widgets.write", input: { ok: true } },
+            ],
+          };
+        },
+      },
+    }),
+  );
+
+  assert.equal(result.status, "completed");
+  if (result.status !== "completed") return;
+  assert.equal(toolCallsSeen, 1);
+  assert.equal(result.toolCalls.length, 1);
+  assert.equal(result.toolCalls[0]?.name, "widgets.write");
+});
+
+test("MODEL TURN B: stream idle timeout aborts and may retry before visible text", async () => {
+  let modelCalls = 0;
+  const model = {
+    async complete(request: ModelRequest) {
+      modelCalls += 1;
+      if (modelCalls === 1) {
+        request.onModelActivity?.("tool_call_start");
+        await waitForAbort(request.signal);
+      }
+      return { content: "recovered", toolCalls: [] };
+    },
+  };
+
+  const first = await executeModelTurn(
+    options({
+      model,
+      timeoutMs: 30,
+      hardTimeoutMs: 2_000,
+      getTimeoutRetryMessage: () => "retry after idle",
+    }),
+  );
+  assert.equal(first.status, "retry");
+  if (first.status !== "retry") return;
+  assert.equal(first.retryMessage, "retry after idle");
+
+  const second = await executeModelTurn(
+    options({
+      model,
+      timeoutMs: 30,
+      hardTimeoutMs: 2_000,
+      timeoutRetryUsed: true,
+      getTimeoutRetryMessage: () => "retry after idle",
+      turnId: "turn-2",
+      turnIndex: 1,
+      messageId: "message-2",
+    }),
+  );
+  assert.equal(second.status, "completed");
+  assert.equal(modelCalls, 2);
+});
+
+test("MODEL TURN C: no first activity hits startup timeout", async () => {
+  const result = await executeModelTurn(
+    options({
+      timeoutMs: 25,
+      hardTimeoutMs: 2_000,
+      model: {
+        async complete(request) {
+          await waitForAbort(request.signal);
+          return { content: "late", toolCalls: [] };
+        },
+      },
+    }),
+  );
+
+  assert.equal(result.status, "failed");
+  if (result.status !== "failed") return;
+  assert.equal(result.diagnostic.details?.timeoutSource, "startup");
+  assert.match(result.diagnostic.message, /startup timeout/i);
+});
+
+test("MODEL TURN D: transport-only noise does not reset idle timer", async () => {
+  const result = await executeModelTurn(
+    options({
+      timeoutMs: 40,
+      hardTimeoutMs: 2_000,
+      model: {
+        async complete(request) {
+          request.onModelActivity?.("tool_call_start");
+          // Simulate heartbeats / empty SSE — no onModelActivity.
+          for (let i = 0; i < 8; i += 1) {
+            await sleep(15);
+          }
+          await waitForAbort(request.signal);
+          return { content: "late", toolCalls: [] };
+        },
+      },
+    }),
+  );
+
+  assert.equal(result.status, "failed");
+  if (result.status !== "failed") return;
+  assert.equal(result.diagnostic.details?.timeoutSource, "idle");
+  assert.match(result.diagnostic.message, /idle timeout/i);
+});
+
+test("MODEL TURN E: visible text blocks unsafe timeout retry", async () => {
+  const events = createRecordingEventSink();
+  let modelCalls = 0;
+  const result = await executeModelTurn(
+    options({
+      events,
+      timeoutMs: 30,
+      hardTimeoutMs: 2_000,
+      getTimeoutRetryMessage: () => "should not retry",
+      model: {
+        async complete(request) {
+          modelCalls += 1;
+          await request.onTextDelta?.("Hello visible");
+          await waitForAbort(request.signal);
+          return { content: "Hello visible", toolCalls: [] };
+        },
+      },
+    }),
+  );
+
+  assert.equal(result.status, "failed");
+  if (result.status !== "failed") return;
+  assert.equal(modelCalls, 1);
+  assert.equal(result.diagnostic.details?.timeoutSource, "idle");
+  assert.equal(result.diagnostic.details?.visibleTextEmitted, true);
+  assert.equal(
+    events.events.filter((event) => event.type === "message.delta").length,
+    1,
+  );
+});
+
+test("MODEL TURN F: tool-call fragments alone keep liveness without visible text", async () => {
+  const events = createRecordingEventSink();
+  const result = await executeModelTurn(
+    options({
+      events,
+      timeoutMs: 80,
+      hardTimeoutMs: 2_000,
+      model: {
+        async complete(request) {
+          for (let i = 0; i < 6; i += 1) {
+            request.onModelActivity?.(
+              i === 0 ? "tool_call_start" : "tool_call_arguments_delta",
+            );
+            await sleep(25);
+          }
+          return {
+            content: "",
+            toolCalls: [
+              { id: "c1", name: "widgets.read", input: { id: 1 } },
+            ],
+          };
+        },
+      },
+    }),
+  );
+
+  assert.equal(result.status, "completed");
+  if (result.status !== "completed") return;
+  assert.equal(result.response.content, "");
+  assert.equal(result.toolCalls.length, 1);
+  assert.equal(
+    events.events.filter((event) => event.type === "message.delta").length,
+    0,
+  );
+});
+
+test("MODEL TURN G: external cancellation is not labeled as timeout", async () => {
+  const controller = new AbortController();
+  const resultPromise = executeModelTurn(
+    options({
+      signal: controller.signal,
+      timeoutMs: 5_000,
+      hardTimeoutMs: 10_000,
+      getTimeoutRetryMessage: () => "should not apply",
+      model: {
+        async complete(request) {
+          request.onModelActivity?.("text_delta");
+          await waitForAbort(request.signal);
+          return { content: "late", toolCalls: [] };
+        },
+      },
+    }),
+  );
+  await sleep(5);
+  controller.abort();
+
+  assert.deepEqual(await resultPromise, { status: "cancelled" });
+});
+
+test("MODEL TURN H: absolute hard ceiling terminates endless trickle", async () => {
+  const result = await executeModelTurn(
+    options({
+      timeoutMs: 200,
+      hardTimeoutMs: 80,
+      model: {
+        async complete(request) {
+          // Continuous meaningful activity — idle never fires; hard must.
+          while (!request.signal?.aborted) {
+            request.onModelActivity?.("tool_call_arguments_delta");
+            await sleep(10);
+          }
+          await waitForAbort(request.signal);
+          return { content: "", toolCalls: [] };
+        },
+      },
+    }),
+  );
+
+  assert.equal(result.status, "failed");
+  if (result.status !== "failed") return;
+  assert.equal(result.diagnostic.details?.timeoutSource, "hard");
+  assert.match(result.diagnostic.message, /hard ceiling/i);
+});

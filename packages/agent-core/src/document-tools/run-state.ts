@@ -25,6 +25,15 @@ import type { DocumentMutationExecutor } from "../document-mutation.js";
 import type { CreateToolExecutionContext } from "../model.js";
 import type { DocumentInspectFocus, DocumentRuntime } from "../runtime.js";
 import type { DocumentRef } from "../types.js";
+import {
+  clearInspectKnowledge,
+  createProgressLedger,
+  emitProgressEvent,
+  inspectReadSignature,
+  noteKnowledgeProgress,
+  noteStateProgress,
+  type DocumentProgressLedger,
+} from "./progress-ledger.js";
 
 const MAX_RECENT_PARAGRAPH_TARGETS = 16;
 const MAX_RECENT_PARAGRAPH_TARGET_BYTES = 2048;
@@ -61,13 +70,20 @@ export interface DocumentRunState {
   primary: DocumentRef | null;
   readonly handles: ArtifactHandleRegistry;
   working: DocumentWorkingState | null;
+  /** Document-policy progress control (stagnation / later recovery). */
+  readonly progress: DocumentProgressLedger;
 }
 
 /** Create fresh per-run document state. Scoped to one `AgentRunner.run()` call. */
 export function createDocumentRunState(
   primary: DocumentRef | null = null,
 ): DocumentRunState {
-  return { primary, handles: new ArtifactHandleRegistry(), working: null };
+  return {
+    primary,
+    handles: new ArtifactHandleRegistry(),
+    working: null,
+    progress: createProgressLedger(),
+  };
 }
 
 export function recordDocumentInspection(
@@ -96,6 +112,7 @@ export function recordDocumentInspection(
       ? prior.recentParagraphTargets
       : [],
   };
+  noteKnowledgeProgress(state.progress, focus, inspection);
 }
 
 /** Exact text from the just-persisted authoring input, never a resolver selector. */
@@ -141,8 +158,10 @@ export function advanceDocumentWorkingState(
 ): void {
   const previous = state.primary;
   state.primary = document;
+  noteStateProgress(state.progress);
   if (!state.working || previous?.documentId !== document.documentId || !preservesStructure) {
     state.working = null;
+    clearInspectKnowledge(state.progress);
     return;
   }
   state.working = {
@@ -152,9 +171,13 @@ export function advanceDocumentWorkingState(
     inspections: state.working.inspections.map((item) => ({ ...item, inspection: removeOpaqueHandles(item.inspection) })),
     freshness: "formatting-carried",
   };
+  // Formatting keeps structure; inspect signatures remain valid for this version.
 }
 
-function sameFocus(a: DocumentInspectFocus | undefined, b: DocumentInspectFocus | undefined): boolean {
+export function sameFocus(
+  a: DocumentInspectFocus | undefined,
+  b: DocumentInspectFocus | undefined,
+): boolean {
   return JSON.stringify(a ?? { kind: "overview" }) === JSON.stringify(b ?? { kind: "overview" });
 }
 
@@ -199,10 +222,30 @@ export function createDocumentToolContext(
     primaryDocument: state.primary,
     runtime,
     mutations,
-    advancePrimaryDocument: (document, preservesStructure) =>
-      advanceDocumentWorkingState(state, document, preservesStructure),
-    recordInspection: (document, focus, inspection) =>
-      recordDocumentInspection(state, document, focus, inspection),
+    advancePrimaryDocument: (document, preservesStructure) => {
+      advanceDocumentWorkingState(state, document, preservesStructure);
+      emitProgressEvent(base.events, {
+        runId: base.runId,
+        classification: "STATE_PROGRESS",
+        document,
+        ledger: state.progress,
+      });
+    },
+    recordInspection: (document, focus, inspection) => {
+      recordDocumentInspection(state, document, focus, inspection);
+      const coverage = state.progress.knownInspectCoverage.at(-1);
+      emitProgressEvent(base.events, {
+        runId: base.runId,
+        classification: "KNOWLEDGE_PROGRESS",
+        document,
+        readSignature: inspectReadSignature(focus),
+        ...(coverage !== undefined ? { coverage } : {}),
+        ...(coverage?.hasMore === true && coverage.returned !== undefined
+          ? { nextOffset: coverage.offset + coverage.returned }
+          : {}),
+        ledger: state.progress,
+      });
+    },
     recordRecentParagraphTargets: (document, texts) =>
       recordRecentParagraphTargets(state, document, texts),
     reuseInspection: (focus) => findDocumentInspection(state, focus),

@@ -30,6 +30,7 @@ import type {
   ModelTimeoutContext,
   ToolBatchContext,
   ToolCallDeferral,
+  ToolCallSkip,
   ToolTurnLifecycle,
   TransformAgentContext,
 } from "../runner.js";
@@ -47,6 +48,14 @@ import {
   type RuntimeCapabilities,
 } from "../types.js";
 import { filterDocumentToolsByCapabilities } from "./index.js";
+import { DOCUMENT_TOOL_NAMES } from "./names.js";
+import {
+  emitProgressEvent,
+  isInspectKnowledgeSatisfied,
+  noteModelTurn,
+  noteRedundantInspect,
+} from "./progress-ledger.js";
+import { parseInspectFocus } from "./selectors.js";
 import {
   advanceDocumentWorkingState,
   createDocumentRunState,
@@ -216,6 +225,7 @@ export function createDocumentTurnToolSelector(
   }
 
   return async (context): Promise<TurnToolSelectorResult> => {
+    noteModelTurn(state.progress);
     const currentPrimaryId = state.primary?.documentId ?? null;
     if (
       bootstrappedPrimaryId === undefined ||
@@ -293,13 +303,12 @@ export function createDocumentAgentRunnerOptions(
 function createDocumentToolTurnLifecycle(
   state: DocumentRunState,
   mutations: DocumentMutationExecutor | undefined,
-): ToolTurnLifecycle | undefined {
-  if (!mutations) return undefined;
+): ToolTurnLifecycle {
   const pendingMutations = mutations;
   let priorFlush: Exclude<Awaited<ReturnType<NonNullable<DocumentMutationExecutor["flushPendingFormatting"]>>>, { status: "noop" }> | undefined;
   let turnBaseVersionId: string | undefined;
   async function flush(context: { readonly runId: string; readonly events: AgentEventSink }) {
-    const flushed = pendingMutations.flushPendingFormatting
+    const flushed = pendingMutations?.flushPendingFormatting
       ? await pendingMutations.flushPendingFormatting()
       : { status: "noop" as const };
     if (flushed.status !== "success") return flushed;
@@ -319,11 +328,23 @@ function createDocumentToolTurnLifecycle(
       turnBaseVersionId = state.primary?.versionId;
     },
     async beforeTool(context) {
-      if (!FORMATTING_MUTATION_TYPES.has(context.toolName)) {
+      if (context.toolName === DOCUMENT_TOOL_NAMES.inspect) {
+        const skip = maybeSkipRedundantInspect(state, context);
+        if (skip) return skip;
+      }
+      if (pendingMutations && !FORMATTING_MUTATION_TYPES.has(context.toolName)) {
         const flushed = await flush(context);
         if (flushed.status === "error") throw new Error(flushed.diagnostics[0].message);
+        if (flushed.status === "success") {
+          emitProgressEvent(context.events, {
+            runId: context.runId,
+            classification: "STATE_PROGRESS",
+            document: state.primary,
+            ledger: state.progress,
+          });
+        }
       }
-      if (!turnBaseVersionId || state.primary?.versionId === turnBaseVersionId) return;
+      if (!pendingMutations || !turnBaseVersionId || state.primary?.versionId === turnBaseVersionId) return;
       const handles = collectOpaqueHandlesFromToolInput(context.toolCall.input);
       if (!handles.some((handle) => state.handles.origin(handle) === turnBaseVersionId)) return;
       return {
@@ -331,6 +352,7 @@ function createDocumentToolTurnLifecycle(
       } satisfies ToolCallDeferral;
     },
     async finalize(context) {
+      if (!pendingMutations) return context.toolOutcomes;
       const flushed = priorFlush ?? await flush(context);
       if (flushed.status === "noop") return context.toolOutcomes;
       if (flushed.status === "error") {
@@ -340,6 +362,12 @@ function createDocumentToolTurnLifecycle(
             : outcome,
         );
       }
+      emitProgressEvent(context.events, {
+        runId: context.runId,
+        classification: "STATE_PROGRESS",
+        document: state.primary,
+        ledger: state.progress,
+      });
       return context.toolOutcomes.map((outcome) => {
         if (!isPendingOutcome(outcome)) return outcome;
         const pending = outcome.output as { operation: string; diagnostics: readonly Diagnostic[]; change?: unknown };
@@ -355,8 +383,48 @@ function createDocumentToolTurnLifecycle(
         };
       });
     },
-    abandon() { pendingMutations.abandonPendingFormatting?.(); },
+    abandon() { pendingMutations?.abandonPendingFormatting?.(); },
   };
+}
+
+function maybeSkipRedundantInspect(
+  state: DocumentRunState,
+  context: {
+    readonly runId: string;
+    readonly events: AgentEventSink;
+    readonly toolCall: { readonly input?: unknown };
+  },
+): ToolCallSkip | undefined {
+  const focus = tryParseInspectFocus(context.toolCall.input);
+  if (!isInspectKnowledgeSatisfied(state.progress, focus)) return undefined;
+  const redundant = noteRedundantInspect(state.progress, focus);
+  emitProgressEvent(context.events, {
+    runId: context.runId,
+    classification: "REDUNDANT_READ",
+    document: state.primary,
+    readSignature: redundant.signature,
+    coverage: redundant.coverage,
+    ...(redundant.nextOffset !== undefined
+      ? { nextOffset: redundant.nextOffset }
+      : {}),
+    ledger: state.progress,
+  });
+  return {
+    skip: true,
+    summary: redundant.output.message,
+    output: redundant.output,
+  };
+}
+
+function tryParseInspectFocus(input: unknown) {
+  if (!input || typeof input !== "object") return undefined;
+  const focus = (input as { focus?: unknown }).focus;
+  if (focus === undefined) return undefined;
+  try {
+    return parseInspectFocus(focus);
+  } catch {
+    return undefined;
+  }
 }
 
 function isPendingOutcome(outcome: ToolBatchContext["toolOutcomes"][number]): boolean {
@@ -367,7 +435,13 @@ function isPendingOutcome(outcome: ToolBatchContext["toolOutcomes"][number]): bo
 export function createDocumentAgentRunnerPolicyOptions(state?: DocumentRunState) {
   return {
     transformContext: (messages: Parameters<TransformAgentContext>[0]) =>
-      transformContext(messages, state?.working, state?.primary, state?.handles),
+      transformContext(
+        messages,
+        state?.working,
+        state?.primary,
+        state?.handles,
+        state?.progress.pendingStagnationGuidance,
+      ),
     shouldTerminalizeToolBatch: shouldTerminalizeDocumentToolBatch,
     getModelTimeoutRetryMessage: getDocumentModelTimeoutRetryMessage,
     requiredToolsNudgeMessage: USE_DOCUMENT_TOOLS_NUDGE_MESSAGE,

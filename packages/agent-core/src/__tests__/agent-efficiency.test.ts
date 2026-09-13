@@ -847,7 +847,7 @@ test("model turn timeout fails the run instead of hanging", async () => {
     runId: "r-timeout",
   });
   assert.equal(result.status, "failed");
-  assert.match(result.summary, /exceeded 50ms/i);
+  assert.match(result.summary, /startup timeout/i);
 });
 
 test("document timeout policy retries open-doc first-turn stalls, not after read/write", () => {

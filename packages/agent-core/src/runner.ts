@@ -56,7 +56,11 @@ import {
 const DEFAULT_MAX_TURNS = 20;
 /** Same tool input failing this many times → block further calls and force an answer. */
 const MAX_FAILURES_PER_TOOL = 2;
-/** Hard cap on a single provider round-trip so chat essays cannot hang the UI for minutes. */
+/**
+ * Startup + stream-idle liveness budget for one model.complete (ms).
+ * Not a wall-clock cap on total stream duration — meaningful model activity
+ * (text/tool fragments) resets the idle timer. Absolute fuse is 10× this.
+ */
 const DEFAULT_MODEL_TURN_TIMEOUT_MS = 90_000;
 
 const REPEATED_FAILURE_STOP_MESSAGE =
@@ -77,7 +81,13 @@ export interface ToolBatchContext {
 /** Domain-owned lifecycle around one assistant response's tool calls. */
 export interface ToolTurnLifecycle {
   begin(context: ToolTurnLifecycleContext): Promise<void> | void;
-  beforeTool?(context: ToolTurnLifecycleContext & { readonly toolCallId: string; readonly toolName: string; readonly toolCall: ModelToolCall }): Promise<void | ToolCallDeferral> | void | ToolCallDeferral;
+  beforeTool?(
+    context: ToolTurnLifecycleContext & {
+      readonly toolCallId: string;
+      readonly toolName: string;
+      readonly toolCall: ModelToolCall;
+    },
+  ): Promise<void | ToolCallDeferral | ToolCallSkip> | void | ToolCallDeferral | ToolCallSkip;
   finalize(context: ToolBatchContext & Omit<ToolTurnLifecycleContext, "toolCalls">): Promise<readonly ToolOutcome[]> | readonly ToolOutcome[];
   abandon?(context: ToolTurnLifecycleContext): Promise<void> | void;
 }
@@ -85,6 +95,13 @@ export interface ToolTurnLifecycle {
 /** Domain-owned reason to stop executing the remaining calls in this response. */
 export interface ToolCallDeferral {
   readonly summary: string;
+}
+
+/** Domain-owned skip of one call without barring siblings (e.g. proven redundant read). */
+export interface ToolCallSkip {
+  readonly skip: true;
+  readonly summary: string;
+  readonly output?: unknown;
 }
 
 export interface ToolTurnLifecycleContext {
@@ -135,8 +152,16 @@ export interface AgentRunnerOptions {
   readonly capabilities?: RuntimeCapabilities;
   /** Hard cap on model turns. Default 20. */
   readonly maxTurns?: number;
-  /** Per model.complete wall-time budget in ms. Default 90000. */
+  /**
+   * Startup + stream-idle liveness budget per model.complete (ms).
+   * Default 90000. Compatible name: historically wall-clock; now first-activity
+   * and between-activity idle, not total stream duration.
+   */
   readonly modelTurnTimeoutMs?: number;
+  /**
+   * Absolute hard ceiling per model.complete (ms). Default 10× modelTurnTimeoutMs.
+   */
+  readonly modelTurnHardTimeoutMs?: number;
   /** Injectable clock for deterministic event timestamps in tests. */
   readonly now?: () => Date;
   /** Injectable id factory for turn/message ids. */
@@ -173,6 +198,7 @@ export class AgentRunner {
   private readonly capabilities: RuntimeCapabilities;
   private readonly maxTurns: number;
   private readonly modelTurnTimeoutMs: number;
+  private readonly modelTurnHardTimeoutMs: number;
   private readonly now: () => Date;
   private readonly createId: () => string;
 
@@ -197,6 +223,8 @@ export class AgentRunner {
     this.maxTurns = options.maxTurns ?? DEFAULT_MAX_TURNS;
     this.modelTurnTimeoutMs =
       options.modelTurnTimeoutMs ?? DEFAULT_MODEL_TURN_TIMEOUT_MS;
+    this.modelTurnHardTimeoutMs =
+      options.modelTurnHardTimeoutMs ?? this.modelTurnTimeoutMs * 10;
     this.now = options.now ?? (() => new Date());
     this.createId = options.createId ?? randomUUID;
   }
@@ -322,6 +350,7 @@ export class AgentRunner {
           toolCount: selection.toolsForModel.length,
           abort: signal.aborted,
           modelTurnTimeoutMs: this.modelTurnTimeoutMs,
+          modelTurnHardTimeoutMs: this.modelTurnHardTimeoutMs,
         });
 
         const messageId = this.createId();
@@ -337,6 +366,7 @@ export class AgentRunner {
           forceAnswerOnly,
           signal,
           timeoutMs: this.modelTurnTimeoutMs,
+          hardTimeoutMs: this.modelTurnHardTimeoutMs,
           timeoutRetryUsed: timeoutRetrySent,
           ...(this.getModelTimeoutRetryMessage !== undefined
             ? {
@@ -755,6 +785,15 @@ export class AgentRunner {
       toolName: call.name,
       toolCall: call,
     });
+    if (deferral && "skip" in deferral && deferral.skip === true) {
+      return {
+        toolCallId: call.id,
+        toolName: call.name,
+        status: "skipped",
+        summary: deferral.summary,
+        ...(deferral.output !== undefined ? { output: deferral.output } : {}),
+      };
+    }
     if (deferral) {
       return { ...deferredToolOutcome(call), summary: deferral.summary };
     }
@@ -1012,6 +1051,21 @@ export class AgentRunner {
           toolName: outcome.toolName, summary: outcome.summary ?? "Tool call deferred",
           at: this.timestamp(),
         });
+        continue;
+      }
+      if (outcome.status === "skipped" && !outcome.diagnostic) {
+        try {
+          await this.emit({
+            type: "tool.completed", runId, toolCallId: outcome.toolCallId,
+            toolName: outcome.toolName, summary: outcome.summary,
+            output: outcome.output, at: this.timestamp(),
+          });
+        } catch (error) {
+          infrastructureFailures.push(this.toDiagnostic(
+            error, "EVENT_SINK_FAILURE",
+            `Failed to record completion of tool ${outcome.toolName}`,
+          ));
+        }
         continue;
       }
       if (outcome.status !== "succeeded") {

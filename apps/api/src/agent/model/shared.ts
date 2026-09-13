@@ -47,6 +47,38 @@ export function isAbortLike(error: unknown): boolean {
 }
 
 /**
+ * Resolve an HTTP-like status from provider/SDK errors.
+ * Mid-stream OpenAI SSE errors often set numeric `code` with `status` undefined.
+ * Connection codes like ECONNRESET are not treated as HTTP statuses.
+ */
+export function resolveProviderHttpStatus(error: unknown): number | undefined {
+  if (!error || typeof error !== "object") {
+    return undefined;
+  }
+  const record = error as {
+    status?: unknown;
+    statusCode?: unknown;
+    code?: unknown;
+  };
+  for (const value of [record.status, record.statusCode]) {
+    const status = asHttpStatus(value);
+    if (status !== undefined) return status;
+  }
+  return asHttpStatus(record.code);
+}
+
+function asHttpStatus(value: unknown): number | undefined {
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return value >= 100 && value < 600 ? value : undefined;
+  }
+  if (typeof value === "string" && /^\d{3}$/.test(value)) {
+    const status = Number(value);
+    return status >= 100 && status < 600 ? status : undefined;
+  }
+  return undefined;
+}
+
+/**
  * Map provider exceptions to AgentCoreError without leaking raw payloads/keys.
  */
 export function normalizeProviderError(
@@ -57,10 +89,7 @@ export function normalizeProviderError(
     return error;
   }
 
-  const status =
-    error && typeof error === "object" && "status" in error
-      ? Number(error.status)
-      : undefined;
+  const status = resolveProviderHttpStatus(error);
 
   const rawMessage =
     error && typeof error === "object" && "message" in error

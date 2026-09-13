@@ -195,6 +195,7 @@ function toLiveAgentEvent(
     case "turn.completed":
     case "model.turn.metrics":
     case "tool.execution.metrics":
+    case "agent.progress":
       return null;
     case "message.started":
       return {

@@ -201,6 +201,66 @@ test("OpenRouter adapter: streams text deltas live before stream completes", asy
   assert.equal(result.meta?.modelId, "meta-llama/test");
 });
 
+test("OpenRouter adapter: reports meaningful model activity, not empty heartbeats", async () => {
+  const activity: string[] = [];
+  const model = createOpenRouterAgentModel({
+    model: "meta-llama/test",
+    client: {
+      chat: {
+        completions: {
+          async create() {
+            async function* chunks() {
+              yield { choices: [] }; // transport-ish empty
+              yield { choices: [{ delta: {} }] }; // empty delta
+              yield {
+                choices: [{
+                  delta: {
+                    tool_calls: [{
+                      index: 0,
+                      id: "c1",
+                      function: { name: "widgets.write" },
+                    }],
+                  },
+                }],
+              };
+              yield {
+                choices: [{
+                  delta: {
+                    tool_calls: [{
+                      index: 0,
+                      function: { arguments: '{"a":1}' },
+                    }],
+                  },
+                }],
+              };
+              yield { choices: [{ delta: { content: "ok" } }] };
+              yield { choices: [{ finish_reason: "stop" }] };
+            }
+            return chunks();
+          },
+        },
+      },
+    },
+  });
+
+  const result = await model.complete({
+    messages: [{ role: "user", content: "Hi" }],
+    tools: [],
+    onTextDelta: () => undefined,
+    onModelActivity: (kind) => {
+      activity.push(kind);
+    },
+  });
+
+  assert.deepEqual(activity, [
+    "tool_call_name_delta",
+    "tool_call_arguments_delta",
+    "text_delta",
+  ]);
+  assert.equal(result.content, "ok");
+  assert.equal(result.toolCalls[0]?.name, "widgets.write");
+});
+
 test("OpenRouter adapter: retries transient failure before visible text (tool fragments only)", async () => {
   let providerAttempts = 0;
   let toolExecutions = 0;
@@ -329,6 +389,187 @@ test("OpenRouter adapter: does not retry after visible text was streamed", async
   );
   assert.equal(providerAttempts, 1);
   assert.deepEqual(deltas, ["Partial answer"]);
+});
+
+test("OpenRouter adapter: retries mid-stream APIError with numeric code=525", async () => {
+  let providerAttempts = 0;
+  let toolExecutions = 0;
+  const model = createOpenRouterAgentModel({
+    model: "meta-llama/test",
+    client: {
+      chat: {
+        completions: {
+          async create() {
+            providerAttempts += 1;
+            if (providerAttempts === 1) {
+              async function* failedStream() {
+                // OpenAI SDK mid-stream shape: status undefined, code from SSE body.
+                throw Object.assign(new Error("error code: 525"), {
+                  name: "APIError",
+                  status: undefined,
+                  code: 525,
+                });
+              }
+              return failedStream();
+            }
+            async function* recoveredStream() {
+              yield {
+                choices: [{
+                  delta: {
+                    tool_calls: [{
+                      index: 0,
+                      id: "write-1",
+                      function: { name: "widgets.write", arguments: "{}" },
+                    }],
+                  },
+                }],
+              };
+              yield { choices: [{ finish_reason: "tool_calls" }] };
+            }
+            return recoveredStream();
+          },
+        },
+      },
+    },
+  });
+  const events = createRecordingEventSink();
+  const runner = new AgentRunner({
+    model,
+    tools: ToolRegistry.create([
+      createFakeTool({
+        name: "widgets.write",
+        effect: "write",
+        async execute() {
+          toolExecutions += 1;
+          return { summary: "saved" };
+        },
+      }),
+    ]),
+    shouldTerminalizeToolBatch: () => true,
+    events,
+  });
+
+  const result = await runner.run({
+    instruction: "Save it",
+    threadId: "retry-525-thread",
+    runId: "retry-525-run",
+  });
+
+  assert.equal(providerAttempts, 2);
+  assert.equal(toolExecutions, 1);
+  assert.equal(result.status, "completed");
+  assert.equal(result.toolOutcomes.length, 1);
+  assert.equal(
+    events.events.filter((event) => event.type === "message.delta").length,
+    0,
+  );
+});
+
+test("OpenRouter adapter: retries mid-stream APIError with string code=\"525\"", async () => {
+  let providerAttempts = 0;
+  const model = createOpenRouterAgentModel({
+    model: "meta-llama/test",
+    client: {
+      chat: {
+        completions: {
+          async create() {
+            providerAttempts += 1;
+            if (providerAttempts === 1) {
+              async function* failedStream() {
+                throw Object.assign(new Error("error code: 525"), {
+                  name: "APIError",
+                  status: undefined,
+                  code: "525",
+                });
+              }
+              return failedStream();
+            }
+            async function* recoveredStream() {
+              yield { choices: [{ delta: { content: "Recovered" } }] };
+            }
+            return recoveredStream();
+          },
+        },
+      },
+    },
+  });
+
+  const deltas: string[] = [];
+  const result = await model.complete({
+    messages: [{ role: "user", content: "Hi" }],
+    tools: [],
+    onTextDelta: (delta) => {
+      deltas.push(delta);
+    },
+  });
+
+  assert.equal(providerAttempts, 2);
+  assert.deepEqual(deltas, ["Recovered"]);
+  assert.equal(result.content, "Recovered");
+});
+
+test("OpenRouter adapter: does not retry code=525 after visible text", async () => {
+  let providerAttempts = 0;
+  const deltas: string[] = [];
+  const model = createOpenRouterAgentModel({
+    model: "meta-llama/test",
+    client: {
+      chat: {
+        completions: {
+          async create() {
+            providerAttempts += 1;
+            async function* failedStream() {
+              yield { choices: [{ delta: { content: "Partial" } }] };
+              throw Object.assign(new Error("error code: 525"), {
+                name: "APIError",
+                status: undefined,
+                code: 525,
+              });
+            }
+            return failedStream();
+          },
+        },
+      },
+    },
+  });
+
+  await assert.rejects(
+    () =>
+      model.complete({
+        messages: [{ role: "user", content: "Hi" }],
+        tools: [],
+        onTextDelta: (delta) => {
+          deltas.push(delta);
+        },
+      }),
+    (error: unknown) =>
+      error instanceof AgentCoreError &&
+      error.code === "MODEL_FAILURE" &&
+      error.message === "OpenRouter service unavailable",
+  );
+  assert.equal(providerAttempts, 1);
+  assert.deepEqual(deltas, ["Partial"]);
+});
+
+test("OpenRouter adapter: retries connection code ECONNRESET", async () => {
+  let providerAttempts = 0;
+  const model = createOpenRouterAgentModel({
+    model: "meta-llama/test",
+    client: mockClient(async () => {
+      providerAttempts += 1;
+      if (providerAttempts === 1) {
+        throw Object.assign(new Error("socket hang up"), { code: "ECONNRESET" });
+      }
+      return { choices: [{ message: { content: "ok" } }] };
+    }),
+  });
+
+  const result = await model.complete({
+    messages: [{ role: "user", content: "Hi" }],
+    tools: [],
+  });
+  assert.equal(providerAttempts, 2);
+  assert.equal(result.content, "ok");
 });
 
 test("OpenRouter adapter: tool-call fragments are not emitted as text deltas", async () => {
@@ -658,4 +899,14 @@ test("OpenRouter adapter: provider error and unsupported tools", async () => {
     "OpenRouter",
   );
   assert.equal(normalized.message, "OpenRouter authentication failed");
+
+  const midStream525 = normalizeProviderError(
+    Object.assign(new Error("error code: 525"), {
+      name: "APIError",
+      status: undefined,
+      code: 525,
+    }),
+    "OpenRouter",
+  );
+  assert.equal(midStream525.message, "OpenRouter service unavailable");
 });

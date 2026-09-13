@@ -144,8 +144,24 @@ export type {
   DocumentAgentRunnerOptionsInput,
   DocumentTurnToolSelectorOptions,
 } from "./turn-tool-selector.js";
-export { advanceDocumentWorkingState, createDocumentRunState, createDocumentToolContext, findDocumentInspection, recordDocumentInspection, recordRecentParagraphTargets } from "./run-state.js";
+export { advanceDocumentWorkingState, createDocumentRunState, createDocumentToolContext, findDocumentInspection, recordDocumentInspection, recordRecentParagraphTargets, sameFocus } from "./run-state.js";
 export type { DocumentInspectionCoverage, DocumentInspectionKnowledge, DocumentRunState, DocumentToolContextOptions, DocumentWorkingState, RecentParagraphTarget } from "./run-state.js";
+export {
+  createProgressLedger,
+  inspectReadSignature,
+  isInspectKnowledgeSatisfied,
+  normalizeInspectFocus,
+  noteKnowledgeProgress,
+  noteRedundantInspect,
+  noteStateProgress,
+  stableJson,
+} from "./progress-ledger.js";
+export type {
+  DocumentProgressLedger,
+  InspectCoverageEntry,
+  ProgressClassification,
+  RedundantInspectOutput,
+} from "./progress-ledger.js";
 
 /**
  * Full model-facing document tool catalog (unfiltered).

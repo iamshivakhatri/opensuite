@@ -1,6 +1,7 @@
 import {
   AgentCoreError,
   type AgentModel,
+  type ModelActivityKind,
   type ModelMessage,
   type ModelRequest,
   type ModelResponse,
@@ -20,6 +21,7 @@ import {
   isAbortLike,
   normalizeProviderError,
   resolveAgentSystemPrompt,
+  resolveProviderHttpStatus,
 } from "./shared.js";
 
 /** Chat Completions shapes — OpenRouter's OpenAI-compatible surface. */
@@ -230,6 +232,7 @@ export function createOpenRouterAgentModel(
                     source: "mid-stream",
                     elapsedMs: Date.now() - startedAt,
                     sawFirstChunk,
+                    ...abortKindFields(request.signal),
                   });
                   throw cancelledError();
                 }
@@ -260,6 +263,7 @@ export function createOpenRouterAgentModel(
                   }
                   content += delta.content;
                   hasEmittedVisibleText = true;
+                  request.onModelActivity?.("text_delta");
                   await request.onTextDelta(delta.content);
                 }
 
@@ -267,6 +271,7 @@ export function createOpenRouterAgentModel(
                   if (timeToFirstTokenMs === undefined) {
                     timeToFirstTokenMs = Date.now() - startedAt;
                   }
+                  reportOpenRouterToolActivity(toolDelta, request.onModelActivity);
                   const index = toolDelta.index ?? 0;
                   const current = toolAcc.get(index) ?? {
                     id: "",
@@ -313,6 +318,7 @@ export function createOpenRouterAgentModel(
                 source: "post-stream",
                 elapsedMs: Date.now() - startedAt,
                 sawFirstChunk,
+                ...abortKindFields(request.signal),
               });
               throw cancelledError();
             }
@@ -381,6 +387,7 @@ export function createOpenRouterAgentModel(
               ...attemptCorr,
               source: "outer-catch",
               elapsedMs: Date.now() - startedAt,
+              ...abortKindFields(request.signal),
               ...summarizeDebugError(error),
             });
             throw cancelledError(error);
@@ -410,10 +417,7 @@ export function createOpenRouterAgentModel(
               ...providerFailureFields(error),
             });
           }
-          const status =
-            error && typeof error === "object" && "status" in error
-              ? Number((error as { status?: unknown }).status)
-              : undefined;
+          const status = resolveProviderHttpStatus(error);
           if (status !== undefined && (status < 200 || status >= 300)) {
             agentDebugLifecycle("OPENROUTER_HTTP", {
               ...attemptCorr,
@@ -443,7 +447,7 @@ function transientRetryDelayMs(error: unknown): number | undefined {
   if (!error || typeof error !== "object" || error instanceof AgentCoreError) {
     return undefined;
   }
-  const status = "status" in error ? Number(error.status) : undefined;
+  const status = resolveProviderHttpStatus(error);
   if (status === 429) {
     return retryAfterMs(error);
   }
@@ -614,6 +618,31 @@ function withOpenRouterMeta(
   };
 }
 
+/** Distinguish model-turn liveness abort from external/user cancellation. */
+function abortKindFields(signal: AbortSignal | undefined): {
+  abortKind: "timeout" | "external";
+  timeoutSource?: string;
+} {
+  const reason =
+    signal && "reason" in signal
+      ? (signal as AbortSignal & { reason?: unknown }).reason
+      : undefined;
+  if (
+    reason &&
+    typeof reason === "object" &&
+    reason !== null &&
+    "timeoutSource" in reason
+  ) {
+    return {
+      abortKind: "timeout",
+      timeoutSource: String(
+        (reason as { timeoutSource: unknown }).timeoutSource,
+      ),
+    };
+  }
+  return { abortKind: "external" };
+}
+
 function safeJsonStringify(value: unknown): string {
   try {
     return JSON.stringify(value ?? {});
@@ -627,5 +656,23 @@ function parseJsonObject(raw: string): unknown {
     return JSON.parse(raw) as unknown;
   } catch {
     return {};
+  }
+}
+
+/** Report tool-call stream fragments as model liveness (not transport noise). */
+function reportOpenRouterToolActivity(
+  toolDelta: {
+    readonly id?: string;
+    readonly function?: { readonly name?: string; readonly arguments?: string };
+  },
+  onModelActivity: ((kind: ModelActivityKind) => void) | undefined,
+): void {
+  if (!onModelActivity) return;
+  if (toolDelta.function?.arguments) {
+    onModelActivity("tool_call_arguments_delta");
+  } else if (toolDelta.function?.name) {
+    onModelActivity("tool_call_name_delta");
+  } else if (toolDelta.id) {
+    onModelActivity("tool_call_start");
   }
 }
