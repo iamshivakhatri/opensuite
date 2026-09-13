@@ -697,7 +697,9 @@ async function continueExecution(input: {
         elapsedMs: Date.now() - executionStartedAt,
       });
     } else {
-      const diagnostic = agentResult.diagnostics[0];
+      // Diagnostics retain every recovered tool failure in chronological order.
+      // A failed AgentResult appends the diagnostic that actually ended the run.
+      const diagnostic = agentResult.diagnostics.at(-1);
       const errorCode = safeErrorCode(
         diagnostic?.code,
         "AGENT_EXECUTION_FAILED",
@@ -728,10 +730,11 @@ async function continueExecution(input: {
         type: "agent.failed",
         runId: run.id,
         at: new Date().toISOString(),
-        diagnostic: diagnostic ?? {
-          code: "AGENT_EXECUTION_FAILED",
-          severity: "error",
-          message: "Agent run failed",
+        diagnostic: {
+          ...diagnostic,
+          code: errorCode,
+          severity: diagnostic?.severity ?? "error",
+          message: errorMessage,
         },
       });
       agentDebugLifecycle("RUN_FAILED", {

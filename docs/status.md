@@ -17,6 +17,7 @@ _Read this before starting any work. Keep it a concise current-state handoff, no
 * **TEMP agent lifecycle debug** — `AGENT_DEBUG_LIFECYCLE=1` logs `[agent-debug]` turn/OpenRouter/abort/SSE/status (remove after diagnosis).
 * **Protocol hardening v7.4:** same-turn calls with handles made stale by an earlier version advance are deferred as a clean barrier; semantic selectors and formatting transactions continue normally.
 * **Protocol hardening v7.5:** model-facing context hides registry-backed handles from older document versions while preserving semantic inspection knowledge and canonical audit history.
+* **Protocol hardening v7.6:** durable failed-run status and deferred terminal SSE use the final AgentRunner diagnostic, while earlier recovered tool failures remain in step history.
 
 ## Current Decisions
 

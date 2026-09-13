@@ -5,6 +5,7 @@ import { randomUUID } from "node:crypto";
 import { test } from "node:test";
 
 import {
+  AgentCoreError,
   AutoApproveConfirmationGate,
   ToolRegistry,
   assistantOnlyResponse,
@@ -13,6 +14,7 @@ import {
   delay,
   denyAllConfirmationGate,
   toolCallResponse,
+  type AgentEvent,
   type AgentModel,
   type ModelRequest,
 } from "@opensuite/agent-core";
@@ -585,31 +587,54 @@ test(
       });
       const failing = createService(persistence, documents, {
         model: createScriptedAgentModel([
-          toolCallResponse("", [{ id: "1", name: "tool.ok", input: {} }]),
+          toolCallResponse("", [{ id: "1", name: "tool.stale", input: {} }]),
           () => {
             throw new Error("model exploded");
           },
         ]),
         tools: ToolRegistry.create([
           createFakeTool({
-            name: "tool.ok",
+            name: "tool.stale",
             async execute() {
-              return { summary: "kept" };
+              throw new AgentCoreError("STALE_HANDLE", "Handle is stale", {
+                diagnostic: {
+                  code: "STALE_HANDLE",
+                  severity: "error",
+                  message: "Handle is stale",
+                },
+              });
             },
           }),
         ]),
       });
+      const failEvents: AgentEvent[] = [];
       const failResult = await failing.execute({
         userId: aliceId,
         threadId: failThread.id,
         instruction: "Will fail",
+        liveEvents: {
+          async emit(event) {
+            failEvents.push(event);
+          },
+        },
       });
       assert.equal(failResult.run.status, "failed");
       assert.equal(failResult.assistantMessage, null);
       assert.equal(failResult.run.errorCode, "MODEL_FAILURE");
+      assert.deepEqual(
+        failResult.result.diagnostics.map((diagnostic) => diagnostic.code),
+        ["STALE_HANDLE", "MODEL_FAILURE"],
+      );
+      const terminalFailure = failEvents.find(
+        (
+          event,
+        ): event is Extract<AgentEvent, { type: "agent.failed" }> =>
+          event.type === "agent.failed",
+      );
+      assert.equal(terminalFailure?.diagnostic.code, "MODEL_FAILURE");
       assert.ok(failResult.run.completedAt);
       assert.equal(failResult.steps.length, 1);
-      assert.equal(failResult.steps[0]?.status, "completed");
+      assert.equal(failResult.steps[0]?.status, "failed");
       const failMessages = await persistence.listMessagesForThread({
         threadId: failThread.id,
         ownerUserId: aliceId,
