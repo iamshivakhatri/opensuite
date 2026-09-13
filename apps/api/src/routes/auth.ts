@@ -1,5 +1,12 @@
+import type { Db } from "@opensuite/db";
+import { probeDatabase } from "@opensuite/db";
 import type { FastifyInstance } from "fastify";
 import { fromNodeHeaders } from "better-auth/node";
+
+import {
+  databaseUnavailableBody,
+  shouldTreatAsDatabaseUnavailable,
+} from "../database-availability.js";
 
 export interface AuthHandler {
   handler(request: Request): Promise<Response>;
@@ -13,6 +20,7 @@ export interface AuthHandler {
 export function registerAuthRoutes(
   app: FastifyInstance,
   auth: AuthHandler,
+  deps: { readonly db: Db },
 ): void {
   app.route({
     method: ["GET", "POST"],
@@ -33,6 +41,15 @@ export function registerAuthRoutes(
 
         const response = await auth.handler(req);
 
+        // Better Auth often returns 5xx JSON instead of throwing when Postgres
+        // is down — rewrite to a stable DATABASE_UNAVAILABLE signal.
+        if (response.status >= 500) {
+          const database = await probeDatabase(deps.db);
+          if (database === "unavailable") {
+            return reply.status(503).send(databaseUnavailableBody);
+          }
+        }
+
         reply.status(response.status);
         response.headers.forEach((value, key) => {
           reply.header(key, value);
@@ -42,6 +59,9 @@ export function registerAuthRoutes(
         return reply.send(body);
       } catch (error) {
         request.log.error({ err: error }, "authentication handler error");
+        if (await shouldTreatAsDatabaseUnavailable(error, deps.db)) {
+          return reply.status(503).send(databaseUnavailableBody);
+        }
         return reply.status(500).send({
           error: {
             statusCode: 500,

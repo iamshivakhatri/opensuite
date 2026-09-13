@@ -49,9 +49,11 @@ function mockAuth(
   };
 }
 
-/** Unit-test placeholder — never queried by the cases below. */
+/** Unit-test placeholder — supports health SELECT 1 probe. */
 function stubDb(): Db {
-  return {} as Db;
+  return {
+    execute: async () => ({ rows: [{ ok: 1 }] }),
+  } as unknown as Db;
 }
 
 async function testApp(sessionUser: AuthenticatedUser | null = null) {
@@ -70,7 +72,101 @@ test("GET /health returns 200 with a status payload", async () => {
   assert.equal(response.statusCode, 200);
   const body = response.json();
   assert.equal(body.status, "ok");
+  assert.equal(body.database, "ok");
   assert.equal(typeof body.uptimeSeconds, "number");
+
+  await app.close();
+});
+
+test("GET /health reports degraded when database probe fails", async () => {
+  const app = await buildApp(testConfig(), {
+    auth: mockAuth(),
+    db: {
+      execute: async () => {
+        throw Object.assign(new Error("connect ETIMEDOUT"), {
+          code: "ETIMEDOUT",
+        });
+      },
+    } as unknown as Db,
+    storage: createMemoryObjectStorage(),
+  });
+
+  const response = await app.inject({ method: "GET", url: "/health" });
+
+  assert.equal(response.statusCode, 200);
+  const body = response.json();
+  assert.equal(body.status, "degraded");
+  assert.equal(body.database, "unavailable");
+
+  await app.close();
+});
+
+test("protected routes map Postgres outages to DATABASE_UNAVAILABLE", async () => {
+  const app = await buildApp(testConfig(), {
+    auth: {
+      handler: async () =>
+        new Response(JSON.stringify({ ok: true }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        }),
+      api: {
+        getSession: async () => {
+          throw Object.assign(new Error("connect ETIMEDOUT"), {
+            code: "ETIMEDOUT",
+          });
+        },
+      },
+    },
+    db: stubDb(),
+    storage: createMemoryObjectStorage(),
+  });
+
+  const response = await app.inject({
+    method: "GET",
+    url: "/api/me",
+  });
+
+  assert.equal(response.statusCode, 503);
+  assert.deepEqual(response.json(), {
+    error: {
+      statusCode: 503,
+      message: "Database temporarily unavailable",
+      code: "DATABASE_UNAVAILABLE",
+    },
+  });
+
+  await app.close();
+});
+
+test("auth get-session 5xx becomes DATABASE_UNAVAILABLE when DB is down", async () => {
+  const app = await buildApp(testConfig(), {
+    auth: {
+      handler: async () =>
+        new Response(JSON.stringify({ message: "Failed to get session" }), {
+          status: 500,
+          headers: { "Content-Type": "application/json" },
+        }),
+      api: {
+        getSession: async () => null,
+      },
+    },
+    db: {
+      execute: async () => {
+        throw Object.assign(new Error("connect ECONNREFUSED"), {
+          code: "ECONNREFUSED",
+        });
+      },
+    } as unknown as Db,
+    storage: createMemoryObjectStorage(),
+  });
+
+  const response = await app.inject({
+    method: "GET",
+    url: "/api/auth/get-session",
+  });
+
+  assert.equal(response.statusCode, 503);
+  assert.equal(response.json().error.code, "DATABASE_UNAVAILABLE");
 
   await app.close();
 });

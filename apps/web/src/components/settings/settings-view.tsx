@@ -1,15 +1,10 @@
 "use client";
 
 import * as React from "react";
-import { useRouter } from "next/navigation";
 
+import { AccountSettings } from "@/components/settings/account-settings";
 import { AiModelsSettings } from "@/components/settings/ai-models-settings";
 import { StorageSettings } from "@/components/settings/storage-settings";
-import { Button } from "@/components/ui/button";
-import { PageError, PageLoading } from "@/components/ui/page-state";
-import { userFacingError } from "@/components/files/format";
-import { fetchMe, type Me } from "@/lib/api";
-import { signOut } from "@/lib/auth-client";
 import { useTheme, type ThemePreference } from "@/lib/theme";
 import { cn } from "@/lib/utils";
 
@@ -45,12 +40,8 @@ function hashForSection(section: SettingsSection): string {
 }
 
 export function SettingsView() {
-  const router = useRouter();
   const { themePreference, setThemePreference } = useTheme();
   const [section, setSection] = React.useState<SettingsSection>("account");
-  const [me, setMe] = React.useState<Me | null>(null);
-  const [error, setError] = React.useState<string | null>(null);
-  const [signingOut, setSigningOut] = React.useState(false);
 
   React.useEffect(() => {
     setSection(sectionFromHash());
@@ -61,26 +52,12 @@ export function SettingsView() {
     return () => window.removeEventListener("hashchange", onHash);
   }, []);
 
-  React.useEffect(() => {
-    void fetchMe()
-      .then((user) => setMe(user))
-      .catch((err) =>
-        setError(userFacingError(err, "Could not load account.")),
-      );
-  }, []);
-
   function selectSection(next: SettingsSection) {
     setSection(next);
     const hash = hashForSection(next);
     if (window.location.hash.replace(/^#/, "") !== hash) {
       window.history.replaceState(null, "", `#${hash}`);
     }
-  }
-
-  async function handleSignOut() {
-    setSigningOut(true);
-    await signOut();
-    router.push("/sign-in");
   }
 
   const sectionLabel =
@@ -121,39 +98,7 @@ export function SettingsView() {
         })}
       </nav>
 
-      {section === "account" ? (
-        <section>
-          <div className="rounded-[var(--radius-md)] border border-line bg-surface px-4 py-4">
-            {error ? (
-              <PageError message={error} />
-            ) : me === null ? (
-              <PageLoading variant="settings" />
-            ) : (
-              <dl className="space-y-3 text-[12.5px]">
-                <div>
-                  <dt className="text-[10.5px] text-ink-faint">Name</dt>
-                  <dd className="font-medium text-ink">{me.name}</dd>
-                </div>
-                <div>
-                  <dt className="text-[10.5px] text-ink-faint">Email</dt>
-                  <dd className="font-medium text-ink">{me.email}</dd>
-                </div>
-              </dl>
-            )}
-            <div className="mt-4">
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                disabled={signingOut}
-                onClick={() => void handleSignOut()}
-              >
-                {signingOut ? "Signing out…" : "Sign out"}
-              </Button>
-            </div>
-          </div>
-        </section>
-      ) : null}
+      {section === "account" ? <AccountSettings /> : null}
 
       {section === "ai" ? <AiModelsSettings /> : null}
 

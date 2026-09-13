@@ -14,6 +14,10 @@ import {
 import type { Db } from "@opensuite/db";
 
 import {
+  databaseUnavailableBody,
+  shouldTreatAsDatabaseUnavailable,
+} from "./database-availability.js";
+import {
   createAgentExecutionService,
   type AgentExecutionService,
 } from "./agent/execution.js";
@@ -167,7 +171,7 @@ export async function buildApp(
     },
   });
 
-  app.setErrorHandler((error: FastifyError, request, reply) => {
+  app.setErrorHandler(async (error: FastifyError, request, reply) => {
     const statusCode = error.statusCode ?? 500;
     request.log.error({ err: error }, "request error");
 
@@ -179,6 +183,10 @@ export async function buildApp(
           code: "UPLOAD_TOO_LARGE",
         },
       });
+    }
+
+    if (await shouldTreatAsDatabaseUnavailable(error, deps.db)) {
+      return reply.status(503).send(databaseUnavailableBody);
     }
 
     reply.status(statusCode).send({
@@ -338,8 +346,8 @@ export async function buildApp(
       liveGraceMs: deps.agent?.liveGraceMs,
     });
 
-  registerHealthRoutes(app);
-  registerAuthRoutes(app, deps.auth);
+  registerHealthRoutes(app, { db: deps.db });
+  registerAuthRoutes(app, deps.auth, { db: deps.db });
   registerMeRoutes(app, deps.auth);
   registerAiModelRoutes(app, deps.auth, managedModelCatalog);
   registerAiTrialRoutes(app, deps.auth, managedTrial);

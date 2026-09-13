@@ -14,6 +14,7 @@ import {
   deleteProviderCredential,
   fetchAiPreference,
   fetchAiTrial,
+  fetchManagedAiModels,
   listProviderCredentials,
   saveAiPreference,
 } from "@/lib/ai-settings-api";
@@ -21,10 +22,14 @@ import {
   AI_PROVIDERS,
   BYOK_MODEL_PLACEHOLDERS,
   PROVIDER_LABELS,
-  activeModeSummary,
   buildByokPreferencePayload,
   buildManagedPreferencePayload,
+  byokActiveOptionLabel,
+  byokDraftReady,
   clearedApiKeyAfterSuccess,
+  findManagedModel,
+  formatInputOutputPricing,
+  isManagedModelUnavailable,
   isProviderConnected,
   modeFromPreference,
   trialDisplay,
@@ -32,10 +37,15 @@ import {
   type AiPreference,
   type AiProvider,
   type AiTrialStatus,
+  type ManagedAiModel,
   type PublicProviderCredential,
 } from "@/lib/ai-settings-model";
 import { useToast } from "@/lib/toast";
 import { cn } from "@/lib/utils";
+import {
+  ManagedModelPicker,
+  ManagedModelPickerError,
+} from "@/components/settings/managed-model-picker";
 
 type ConnectTarget = {
   readonly provider: AiProvider;
@@ -62,6 +72,15 @@ export function AiModelsSettings() {
   const [trial, setTrial] = React.useState<AiTrialStatus | null>(null);
   const [trialLoading, setTrialLoading] = React.useState(true);
   const [trialError, setTrialError] = React.useState<string | null>(null);
+
+  const [openrouterModels, setOpenrouterModels] = React.useState<
+    ManagedAiModel[] | null
+  >(null);
+  const [openrouterModelsLoading, setOpenrouterModelsLoading] =
+    React.useState(false);
+  const [openrouterModelsError, setOpenrouterModelsError] = React.useState<
+    string | null
+  >(null);
 
   const [mode, setMode] = React.useState<AiMode>("managed");
   const [draftByokProvider, setDraftByokProvider] =
@@ -127,21 +146,61 @@ export function AiModelsSettings() {
     }
   }, []);
 
+  const loadOpenrouterModels = React.useCallback(async () => {
+    setOpenrouterModelsLoading(true);
+    setOpenrouterModelsError(null);
+    try {
+      setOpenrouterModels(await fetchManagedAiModels());
+    } catch (error) {
+      setOpenrouterModelsError(
+        userFacingError(error, "Could not load OpenRouter models."),
+      );
+    } finally {
+      setOpenrouterModelsLoading(false);
+    }
+  }, []);
+
   React.useEffect(() => {
     void loadPreference();
     void loadCredentials();
     void loadTrial();
   }, [loadPreference, loadCredentials, loadTrial]);
 
+  React.useEffect(() => {
+    if (mode !== "byok" || draftByokProvider !== "openrouter") return;
+    void loadOpenrouterModels();
+  }, [mode, draftByokProvider, loadOpenrouterModels]);
+
   const byokConnected =
     credentials !== null &&
     isProviderConnected(credentials, draftByokProvider);
 
+  const selectedOpenrouterModel = findManagedModel(
+    openrouterModels ?? [],
+    draftByokModel,
+  );
+  const openrouterModelUnavailable = isManagedModelUnavailable(
+    openrouterModels ?? [],
+    openrouterModels !== null,
+    draftByokModel.trim() || null,
+  );
+  const openrouterPricing = selectedOpenrouterModel
+    ? formatInputOutputPricing(selectedOpenrouterModel)
+    : null;
+
   const activeIsManaged =
     !preference || preference.credentialSource === "managed";
+  const byokReady = byokDraftReady({
+    connected: byokConnected,
+    model: draftByokModel,
+  });
+  const byokOptionLabel = byokActiveOptionLabel({
+    provider: draftByokProvider,
+    model: draftByokModel,
+    ready: byokReady,
+  });
 
-  async function switchToManaged() {
-    setMode("managed");
+  async function activateManaged() {
     if (activeIsManaged || savingPreference) return;
     setSavingPreference(true);
     try {
@@ -157,44 +216,37 @@ export function AiModelsSettings() {
         title: "Could not switch to managed AI",
         description: userFacingError(error, "Please try again."),
       });
-      // Keep the BYOK form visible if the switch failed.
+    } finally {
+      setSavingPreference(false);
+    }
+  }
+
+  async function activateByok() {
+    if (savingPreference || !byokReady) return;
+    setSavingPreference(true);
+    try {
+      const saved = await saveAiPreference(
+        buildByokPreferencePayload(draftByokProvider, draftByokModel.trim()),
+      );
+      setPreference(saved);
       setMode("byok");
+      toast({
+        tone: "success",
+        title: "Using your key",
+      });
+    } catch (error) {
+      toast({
+        tone: "error",
+        title: "Could not switch to your key",
+        description: userFacingError(error, "Please try again."),
+      });
     } finally {
       setSavingPreference(false);
     }
   }
 
   async function handleSaveByokPreference() {
-    if (savingPreference) return;
-    setSavingPreference(true);
-    try {
-      if (!byokConnected) {
-        throw new Error(
-          `Connect a ${PROVIDER_LABELS[draftByokProvider]} key before saving.`,
-        );
-      }
-      const model = draftByokModel.trim();
-      if (!model) {
-        throw new Error("Enter a model id for your provider.");
-      }
-      const saved = await saveAiPreference(
-        buildByokPreferencePayload(draftByokProvider, model),
-      );
-      setPreference(saved);
-      setMode("byok");
-      toast({
-        tone: "success",
-        title: "AI preference saved",
-      });
-    } catch (error) {
-      toast({
-        tone: "error",
-        title: "Could not save preference",
-        description: userFacingError(error, "Please try again."),
-      });
-    } finally {
-      setSavingPreference(false);
-    }
+    await activateByok();
   }
 
   async function handleConnectSubmit() {
@@ -255,25 +307,45 @@ export function AiModelsSettings() {
   }
 
   const trialUi = trial ? trialDisplay(trial) : null;
-  const summary = activeModeSummary({ preference, credentials });
+  const activeSource: AiMode = activeIsManaged ? "managed" : "byok";
 
   return (
     <div className="space-y-8">
-      <div className="rounded-[var(--radius-md)] border border-line bg-sunken/40 px-3.5 py-2.5">
-        <div className="text-[10.5px] font-medium uppercase tracking-[0.06em] text-ink-faint">
+      <section>
+        <Label htmlFor="active-agent-source" className="mb-1.5 block">
           Active for agent runs
-        </div>
-        <div className="mt-0.5 truncate text-[12.5px] font-medium text-ink">
-          {preferenceLoading ? "Loading…" : summary}
-        </div>
-      </div>
+        </Label>
+        <select
+          id="active-agent-source"
+          value={activeSource}
+          disabled={savingPreference || preferenceLoading}
+          onChange={(event) => {
+            const next = event.target.value;
+            if (next === "managed") void activateManaged();
+            else if (next === "byok") void activateByok();
+          }}
+          className={cn(
+            "h-9 w-full rounded-[var(--radius-sm)] border border-line bg-surface px-3 text-[13px] text-ink outline-none transition-colors",
+            "focus-visible:border-accent focus-visible:ring-2 focus-visible:ring-accent/20",
+            "disabled:opacity-60",
+          )}
+        >
+          <option value="managed">OpenSuite managed</option>
+          <option value="byok" disabled={!byokReady}>
+            {byokReady
+              ? `Your key · ${byokOptionLabel}`
+              : "Your key (set up key & model below)"}
+          </option>
+        </select>
+      </section>
 
       <section>
         <h2 className="mb-1 text-[12px] font-semibold uppercase tracking-[0.06em] text-ink-faint">
-          AI mode
+          Setup
         </h2>
         <p className="mb-3 text-[12px] text-ink-soft">
-          Choose how OpenSuite runs the document agent.
+          Configure trial credits or your own key. This does not change what
+          agent runs use until you switch above.
         </p>
         <div className="grid gap-2 sm:grid-cols-2">
           <ModeCard
@@ -281,7 +353,7 @@ export function AiModelsSettings() {
             title="OpenSuite managed"
             description="No personal API key required. Uses your OpenSuite trial credits."
             disabled={savingPreference || preferenceLoading}
-            onSelect={() => void switchToManaged()}
+            onSelect={() => setMode("managed")}
           />
           <ModeCard
             selected={mode === "byok"}
@@ -356,7 +428,9 @@ export function AiModelsSettings() {
             Your provider & model
           </h2>
           <p className="mb-3 text-[12px] text-ink-soft">
-            Connect a provider key, then enter the model id to use.
+            {draftByokProvider === "openrouter"
+              ? "Connect an OpenRouter key, then pick a model."
+              : "Connect a provider key, then enter the model id to use."}
           </p>
           <div className="space-y-4">
             <div>
@@ -449,23 +523,68 @@ export function AiModelsSettings() {
             </div>
 
             <div>
-              <Label htmlFor="byok-model" className="mb-1.5 block">
-                Model id
+              <Label
+                htmlFor={
+                  draftByokProvider === "openrouter" ? undefined : "byok-model"
+                }
+                className="mb-1.5 block"
+              >
+                {draftByokProvider === "openrouter" ? "Model" : "Model id"}
               </Label>
-              <Input
-                id="byok-model"
-                value={draftByokModel}
-                disabled={savingPreference || !byokConnected}
-                placeholder={BYOK_MODEL_PLACEHOLDERS[draftByokProvider]}
-                onChange={(event) => setDraftByokModel(event.target.value)}
-                autoComplete="off"
-                spellCheck={false}
-              />
-              <p className="mt-1.5 text-[11px] text-ink-faint">
-                {byokConnected
-                  ? `Example: ${BYOK_MODEL_PLACEHOLDERS[draftByokProvider]}`
-                  : `Connect a ${PROVIDER_LABELS[draftByokProvider]} key before entering a model id.`}
-              </p>
+              {draftByokProvider === "openrouter" ? (
+                !byokConnected ? (
+                  <p className="text-[12px] text-ink-faint">
+                    Connect an OpenRouter key before choosing a model.
+                  </p>
+                ) : openrouterModelsLoading && openrouterModels === null ? (
+                  <PageLoading variant="inline" />
+                ) : openrouterModelsError && openrouterModels === null ? (
+                  <ManagedModelPickerError
+                    message={openrouterModelsError}
+                    onRetry={() => void loadOpenrouterModels()}
+                  />
+                ) : (
+                  <>
+                    <ManagedModelPicker
+                      models={openrouterModels ?? []}
+                      value={selectedOpenrouterModel?.id ?? null}
+                      unavailableId={
+                        openrouterModelUnavailable
+                          ? draftByokModel.trim()
+                          : null
+                      }
+                      disabled={savingPreference}
+                      onChange={setDraftByokModel}
+                    />
+                    {openrouterPricing ? (
+                      <p className="mt-2 text-[12px] tabular-nums text-ink-soft">
+                        {openrouterPricing}
+                      </p>
+                    ) : (
+                      <p className="mt-1.5 text-[11px] text-ink-faint">
+                        Pricing updates when you select a model.
+                      </p>
+                    )}
+                  </>
+                )
+              ) : (
+                <>
+                  <Input
+                    id="byok-model"
+                    value={draftByokModel}
+                    disabled={savingPreference || !byokConnected}
+                    placeholder={BYOK_MODEL_PLACEHOLDERS[draftByokProvider]}
+                    onChange={(event) => setDraftByokModel(event.target.value)}
+                    autoComplete="off"
+                    spellCheck={false}
+                  />
+                  <p className="mt-1.5 text-[11px] text-ink-faint">
+                    {byokConnected
+                      ? `Example: ${BYOK_MODEL_PLACEHOLDERS[draftByokProvider]}`
+                      : `Connect a ${PROVIDER_LABELS[draftByokProvider]} key before entering a model id.`}
+                  </p>
+                </>
+              )}
             </div>
 
             <div>
@@ -480,7 +599,7 @@ export function AiModelsSettings() {
                 }
                 onClick={() => void handleSaveByokPreference()}
               >
-                {savingPreference ? "Saving…" : "Save preference"}
+                {savingPreference ? "Saving…" : "Save & use your key"}
               </Button>
             </div>
           </div>

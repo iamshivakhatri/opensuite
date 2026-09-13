@@ -95,8 +95,24 @@ export function createDocumentInspectTool(): AgentTool<
       type: "object",
       properties: {
         focus: {
-          type: "object",
-          description: "Omit for overview. Prefer headings|paragraphs|tables|body_blocks|context.",
+          oneOf: [
+            {
+              type: "string",
+              enum: [
+                "overview",
+                "structure",
+                "headings",
+                "paragraphs",
+                "tables",
+                "body_blocks",
+                "slides",
+                "sheets",
+                "range",
+              ],
+            },
+            {
+              type: "object",
+          description: "Optional inspection focus.",
           properties: {
             kind: {
               type: "string",
@@ -140,6 +156,8 @@ export function createDocumentInspectTool(): AgentTool<
           },
           required: ["kind"],
           additionalProperties: false,
+            },
+          ],
         },
       },
       additionalProperties: false,

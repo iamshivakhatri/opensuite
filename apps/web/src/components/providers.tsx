@@ -3,6 +3,8 @@
 import * as React from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
+import { ServiceStatusBanner } from "@/components/service-status-banner";
+import { ServiceStatusProvider } from "@/lib/service-status";
 import { ThemeProvider } from "@/lib/theme";
 import { ToastProvider } from "@/lib/toast";
 
@@ -24,7 +26,12 @@ export function AppProviders({ children }: { children: React.ReactNode }) {
   return (
     <QueryClientProvider client={queryClient}>
       <ThemeProvider>
-        <ToastProvider>{children}</ToastProvider>
+        <ToastProvider>
+          <ServiceStatusProvider>
+            <ServiceStatusBanner />
+            {children}
+          </ServiceStatusProvider>
+        </ToastProvider>
       </ThemeProvider>
     </QueryClientProvider>
   );

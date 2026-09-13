@@ -1,13 +1,22 @@
 import type { FastifyInstance } from "fastify";
+import { probeDatabase, type Db } from "@opensuite/db";
 
 /**
- * Liveness/readiness endpoint. Deliberately has no dependencies (no DB,
- * storage, or engine checks) until those actually exist — a health check
- * that depends on unbuilt subsystems would just be wrong today.
+ * Process liveness + database reachability.
+ * Always returns HTTP 200 while the API process is up so orchestrators do not
+ * kill the process during a Postgres outage. Clients read `database` /
+ * top-level `status` (`ok` | `degraded`) to show recovery UI.
  */
-export function registerHealthRoutes(app: FastifyInstance): void {
-  app.get("/health", async () => ({
-    status: "ok" as const,
-    uptimeSeconds: process.uptime(),
-  }));
+export function registerHealthRoutes(
+  app: FastifyInstance,
+  deps: { readonly db: Db },
+): void {
+  app.get("/health", async () => {
+    const database = await probeDatabase(deps.db);
+    return {
+      status: database === "ok" ? ("ok" as const) : ("degraded" as const),
+      uptimeSeconds: process.uptime(),
+      database,
+    };
+  });
 }

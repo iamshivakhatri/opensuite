@@ -244,16 +244,21 @@ export function managedModelMetaLine(model: ManagedAiModel): string {
   if (model.author) parts.push(model.author);
   const ctx = formatContextLength(model.contextLength);
   if (ctx) parts.push(ctx);
+  const pricing = formatInputOutputPricing(model);
+  if (pricing) parts.push(pricing);
+  return parts.join(" · ");
+}
+
+/** Selected-model pricing strip: "Input $2/M · Output $8/M". */
+export function formatInputOutputPricing(
+  model: ManagedAiModel,
+): string | null {
   const prompt = formatPerMillionTokens(model.pricing.prompt);
   const completion = formatPerMillionTokens(model.pricing.completion);
-  if (prompt && completion) {
-    parts.push(`${prompt} in · ${completion} out`);
-  } else if (prompt) {
-    parts.push(`${prompt} in`);
-  } else if (completion) {
-    parts.push(`${completion} out`);
-  }
-  return parts.join(" · ");
+  if (prompt && completion) return `Input ${prompt} · Output ${completion}`;
+  if (prompt) return `Input ${prompt}`;
+  if (completion) return `Output ${completion}`;
+  return null;
 }
 
 /** Active-mode summary — reflects what agent runs will use (saved preference). */
@@ -272,6 +277,43 @@ export function activeModeSummary(input: {
     return `Your key unavailable · using OpenSuite managed`;
   }
   return `Your key · ${PROVIDER_LABELS[preference.provider]} · ${preference.model}`;
+}
+
+/**
+ * Agent panel footer: show BYOK model id only when that preference is active
+ * and the key is still connected. Managed → null (hide).
+ */
+export function agentPanelByokModelLabel(input: {
+  readonly preference: AiPreference | null;
+  readonly credentials?: readonly PublicProviderCredential[] | null;
+}): string | null {
+  const preference = input.preference;
+  if (!preference || preference.credentialSource !== "byok") return null;
+  const keyOk =
+    input.credentials == null ||
+    isProviderConnected(input.credentials, preference.provider);
+  if (!keyOk) return null;
+  const model = preference.model.trim();
+  return model || null;
+}
+
+/** Draft BYOK form is complete enough to activate for agent runs. */
+export function byokDraftReady(input: {
+  readonly connected: boolean;
+  readonly model: string;
+}): boolean {
+  return input.connected && input.model.trim().length > 0;
+}
+
+/** Short label for the active-strip “Your key” option. */
+export function byokActiveOptionLabel(input: {
+  readonly provider: AiProvider;
+  readonly model: string;
+  readonly ready: boolean;
+}): string {
+  if (!input.ready) return "Set up key & model below";
+  const model = input.model.trim();
+  return `${PROVIDER_LABELS[input.provider]} · ${model}`;
 }
 
 /**

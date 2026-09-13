@@ -41,6 +41,11 @@ import {
   OPENSUITE_DOCUMENT_DRAG_MIME,
   parseDocumentDragPayload,
 } from "@/lib/document-drag";
+import {
+  fetchAiPreference,
+  listProviderCredentials,
+} from "@/lib/ai-settings-api";
+import { agentPanelByokModelLabel } from "@/lib/ai-settings-model";
 import { Button } from "@/components/ui/button";
 import { documentPath } from "@/lib/paths";
 import { focusRingClass } from "@/lib/focus-scope";
@@ -121,6 +126,10 @@ export function DocumentAgentPanel({
     documentId: string;
     versionNumber: number;
   } | null>(null);
+  /** BYOK model id for composer footer; null when managed. */
+  const [byokModelLabel, setByokModelLabel] = React.useState<string | null>(
+    null,
+  );
   /** Detail for the currently pending confirmation.required tool, if any. */
   const [pendingConfirmation, setPendingConfirmation] = React.useState<{
     toolCallId: string;
@@ -680,6 +689,33 @@ export function DocumentAgentPanel({
       stopSse();
     };
   }, [load, stopSse]);
+
+  React.useEffect(() => {
+    let cancelled = false;
+    async function loadByokModel() {
+      try {
+        const [preference, credentials] = await Promise.all([
+          fetchAiPreference(),
+          listProviderCredentials(),
+        ]);
+        if (cancelled) return;
+        setByokModelLabel(
+          agentPanelByokModelLabel({ preference, credentials }),
+        );
+      } catch {
+        if (!cancelled) setByokModelLabel(null);
+      }
+    }
+    void loadByokModel();
+    function onFocus() {
+      void loadByokModel();
+    }
+    window.addEventListener("focus", onFocus);
+    return () => {
+      cancelled = true;
+      window.removeEventListener("focus", onFocus);
+    };
+  }, []);
 
   React.useEffect(() => {
     const el = scrollRef.current;
@@ -1430,6 +1466,14 @@ export function DocumentAgentPanel({
       </div>
 
       <div className="shrink-0 border-t border-line bg-sidebar px-3 py-2.5">
+        {byokModelLabel ? (
+          <p
+            className="mb-1.5 truncate px-0.5 text-[length:var(--text-2xs)] text-ink-faint"
+            title={byokModelLabel}
+          >
+            {byokModelLabel}
+          </p>
+        ) : null}
         <div
           className={cn(
             "os-composer rounded-[var(--radius-md)] border bg-surface p-2",

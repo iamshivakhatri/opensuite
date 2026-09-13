@@ -145,6 +145,17 @@ export interface DocumentSetTableCellShadingInput {
   readonly updates: readonly { readonly target: DocumentTableCellUpdate["target"]; readonly fill?: string }[];
 }
 
+function parseRgbHex(value: unknown, label: string): string {
+  if (typeof value !== "string") {
+    invalidInput(`${label} must be a six-digit hex color`);
+  }
+  const normalized = value.startsWith("#") ? value.slice(1) : value;
+  if (!/^[0-9A-Fa-f]{6}$/.test(normalized)) {
+    invalidInput(`${label} must be a six-digit hex color`);
+  }
+  return normalized.toUpperCase();
+}
+
 export interface SlidesUpdateTextInput {
   readonly slideIndex: number;
   readonly existingText?: string;
@@ -1500,7 +1511,7 @@ export function createDocumentSetTableCellShadingTool(): AgentTool<DocumentSetTa
   return defineDocumentTool({
     name: DOCUMENT_TOOL_NAMES.setTableCellShading,
     description: "Set or clear table-cell fill colors. Omit fill to clear.", effect: "write", executionMode: "sequential", capability: DOCX_ENGINE_CAPS.setTableCellShading,
-    inputSchema: { type: "object", properties: { table: tableTargetSchema(), updates: { type: "array", minItems: 1, items: { type: "object", properties: { target: { type: "object" }, fill: { type: "string", pattern: "^[0-9A-Fa-f]{6}$" } }, required: ["target"], additionalProperties: false } } }, required: ["table", "updates"], additionalProperties: false },
+    inputSchema: { type: "object", properties: { table: tableTargetSchema(), updates: { type: "array", minItems: 1, items: { type: "object", properties: { target: { type: "object" }, fill: { type: "string", pattern: "^#?[0-9A-Fa-f]{6}$" } }, required: ["target"], additionalProperties: false } } }, required: ["table", "updates"], additionalProperties: false },
     parseInput(raw) {
       const obj = assertObject(raw, DOCUMENT_TOOL_NAMES.setTableCellShading);
       const table = parseTableTarget(obj.table, DOCUMENT_TOOL_NAMES.setTableCellShading);
@@ -1508,8 +1519,7 @@ export function createDocumentSetTableCellShadingTool(): AgentTool<DocumentSetTa
       const updates = obj.updates.map((value) => {
         const update = assertObject(value, DOCUMENT_TOOL_NAMES.setTableCellShading);
         const target = parseCellTarget(update, DOCUMENT_TOOL_NAMES.setTableCellShading);
-        if (update.fill !== undefined && (typeof update.fill !== "string" || !/^[0-9A-Fa-f]{6}$/.test(update.fill))) invalidInput("document.set_table_cell_shading fill must be a six-digit hex color");
-        return { target, ...(typeof update.fill === "string" ? { fill: update.fill.toUpperCase() } : {}) };
+        return { target, ...(update.fill !== undefined ? { fill: parseRgbHex(update.fill, "document.set_table_cell_shading fill") } : {}) };
       });
       return { table, updates };
     },

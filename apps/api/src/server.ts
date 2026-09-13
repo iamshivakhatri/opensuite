@@ -14,7 +14,15 @@ import { createS3ObjectStorage } from "./storage/index.js";
 
 async function main(): Promise<void> {
   const config = loadConfig();
-  const dbClient = createDbClient({ databaseUrl: config.databaseUrl });
+  const dbClient = createDbClient(
+    { databaseUrl: config.databaseUrl },
+    {
+      onPoolError: (error) => {
+        // Idle client errors must be handled; log and let later checkouts retry.
+        console.error("[db] idle pool client error", error.message);
+      },
+    },
+  );
   const emailSender = createResendEmailSender({
     apiKey: config.resendApiKey,
     from: config.emailFrom,

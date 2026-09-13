@@ -9,11 +9,12 @@ _Read this before starting any work. Keep it a concise current-state handoff, no
 * **Document Authoring Intelligence v1** + list≠grouping + **insert_paragraphs rejects embedded newlines**.
 * **Agent Panel UX v1.1** — live status from last activity (no premature Finishing up); inspect=`checks`; recovered details muted; slim composer.
 * Confirmation bridge; Frontend Phases 1–6B; hosted-alpha foundation.
-* **AI Settings** — managed = credits bar only (card click applies); BYOK = provider → key → model → save; active strip shows what agent runs use. Key connect + BYOK model save probe provider models APIs (no chat tokens).
+* **AI Settings** — active strip select switches managed ↔ BYOK; setup cards only browse. Account tab shows read-only AI / storage / appearance glance. OpenRouter BYOK has model picker + pricing.
+* **DB availability UX** — pool `connectionTimeoutMillis` 5s; `/health` includes `database`; API maps outages to `503 DATABASE_UNAVAILABLE`; web banner + auth-gate hold (no false sign-out); pg pool reconnects on next checkout.
 
 ## Just Completed
 
-* **BYOK key/model validation:** Connect key probes provider auth cheaply (`GET /models` for OpenAI/Anthropic; `GET /api/v1/key` for OpenRouter — `/models` is public). Save preference verifies model id. Fake keys no longer save as Connected.
+* **Protocol hardening v7.1:** deterministic inspect-focus, occurrence, and RGB-hex normalization; extended tools reuse shared selectors without semantic guessing.
 
 ## Current Decisions
 
@@ -23,18 +24,21 @@ _Read this before starting any work. Keep it a concise current-state handoff, no
 * Agent progress presentation stays in `apps/web` (not agent-core).
 * Managed model is server-chosen (`OPENROUTER_MODEL`); users do not pick it.
 * Agent runs: valid BYOK preference wins; otherwise OpenSuite managed trial.
+* `/health` stays HTTP 200 while the API process is up; clients read `database` / `status` for outages (not process kill).
 
 ## Verification Status
 
 | Check | Status |
 |---|---|
-| api tests | **Pass** (199; 23 skipped) |
+| api `app.test.ts` | **Pass** (16; includes health degraded + DATABASE_UNAVAILABLE) |
+| db errors + package tests | **Pass** (17; 1 skipped live connect) |
+| web typecheck | **Pass** |
 | web tests | **Pass** (85) prior |
-| web typecheck | **Pass** prior |
-| agent-core tests/typecheck | **Pass** (214) prior |
-| Provider benchmark | **Partially complete** (focused scenarios pass; full suite / `launch-brief` can exit without a final record) |
-| Visual `/dev/agent-panel-ux` | **Reviewed** (between-tools ≠ Finishing up; recovered muted) |
-| Live signed-in agent run | **Blocked** (auth 403) |
+| agent-core tests/typecheck | **Pass** (218) |
+| api tests (full) | **Pass** (180; 23 skipped) |
+| Provider benchmark | **Partially complete** |
+| Visual `/dev/agent-panel-ux` | **Reviewed** prior |
+| Live signed-in agent run | **Blocked** (auth 403) prior |
 
 ## Intentionally Deferred
 
@@ -43,4 +47,4 @@ _Read this before starting any work. Keep it a concise current-state handoff, no
 
 ## Recommended Next Step
 
-Smoke BYOK connect with a real key + bogus key in Settings → AI & Models, then resume provider-benchmark early-exit diagnosis.
+Restore Tailscale/Postgres reachability and confirm banner clears within ~5s; smoke a signed-in `/app` reload during a brief DB blip.

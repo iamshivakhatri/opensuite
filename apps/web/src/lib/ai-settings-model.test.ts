@@ -5,6 +5,9 @@ import {
   assertSafeCredentialPayload,
   buildByokPreferencePayload,
   buildManagedPreferencePayload,
+  byokActiveOptionLabel,
+  byokDraftReady,
+  agentPanelByokModelLabel,
   clearedApiKeyAfterSuccess,
   credentialStatusByProvider,
   filterManagedModels,
@@ -94,6 +97,66 @@ describe("preference payloads", () => {
     assert.equal(modeFromPreference(byok), "byok");
     assert.equal(modeFromPreference(null), "managed");
   });
+
+  it("requires a connected key and model before BYOK can activate", () => {
+    assert.equal(byokDraftReady({ connected: true, model: "gpt-4.1" }), true);
+    assert.equal(byokDraftReady({ connected: false, model: "gpt-4.1" }), false);
+    assert.equal(byokDraftReady({ connected: true, model: "  " }), false);
+    assert.equal(
+      byokActiveOptionLabel({
+        provider: "openrouter",
+        model: "nex-agi/nex-n2.5-mini:free",
+        ready: true,
+      }),
+      "OpenRouter · nex-agi/nex-n2.5-mini:free",
+    );
+    assert.equal(
+      byokActiveOptionLabel({
+        provider: "openrouter",
+        model: "",
+        ready: false,
+      }),
+      "Set up key & model below",
+    );
+  });
+
+  it("exposes BYOK model for the agent panel only when active", () => {
+    const credentials: PublicProviderCredential[] = [
+      {
+        provider: "openrouter",
+        connected: true,
+        createdAt: "",
+        updatedAt: "",
+      },
+    ];
+    assert.equal(
+      agentPanelByokModelLabel({
+        preference: {
+          provider: "openrouter",
+          model: "nvidia/nemotron-free",
+          credentialSource: "byok",
+          createdAt: "",
+          updatedAt: "",
+        },
+        credentials,
+      }),
+      "nvidia/nemotron-free",
+    );
+    assert.equal(
+      agentPanelByokModelLabel({
+        preference: {
+          provider: "openrouter",
+          model: "openai/gpt-4.1",
+          credentialSource: "managed",
+          createdAt: "",
+          updatedAt: "",
+        },
+        credentials,
+      }),
+      null,
+    );
+    assert.equal(agentPanelByokModelLabel({ preference: null }), null);
+  });
 });
 
 describe("managed catalog", () => {
@@ -123,6 +186,8 @@ describe("managed catalog", () => {
     const line = managedModelMetaLine(sampleModels[0]!);
     assert.match(line, /openai/);
     assert.match(line, /128K ctx/);
+    assert.match(line, /Input/);
+    assert.match(line, /Output/);
     assert.match(line, /\/M/);
   });
 });

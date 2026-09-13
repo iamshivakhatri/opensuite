@@ -5,6 +5,10 @@ import { useRouter } from "next/navigation";
 
 import { useSession } from "@/lib/auth-client";
 import { CommandPaletteProvider } from "@/components/shell/command-palette";
+import {
+  isDatabaseUnavailable,
+  useServiceStatus,
+} from "@/lib/service-status";
 
 /**
  * Auth gate shared by every `/app/*` route. Restores the session on load via
@@ -15,6 +19,7 @@ import { CommandPaletteProvider } from "@/components/shell/command-palette";
  *
  * Stay on the loading screen until the session check settles. A short debounce
  * avoids bouncing logged-in users to `/sign-in` during session hydration races.
+ * When Postgres/API is down, show an unavailable state instead of signing out.
  */
 export default function AppLayout({
   children,
@@ -22,17 +27,36 @@ export default function AppLayout({
   children: React.ReactNode;
 }) {
   const router = useRouter();
-  const { data: session, isPending } = useSession();
+  const { data: session, isPending, error: sessionError } = useSession();
+  const serviceStatus = useServiceStatus();
+  const databaseDown = isDatabaseUnavailable(serviceStatus);
 
   React.useEffect(() => {
-    if (isPending || session) {
+    if (isPending || session || databaseDown || sessionError) {
       return;
     }
     const timer = window.setTimeout(() => {
       router.replace("/sign-in");
     }, 250);
     return () => window.clearTimeout(timer);
-  }, [isPending, session, router]);
+  }, [isPending, session, databaseDown, sessionError, router]);
+
+  if (databaseDown) {
+    return (
+      <div className="grid h-screen place-items-center px-6 text-center">
+        <div className="max-w-md space-y-2">
+          <p className="text-[15px] font-medium text-ink">
+            OpenSuite is temporarily unavailable
+          </p>
+          <p className="os-type-secondary text-ink-soft">
+            We can’t reach the database right now. This page will recover
+            automatically when the connection is restored — you don’t need to
+            sign in again.
+          </p>
+        </div>
+      </div>
+    );
+  }
 
   if (isPending || !session) {
     return (

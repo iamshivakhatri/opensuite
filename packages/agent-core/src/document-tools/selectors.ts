@@ -191,6 +191,25 @@ function parseOptionalHandle(value: unknown): StructuralHandle | undefined {
 }
 
 export function parseInspectFocus(raw: unknown): DocumentInspectFocus {
+  if (typeof raw === "string") {
+    switch (raw) {
+      case "overview":
+      case "structure":
+      case "headings":
+      case "paragraphs":
+      case "tables":
+      case "body_blocks":
+      case "slides":
+      case "sheets":
+      case "range":
+        return { kind: raw };
+      default:
+        throw new AgentCoreError(
+          "INVALID_TOOL_INPUT",
+          `Unsupported document.inspect focus.kind: ${raw}`,
+        );
+    }
+  }
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
     throw new AgentCoreError(
       "INVALID_TOOL_INPUT",
