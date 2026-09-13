@@ -540,7 +540,7 @@ export function AiModelsSettings() {
               disabled={connectBusy}
               onClick={() => void handleConnectSubmit()}
             >
-              {connectBusy ? "Saving…" : "Save key"}
+              {connectBusy ? "Verifying…" : "Save key"}
             </Button>
           </div>
         </Dialog>

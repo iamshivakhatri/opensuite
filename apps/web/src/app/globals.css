@@ -22,23 +22,42 @@ html[data-opensuite-theme] {
   --ink-soft: #4f5563;
   --ink-faint: #6e7480;
   --line: #d8dce3;
-  --selected: #eff6ff;
   --overlay: rgba(15, 18, 24, 0.4);
 
   /*
-   * Brand — change these to retheme the whole app.
-   * primary = fills / strong CTAs; secondary = quieter borders & hover chrome
-   * (resize rails, outline buttons, selected tab ring).
+   * ── Brand (edit here to retheme) ──────────────────────────────
+   * Logo mid-blue is the source. Change --primary (and optionally
+   * --primary-hover); secondary / soft / line / hover / selected derive.
+   *
+   * --primary         solid fills: CTAs, active accents (logo mid)
+   * --primary-hover   pressed primary (logo deep end)
+   *
+   * Derived (usually leave alone):
+   * --secondary       quieter accent chrome (lighter mix of primary)
+   * --secondary-hover secondary press → primary
+   * --primary-soft    selected + hover backgrounds (sidebar, rows)
+   * --primary-line    soft borders / focus rings
+   * --secondary-soft  quiet tint fills (e.g. user chat bubbles)
+   * --secondary-line  quiet borders on secondary controls
+   * --hover           generic hover wash (bg-hover)
+   * --selected        selected-row background
+   *
+   * Favicon cannot read CSS vars — if you change primary/hover,
+   * also update gradient stops in src/app/icon.svg.
+   * In-app mark (BrandMark / Wordmark) follows these tokens automatically.
    */
-  --primary: #2563eb;
-  --primary-hover: #1d4ed8;
-  --primary-soft: #eff6ff;
-  --primary-line: #93c5fd;
-  --secondary: #3b82f6;
-  --secondary-hover: #2563eb;
-  --secondary-soft: #f0f7ff;
-  --secondary-line: #bfdbfe;
+  --primary: #4d71de;
+  --primary-hover: #2d50d1;
+  --secondary: color-mix(in srgb, var(--primary) 78%, white);
+  --secondary-hover: var(--primary);
+
+  --primary-soft: color-mix(in srgb, var(--primary) 9%, white);
+  --primary-line: color-mix(in srgb, var(--primary) 42%, white);
+  --secondary-soft: color-mix(in srgb, var(--secondary) 8%, white);
+  --secondary-line: color-mix(in srgb, var(--secondary) 35%, white);
   --hover: color-mix(in srgb, var(--primary) 9%, transparent);
+  --selected: var(--primary-soft);
+
   /* Back-compat aliases (prefer --primary* / --secondary* in new code). */
   --accent: var(--primary);
   --accent-hover: var(--primary-hover);
@@ -112,17 +131,18 @@ html[data-opensuite-theme="dark"] {
   --ink-soft: #a0a6b2;
   --ink-faint: #757b88;
   --line: #2c313b;
-  --selected: #1e3a5f;
   --overlay: rgba(0, 0, 0, 0.55);
-  --primary: #60a5fa;
-  --primary-hover: #93c5fd;
-  --primary-soft: #1e3a5f;
-  --primary-line: #3b82f6;
-  --secondary: #93c5fd;
-  --secondary-hover: #bfdbfe;
-  --secondary-soft: #1a2740;
-  --secondary-line: #2563eb;
+  /* Brand dark — lighter logo blue for contrast; soft/line/hover derive. */
+  --primary: #6e8fea;
+  --primary-hover: #93a9f2;
+  --secondary: color-mix(in srgb, var(--primary) 70%, white);
+  --secondary-hover: var(--primary);
+  --primary-soft: color-mix(in srgb, var(--primary) 22%, #12141a);
+  --primary-line: color-mix(in srgb, var(--primary) 45%, #12141a);
+  --secondary-soft: color-mix(in srgb, var(--secondary) 14%, #12141a);
+  --secondary-line: color-mix(in srgb, var(--secondary) 40%, #12141a);
   --hover: color-mix(in srgb, var(--primary) 16%, transparent);
+  --selected: var(--primary-soft);
   --accent: var(--primary);
   --accent-hover: var(--primary-hover);
   --accent-soft: var(--primary-soft);

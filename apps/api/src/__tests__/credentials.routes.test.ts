@@ -9,6 +9,7 @@ import { buildApp } from "../app.js";
 import type { AuthenticatedUser } from "../auth/session.js";
 import { loadConfig } from "../config/index.js";
 import { createCredentialCipher } from "../credentials/crypto.js";
+import { createPassthroughProviderProbe } from "../credentials/provider-probe.js";
 import type {
   ProviderCredentialRepository,
   StoredProviderCredential,
@@ -134,6 +135,7 @@ async function testApp(options: {
     db: stubDb(),
     storage: createMemoryObjectStorage(),
     credentials,
+    providerProbe: createPassthroughProviderProbe(),
   });
   return { app, repository, credentials };
 }
@@ -368,6 +370,41 @@ test("unsupported provider and empty API key input are rejected", async () => {
     assert.equal(invalid.json().error.code, "INVALID_API_KEY");
     assertNoSecretLeak(invalid.body);
   }
+
+  await app.close();
+});
+
+test("provider probe rejection prevents saving an invalid API key", async () => {
+  const repository = new MemoryCredentialRepository();
+  const credentials = createProviderCredentialService(
+    repository,
+    createCredentialCipher(encryptionKey),
+  );
+  const app = await buildApp(testConfig(), {
+    auth: mockAuth(alice),
+    db: stubDb(),
+    storage: createMemoryObjectStorage(),
+    credentials,
+    providerProbe: {
+      verifyApiKey: async () => ({
+        ok: false,
+        code: "INVALID_API_KEY",
+        message: "That OpenAI API key was rejected. Check the key and try again.",
+      }),
+      verifyModel: async () => ({ ok: true }),
+    },
+  });
+
+  const connect = await app.inject({
+    method: "PUT",
+    url: "/api/provider-credentials",
+    headers: { "content-type": "application/json" },
+    payload: { provider: "openai", apiKey: "sk-bogus" },
+  });
+  assert.equal(connect.statusCode, 400);
+  assert.equal(connect.json().error.code, "INVALID_API_KEY");
+  assert.equal(repository.records.size, 0);
+  assertNoSecretLeak(connect.body);
 
   await app.close();
 });

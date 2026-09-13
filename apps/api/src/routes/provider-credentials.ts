@@ -2,6 +2,7 @@ import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 
 import { getRequestUser, type SessionAuth } from "../auth/session.js";
+import type { ProviderCredentialProbe } from "../credentials/provider-probe.js";
 import type { ProviderCredentialService } from "../credentials/service.js";
 import {
   providerCredentialProviders,
@@ -52,6 +53,16 @@ function invalidApiKey(message: string) {
   };
 }
 
+function providerUnreachable(message: string) {
+  return {
+    error: {
+      statusCode: 502 as const,
+      message,
+      code: "PROVIDER_UNREACHABLE" as const,
+    },
+  };
+}
+
 function credentialNotFound() {
   return {
     error: {
@@ -90,6 +101,7 @@ export function registerProviderCredentialRoutes(
   app: FastifyInstance,
   auth: SessionAuth,
   credentials: ProviderCredentialService | null,
+  probe: ProviderCredentialProbe,
 ): void {
   app.get("/api/provider-credentials", async (request, reply) => {
     const user = await getRequestUser(auth, request);
@@ -127,6 +139,17 @@ export function registerProviderCredentialRoutes(
       return reply
         .status(400)
         .send(invalidApiKey(issue?.message ?? "Invalid API key"));
+    }
+
+    const verified = await probe.verifyApiKey({
+      provider: parsed.data.provider,
+      apiKey: parsed.data.apiKey,
+    });
+    if (!verified.ok) {
+      if (verified.code === "PROVIDER_UNREACHABLE") {
+        return reply.status(502).send(providerUnreachable(verified.message));
+      }
+      return reply.status(400).send(invalidApiKey(verified.message));
     }
 
     const credential = await credentials.save({

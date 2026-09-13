@@ -2,6 +2,8 @@ import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 
 import { getRequestUser, type SessionAuth } from "../auth/session.js";
+import type { ProviderCredentialProbe } from "../credentials/provider-probe.js";
+import type { ProviderCredentialService } from "../credentials/service.js";
 import { providerCredentialProviders } from "../credentials/types.js";
 import type { AiPreferenceService } from "../ai-preferences/service.js";
 import { credentialSources } from "../ai-preferences/types.js";
@@ -28,7 +30,11 @@ export function registerAiPreferenceRoutes(
   auth: SessionAuth,
   preferences: AiPreferenceService,
   catalog?: OpenRouterManagedModelCatalog | null,
-  options?: { readonly managedModel?: string | null },
+  options?: {
+    readonly managedModel?: string | null;
+    readonly credentials?: ProviderCredentialService | null;
+    readonly probe?: ProviderCredentialProbe | null;
+  },
 ): void {
   app.get("/api/ai-preferences", async (request, reply) => {
     const user = await getRequestUser(auth, request);
@@ -106,6 +112,54 @@ export function registerAiPreferenceRoutes(
           statusCode: 400,
           message: "Provider and model are required for bring-your-own-key",
           code: "INVALID_AI_PREFERENCE",
+        },
+      });
+    }
+
+    const credentials = options?.credentials ?? null;
+    const probe = options?.probe ?? null;
+    if (!credentials || !probe) {
+      return reply.status(503).send({
+        error: {
+          statusCode: 503,
+          message: "Provider credentials are not configured on this server",
+          code: "CREDENTIALS_UNCONFIGURED",
+        },
+      });
+    }
+
+    const apiKey = await credentials.getSecret({
+      userId: user.id,
+      provider,
+    });
+    if (!apiKey) {
+      const label =
+        provider === "openai"
+          ? "OpenAI"
+          : provider === "anthropic"
+            ? "Anthropic"
+            : "OpenRouter";
+      return reply.status(400).send({
+        error: {
+          statusCode: 400,
+          message: `Connect a ${label} key before saving a model preference`,
+          code: "CREDENTIAL_REQUIRED",
+        },
+      });
+    }
+
+    const verified = await probe.verifyModel({
+      provider,
+      apiKey,
+      model,
+    });
+    if (!verified.ok) {
+      const status = verified.code === "PROVIDER_UNREACHABLE" ? 502 : 400;
+      return reply.status(status).send({
+        error: {
+          statusCode: status,
+          message: verified.message,
+          code: verified.code,
         },
       });
     }

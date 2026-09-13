@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { randomUUID } from "node:crypto";
 import { test } from "node:test";
 
 import type { Db } from "@opensuite/db";
@@ -7,6 +8,16 @@ import type { AppDependencies } from "../app.js";
 import { buildApp } from "../app.js";
 import type { AuthenticatedUser } from "../auth/session.js";
 import { loadConfig } from "../config/index.js";
+import { createCredentialCipher } from "../credentials/crypto.js";
+import {
+  createPassthroughProviderProbe,
+  type ProviderCredentialProbe,
+} from "../credentials/provider-probe.js";
+import type {
+  ProviderCredentialRepository,
+  StoredProviderCredential,
+} from "../credentials/repository.js";
+import { createProviderCredentialService } from "../credentials/service.js";
 import { createOpenRouterManagedModelCatalog } from "../openrouter-models/catalog.js";
 import { createMemoryObjectStorage } from "../storage/index.js";
 import { testS3Env } from "./support/test-env.js";
@@ -106,6 +117,8 @@ function stubDb(preferenceStore: {
 async function buildTestApp(input?: {
   sessionUser?: AuthenticatedUser | null;
   fetchImpl?: typeof fetch;
+  providerProbe?: ProviderCredentialProbe;
+  withByokCredential?: boolean;
 }) {
   const preferenceStore = { row: null as null | {
     userId: string;
@@ -122,18 +135,57 @@ async function buildTestApp(input?: {
       (async () =>
         new Response(JSON.stringify({ data: [TOOL_MODEL] }), { status: 200 })),
   });
+
+  const cipher = createCredentialCipher(encryptionKey);
+  const memoryRecords = new Map<string, StoredProviderCredential>();
+  const repository: ProviderCredentialRepository = {
+    async save(row) {
+      const key = `${row.userId}:${row.provider}`;
+      const existing = memoryRecords.get(key);
+      const now = new Date();
+      const saved: StoredProviderCredential = {
+        ...row,
+        id: existing?.id ?? randomUUID(),
+        createdAt: existing?.createdAt ?? now,
+        updatedAt: now,
+      };
+      memoryRecords.set(key, saved);
+      return saved;
+    },
+    async get(userId, provider) {
+      return memoryRecords.get(`${userId}:${provider}`) ?? null;
+    },
+    async listByUser(userId) {
+      return [...memoryRecords.values()].filter((r) => r.userId === userId);
+    },
+    async delete(userId, provider) {
+      return memoryRecords.delete(`${userId}:${provider}`);
+    },
+  };
+  const credentials = createProviderCredentialService(repository, cipher);
+  const sessionUser =
+    input?.sessionUser === undefined
+      ? { id: "user-a", name: "Ada", email: "ada@example.com" }
+      : input.sessionUser;
+
+  if (input?.withByokCredential && sessionUser) {
+    await credentials.save({
+      userId: sessionUser.id,
+      provider: "openai",
+      secret: "sk-user-test",
+    });
+  }
+
   const app = await buildApp(testConfig(), {
-    auth: mockAuth(
-      input?.sessionUser === undefined
-        ? { id: "user-a", name: "Ada", email: "ada@example.com" }
-        : input.sessionUser,
-    ),
+    auth: mockAuth(sessionUser),
     db: stubDb(preferenceStore),
     storage: createMemoryObjectStorage(),
     managedModelCatalog: catalog,
+    credentials,
+    providerProbe: input?.providerProbe ?? createPassthroughProviderProbe(),
     createBlankDocxBytes: () => new Uint8Array([1, 2, 3]),
   });
-  return { app, preferenceStore, catalog };
+  return { app, preferenceStore, catalog, credentials };
 }
 
 test("GET /api/ai-models/managed returns normalized models without secrets", async () => {
@@ -203,8 +255,10 @@ test("managed preference saves server OPENROUTER_MODEL and ignores client model 
   await app.close();
 });
 
-test("BYOK preferences remain unconstrained by managed catalog", async () => {
-  const { app, preferenceStore } = await buildTestApp();
+test("BYOK preferences require a connected key and accept a verified model", async () => {
+  const { app, preferenceStore } = await buildTestApp({
+    withByokCredential: true,
+  });
   const response = await app.inject({
     method: "PUT",
     url: "/api/ai-preferences",
@@ -220,6 +274,47 @@ test("BYOK preferences remain unconstrained by managed catalog", async () => {
   assert.equal(response.json().preference.credentialSource, "byok");
   assert.equal(preferenceStore.row?.provider, "openai");
   await app.close();
+});
+
+test("BYOK preference rejects missing credential and invalid model", async () => {
+  const missingCred = await buildTestApp();
+  const noKey = await missingCred.app.inject({
+    method: "PUT",
+    url: "/api/ai-preferences",
+    payload: {
+      provider: "openai",
+      model: "gpt-4.1",
+      credentialSource: "byok",
+    },
+  });
+  assert.equal(noKey.statusCode, 400);
+  assert.equal(noKey.json().error.code, "CREDENTIAL_REQUIRED");
+  await missingCred.app.close();
+
+  const badModel = await buildTestApp({
+    withByokCredential: true,
+    providerProbe: {
+      verifyApiKey: async () => ({ ok: true }),
+      verifyModel: async () => ({
+        ok: false,
+        code: "INVALID_MODEL",
+        message:
+          '"not-a-real-model" was not found for your OpenAI key. Check the model id and try again.',
+      }),
+    },
+  });
+  const rejected = await badModel.app.inject({
+    method: "PUT",
+    url: "/api/ai-preferences",
+    payload: {
+      provider: "openai",
+      model: "not-a-real-model",
+      credentialSource: "byok",
+    },
+  });
+  assert.equal(rejected.statusCode, 400);
+  assert.equal(rejected.json().error.code, "INVALID_MODEL");
+  await badModel.app.close();
 });
 
 test("managed preference rejects non-openrouter provider hints", async () => {

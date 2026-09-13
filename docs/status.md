@@ -9,11 +9,11 @@ _Read this before starting any work. Keep it a concise current-state handoff, no
 * **Document Authoring Intelligence v1** + list≠grouping + **insert_paragraphs rejects embedded newlines**.
 * **Agent Panel UX v1.1** — live status from last activity (no premature Finishing up); inspect=`checks`; recovered details muted; slim composer.
 * Confirmation bridge; Frontend Phases 1–6B; hosted-alpha foundation.
-* **AI Settings** — managed = credits bar only (card click applies); BYOK = provider → key → model → save; active strip shows what agent runs use.
+* **AI Settings** — managed = credits bar only (card click applies); BYOK = provider → key → model → save; active strip shows what agent runs use. Key connect + BYOK model save probe provider models APIs (no chat tokens).
 
 ## Just Completed
 
-* **Theme hover:** sidebar (Home→Trash), lists, menus, and chrome use `primary-soft` / primary text — not grey. `--hover` token is primary-tinted.
+* **BYOK key/model validation:** Connect key probes provider auth cheaply (`GET /models` for OpenAI/Anthropic; `GET /api/v1/key` for OpenRouter — `/models` is public). Save preference verifies model id. Fake keys no longer save as Connected.
 
 ## Current Decisions
 
@@ -28,10 +28,10 @@ _Read this before starting any work. Keep it a concise current-state handoff, no
 
 | Check | Status |
 |---|---|
-| web tests | **Pass** (85) |
-| web typecheck | **Pass** |
-| `git diff --check` | **Pass** |
-| agent-core tests/typecheck | **Pass** (214) |
+| api tests | **Pass** (199; 23 skipped) |
+| web tests | **Pass** (85) prior |
+| web typecheck | **Pass** prior |
+| agent-core tests/typecheck | **Pass** (214) prior |
 | Provider benchmark | **Partially complete** (focused scenarios pass; full suite / `launch-brief` can exit without a final record) |
 | Visual `/dev/agent-panel-ux` | **Reviewed** (between-tools ≠ Finishing up; recovered muted) |
 | Live signed-in agent run | **Blocked** (auth 403) |
@@ -43,4 +43,4 @@ _Read this before starting any work. Keep it a concise current-state handoff, no
 
 ## Recommended Next Step
 
-Smoke workspace explorer + modal (create blank once, rename/edit unlocks another; upload drop), then resume provider-benchmark early-exit diagnosis.
+Smoke BYOK connect with a real key + bogus key in Settings → AI & Models, then resume provider-benchmark early-exit diagnosis.

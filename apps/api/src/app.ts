@@ -38,6 +38,10 @@ import { createAiModelResolver } from "./ai-preferences/resolver.js";
 import { createAiPreferenceService } from "./ai-preferences/service.js";
 import type { SessionAuth } from "./auth/session.js";
 import type { AppConfig } from "./config/index.js";
+import {
+  createProviderCredentialProbe,
+  type ProviderCredentialProbe,
+} from "./credentials/provider-probe.js";
 import { createCredentialCipher } from "./credentials/crypto.js";
 import { createProviderCredentialRepository } from "./credentials/repository.js";
 import {
@@ -107,6 +111,8 @@ export interface AppDependencies {
   readonly agent?: AgentAppDependencies;
   /** Test/override: inject credential service without encryption-key config. */
   readonly credentials?: ProviderCredentialService;
+  /** Test/override: skip real provider HTTP for BYOK key/model checks. */
+  readonly providerProbe?: ProviderCredentialProbe;
   /** Test/override: inject managed model catalog (mocked OpenRouter). */
   readonly managedModelCatalog?: ReturnType<
     typeof createOpenRouterManagedModelCatalog
@@ -191,6 +197,8 @@ export async function buildApp(
           createCredentialCipher(config.aiCredentialEncryptionKey),
         )
       : null);
+  const providerProbe =
+    deps.providerProbe ?? createProviderCredentialProbe();
   const aiPreferences = createAiPreferenceService(deps.db);
   const modelUsage = createModelUsageService(
     createModelUsageRepository(deps.db),
@@ -337,9 +345,16 @@ export async function buildApp(
   registerAiTrialRoutes(app, deps.auth, managedTrial);
   registerAiPreferenceRoutes(app, deps.auth, aiPreferences, managedModelCatalog, {
     managedModel: config.agent.openrouterModel,
+    credentials,
+    probe: providerProbe,
   });
   registerWorkspaceRoutes(app, deps.auth, workspaces);
-  registerProviderCredentialRoutes(app, deps.auth, credentials);
+  registerProviderCredentialRoutes(
+    app,
+    deps.auth,
+    credentials,
+    providerProbe,
+  );
   registerDocumentRoutes(app, deps.auth, workspaces, documents, preferences);
   registerTrashRoutes(app, deps.auth, workspaces, documents);
   registerStorageRoutes(app, deps.auth, storageAccounting);
