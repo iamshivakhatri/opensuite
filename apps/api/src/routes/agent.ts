@@ -21,6 +21,9 @@ import {
   type AgentRunManager,
   type LiveEvent,
 } from "../agent/run-manager.js";
+import {
+  agentDebugLifecycle,
+} from "../agent/debug-lifecycle.js";
 import type { ConfirmationBridge } from "../agent/confirmation-bridge.js";
 import { getRequestUser, type SessionAuth } from "../auth/session.js";
 import {
@@ -690,12 +693,19 @@ export function registerAgentRoutes(
     reply.raw.write(formatSseComment("connected"));
     raw.flush?.();
 
+    // TEMP: agent lifecycle diagnosis
+    agentDebugLifecycle("SSE_OPEN", {
+      run: run.id,
+      runStatus: run.status,
+      cancelsRun: false,
+    });
+
     const terminalStatuses = TERMINAL_RUN_STATUSES;
     let cleaned = false;
     let unsubscribe: (() => void) | null = null;
     let heartbeat: NodeJS.Timeout | null = null;
 
-    const cleanup = () => {
+    const cleanup = (reason = "cleanup") => {
       if (cleaned) {
         return;
       }
@@ -706,10 +716,28 @@ export function registerAgentRoutes(
       }
       unsubscribe?.();
       unsubscribe = null;
-      request.raw.off("close", cleanup);
+      request.raw.off("close", onRequestClose);
+      // TEMP: agent lifecycle diagnosis — SSE close does NOT cancel the run
+      agentDebugLifecycle("SSE_CLOSE", {
+        run: run.id,
+        reason,
+        cancelsRun: false,
+        runStatus: run.status,
+      });
       if (!reply.raw.writableEnded) {
         reply.raw.end();
       }
+    };
+
+    const onRequestClose = () => {
+      // TEMP: agent lifecycle diagnosis
+      agentDebugLifecycle("SSE_CLIENT_ABORT", {
+        run: run.id,
+        cancelsRun: false,
+        note: "unsubscribe-only; runManager.abort untouched",
+        runStatus: run.status,
+      });
+      cleanup("client-close");
     };
 
     const writeEvent = (event: LiveEvent) => {
@@ -725,7 +753,7 @@ export function registerAgentRoutes(
         event.type === "agent.failed" ||
         event.type === "agent.cancelled"
       ) {
-        cleanup();
+        cleanup(`terminal:${event.type}`);
       }
     };
 
@@ -736,20 +764,20 @@ export function registerAgentRoutes(
     });
 
     if (sub.status === "not_found") {
-      reply.raw.write(
-        formatSseEvent({
-          id: 0,
-          runId: run.id,
-          type: "agent.failed",
-          at: new Date().toISOString(),
-          data: { code: "RUN_NOT_FOUND", message: "Agent run not found" },
-        }),
-      );
-      cleanup();
-      return;
-    }
+        reply.raw.write(
+          formatSseEvent({
+            id: 0,
+            runId: run.id,
+            type: "agent.failed",
+            at: new Date().toISOString(),
+            data: { code: "RUN_NOT_FOUND", message: "Agent run not found" },
+          }),
+        );
+        cleanup("not_found");
+        return;
+      }
 
-    if (sub.status === "not_live") {
+      if (sub.status === "not_live") {
       // Live hub gone (API restart / process crash). If durable status is still
       // non-terminal, mark the run failed and emit a terminal event so the UI
       // stops reconnecting / polling.
@@ -760,6 +788,14 @@ export function registerAgentRoutes(
       ) {
         let durable = run;
         try {
+          // TEMP: agent lifecycle diagnosis
+          agentDebugLifecycle("STATUS", {
+            run: run.id,
+            from: run.status,
+            to: "failed",
+            source: "sse.not_live→RUN_ABANDONED",
+            errorCode: "RUN_ABANDONED",
+          });
           durable = await persistence.updateRunStatus({
             runId: run.id,
             ownerUserId: user.id,
@@ -793,7 +829,7 @@ export function registerAgentRoutes(
             },
           }),
         );
-        cleanup();
+        cleanup("not_live_abandoned");
         return;
       }
       const type =
@@ -820,7 +856,7 @@ export function registerAgentRoutes(
           },
         }),
       );
-      cleanup();
+      cleanup("not_live_terminal");
       return;
     }
 
@@ -829,7 +865,7 @@ export function registerAgentRoutes(
     // If durable status is already terminal and we somehow still subscribed,
     // the hub should still deliver agent.* terminal from buffer/grace.
     if (terminalStatuses.has(run.status) && !runManager.isLive(run.id)) {
-      cleanup();
+      cleanup("already_terminal");
       return;
     }
 
@@ -841,7 +877,7 @@ export function registerAgentRoutes(
     }, SSE_HEARTBEAT_MS);
     heartbeat.unref?.();
 
-    request.raw.on("close", cleanup);
+    request.raw.on("close", onRequestClose);
   });
 }
 

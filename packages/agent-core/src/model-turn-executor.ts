@@ -1,3 +1,8 @@
+import {
+  agentDebugLifecycle,
+  summarizeDebugError,
+  watchAbortSignal,
+} from "./debug-lifecycle.js";
 import { AgentCoreError, isAbortError } from "./errors.js";
 import type { AgentEvent, AgentEventSink } from "./events.js";
 import type {
@@ -106,7 +111,31 @@ export async function executeModelTurn(
     const contextMessageBytes = measureMessagesBytes(modelMessages);
     const toolCatalogBytes = measureToolCatalogBytes(toolsForModel);
     const modelStartedAt = Date.now();
-    const timeout = createTimeoutSignal(options.signal, options.timeoutMs);
+    const timeout = createTimeoutSignal(options.signal, options.timeoutMs, {
+      run: options.runId,
+      turn: options.turnIndex,
+    });
+
+    // TEMP: agent lifecycle diagnosis
+    agentDebugLifecycle("MODEL_START", {
+      run: options.runId,
+      turn: options.turnIndex,
+      turnId: options.turnId.slice(0, 8),
+      toolCount: toolsForModel.length,
+      contextBytes: contextMessageBytes,
+      catalogBytes: toolCatalogBytes,
+      abort: options.signal.aborted,
+      modelTurnTimeoutMs: options.timeoutMs,
+      timeoutRetryUsed: options.timeoutRetryUsed,
+      forceAnswerOnly: options.forceAnswerOnly,
+    });
+    watchAbortSignal(options.signal, "run-controller", {
+      run: options.runId,
+      turn: options.turnIndex,
+    });
+    // Combined timeout.signal is watched via createTimeoutSignal timer
+    // (source=model-turn-timeout) — do not attach here or parent aborts
+    // would be mis-attributed.
 
     let response: ModelResponse;
     try {
@@ -129,7 +158,16 @@ export async function executeModelTurn(
         },
       });
     } catch (error) {
+      const modelElapsedMs = Date.now() - modelStartedAt;
       if (options.signal.aborted) {
+        // TEMP: agent lifecycle diagnosis
+        agentDebugLifecycle("MODEL_ABORT", {
+          run: options.runId,
+          turn: options.turnIndex,
+          modelElapsedMs,
+          source: "run-controller",
+          ...summarizeDebugError(error),
+        });
         throw error;
       }
       if (timeout.timedOut) {
@@ -138,6 +176,14 @@ export async function executeModelTurn(
               toolOutcomes: options.toolOutcomes,
             })
           : undefined;
+        // TEMP: agent lifecycle diagnosis
+        agentDebugLifecycle(retryMessage ? "MODEL_TIMEOUT_RETRY" : "MODEL_TIMEOUT", {
+          run: options.runId,
+          turn: options.turnIndex,
+          modelElapsedMs,
+          timeoutMs: options.timeoutMs,
+          ...summarizeDebugError(error),
+        });
         if (retryMessage) {
           return { status: "retry", retryMessage };
         }
@@ -154,6 +200,13 @@ export async function executeModelTurn(
           },
         };
       }
+      // TEMP: agent lifecycle diagnosis
+      agentDebugLifecycle("MODEL_ERROR", {
+        run: options.runId,
+        turn: options.turnIndex,
+        modelElapsedMs,
+        ...summarizeDebugError(error),
+      });
       throw error;
     } finally {
       timeout.clear();
@@ -211,6 +264,18 @@ export async function executeModelTurn(
       at: timestamp(),
     });
 
+    // TEMP: agent lifecycle diagnosis
+    agentDebugLifecycle("MODEL_SUCCESS", {
+      run: options.runId,
+      turn: options.turnIndex,
+      modelElapsedMs: modelWallMs,
+      toolCalls: toolCalls.length,
+      contentChars: response.content.length,
+      finishReason: response.meta?.finishReason,
+      provider: response.meta?.provider,
+      modelId: response.meta?.modelId,
+    });
+
     return {
       status: "completed",
       response,
@@ -219,8 +284,22 @@ export async function executeModelTurn(
     };
   } catch (error) {
     if (options.signal.aborted || isAbortError(error)) {
+      // TEMP: agent lifecycle diagnosis
+      agentDebugLifecycle("MODEL_ABORT", {
+        run: options.runId,
+        turn: options.turnIndex,
+        source: "outer-catch",
+        ...summarizeDebugError(error),
+      });
       return { status: "cancelled" };
     }
+    // TEMP: agent lifecycle diagnosis
+    agentDebugLifecycle("MODEL_ERROR", {
+      run: options.runId,
+      turn: options.turnIndex,
+      source: "outer-catch",
+      ...summarizeDebugError(error),
+    });
     return {
       status: "failed",
       diagnostic: toDiagnostic(error, "MODEL_FAILURE", "Model call failed"),
@@ -242,10 +321,12 @@ async function emitTelemetry(
 function createTimeoutSignal(
   parent: AbortSignal,
   timeoutMs: number,
+  debugFields: Record<string, unknown> = {},
 ): { signal: AbortSignal; timedOut: boolean; clear: () => void } {
   const controller = new AbortController();
   let timedOut = false;
   const onParentAbort = () => {
+    // Parent (run-controller) fired first — do not mark as model-turn timeout.
     controller.abort();
   };
   if (parent.aborted) {
@@ -255,6 +336,13 @@ function createTimeoutSignal(
   }
   const timer = setTimeout(() => {
     timedOut = true;
+    // TEMP: agent lifecycle diagnosis
+    agentDebugLifecycle("ABORT", {
+      source: "model-turn-timeout",
+      reason: `timeoutMs=${timeoutMs}`,
+      timeoutMs,
+      ...debugFields,
+    });
     controller.abort();
   }, timeoutMs);
   return {

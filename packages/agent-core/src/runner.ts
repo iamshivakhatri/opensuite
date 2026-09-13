@@ -4,6 +4,11 @@ import {
   denyAllConfirmationGate,
   type ConfirmationGate,
 } from "./confirmation.js";
+import {
+  agentDebugLifecycle,
+  summarizeDebugError,
+  watchAbortSignal,
+} from "./debug-lifecycle.js";
 import { AgentCoreError, isAbortError } from "./errors.js";
 import {
   noopEventSink,
@@ -201,6 +206,7 @@ export class AgentRunner {
     options: AgentRunOptions = {},
   ): Promise<AgentResult> {
     const signal = options.signal ?? new AbortController().signal;
+    const runStartedAt = Date.now();
     const toolOutcomes: ToolOutcome[] = [];
     const diagnostics: Diagnostic[] = [];
     const transcript: ModelMessage[] = [
@@ -225,6 +231,18 @@ export class AgentRunner {
     let useToolsNudgeSent = false;
     let timeoutRetrySent = false;
 
+    // TEMP: agent lifecycle diagnosis
+    agentDebugLifecycle("RUNNER_START", {
+      run: request.runId,
+      maxTurns: this.maxTurns,
+      modelTurnTimeoutMs: this.modelTurnTimeoutMs,
+      overallRunTimeoutMs: "none",
+      abort: signal.aborted,
+      primaryDoc: request.primaryDocument?.documentId?.slice(0, 8),
+      primaryVer: request.primaryDocument?.versionId?.slice(0, 8),
+    });
+    watchAbortSignal(signal, "run-controller", { run: request.runId });
+
     await this.emit({
       type: "agent.started",
       runId: request.runId,
@@ -239,6 +257,17 @@ export class AgentRunner {
 
       for (let turn = 0; turn < this.maxTurns; turn += 1) {
         this.throwIfAborted(signal);
+
+        // TEMP: agent lifecycle diagnosis
+        agentDebugLifecycle("TURN_BEGIN", {
+          run: request.runId,
+          turn,
+          elapsedRunMs: Date.now() - runStartedAt,
+          abort: signal.aborted,
+          toolOutcomes: toolOutcomes.length,
+          modelTurnTimeoutMs: this.modelTurnTimeoutMs,
+          overallRunTimeoutMs: "none",
+        });
 
         // Ask the injected selector for this turn's tool surface every turn.
         // AgentRunner does not know why/whether it changed (e.g. capability
@@ -255,6 +284,14 @@ export class AgentRunner {
             runId: request.runId,
             diagnostic: selection.diagnostic,
             at: this.timestamp(),
+          });
+          // TEMP: agent lifecycle diagnosis
+          agentDebugLifecycle("RUNNER_FAILED", {
+            run: request.runId,
+            source: "selectTurnTools",
+            code: selection.diagnostic.code,
+            message: selection.diagnostic.message,
+            elapsedRunMs: Date.now() - runStartedAt,
           });
           return {
             status: "failed",
@@ -274,6 +311,17 @@ export class AgentRunner {
           runId: request.runId,
           turnId,
           at: this.timestamp(),
+        });
+
+        // TEMP: agent lifecycle diagnosis — before model.complete path
+        agentDebugLifecycle("MODEL_TURN_INVOKE", {
+          run: request.runId,
+          turn,
+          turnId: turnId.slice(0, 8),
+          elapsedRunMs: Date.now() - runStartedAt,
+          toolCount: selection.toolsForModel.length,
+          abort: signal.aborted,
+          modelTurnTimeoutMs: this.modelTurnTimeoutMs,
         });
 
         const messageId = this.createId();
@@ -304,6 +352,14 @@ export class AgentRunner {
           now: this.now,
         });
 
+        // TEMP: agent lifecycle diagnosis
+        agentDebugLifecycle("MODEL_TURN_RESULT", {
+          run: request.runId,
+          turn,
+          status: modelTurn.status,
+          elapsedRunMs: Date.now() - runStartedAt,
+        });
+
         if (modelTurn.status === "cancelled") {
           return this.cancelled(request.runId, toolOutcomes, diagnostics);
         }
@@ -329,6 +385,14 @@ export class AgentRunner {
             runId: request.runId,
             diagnostic,
             at: this.timestamp(),
+          });
+          // TEMP: agent lifecycle diagnosis
+          agentDebugLifecycle("RUNNER_FAILED", {
+            run: request.runId,
+            source: "modelTurn",
+            code: diagnostic.code,
+            message: diagnostic.message,
+            elapsedRunMs: Date.now() - runStartedAt,
           });
           return {
             status: "failed",
@@ -387,6 +451,12 @@ export class AgentRunner {
             runId: request.runId,
             at: this.timestamp(),
           });
+          // TEMP: agent lifecycle diagnosis
+          agentDebugLifecycle("RUNNER_COMPLETED", {
+            run: request.runId,
+            source: "empty-tool-calls",
+            elapsedRunMs: Date.now() - runStartedAt,
+          });
           return {
             status: "completed",
             summary: response.content,
@@ -444,6 +514,14 @@ export class AgentRunner {
             diagnostic,
             at: this.timestamp(),
           });
+          // TEMP: agent lifecycle diagnosis
+          agentDebugLifecycle("RUNNER_FAILED", {
+            run: request.runId,
+            source: "infrastructureFailures",
+            code: diagnostic.code,
+            message: diagnostic.message,
+            elapsedRunMs: Date.now() - runStartedAt,
+          });
           return {
             status: "failed",
             summary: diagnostic.message,
@@ -470,6 +548,12 @@ export class AgentRunner {
             type: "agent.completed",
             runId: request.runId,
             at: this.timestamp(),
+          });
+          // TEMP: agent lifecycle diagnosis
+          agentDebugLifecycle("RUNNER_COMPLETED", {
+            run: request.runId,
+            source: "terminalizeToolBatch",
+            elapsedRunMs: Date.now() - runStartedAt,
           });
           return {
             status: "completed",
@@ -512,6 +596,14 @@ export class AgentRunner {
         diagnostic,
         at: this.timestamp(),
       });
+      // TEMP: agent lifecycle diagnosis
+      agentDebugLifecycle("RUNNER_FAILED", {
+        run: request.runId,
+        source: "maxTurns",
+        code: diagnostic.code,
+        message: diagnostic.message,
+        elapsedRunMs: Date.now() - runStartedAt,
+      });
       return {
         status: "failed",
         summary: diagnostic.message,
@@ -520,6 +612,12 @@ export class AgentRunner {
       };
     } catch (error) {
       if (this.isCancellation(error, signal)) {
+        // TEMP: agent lifecycle diagnosis
+        agentDebugLifecycle("RUNNER_CANCELLED", {
+          run: request.runId,
+          elapsedRunMs: Date.now() - runStartedAt,
+          ...summarizeDebugError(error),
+        });
         return this.cancelled(request.runId, toolOutcomes, diagnostics);
       }
       const diagnostic = this.toDiagnostic(
@@ -533,6 +631,15 @@ export class AgentRunner {
         runId: request.runId,
         diagnostic,
         at: this.timestamp(),
+      });
+      // TEMP: agent lifecycle diagnosis
+      agentDebugLifecycle("RUNNER_FAILED", {
+        run: request.runId,
+        source: "catch",
+        code: diagnostic.code,
+        message: diagnostic.message,
+        elapsedRunMs: Date.now() - runStartedAt,
+        ...summarizeDebugError(error),
       });
       return {
         status: "failed",
@@ -962,6 +1069,11 @@ export class AgentRunner {
       type: "agent.cancelled",
       runId,
       at: this.timestamp(),
+    });
+    // TEMP: agent lifecycle diagnosis
+    agentDebugLifecycle("RUNNER_CANCELLED", {
+      run: runId,
+      source: "cancelled()",
     });
     return {
       status: "cancelled",

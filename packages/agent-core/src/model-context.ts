@@ -14,6 +14,8 @@ import {
 } from "./document-mutation.js";
 import type { ModelMessage, ModelToolCall } from "./model.js";
 import type { DocumentWorkingState } from "./document-tools/run-state.js";
+import type { ArtifactHandleRegistry } from "./artifact-handles.js";
+import type { DocumentRef } from "./types.js";
 import {
   shapeDiagnosticForToolResult,
   type Diagnostic,
@@ -31,6 +33,8 @@ const COMPACT_ARG_BYTE_THRESHOLD = 512;
 export function transformContext(
   messages: readonly ModelMessage[],
   workingState?: DocumentWorkingState | null,
+  currentDocument?: DocumentRef | null,
+  handles?: ArtifactHandleRegistry,
 ): ModelMessage[] {
   const succeededCallIds = new Set<string>();
   for (const message of messages) {
@@ -79,15 +83,24 @@ export function transformContext(
       };
     }
     const toolProjection = projectToolResultForModel(message);
+    const output = hideStaleArtifactHandles(
+      toolProjection.output,
+      currentDocument?.versionId,
+      handles,
+    );
     return {
       role: "tool" as const,
       toolCallId: message.toolCallId,
       toolName: message.toolName,
       status: message.status,
       ...(toolProjection.summary !== undefined
-        ? { summary: toolProjection.summary }
+        ? {
+            summary: output.changed
+              ? slimSummary(output.value as Record<string, unknown>)
+              : toolProjection.summary,
+          }
         : {}),
-      ...(toolProjection.output !== undefined ? { output: toolProjection.output } : {}),
+      ...(toolProjection.output !== undefined ? { output: output.value } : {}),
       ...(toolProjection.diagnostic !== undefined
         ? { diagnostic: toolProjection.diagnostic }
         : {}),
@@ -99,8 +112,48 @@ export function transformContext(
 
 function isSupersededRead(message: ModelMessage, index: number, latestFindIndex: number, latestInspectIndex: number, workingState: DocumentWorkingState | null | undefined): boolean {
   if (message.role !== "tool" || message.status !== "succeeded") return false;
-  if (message.toolName === "document.inspect") return !!workingState && index !== latestInspectIndex;
+  if (message.toolName === "document.inspect") {
+    return workingState?.freshness === "formatting-carried" || (!!workingState && index !== latestInspectIndex);
+  }
   return message.toolName === "document.find" && index !== latestFindIndex;
+}
+
+function hideStaleArtifactHandles(
+  value: unknown,
+  currentVersionId: string | undefined,
+  handles: ArtifactHandleRegistry | undefined,
+): { readonly value: unknown; readonly changed: boolean } {
+  if (!currentVersionId || !handles || value === null || value === undefined) {
+    return { value, changed: false };
+  }
+  if (Array.isArray(value)) {
+    let changed = false;
+    const projected = value.map((item) => {
+      const result = hideStaleArtifactHandles(item, currentVersionId, handles);
+      changed ||= result.changed;
+      return result.value;
+    });
+    return { value: projected, changed };
+  }
+  if (typeof value !== "object") return { value, changed: false };
+
+  let changed = false;
+  const projected: Record<string, unknown> = {};
+  for (const [key, nested] of Object.entries(value as Record<string, unknown>)) {
+    if (
+      (key === "handle" || key.endsWith("Handle")) &&
+      typeof nested === "string" &&
+      handles.origin(nested) !== undefined &&
+      handles.origin(nested) !== currentVersionId
+    ) {
+      changed = true;
+      continue;
+    }
+    const result = hideStaleArtifactHandles(nested, currentVersionId, handles);
+    changed ||= result.changed;
+    projected[key] = result.value;
+  }
+  return { value: projected, changed };
 }
 
 function workingStateMessage(working: DocumentWorkingState): ModelMessage {

@@ -171,7 +171,7 @@ function removeOpaqueHandles(value: unknown): unknown {
   if (Array.isArray(value)) return value.map(removeOpaqueHandles);
   if (!value || typeof value !== "object") return value;
   return Object.fromEntries(Object.entries(value as Record<string, unknown>)
-    .filter(([key]) => key !== "handle")
+    .filter(([key]) => key !== "handle" && !key.endsWith("Handle"))
     .map(([key, nested]) => [key, removeOpaqueHandles(nested)]));
 }
 

@@ -9,6 +9,10 @@ import type {
   AgentPersistenceService,
   AgentRun,
 } from "./persistence.js";
+import {
+  agentDebugLifecycle,
+  watchAbortSignal,
+} from "./debug-lifecycle.js";
 
 /** Application-owned live event for SSE — no CoT / provider / huge payloads. */
 export interface LiveAgentEvent {
@@ -291,6 +295,15 @@ export function createAgentRunManager(deps: AgentRunManagerDeps) {
       liveEvents,
     });
 
+    // TEMP: agent lifecycle diagnosis
+    agentDebugLifecycle("RUN_MANAGER_START", {
+      run: handle.run.id,
+      abort: abort.signal.aborted,
+    });
+    watchAbortSignal(abort.signal, "run-controller", {
+      run: handle.run.id,
+    });
+
     const entry: ActiveRun = {
       ownerUserId: input.userId,
       hub,
@@ -352,6 +365,11 @@ export function createAgentRunManager(deps: AgentRunManagerDeps) {
       return false;
     }
     if (!entry.abort.signal.aborted) {
+      // TEMP: agent lifecycle diagnosis
+      agentDebugLifecycle("USER_CANCEL", {
+        run: input.runId,
+        source: "runManager.cancel",
+      });
       entry.abort.abort();
     }
     return true;

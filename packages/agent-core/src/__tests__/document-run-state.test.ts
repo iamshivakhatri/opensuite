@@ -13,6 +13,7 @@ import {
   recordDocumentInspection,
   recordRecentParagraphTargets,
   findDocumentInspection,
+  transformContext,
   createFakeTool,
   createInMemoryDocumentMutationExecutor,
   createMockDocumentRuntime,
@@ -45,6 +46,94 @@ test("run-state: inspection working state follows safe formatting changes only",
 
   advanceDocumentWorkingState(state, { ...docxRef, versionId: "ver-3" });
   assert.equal(state.working, null);
+});
+
+test("model context hides stale inspection handles after a formatting version advance", () => {
+  const state = createDocumentRunState(docxRef);
+  const inspection = {
+    status: "success",
+    payload: {
+      tables: [{
+        handle: "t0",
+        tableHandle: "t0",
+        rowCount: 1,
+        cols: 2,
+        columns: [{ handle: "t0:c0", text: "Day" }],
+        rows: [{
+          handle: "t0:r0",
+          cells: [{ handle: "t0:r0:c0", text: "Monday" }],
+        }],
+      }],
+    },
+  };
+  const canonical = [{
+    role: "tool" as const,
+    toolCallId: "inspect-tables",
+    toolName: DOCUMENT_TOOL_NAMES.inspect,
+    status: "succeeded" as const,
+    output: inspection,
+  }];
+
+  state.handles.registerAll(docxRef.versionId, ["t0", "t0:c0", "t0:r0", "t0:r0:c0"]);
+  recordDocumentInspection(state, docxRef, { kind: "tables" }, inspection);
+
+  const current = transformContext(canonical, state.working, state.primary, state.handles);
+  assert.match(JSON.stringify(current), /t0:r0:c0/);
+
+  advanceDocumentWorkingState(state, { ...docxRef, versionId: "ver-2" }, true);
+  const stale = transformContext(canonical, state.working, state.primary, state.handles);
+  assert.match(JSON.stringify(canonical), /t0:r0:c0/, "canonical transcript remains unchanged");
+  assert.doesNotMatch(JSON.stringify(stale), /t0(?::r0(?::c0)?|:c0)?/);
+  assert.match(JSON.stringify(stale), /Monday/);
+  assert.match(JSON.stringify(stale), /Day/);
+  assert.deepEqual((stale[0] as { output?: unknown }).output, {
+    status: "succeeded",
+    compacted: true,
+  });
+  const beforeCompaction = [
+    transformContext(canonical)[0],
+    stale.at(-1),
+  ];
+  assert.ok(
+    JSON.stringify(stale).length < JSON.stringify(beforeCompaction).length,
+    "stale inspection no longer duplicates the latest canonical projection",
+  );
+  assert.equal(state.handles.origin("t0"), "ver-1", "handles are not rebound");
+  assert.throws(
+    () => requireCurrentArtifactHandles(
+      createDocumentToolContext({ state })({
+        runId: "stale-context",
+        signal: new AbortController().signal,
+        events: { emit() {} },
+      }),
+      { handle: "t0" },
+    ),
+    (error: unknown) => error instanceof AgentCoreError && error.code === "STALE_HANDLE",
+  );
+});
+
+test("model context hides stale inspection handles after a structural version advance", () => {
+  const state = createDocumentRunState(docxRef);
+  const inspection = {
+    status: "success",
+    payload: { tables: [{ handle: "t0", rows: [{ handle: "t0:r0", cells: [{ handle: "t0:r0:c0", text: "Monday" }] }] }] },
+  };
+  const canonical = [{
+    role: "tool" as const,
+    toolCallId: "inspect-tables",
+    toolName: DOCUMENT_TOOL_NAMES.inspect,
+    status: "succeeded" as const,
+    output: inspection,
+  }];
+  state.handles.registerAll(docxRef.versionId, ["t0", "t0:r0", "t0:r0:c0"]);
+  recordDocumentInspection(state, docxRef, { kind: "tables" }, inspection);
+
+  advanceDocumentWorkingState(state, { ...docxRef, versionId: "ver-2" });
+  const projected = transformContext(canonical, state.working, state.primary, state.handles);
+  assert.equal(state.working, null);
+  assert.match(JSON.stringify(canonical), /t0:r0:c0/);
+  assert.doesNotMatch(JSON.stringify(projected), /t0(?::r0(?::c0)?)?/);
+  assert.match(JSON.stringify(projected), /Monday/);
 });
 
 test("run-state: same-version inspections merge by exact coverage", () => {

@@ -367,7 +367,7 @@ function isPendingOutcome(outcome: ToolBatchContext["toolOutcomes"][number]): bo
 export function createDocumentAgentRunnerPolicyOptions(state?: DocumentRunState) {
   return {
     transformContext: (messages: Parameters<TransformAgentContext>[0]) =>
-      transformContext(messages, state?.working),
+      transformContext(messages, state?.working, state?.primary, state?.handles),
     shouldTerminalizeToolBatch: shouldTerminalizeDocumentToolBatch,
     getModelTimeoutRetryMessage: getDocumentModelTimeoutRetryMessage,
     requiredToolsNudgeMessage: USE_DOCUMENT_TOOLS_NUDGE_MESSAGE,

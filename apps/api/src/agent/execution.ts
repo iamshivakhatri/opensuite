@@ -48,6 +48,11 @@ import {
   type AgentExecutionLease,
   type AgentExecutionLeaseService,
 } from "./execution-lease.js";
+import {
+  agentDebugLifecycle,
+  summarizeDebugError,
+  watchAbortSignal,
+} from "./debug-lifecycle.js";
 import { devLog } from "../dev-log.js";
 
 /** Trusted usage attribution resolved with the model (never from model output). */
@@ -395,6 +400,21 @@ async function continueExecution(input: {
     liveEvents,
   } = input;
 
+  const executionStartedAt = Date.now();
+  // TEMP: agent lifecycle diagnosis
+  agentDebugLifecycle("RUN_START", {
+    run: run.id,
+    thread: thread.id.slice(0, 8),
+    abort: signal?.aborted ?? false,
+    hasLiveEvents: Boolean(liveEvents),
+    primaryDoc: primaryDocument?.documentId?.slice(0, 8),
+    primaryVer: primaryDocument?.versionId?.slice(0, 8),
+    modelTurnTimeoutMs: 90_000,
+    overallRunTimeoutMs: "none",
+    executionServiceTimeoutMs: "none",
+  });
+  watchAbortSignal(signal, "run-controller", { run: run.id });
+
   const priorMessages = (
     await persistence.listMessagesForThread({
       threadId: thread.id,
@@ -517,8 +537,41 @@ async function continueExecution(input: {
 
   let agentResult: AgentResult;
   try {
+    // TEMP: agent lifecycle diagnosis
+    agentDebugLifecycle("RUNNER_INVOKE", {
+      run: run.id,
+      elapsedMs: Date.now() - executionStartedAt,
+      abort: signal?.aborted ?? false,
+    });
     agentResult = await runner.run(request, { signal });
-  } catch {
+    // TEMP: agent lifecycle diagnosis
+    agentDebugLifecycle("RUNNER_RESOLVED", {
+      run: run.id,
+      status: agentResult.status,
+      summary: agentResult.summary.slice(0, 160),
+      diagnostics: agentResult.diagnostics.length,
+      toolOutcomes: agentResult.toolOutcomes.length,
+      elapsedMs: Date.now() - executionStartedAt,
+    });
+  } catch (error) {
+    // TEMP: agent lifecycle diagnosis — original error before normalization
+    agentDebugLifecycle("RUNNER_REJECTED", {
+      run: run.id,
+      elapsedMs: Date.now() - executionStartedAt,
+      ...summarizeDebugError(error),
+    });
+    agentDebugLifecycle("CATCH_ENTERED", {
+      run: run.id,
+      source: "runner.run",
+      elapsedMs: Date.now() - executionStartedAt,
+    });
+    agentDebugLifecycle("STATUS", {
+      run: run.id,
+      from: "running?",
+      to: "failed",
+      source: "continueExecution.catch→bestEffortFailRun",
+      errorCode: "AGENT_EXECUTION_FAILED",
+    });
     await bestEffortFailRun(
       persistence,
       ownerUserId,
@@ -536,6 +589,11 @@ async function continueExecution(input: {
         message: "Agent runner failed unexpectedly",
       },
     });
+    agentDebugLifecycle("RUN_FAILED", {
+      run: run.id,
+      source: "runner-throw",
+      elapsedMs: Date.now() - executionStartedAt,
+    });
     throw new AgentExecutionError(
       "AGENT_EXECUTION_FAILED",
       "Agent runner failed unexpectedly",
@@ -544,7 +602,21 @@ async function continueExecution(input: {
 
   try {
     await bridge.flush();
-  } catch {
+  } catch (error) {
+    // TEMP: agent lifecycle diagnosis
+    agentDebugLifecycle("CATCH_ENTERED", {
+      run: run.id,
+      source: "bridge.flush",
+      elapsedMs: Date.now() - executionStartedAt,
+      ...summarizeDebugError(error),
+    });
+    agentDebugLifecycle("STATUS", {
+      run: run.id,
+      from: "running?",
+      to: "failed",
+      source: "bridge.flush→bestEffortFailRun",
+      errorCode: "AGENT_PERSISTENCE_FAILED",
+    });
     await bestEffortFailRun(
       persistence,
       ownerUserId,
@@ -562,6 +634,11 @@ async function continueExecution(input: {
         message: "Failed to persist agent steps",
       },
     });
+    agentDebugLifecycle("RUN_FAILED", {
+      run: run.id,
+      source: "bridge-flush",
+      elapsedMs: Date.now() - executionStartedAt,
+    });
     throw new AgentExecutionError(
       "AGENT_PERSISTENCE_FAILED",
       "Failed to persist agent steps",
@@ -569,10 +646,16 @@ async function continueExecution(input: {
   }
 
   let assistantMessage: AgentMessage | null = null;
-  let finalRun: AgentRun;
+  let finalRun: AgentRun | undefined;
 
   try {
     if (agentResult.status === "completed") {
+      agentDebugLifecycle("STATUS", {
+        run: run.id,
+        from: "running",
+        to: "completed",
+        source: "finalizeCompletedRun",
+      });
       const finalized = await finalizeCompletedRun({
         persistence,
         ownerUserId,
@@ -587,8 +670,18 @@ async function continueExecution(input: {
         runId: run.id,
         at: new Date().toISOString(),
       });
+      agentDebugLifecycle("RUN_COMPLETED", {
+        run: run.id,
+        elapsedMs: Date.now() - executionStartedAt,
+      });
     } else if (agentResult.status === "cancelled") {
       await bridge.cancelOpenSteps();
+      agentDebugLifecycle("STATUS", {
+        run: run.id,
+        from: "running",
+        to: "cancelled",
+        source: "agentResult.cancelled",
+      });
       finalRun = await persistence.updateRunStatus({
         runId: run.id,
         ownerUserId,
@@ -599,17 +692,37 @@ async function continueExecution(input: {
         runId: run.id,
         at: new Date().toISOString(),
       });
+      agentDebugLifecycle("RUN_CANCELLED", {
+        run: run.id,
+        elapsedMs: Date.now() - executionStartedAt,
+      });
     } else {
       const diagnostic = agentResult.diagnostics[0];
+      const errorCode = safeErrorCode(
+        diagnostic?.code,
+        "AGENT_EXECUTION_FAILED",
+      );
+      const errorMessage = safeErrorMessage(
+        diagnostic?.message ?? agentResult.summary,
+        "Agent run failed",
+      );
+      agentDebugLifecycle("STATUS", {
+        run: run.id,
+        from: "running",
+        to: "failed",
+        source: "agentResult.failed→updateRunStatus",
+        errorCode,
+        errorMessage,
+        diagnosticCode: diagnostic?.code,
+        diagnosticMessage: diagnostic?.message?.slice(0, 200),
+        resultSummary: agentResult.summary.slice(0, 200),
+      });
       finalRun = await persistence.updateRunStatus({
         runId: run.id,
         ownerUserId,
         status: "failed",
-        errorCode: safeErrorCode(diagnostic?.code, "AGENT_EXECUTION_FAILED"),
-        errorMessage: safeErrorMessage(
-          diagnostic?.message ?? agentResult.summary,
-          "Agent run failed",
-        ),
+        errorCode,
+        errorMessage,
       });
       await emitTerminalLive(liveEvents, {
         type: "agent.failed",
@@ -621,12 +734,33 @@ async function continueExecution(input: {
           message: "Agent run failed",
         },
       });
+      agentDebugLifecycle("RUN_FAILED", {
+        run: run.id,
+        source: "agentResult.failed",
+        errorCode,
+        errorMessage,
+        elapsedMs: Date.now() - executionStartedAt,
+      });
     }
   } catch (error) {
     if (
       error instanceof AgentPersistenceError ||
       error instanceof AgentExecutionError
     ) {
+      // TEMP: agent lifecycle diagnosis
+      agentDebugLifecycle("CATCH_ENTERED", {
+        run: run.id,
+        source: "finalize",
+        elapsedMs: Date.now() - executionStartedAt,
+        ...summarizeDebugError(error),
+      });
+      agentDebugLifecycle("STATUS", {
+        run: run.id,
+        from: "running?",
+        to: "failed",
+        source: "finalize→bestEffortFailRun",
+        errorCode: "AGENT_PERSISTENCE_FAILED",
+      });
       await bestEffortFailRun(
         persistence,
         ownerUserId,
@@ -644,12 +778,38 @@ async function continueExecution(input: {
           message: "Failed to finalize agent run",
         },
       });
+      agentDebugLifecycle("RUN_FAILED", {
+        run: run.id,
+        source: "finalize",
+        elapsedMs: Date.now() - executionStartedAt,
+      });
       throw new AgentExecutionError(
         "AGENT_PERSISTENCE_FAILED",
         "Failed to finalize agent run",
       );
     }
+    // TEMP: agent lifecycle diagnosis
+    agentDebugLifecycle("CATCH_ENTERED", {
+      run: run.id,
+      source: "finalize-unexpected",
+      elapsedMs: Date.now() - executionStartedAt,
+      ...summarizeDebugError(error),
+    });
     throw error;
+  } finally {
+    // TEMP: agent lifecycle diagnosis
+    agentDebugLifecycle("RUN_END", {
+      run: run.id,
+      elapsedMs: Date.now() - executionStartedAt,
+      finalStatus: finalRun?.status ?? "unknown",
+    });
+  }
+
+  if (!finalRun) {
+    throw new AgentExecutionError(
+      "AGENT_EXECUTION_FAILED",
+      "Agent run finalized without a durable status",
+    );
   }
 
   const steps = await persistence.listStepsForRun({
@@ -918,8 +1078,25 @@ async function bestEffortFailRun(
       existing.status === "failed" ||
       existing.status === "cancelled"
     ) {
+      // TEMP: agent lifecycle diagnosis
+      agentDebugLifecycle("STATUS", {
+        run: runId,
+        from: existing.status,
+        to: existing.status,
+        source: "bestEffortFailRun.skip-terminal",
+        errorCode,
+      });
       return;
     }
+    // TEMP: agent lifecycle diagnosis
+    agentDebugLifecycle("STATUS", {
+      run: runId,
+      from: existing.status,
+      to: "failed",
+      source: "bestEffortFailRun",
+      errorCode,
+      errorMessage,
+    });
     await persistence.updateRunStatus({
       runId,
       ownerUserId,
@@ -927,8 +1104,14 @@ async function bestEffortFailRun(
       errorCode,
       errorMessage,
     });
-  } catch {
+  } catch (error) {
     // Best-effort only — caller already has the primary error.
+    // TEMP: agent lifecycle diagnosis
+    agentDebugLifecycle("CATCH_ENTERED", {
+      run: runId,
+      source: "bestEffortFailRun",
+      ...summarizeDebugError(error),
+    });
   }
 }
 
@@ -1001,6 +1184,13 @@ function createRunEventBridge(input: {
     ) {
       return;
     }
+    // TEMP: agent lifecycle diagnosis
+    agentDebugLifecycle("STATUS", {
+      run: input.runId,
+      from: runStatus,
+      to: status,
+      source: "eventBridge.setRunStatus",
+    });
     await input.persistence.updateRunStatus({
       runId: input.runId,
       ownerUserId: input.ownerUserId,

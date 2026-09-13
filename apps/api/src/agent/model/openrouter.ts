@@ -8,6 +8,11 @@ import {
 } from "@opensuite/agent-core";
 
 import {
+  agentDebugLifecycle,
+  summarizeDebugError,
+  watchAbortSignal,
+} from "../debug-lifecycle.js";
+import {
   cancelledError,
   ensureObjectSchema,
   formatToolResultContent,
@@ -135,12 +140,19 @@ export function createOpenRouterAgentModel(
   return {
     async complete(request: ModelRequest): Promise<ModelResponse> {
       if (request.signal?.aborted) {
+        // TEMP: agent lifecycle diagnosis
+        agentDebugLifecycle("OPENROUTER_REQUEST_ABORTED", {
+          model: options.model,
+          source: "preflight",
+        });
         throw cancelledError();
       }
 
       const system = resolveAgentSystemPrompt(request, systemOverride);
       const startedAt = Date.now();
       let timeToFirstTokenMs: number | undefined;
+      // Limitation: ModelRequest has no runId/turnIndex — correlate via MODEL_START chronology.
+      const corr = { model: options.model };
 
       const baseParams = {
         model: options.model,
@@ -162,6 +174,16 @@ export function createOpenRouterAgentModel(
         ? { signal: request.signal }
         : undefined;
 
+      // TEMP: agent lifecycle diagnosis
+      agentDebugLifecycle("OPENROUTER_REQUEST_START", {
+        ...corr,
+        stream: Boolean(request.onTextDelta),
+        toolCount: request.tools.length,
+        messageCount: request.messages.length,
+        abort: request.signal?.aborted ?? false,
+      });
+      watchAbortSignal(request.signal, "provider-request", corr);
+
       try {
         if (request.onTextDelta) {
           const stream = (await options.client.chat.completions.create(
@@ -173,6 +195,18 @@ export function createOpenRouterAgentModel(
             callOptions,
           )) as AsyncIterable<OpenAIChatCompletionChunk>;
 
+          // TEMP: agent lifecycle diagnosis — HTTP accepted + stream body opened
+          agentDebugLifecycle("OPENROUTER_HTTP", {
+            ...corr,
+            status: "ok",
+            elapsedMs: Date.now() - startedAt,
+            mode: "stream",
+          });
+          agentDebugLifecycle("OPENROUTER_STREAM_START", {
+            ...corr,
+            elapsedMs: Date.now() - startedAt,
+          });
+
           let content = "";
           let finishReason: string | null | undefined;
           let streamUsage: OpenAIChatCompletion["usage"] | undefined;
@@ -180,57 +214,107 @@ export function createOpenRouterAgentModel(
             number,
             { id: string; name: string; arguments: string }
           >();
+          let sawFirstChunk = false;
 
-          for await (const chunk of stream) {
-            if (request.signal?.aborted) {
-              throw cancelledError();
-            }
-            if (chunk.usage) {
-              streamUsage = chunk.usage;
-            }
-            const choice = chunk.choices[0];
-            if (choice?.finish_reason) {
-              finishReason = choice.finish_reason;
-            }
-            const delta = choice?.delta;
-            if (!delta) continue;
-
-            if (typeof delta.content === "string" && delta.content.length > 0) {
-              if (timeToFirstTokenMs === undefined) {
+          try {
+            for await (const chunk of stream) {
+              if (request.signal?.aborted) {
+                agentDebugLifecycle("OPENROUTER_REQUEST_ABORTED", {
+                  ...corr,
+                  source: "mid-stream",
+                  elapsedMs: Date.now() - startedAt,
+                  sawFirstChunk,
+                });
+                throw cancelledError();
+              }
+              if (!sawFirstChunk) {
+                sawFirstChunk = true;
                 timeToFirstTokenMs = Date.now() - startedAt;
+                agentDebugLifecycle("OPENROUTER_FIRST_CHUNK", {
+                  ...corr,
+                  ttftMs: timeToFirstTokenMs,
+                });
               }
-              content += delta.content;
-              await request.onTextDelta(delta.content);
-            }
+              if (chunk.usage) {
+                streamUsage = chunk.usage;
+              }
+              const choice = chunk.choices[0];
+              if (choice?.finish_reason) {
+                finishReason = choice.finish_reason;
+              }
+              const delta = choice?.delta;
+              if (!delta) continue;
 
-            for (const toolDelta of delta.tool_calls ?? []) {
-              if (timeToFirstTokenMs === undefined) {
-                timeToFirstTokenMs = Date.now() - startedAt;
+              if (typeof delta.content === "string" && delta.content.length > 0) {
+                if (timeToFirstTokenMs === undefined) {
+                  timeToFirstTokenMs = Date.now() - startedAt;
+                }
+                content += delta.content;
+                await request.onTextDelta(delta.content);
               }
-              const index = toolDelta.index ?? 0;
-              const current = toolAcc.get(index) ?? {
-                id: "",
-                name: "",
-                arguments: "",
-              };
-              if (toolDelta.id) {
-                current.id = toolDelta.id;
+
+              for (const toolDelta of delta.tool_calls ?? []) {
+                if (timeToFirstTokenMs === undefined) {
+                  timeToFirstTokenMs = Date.now() - startedAt;
+                }
+                const index = toolDelta.index ?? 0;
+                const current = toolAcc.get(index) ?? {
+                  id: "",
+                  name: "",
+                  arguments: "",
+                };
+                if (toolDelta.id) {
+                  current.id = toolDelta.id;
+                }
+                if (toolDelta.function?.name) {
+                  current.name += toolDelta.function.name;
+                }
+                if (toolDelta.function?.arguments) {
+                  current.arguments += toolDelta.function.arguments;
+                }
+                toolAcc.set(index, current);
               }
-              if (toolDelta.function?.name) {
-                current.name += toolDelta.function.name;
-              }
-              if (toolDelta.function?.arguments) {
-                current.arguments += toolDelta.function.arguments;
-              }
-              toolAcc.set(index, current);
             }
+          } catch (error) {
+            // Log only — outer catch still owns abort/normalize behavior.
+            if (request.signal?.aborted || isAbortLike(error)) {
+              agentDebugLifecycle("OPENROUTER_STREAM_ERROR", {
+                ...corr,
+                kind: "abort",
+                elapsedMs: Date.now() - startedAt,
+                ...summarizeDebugError(error),
+              });
+            } else {
+              agentDebugLifecycle("OPENROUTER_STREAM_ERROR", {
+                ...corr,
+                kind: "throw",
+                elapsedMs: Date.now() - startedAt,
+                ...summarizeDebugError(error),
+              });
+            }
+            throw error;
           }
 
           // Stream may end quietly when AbortSignal fires — treat as cancel so
           // AgentRunner timeouts fail the run instead of "completing" empty.
           if (request.signal?.aborted) {
+            agentDebugLifecycle("OPENROUTER_REQUEST_ABORTED", {
+              ...corr,
+              source: "post-stream",
+              elapsedMs: Date.now() - startedAt,
+              sawFirstChunk,
+            });
             throw cancelledError();
           }
+
+          agentDebugLifecycle("OPENROUTER_STREAM_DONE", {
+            ...corr,
+            elapsedMs: Date.now() - startedAt,
+            ttftMs: timeToFirstTokenMs,
+            toolCalls: toolAcc.size,
+            contentChars: content.length,
+            finishReason: finishReason ?? null,
+          });
 
           const toolCalls: ModelToolCall[] = [...toolAcc.entries()]
             .sort((a, b) => a[0] - b[0])
@@ -260,6 +344,12 @@ export function createOpenRouterAgentModel(
           { ...baseParams, stream: false },
           callOptions,
         )) as OpenAIChatCompletion;
+        agentDebugLifecycle("OPENROUTER_HTTP", {
+          ...corr,
+          status: "ok",
+          elapsedMs: Date.now() - startedAt,
+          mode: "non-stream",
+        });
         return withOpenRouterMeta(
           fromOpenAIChatCompletion(completion),
           options.model,
@@ -269,8 +359,31 @@ export function createOpenRouterAgentModel(
         );
       } catch (error) {
         if (request.signal?.aborted || isAbortLike(error)) {
+          agentDebugLifecycle("OPENROUTER_REQUEST_ABORTED", {
+            ...corr,
+            source: "outer-catch",
+            elapsedMs: Date.now() - startedAt,
+            ...summarizeDebugError(error),
+          });
           throw cancelledError(error);
         }
+        const status =
+          error && typeof error === "object" && "status" in error
+            ? Number((error as { status?: unknown }).status)
+            : undefined;
+        if (status !== undefined && (status < 200 || status >= 300)) {
+          agentDebugLifecycle("OPENROUTER_HTTP", {
+            ...corr,
+            status,
+            elapsedMs: Date.now() - startedAt,
+            mode: "error",
+          });
+        }
+        agentDebugLifecycle("OPENROUTER_ADAPTER_ERROR", {
+          ...corr,
+          elapsedMs: Date.now() - startedAt,
+          ...summarizeDebugError(error),
+        });
         throw normalizeProviderError(error, providerLabel);
       }
     },

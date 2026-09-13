@@ -14,7 +14,9 @@ _Read this before starting any work. Keep it a concise current-state handoff, no
 
 ## Just Completed
 
+* **TEMP agent lifecycle debug** — `AGENT_DEBUG_LIFECYCLE=1` logs `[agent-debug]` turn/OpenRouter/abort/SSE/status (remove after diagnosis).
 * **Protocol hardening v7.4:** same-turn calls with handles made stale by an earlier version advance are deferred as a clean barrier; semantic selectors and formatting transactions continue normally.
+* **Protocol hardening v7.5:** model-facing context hides registry-backed handles from older document versions while preserving semantic inspection knowledge and canonical audit history.
 
 ## Current Decisions
 
@@ -34,7 +36,7 @@ _Read this before starting any work. Keep it a concise current-state handoff, no
 | db errors + package tests | **Pass** (17; 1 skipped live connect) |
 | web typecheck | **Pass** |
 | web tests | **Pass** (85) prior |
-| agent-core tests/typecheck | **Pass** (221) |
+| agent-core tests/typecheck | **Pass** (223) |
 | api tests (full) | **Pass** (183; 23 skipped) |
 | Provider benchmark | **Partially complete** |
 | Visual `/dev/agent-panel-ux` | **Reviewed** prior |
@@ -47,4 +49,4 @@ _Read this before starting any work. Keep it a concise current-state handoff, no
 
 ## Recommended Next Step
 
-Restore Tailscale/Postgres reachability and confirm banner clears within ~5s; smoke a signed-in `/app` reload during a brief DB blip.
+Reproduce the nex fitness-routine failure with `AGENT_DEBUG_LIFECYCLE=1` (API console) and capture the `[agent-debug]` sequence through `RUN_FAILED` / `RUN_END`.

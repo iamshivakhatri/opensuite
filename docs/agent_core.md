@@ -156,7 +156,9 @@ no ritual inspect before append/end authoring. Structured `reasonCode` over mess
 Canonical transcript stays rich; `transformContext` projects slim model-facing tool results
 (no echoed prose / version UUIDs; inspect drops empty caps/null summary/format duplication)
 and compacts large historical successful write tool arguments for later
-provider turns (id/name/pairing preserved). Recent successful paragraph inserts also keep
+provider turns (id/name/pairing preserved). After a document advances, projection hides only
+registry-backed opaque handles from older versions while retaining inspection text/structure;
+canonical history and stale-handle validation remain unchanged. Recent successful paragraph inserts also keep
 a bounded, exact-text-only run-local hint; paragraph occurrence remains unknown until inspection.
 When an assistant response includes a short
 Done confirmation **plus** successful document writes, OpenSuite policy may terminalize without
