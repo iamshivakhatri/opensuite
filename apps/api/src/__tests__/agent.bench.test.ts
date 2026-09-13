@@ -8,7 +8,7 @@ import {
   toolCallResponse,
   assistantOnlyResponse,
 } from "@opensuite/agent-core";
-import { buildNameRoleTableDocx } from "@opensuite/engine-client";
+import { buildDocxBody, buildNameRoleTableDocx } from "@opensuite/engine-client";
 
 import {
   createBenchHarness,
@@ -278,4 +278,54 @@ test("a structural tool flushes pending table formatting first", async () => {
   const note = result.toolOutcomes.find((outcome) => outcome.toolCallId === "insert-note");
   assert.equal(note?.status, "succeeded");
   assert.equal((note?.output as { baseVersionId?: string }).baseVersionId, advances[0]?.versionId);
+});
+
+test("a disjoint bullet request persists before the next same-turn mutation", async () => {
+  const harness = await createProductionBenchHarness();
+  const document = harness.seedDocument(buildDocxBody([
+    { kind: "paragraph", text: "First" },
+    { kind: "paragraph", text: "Second" },
+    { kind: "paragraph", text: "Section" },
+    { kind: "paragraph", text: "Third" },
+    { kind: "paragraph", text: "Fourth" },
+  ]));
+  const { result, events, document: finalDocument } = await harness.run({
+    instruction: "format two bullet lists",
+    primaryDocument: document,
+    model: createScriptedAgentModel([
+      toolCallResponse("", [
+        {
+          id: "grouped-bullets",
+          name: DOCUMENT_TOOL_NAMES.setParagraphsList,
+          input: {
+            targets: ["First", "Second", "Third", "Fourth"].map((text) => ({ text })),
+            kind: "bullet",
+          },
+        },
+        {
+          id: "format-heading",
+          name: DOCUMENT_TOOL_NAMES.setParagraphFormatting,
+          input: { target: { text: "Section" }, spacingBeforeTwips: 240 },
+        },
+      ]),
+      assistantOnlyResponse("Done."),
+    ]),
+  });
+  assert.ok(result.toolOutcomes.every((outcome) => outcome.status === "succeeded"));
+  const advances = events.filter((event) => event.type === "document.version.advanced");
+  assert.equal(advances.length, 2);
+  const formatting = result.toolOutcomes.find(
+    (outcome) => outcome.toolCallId === "format-heading",
+  );
+  assert.equal((formatting?.output as { baseVersionId?: string }).baseVersionId, advances[0]?.versionId);
+  assert.ok(finalDocument);
+  const inspection = await harness.runtime.inspect(finalDocument!, {
+    focus: { kind: "paragraphs" },
+  });
+  assert.equal(inspection.status, "success");
+  if (inspection.status !== "success" || inspection.payload.format !== "docx") return;
+  assert.deepEqual(
+    inspection.payload.paragraphs?.map((paragraph) => paragraph.text),
+    ["First", "Second", "Section", "Third", "Fourth"],
+  );
 });

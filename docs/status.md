@@ -14,7 +14,7 @@ _Read this before starting any work. Keep it a concise current-state handoff, no
 
 ## Just Completed
 
-* **Protocol hardening v7.2:** table formatting, widths, and cell shading share the existing formatting transaction; one table presentation turn persists one version and then expires old handles.
+* **Protocol hardening v7.3:** one bullet-list request can safely target separate direct-body runs in source order; decimal lists remain consecutive-only.
 
 ## Current Decisions
 
@@ -34,8 +34,8 @@ _Read this before starting any work. Keep it a concise current-state handoff, no
 | db errors + package tests | **Pass** (17; 1 skipped live connect) |
 | web typecheck | **Pass** |
 | web tests | **Pass** (85) prior |
-| agent-core tests/typecheck | **Pass** (218) |
-| api tests (full) | **Pass** (182; 23 skipped) |
+| agent-core tests/typecheck | **Pass** (219) |
+| api tests (full) | **Pass** (183; 23 skipped) |
 | Provider benchmark | **Partially complete** |
 | Visual `/dev/agent-panel-ux` | **Reviewed** prior |
 | Live signed-in agent run | **Blocked** (auth 403) prior |
