@@ -58,8 +58,13 @@ COPY packages/db/package.json packages/db/
 COPY packages/agent-core/package.json packages/agent-core/
 COPY packages/engine-client/package.json packages/engine-client/
 
-# Sibling-repo `link:` optionalDependency is unavailable in Docker — drop it.
-RUN node -e "const fs=require('fs'); const p='packages/engine-client/package.json'; const j=JSON.parse(fs.readFileSync(p,'utf8')); delete j.optionalDependencies; fs.writeFileSync(p, JSON.stringify(j,null,2)+'\\n');"
+# Lockfile expects optional link:../../../opensuite-engine/... (sibling of this
+# repo). Stub it so frozen install works; real .node is copied after build.
+RUN mkdir -p /opensuite-engine/crates/opensuite-node \
+  && printf '%s\n' '{"name":"@opensuite/engine","version":"0.1.0","private":true,"main":"index.js"}' \
+       >/opensuite-engine/crates/opensuite-node/package.json \
+  && printf '%s\n' 'module.exports = {};' \
+       >/opensuite-engine/crates/opensuite-node/index.js
 
 RUN pnpm install --frozen-lockfile --filter @opensuite/api...
 
