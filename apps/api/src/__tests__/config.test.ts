@@ -39,6 +39,18 @@ test("loadConfig applies defaults when auth/database env vars are provided", () 
   assert.equal(config.agent.openaiModel, "gpt-4.1");
   assert.equal(config.agent.openrouterApiKey, null);
   assert.equal(config.agent.openrouterModel, null);
+  assert.equal(config.allowSignup, true);
+  assert.equal(config.authCrossOrigin, false);
+});
+
+test("loadConfig parses ALLOW_SIGNUP and AUTH_CROSS_ORIGIN", () => {
+  const config = loadConfig({
+    ...baseEnv,
+    ALLOW_SIGNUP: "false",
+    AUTH_CROSS_ORIGIN: "true",
+  });
+  assert.equal(config.allowSignup, false);
+  assert.equal(config.authCrossOrigin, true);
 });
 
 test("loadConfig accepts legacy MINIO_* aliases for S3 settings", () => {

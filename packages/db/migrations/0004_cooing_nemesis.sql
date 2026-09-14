@@ -1,0 +1,2 @@
+ALTER TABLE "agent_run" ADD COLUMN "base_document_version_id" uuid;--> statement-breakpoint
+ALTER TABLE "agent_run" ADD CONSTRAINT "agent_run_base_document_version_id_document_version_id_fk" FOREIGN KEY ("base_document_version_id") REFERENCES "public"."document_version"("id") ON DELETE restrict ON UPDATE no action;

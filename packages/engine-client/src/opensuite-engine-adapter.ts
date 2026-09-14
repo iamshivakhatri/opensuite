@@ -2024,7 +2024,8 @@ export function mapSetTableCellShadingOperation(operation: DocumentOperation):
   const updates: DocxSetTableCellShadingOperation["updates"][number][] = [];
   for (const raw of operation.payload.updates) {
     if (!isRecord(raw)) return { ok: false, error: operationError("VALIDATION_FAILED", "document.set_table_cell_shading updates must be objects") };
-    const target = mapCellTarget(raw, "document.set_table_cell_shading");
+    if (!isRecord(raw.target)) return { ok: false, error: operationError("VALIDATION_FAILED", "document.set_table_cell_shading updates require a target object") };
+    const target = mapCellTarget(raw.target, "document.set_table_cell_shading");
     if (!target.ok) return target;
     if (raw.fill !== undefined && (typeof raw.fill !== "string" || !/^[0-9A-Fa-f]{6}$/.test(raw.fill))) {
       return { ok: false, error: operationError("VALIDATION_FAILED", "document.set_table_cell_shading fill must be a six-digit hex color") };
@@ -2148,30 +2149,27 @@ function mapCellTarget(
   | { readonly ok: false; readonly error: OperationResult } {
   const targetSource = isRecord(item.target) ? item.target : item;
   const handle = readNonEmptyString(targetSource.handle);
+  const rowLabel = readNonEmptyString(targetSource.rowLabel);
+  const columnHeader = readNonEmptyString(targetSource.columnHeader);
+  const occurrence = readOptionalPositiveInt(
+    targetSource.occurrence,
+    `${operationLabel} update occurrence`,
+  );
+  if (occurrence === "invalid") {
+    return { ok: false, error: operationError("VALIDATION_FAILED", `${operationLabel} update occurrence must be a positive integer when provided`) };
+  }
+  if (handle !== null && (rowLabel !== null || columnHeader !== null || occurrence !== undefined)) {
+    return { ok: false, error: operationError("VALIDATION_FAILED", `${operationLabel} target must use handle or rowLabel+columnHeader, not both`) };
+  }
   if (handle !== null) {
     return { ok: true, value: { handle } };
   }
-  const rowLabel = readNonEmptyString(targetSource.rowLabel);
-  const columnHeader = readNonEmptyString(targetSource.columnHeader);
   if (rowLabel === null || columnHeader === null) {
     return {
       ok: false,
       error: operationError(
         "VALIDATION_FAILED",
         `${operationLabel} updates require target.handle or rowLabel+columnHeader`,
-      ),
-    };
-  }
-  const occurrence = readOptionalPositiveInt(
-    targetSource.occurrence,
-    `${operationLabel} update occurrence`,
-  );
-  if (occurrence === "invalid") {
-    return {
-      ok: false,
-      error: operationError(
-        "VALIDATION_FAILED",
-        `${operationLabel} update occurrence must be a positive integer when provided`,
       ),
     };
   }

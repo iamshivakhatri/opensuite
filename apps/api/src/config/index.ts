@@ -69,6 +69,22 @@ const EnvSchema = z
     /** Display units for the trial grant (e.g. 100 credits ↔ $0.50 when micros=500000). */
     MANAGED_AI_TRIAL_DISPLAY_CREDITS: z.coerce.number().int().positive().default(100),
     USER_STORAGE_QUOTA_BYTES: z.coerce.number().int().nonnegative().default(500 * 1024 * 1024),
+    /**
+     * When false, Better Auth rejects `/api/auth/sign-up/email` (existing
+     * users can still sign in). Default true so local/dev stays open.
+     */
+    ALLOW_SIGNUP: z
+      .enum(["true", "false"])
+      .default("true")
+      .transform((value) => value === "true"),
+    /**
+     * When true, session cookies use SameSite=None; Secure (required for
+     * Vercel frontend ↔ separate API origin). Keep false for localhost.
+     */
+    AUTH_CROSS_ORIGIN: z
+      .enum(["true", "false"])
+      .default("false")
+      .transform((value) => value === "true"),
   })
   .superRefine((data, ctx) => {
     if (data.AGENT_MODEL_PROVIDER === "fake" && data.NODE_ENV === "production") {
@@ -167,6 +183,8 @@ export interface AppConfig {
   readonly managedAiTrialCreditMicros: number;
   readonly managedAiTrialDisplayCredits: number;
   readonly userStorageQuotaBytes: number;
+  readonly allowSignup: boolean;
+  readonly authCrossOrigin: boolean;
   readonly agent: AgentModelConfig;
 }
 
@@ -236,6 +254,8 @@ export function loadConfig(
     managedAiTrialCreditMicros: result.data.MANAGED_AI_TRIAL_CREDIT_MICROS,
     managedAiTrialDisplayCredits: result.data.MANAGED_AI_TRIAL_DISPLAY_CREDITS,
     userStorageQuotaBytes: result.data.USER_STORAGE_QUOTA_BYTES,
+    allowSignup: result.data.ALLOW_SIGNUP,
+    authCrossOrigin: result.data.AUTH_CROSS_ORIGIN,
     agent: {
       provider,
       anthropicApiKey: provider === "anthropic" ? anthropicKey : null,

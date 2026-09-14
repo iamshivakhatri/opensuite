@@ -18,10 +18,10 @@ test("table widths and shading reach the binding with verified bytes", async () 
     executeDocxSetTableCellShading: async (_bytes, operation) => { shading = operation; return success("set_table_cell_shading"); },
   }) });
   const widthResult = await runtime.execute!(document, { type: "document.set_table_column_widths", baseVersionId: "v1", payload: { table: { handle: "t0" }, widthsTwips: [1440, 2880] } });
-  const shadingResult = await runtime.execute!(document, { type: "document.set_table_cell_shading", baseVersionId: "v1", payload: { table: { handle: "t0" }, updates: [{ target: { handle: "c0" }, fill: "aabbcc" }, { target: { handle: "c1" } }] } });
+  const shadingResult = await runtime.execute!(document, { type: "document.set_table_cell_shading", baseVersionId: "v1", payload: { table: { handle: "t0" }, updates: [{ target: { handle: "c0" }, fill: "aabbcc" }, { target: { handle: "c1" } }, { target: { rowLabel: "Ada", columnHeader: "Name" }, fill: "001122" }] } });
   assert.equal(widthResult.status, "success"); assert.equal(shadingResult.status, "success");
   assert.deepEqual(widths, { table: { handle: "t0" }, widthsTwips: [1440, 2880], baseRevision: "v1" });
-  assert.deepEqual(shading, { table: { handle: "t0" }, updates: [{ target: { handle: "c0" }, fill: "AABBCC" }, { target: { handle: "c1" }}], baseRevision: "v1" });
+  assert.deepEqual(shading, { table: { handle: "t0" }, updates: [{ target: { handle: "c0" }, fill: "AABBCC" }, { target: { handle: "c1" }}, { target: { rowLabel: "Ada", columnHeader: "Name" }, fill: "001122" }], baseRevision: "v1" });
 });
 
 test("invalid shading is rejected before the binding", async () => {
@@ -29,4 +29,11 @@ test("invalid shading is rejected before the binding", async () => {
   const result = await runtime.execute!(document, { type: "document.set_table_cell_shading", baseVersionId: "v1", payload: { table: { handle: "t0" }, updates: [{ target: { handle: "c0" }, fill: "red" }] } });
   assert.equal(result.status, "error");
   if (result.status === "error") assert.equal(result.code, "VALIDATION_FAILED");
+});
+
+test("shading requires explicit nested targets", async () => {
+  const runtime = createOpenSuiteEngineAdapter({ artifactLoader: loader(), binding: createFakeDocxEngineBinding({}) });
+  const result = await runtime.execute!(document, { type: "document.set_table_cell_shading", baseVersionId: "v1", payload: { table: { handle: "t0" }, updates: [{ rowLabel: "Ada", columnHeader: "Name", fill: "AABBCC" }] } });
+  assert.equal(result.status, "error");
+  if (result.status === "error") assert.match(result.diagnostics[0]?.message ?? "", /target object/);
 });

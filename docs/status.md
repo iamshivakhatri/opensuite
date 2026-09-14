@@ -12,10 +12,12 @@ _Read this before starting any work. Keep it a concise current-state handoff, no
 * Confirmation bridge; Frontend Phases 1–6B; hosted-alpha foundation.
 * **AI Settings** — active strip select switches managed ↔ BYOK; setup cards only browse. Account tab shows read-only AI / storage / appearance glance. OpenRouter BYOK has model picker + pricing.
 * **DB availability UX** — pool `connectionTimeoutMillis` 5s; `/health` includes `database`; API maps outages to `503 DATABASE_UNAVAILABLE`; web banner + auth-gate hold (no false sign-out); pg pool reconnects on next checkout.
+* **Deploy scaffolding** — `Dockerfile` + `docker-compose.yml` (API/Postgres/MinIO for Dokploy); `apps/web/vercel.json`; signup gate via `ALLOW_SIGNUP` / `NEXT_PUBLIC_ALLOW_SIGNUP`; `AUTH_CROSS_ORIGIN` for Vercel↔API cookies. See `docs/deploy.md`.
 
 ## Just Completed
 
-* **Live reliability dogfood** (OpenRouter `deepseek/deepseek-v4-flash-0731`, `AGENT_DEBUG_LIFECYCLE=1`) — 6 Word scenarios via real API. Recovery deferral + REDUNDANT_READ observed in prod path; no maxTurns inspect loops; provider timeouts stayed separate from document recovery. Preflight rarely hit (failures mostly formatting tools, excluded in v1). Artifacts: `/tmp/opensuite-dogfood-reliability/`.
+* Hosted deploy files + signup/cross-origin auth env flags.
+* Table/style tool contract cleanup: nested shading targets and truthful Rust diagnostics for table lookup and stylesheet/style failures.
 
 ## Current Decisions
 
@@ -26,22 +28,25 @@ _Read this before starting any work. Keep it a concise current-state handoff, no
 * Managed model is server-chosen (`OPENROUTER_MODEL`); users do not pick it.
 * Agent runs: valid BYOK preference wins; otherwise OpenSuite managed trial.
 * `/health` stays HTTP 200 while the API process is up; clients read `database` / `status` for outages (not process kill).
+* Hosted signup closed by default (`ALLOW_SIGNUP=false` in compose); open locally (default `true`).
 
 ## Verification Status
 
 | Check | Status |
 |---|---|
-| agent-core tests/typecheck | **Pass** (252; +progress-preflight) |
-| api mutation preflight test | **Pass** |
-| live dogfood (6 scenarios) | **Done** — see handoff report in chat |
-| `git diff --check` | **Pass** prior |
+| api config tests (ALLOW_SIGNUP / AUTH_CROSS_ORIGIN) | **Pass** (20) |
+| Docker image build | not run here (needs ENGINE_GIT_URL + network) |
+| agent-core tests/typecheck | **Pass** (252) |
+| engine-client tests | **Pass** (69) |
+| Rust DOCX tests + cargo fmt --check | **Pass** (118) |
 
 ## Intentionally Deferred
 
 * Recovery Preflight for formatting-session mutations / PPTX/XLSX
 * Authoring Guidance v2 (structure/list/table quality)
 * Engine keepNext/keepLines/lineSpacing/indent fields
+* Publishing `@opensuite/engine` linux binaries (compose builds from `ENGINE_GIT_URL`)
 
 ## Recommended Next Step
 
-Address top dogfood generals: (1) bulk-edit version churn, (2) table formatting tool-contract friction, (3) Authoring Guidance v2 — not more recovery machinery yet.
+Wire Dokploy + Vercel with real HTTPS URLs, build API with `ENGINE_GIT_URL`, create first user with temporary `ALLOW_SIGNUP=true`, then lock signup.

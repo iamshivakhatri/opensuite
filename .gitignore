@@ -38,6 +38,11 @@ apps/web/vendor/s1engine_wasm_bg.wasm
 # Drizzle migrations are normally local. Keep this committed migration and its
 # snapshot while leaving prior untracked local migration output alone.
 packages/db/migrations/*.sql
+!packages/db/migrations/0000_wooden_the_hood.sql
+!packages/db/migrations/0001_flashy_rhino.sql
+!packages/db/migrations/0002_past_wraith.sql
+!packages/db/migrations/0003_unusual_ironclad.sql
+!packages/db/migrations/0004_cooing_nemesis.sql
 !packages/db/migrations/0005_lowly_gamma_corps.sql
 !packages/db/migrations/0006_sloppy_starbolt.sql
 !packages/db/migrations/0007_curved_karma.sql
@@ -48,6 +53,11 @@ packages/db/migrations/*.sql
 !packages/db/migrations/0012_brief_retro_girl.sql
 packages/db/migrations/meta/*.json
 !packages/db/migrations/meta/_journal.json
+!packages/db/migrations/meta/0000_snapshot.json
+!packages/db/migrations/meta/0001_snapshot.json
+!packages/db/migrations/meta/0002_snapshot.json
+!packages/db/migrations/meta/0003_snapshot.json
+!packages/db/migrations/meta/0004_snapshot.json
 !packages/db/migrations/meta/0005_snapshot.json
 !packages/db/migrations/meta/0006_snapshot.json
 !packages/db/migrations/meta/0007_snapshot.json

@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 
 import { SignInForm } from "@/components/auth/sign-in-form";
+import { isSignupAllowed } from "@/lib/signup";
 
 const VERIFICATION_ERROR_MESSAGES: Record<string, string> = {
   INVALID_TOKEN: "That verification link is invalid. Request a new one below.",
@@ -61,12 +62,14 @@ export default function SignInPage() {
         <AuthBanner />
       </React.Suspense>
       <SignInForm />
-      <p className="text-center text-[12px] text-ink-soft">
-        Don&apos;t have an account?{" "}
-        <Link href="/sign-up" className="font-medium text-accent">
-          Sign up
-        </Link>
-      </p>
+      {isSignupAllowed() ? (
+        <p className="text-center text-[12px] text-ink-soft">
+          Don&apos;t have an account?{" "}
+          <Link href="/sign-up" className="font-medium text-accent">
+            Sign up
+          </Link>
+        </p>
+      ) : null}
     </div>
   );
 }

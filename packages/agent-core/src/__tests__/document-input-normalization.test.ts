@@ -39,14 +39,26 @@ test("table cell shading accepts one leading hash and rejects other color syntax
   const tool = createDocumentSetTableCellShadingTool();
   const parse = (fill: string) => tool.parseInput({
     table: { headerCells: ["Name"] },
-    updates: [{ rowLabel: "Ada", columnHeader: "Name", fill }],
+    updates: [{ target: { rowLabel: "Ada", columnHeader: "Name" }, fill }],
   });
 
   assert.equal(parse("AABBCC").updates[0]!.fill, "AABBCC");
   assert.equal(parse("#aabbcc").updates[0]!.fill, "AABBCC");
+  assert.deepEqual(tool.parseInput({
+    table: { handle: "t0" },
+    updates: [{ target: { handle: "t0:r1:c0" }, fill: "AABBCC" }],
+  }).updates[0]?.target, { handle: "t0:r1:c0" });
   rejectsInput(() => parse("#abc"));
   rejectsInput(() => parse("red"));
   rejectsInput(() => parse("##AABBCC"));
+  rejectsInput(() => tool.parseInput({
+    table: { headerCells: ["Name"] },
+    updates: [{ rowLabel: "Ada", columnHeader: "Name", fill: "AABBCC" }],
+  }));
+  rejectsInput(() => tool.parseInput({
+    table: { headerCells: ["Name"] },
+    updates: [{ target: { handle: "t0:r1:c0", rowLabel: "Ada" }, fill: "AABBCC" }],
+  }));
 });
 
 test("extended tools reuse selector occurrence normalization without inventing targets", () => {

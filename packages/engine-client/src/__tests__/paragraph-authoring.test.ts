@@ -187,6 +187,38 @@ test("failed delete preserves structured diagnostics and no artifact", async () 
   assert.equal(binding.deleteParagraphCalls.length, 1);
 });
 
+test("paragraph style errors preserve stylesheet and style diagnostics", async () => {
+  for (const { code, reasonCode } of [
+    { code: "UNSUPPORTED_OPERATION", reasonCode: "NO_STYLESHEET" },
+    { code: "TARGET_NOT_FOUND", reasonCode: "STYLE_NOT_FOUND" },
+  ] as const) {
+    const binding = createFakeDocxEngineBinding({
+      executeDocxSetParagraphStyle: async () => ({
+        result: {
+          ok: false,
+          status: "failed",
+          diagnostics: [{ code, severity: "error", message: "style unavailable", reasonCode, operation: "set_paragraph_style" }],
+          changes: [],
+        },
+      }),
+    });
+    const runtime = createOpenSuiteEngineAdapter({
+      artifactLoader: createMemoryArtifactLoader(new Map([["ver-1", new Uint8Array([1])]])),
+      binding,
+    });
+    const result = await runtime.execute!(docRef, {
+      type: "document.set_paragraph_style",
+      baseVersionId: "ver-1",
+      payload: { target: { text: "Title" }, style: "Heading 1" },
+    });
+    assert.equal(result.status, "error");
+    if (result.status === "error") {
+      assert.equal(result.code, code);
+      assert.equal(result.diagnostics[0]?.reasonCode, reasonCode);
+    }
+  }
+});
+
 test("Rust paragraph caps synthesize document.mutate", () => {
   const caps = mapRustCapabilitiesToRuntime({
     ok: true,

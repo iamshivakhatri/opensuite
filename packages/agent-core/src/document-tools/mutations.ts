@@ -467,8 +467,7 @@ export function createDocumentSetParagraphStyleTool(): AgentTool<
   return defineDocumentTool({
     name: DOCUMENT_TOOL_NAMES.setParagraphStyle,
     description:
-      "Set/clear stylesheet style by display name (e.g. Title, Heading 1/2) for hierarchy — not decoration. " +
-      "Target exact visible text. Omit style to clear. TARGET_NOT_FOUND if style missing from styles.xml.",
+      "Set/clear existing paragraph style by name for hierarchy. Target exact text.",
     effect: "write",
     executionMode: "sequential",
     capability: DOCX_ENGINE_CAPS.setParagraphStyle,
@@ -1510,15 +1509,15 @@ export function createDocumentSetTableColumnWidthsTool(): AgentTool<DocumentSetT
 export function createDocumentSetTableCellShadingTool(): AgentTool<DocumentSetTableCellShadingInput, PersistedDocumentMutationToolResult> {
   return defineDocumentTool({
     name: DOCUMENT_TOOL_NAMES.setTableCellShading,
-    description: "Set or clear table-cell fill colors. Omit fill to clear.", effect: "write", executionMode: "sequential", capability: DOCX_ENGINE_CAPS.setTableCellShading,
-    inputSchema: { type: "object", properties: { table: tableTargetSchema(), updates: { type: "array", minItems: 1, items: { type: "object", properties: { target: { type: "object" }, fill: { type: "string", pattern: "^#?[0-9A-Fa-f]{6}$" } }, required: ["target"], additionalProperties: false } } }, required: ["table", "updates"], additionalProperties: false },
+    description: "Set/clear cell fill. Use inspected handle, or row label and column header.", effect: "write", executionMode: "sequential", capability: DOCX_ENGINE_CAPS.setTableCellShading,
+    inputSchema: { type: "object", properties: { table: tableTargetSchema(), updates: { type: "array", minItems: 1, items: { type: "object", properties: { target: { type: "object", properties: { handle: { type: "string" }, rowLabel: { type: "string" }, columnHeader: { type: "string" } }, additionalProperties: false }, fill: { type: "string", pattern: "^#?[0-9A-Fa-f]{6}$" } }, required: ["target"], additionalProperties: false } } }, required: ["table", "updates"], additionalProperties: false },
     parseInput(raw) {
       const obj = assertObject(raw, DOCUMENT_TOOL_NAMES.setTableCellShading);
       const table = parseTableTarget(obj.table, DOCUMENT_TOOL_NAMES.setTableCellShading);
       if (!Array.isArray(obj.updates) || obj.updates.length === 0) invalidInput("document.set_table_cell_shading requires updates");
       const updates = obj.updates.map((value) => {
         const update = assertObject(value, DOCUMENT_TOOL_NAMES.setTableCellShading);
-        const target = parseCellTarget(update, DOCUMENT_TOOL_NAMES.setTableCellShading);
+        const target = parseCellTarget(assertObject(update.target, DOCUMENT_TOOL_NAMES.setTableCellShading), DOCUMENT_TOOL_NAMES.setTableCellShading);
         return { target, ...(update.fill !== undefined ? { fill: parseRgbHex(update.fill, "document.set_table_cell_shading fill") } : {}) };
       });
       return { table, updates };

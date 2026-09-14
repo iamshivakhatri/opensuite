@@ -30,6 +30,8 @@ export function createAuth(config: AppConfig, db: Db, emailSender: EmailSender) 
     }),
     emailAndPassword: {
       enabled: true,
+      // Server-enforced gate — UI hiding alone is not enough.
+      disableSignUp: !config.allowSignup,
       requireEmailVerification: true,
       // Invalidate existing sessions when a password is reset so a stolen
       // session cookie cannot outlive the credential change.
@@ -53,6 +55,20 @@ export function createAuth(config: AppConfig, db: Db, emailSender: EmailSender) 
         });
       },
     },
+    ...(config.authCrossOrigin
+      ? {
+          advanced: {
+            // Vercel (or any different-site origin) needs SameSite=None; Secure.
+            // API must be served over HTTPS for browsers to accept the cookie.
+            useSecureCookies: true,
+            defaultCookieAttributes: {
+              sameSite: "none" as const,
+              secure: true,
+              partitioned: true,
+            },
+          },
+        }
+      : {}),
   });
 }
 

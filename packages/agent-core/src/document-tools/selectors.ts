@@ -158,9 +158,6 @@ export function parseCellTarget(
       ? (entry.target as Record<string, unknown>)
       : entry;
   const handle = parseOptionalHandle(targetSource.handle);
-  if (handle) {
-    return { handle };
-  }
   const rowLabel =
     typeof targetSource.rowLabel === "string" && targetSource.rowLabel
       ? targetSource.rowLabel
@@ -169,16 +166,25 @@ export function parseCellTarget(
     typeof targetSource.columnHeader === "string" && targetSource.columnHeader
       ? targetSource.columnHeader
       : undefined;
+  const occurrence = parseOptionalOccurrence(
+    targetSource.occurrence,
+    `${toolName} update occurrence`,
+  );
+  if (handle && (rowLabel || columnHeader || occurrence !== undefined)) {
+    throw new AgentCoreError(
+      "INVALID_TOOL_INPUT",
+      `${toolName} target must use handle or rowLabel+columnHeader, not both`,
+    );
+  }
+  if (handle) {
+    return { handle };
+  }
   if (!rowLabel || !columnHeader) {
     throw new AgentCoreError(
       "INVALID_TOOL_INPUT",
       `${toolName} updates require target.handle or rowLabel+columnHeader`,
     );
   }
-  const occurrence = parseOptionalOccurrence(
-    targetSource.occurrence,
-    `${toolName} update occurrence`,
-  );
   return {
     rowLabel,
     columnHeader,
