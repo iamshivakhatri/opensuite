@@ -80,6 +80,30 @@ test("loadConfig accepts legacy MINIO_* aliases for S3 settings", () => {
   assert.equal(config.s3.forcePathStyle, true);
 });
 
+test("loadConfig joins MINIO_ENDPOINT + MINIO_PORT when port is separate", () => {
+  const {
+    S3_ENDPOINT: _e,
+    S3_ACCESS_KEY_ID: _a,
+    S3_SECRET_ACCESS_KEY: _s,
+    S3_BUCKET: _b,
+    S3_REGION: _r,
+    S3_FORCE_PATH_STYLE: _f,
+    ...withoutS3
+  } = baseEnv;
+
+  const config = loadConfig({
+    ...withoutS3,
+    MINIO_ENDPOINT: "http://100.85.0.1",
+    MINIO_PORT: "9002",
+    MINIO_ACCESS_KEY: "minio_admin",
+    MINIO_SECRET_KEY: "secret",
+    MINIO_BUCKET: "opensuite",
+    MINIO_USE_SSL: "false",
+  });
+
+  assert.equal(config.s3.endpoint, "http://100.85.0.1:9002");
+});
+
 test("loadConfig parses provided env vars", () => {
   const config = loadConfig({
     ...baseEnv,

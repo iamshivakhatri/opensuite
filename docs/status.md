@@ -12,12 +12,11 @@ _Read this before starting any work. Keep it a concise current-state handoff, no
 * Confirmation bridge; Frontend Phases 1–6B; hosted-alpha foundation.
 * **AI Settings** — active strip select switches managed ↔ BYOK; setup cards only browse. Account tab shows read-only AI / storage / appearance glance. OpenRouter BYOK has model picker + pricing.
 * **DB availability UX** — pool `connectionTimeoutMillis` 5s; `/health` includes `database`; API maps outages to `503 DATABASE_UNAVAILABLE`; web banner + auth-gate hold (no false sign-out); pg pool reconnects on next checkout.
-* **Deploy scaffolding** — `Dockerfile` + `docker-compose.yml` (API/Postgres/MinIO for Dokploy); `apps/web/vercel.json`; signup gate via `ALLOW_SIGNUP` / `NEXT_PUBLIC_ALLOW_SIGNUP`; `AUTH_CROSS_ORIGIN` for Vercel↔API cookies. See `docs/deploy.md`.
+* **Deploy scaffolding** — `Dockerfile` + `docker-compose.atlas.yml` (API-only; external Postgres/MinIO); `apps/web/vercel.json`; `ALLOW_SIGNUP` / `NEXT_PUBLIC_ALLOW_SIGNUP`; `AUTH_CROSS_ORIGIN`; MinIO port join. See `docs/deploy.md`.
 
 ## Just Completed
 
-* Hosted deploy files + signup/cross-origin auth env flags.
-* Table/style tool contract cleanup: nested shading targets and truthful Rust diagnostics for table lookup and stylesheet/style failures.
+* Atlas compose is API-only (no bundled Postgres/MinIO).
 
 ## Current Decisions
 
@@ -34,7 +33,7 @@ _Read this before starting any work. Keep it a concise current-state handoff, no
 
 | Check | Status |
 |---|---|
-| api config tests (ALLOW_SIGNUP / AUTH_CROSS_ORIGIN) | **Pass** (20) |
+| api config tests (ALLOW_SIGNUP / AUTH_CROSS_ORIGIN / MINIO_PORT) | **Pass** (21) |
 | Docker image build | not run here (needs ENGINE_GIT_URL + network) |
 | agent-core tests/typecheck | **Pass** (252) |
 | engine-client tests | **Pass** (69) |

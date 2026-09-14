@@ -1,0 +1,31 @@
+# Atlas (home server) — API only.
+# Uses your existing Postgres + MinIO via the same .env as local/dev.
+# Dokploy: select this compose file; inject env from your .env (or Dokploy UI).
+#
+# Build needs ENGINE_GIT_URL (opensuite-engine git) for the linux N-API binding.
+#
+# First user: ALLOW_SIGNUP=true (+ web NEXT_PUBLIC_ALLOW_SIGNUP=true), then lock.
+
+services:
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        ENGINE_GIT_URL: ${ENGINE_GIT_URL:-}
+        ENGINE_GIT_REF: ${ENGINE_GIT_REF:-main}
+    restart: unless-stopped
+    ports:
+      - "${API_PUBLISH_PORT:-3000}:3000"
+    # Same keys as local `.env`. Dokploy: paste that env into the project UI
+    # (env_file is optional if the platform injects env for you).
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      NODE_ENV: production
+      HOST: 0.0.0.0
+      PORT: 3000
+      # Hosted defaults — override in .env if needed.
+      ALLOW_SIGNUP: ${ALLOW_SIGNUP:-false}
+      AUTH_CROSS_ORIGIN: ${AUTH_CROSS_ORIGIN:-true}

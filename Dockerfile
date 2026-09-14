@@ -1,6 +1,6 @@
 # OpenSuite API image — build from repo root:
 #   docker build -t opensuite-api .
-# Dokploy: point the compose file at this Dockerfile (context = repo root).
+# Atlas/Dokploy: docker-compose.atlas.yml (API only; external DB + MinIO).
 #
 # Native DOCX engine: set build-arg ENGINE_GIT_URL to the opensuite-engine git
 # URL (HTTPS). Without it, the image builds but the API will not start until

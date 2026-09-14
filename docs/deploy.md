@@ -2,24 +2,27 @@
 
 ## Frontend (Vercel)
 
-1. Import the repo (or `apps/web` only). Set **Root Directory** to `apps/web`.
-2. Env:
-   - `NEXT_PUBLIC_API_URL` = public HTTPS API URL
-   - `NEXT_PUBLIC_ALLOW_SIGNUP` = `false` (match API `ALLOW_SIGNUP`)
-3. Deploy. No backend runs on Vercel.
+1. Root Directory: `apps/web`
+2. Env: `NEXT_PUBLIC_API_URL`, `NEXT_PUBLIC_ALLOW_SIGNUP=false`
+3. No backend on Vercel.
 
-## Backend (Dokploy / Docker)
+## Backend — Atlas (Dokploy)
 
-Files: `Dockerfile`, `docker-compose.yml`, `deploy/docker-entrypoint.sh`.
+API-only compose (your existing Postgres + MinIO):
 
-1. Import compose from repo root in Dokploy.
-2. Set env (see compose comments). Critical:
-   - `WEB_ORIGIN` = Vercel URL
+* Compose: `docker-compose.atlas.yml`
+* Image: `Dockerfile` + `deploy/docker-entrypoint.sh`
+
+1. Import `docker-compose.atlas.yml` in Dokploy.
+2. Paste the same `.env` you use locally (Dokploy env UI), then set production URLs:
+   - `WEB_ORIGIN` = Vercel HTTPS URL
    - `BETTER_AUTH_URL` = public API HTTPS URL
-   - `BETTER_AUTH_SECRET` (≥32 chars)
    - `ALLOW_SIGNUP=false`
-   - `AUTH_CROSS_ORIGIN=true` (Vercel ↔ API cookies; API must be HTTPS)
-   - `ENGINE_GIT_URL` = git URL of `opensuite-engine` (linux N-API build)
-3. First user: temporarily `ALLOW_SIGNUP=true` (+ web `NEXT_PUBLIC_ALLOW_SIGNUP=true`), sign up, verify email, then set both back to `false`.
+   - `AUTH_CROSS_ORIGIN=true`
+   - `ENGINE_GIT_URL` = opensuite-engine git URL (build-time)
+3. `DATABASE_URL` / `MINIO_*` stay pointed at your existing services (reachable from the API container — not `localhost` unless you use host networking).
+4. First user: temporarily `ALLOW_SIGNUP=true` (+ web flag), sign up, then lock.
 
-Entrypoint runs `db:migrate` then starts the API.
+Legacy `MINIO_ENDPOINT` + `MINIO_PORT` (+ `MINIO_USE_SSL`) are supported.
+
+Entrypoint: `db:migrate` then API start.

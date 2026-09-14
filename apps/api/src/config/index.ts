@@ -191,20 +191,56 @@ export interface AppConfig {
 /**
  * Maps legacy `MINIO_*` variables onto the application-facing `S3_*` names
  * so open-source code stays provider-agnostic while existing local `.env`
- * files keep working.
+ * files keep working. Supports `MINIO_PORT` / `MINIO_USE_SSL` when the
+ * endpoint is host-only or missing a port.
  */
 function normalizeStorageEnv(
   env: Record<string, string | undefined>,
 ): Record<string, string | undefined> {
+  const fromMinio = resolveMinioEndpoint(env);
   return {
     ...env,
-    S3_ENDPOINT: env.S3_ENDPOINT ?? env.MINIO_ENDPOINT,
+    S3_ENDPOINT: env.S3_ENDPOINT ?? fromMinio ?? env.MINIO_ENDPOINT,
     S3_ACCESS_KEY_ID: env.S3_ACCESS_KEY_ID ?? env.MINIO_ACCESS_KEY,
     S3_SECRET_ACCESS_KEY: env.S3_SECRET_ACCESS_KEY ?? env.MINIO_SECRET_KEY,
     S3_BUCKET: env.S3_BUCKET ?? env.MINIO_BUCKET,
     S3_REGION: env.S3_REGION ?? "us-east-1",
     S3_FORCE_PATH_STYLE: env.S3_FORCE_PATH_STYLE ?? "true",
   };
+}
+
+/** Build an S3-compatible URL from MINIO_ENDPOINT + optional PORT / USE_SSL. */
+function resolveMinioEndpoint(
+  env: Record<string, string | undefined>,
+): string | undefined {
+  const raw = env.MINIO_ENDPOINT?.trim();
+  if (!raw) {
+    return undefined;
+  }
+
+  const useSsl = env.MINIO_USE_SSL === "true";
+  const port = env.MINIO_PORT?.trim();
+
+  try {
+    const withScheme = /^https?:\/\//i.test(raw)
+      ? raw
+      : `${useSsl ? "https" : "http"}://${raw}`;
+    const url = new URL(withScheme);
+    if (port && !hasExplicitPort(raw)) {
+      url.port = port;
+    }
+    if (useSsl) {
+      url.protocol = "https:";
+    }
+    return url.toString().replace(/\/$/, "");
+  } catch {
+    return raw;
+  }
+}
+
+function hasExplicitPort(endpoint: string): boolean {
+  // host:port or http(s)://host:port — not just a scheme default.
+  return /:\d+(\/|$)/.test(endpoint.replace(/^https?:\/\//i, ""));
 }
 
 /**
