@@ -17,6 +17,7 @@ _Read this before starting any work. Keep it a concise current-state handoff, no
 ## Just Completed
 
 * Atlas compose is API-only (no bundled Postgres/MinIO).
+* Structural working-byte session: compatible same-turn DOCX edits validate sequentially and persist one version.
 
 ## Current Decisions
 

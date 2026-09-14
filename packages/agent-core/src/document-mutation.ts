@@ -269,11 +269,36 @@ export const FORMATTING_MUTATION_TYPES: ReadonlySet<string> = new Set([
   "document.set_table_cell_shading",
 ]);
 
+/** Conservative DOCX content changes that can share verified working bytes. */
+export const STRUCTURAL_WORKING_BYTE_MUTATION_TYPES: ReadonlySet<string> = new Set([
+  "document.replace_text",
+  "document.insert_paragraph",
+  "document.insert_paragraphs",
+  "document.delete_paragraph",
+  "document.create_table",
+  "document.set_table_cells_text",
+  "document.insert_table_rows",
+  "document.insert_table_column",
+  "document.delete_table",
+  "document.delete_table_row",
+  "document.delete_table_column",
+]);
+
+/** All operations supported by the one-per-tool-turn working-byte session. */
+export const WORKING_BYTE_MUTATION_TYPES: ReadonlySet<string> = new Set([
+  ...FORMATTING_MUTATION_TYPES,
+  ...STRUCTURAL_WORKING_BYTE_MUTATION_TYPES,
+]);
+
 export interface DocumentMutationExecutor {
   /** Finalize the executor-owned formatting session, if one is active. */
   flushPendingFormatting?(): Promise<DocumentMutationResult | { readonly status: "noop" }>;
   /** Discard unpersisted formatting working bytes. */
   abandonPendingFormatting?(): void;
+  /** Finalize any formatting or structural working-byte mutations. */
+  flushPendingMutations?(): Promise<DocumentMutationResult | { readonly status: "noop" }>;
+  /** Discard any unpersisted formatting or structural working bytes. */
+  abandonPendingMutations?(): void;
   /**
    * Recovery Preflight: validate against temporary current bytes via the
    * authoritative runtime, then promote exact verified bytes on success.
@@ -296,16 +321,16 @@ export interface DocumentMutationExecutor {
   }): Promise<DocumentMutationExecutionResult>;
   replaceText(
     input: DocumentReplaceTextMutationRequest,
-  ): Promise<DocumentMutationResult>;
+  ): Promise<DocumentMutationExecutionResult>;
   insertParagraph(
     input: DocumentInsertParagraphMutationRequest,
-  ): Promise<DocumentMutationResult>;
+  ): Promise<DocumentMutationExecutionResult>;
   insertParagraphs(
     input: DocumentInsertParagraphsMutationRequest,
-  ): Promise<DocumentMutationResult>;
+  ): Promise<DocumentMutationExecutionResult>;
   deleteParagraph(
     input: DocumentDeleteParagraphMutationRequest,
-  ): Promise<DocumentMutationResult>;
+  ): Promise<DocumentMutationExecutionResult>;
   setParagraphStyle(
     input: DocumentSetParagraphStyleMutationRequest,
   ): Promise<DocumentMutationExecutionResult>;
@@ -317,25 +342,25 @@ export interface DocumentMutationExecutor {
   ): Promise<DocumentMutationExecutionResult>;
   setTableCellsText(
     input: DocumentSetTableCellsTextMutationRequest,
-  ): Promise<DocumentMutationResult>;
+  ): Promise<DocumentMutationExecutionResult>;
   insertTableRows(
     input: DocumentInsertTableRowsMutationRequest,
-  ): Promise<DocumentMutationResult>;
+  ): Promise<DocumentMutationExecutionResult>;
   insertTableColumn(
     input: DocumentInsertTableColumnMutationRequest,
-  ): Promise<DocumentMutationResult>;
+  ): Promise<DocumentMutationExecutionResult>;
   createTable(
     input: DocumentCreateTableMutationRequest,
-  ): Promise<DocumentMutationResult>;
+  ): Promise<DocumentMutationExecutionResult>;
   deleteTable(
     input: DocumentDeleteTableMutationRequest,
-  ): Promise<DocumentMutationResult>;
+  ): Promise<DocumentMutationExecutionResult>;
   deleteTableRow(
     input: DocumentDeleteTableRowMutationRequest,
-  ): Promise<DocumentMutationResult>;
+  ): Promise<DocumentMutationExecutionResult>;
   deleteTableColumn(
     input: DocumentDeleteTableColumnMutationRequest,
-  ): Promise<DocumentMutationResult>;
+  ): Promise<DocumentMutationExecutionResult>;
   setTableFormatting(
     input: DocumentSetTableFormattingMutationRequest,
   ): Promise<DocumentMutationExecutionResult>;

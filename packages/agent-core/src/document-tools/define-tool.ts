@@ -359,6 +359,8 @@ function createPreflightRoutingExecutor(
     ...base,
     flushPendingFormatting: base.flushPendingFormatting?.bind(base),
     abandonPendingFormatting: base.abandonPendingFormatting?.bind(base),
+    flushPendingMutations: base.flushPendingMutations?.bind(base),
+    abandonPendingMutations: base.abandonPendingMutations?.bind(base),
     async mutate(input) {
       return route(input.type, input.document, input.payload, input.signal, input.runId);
     },

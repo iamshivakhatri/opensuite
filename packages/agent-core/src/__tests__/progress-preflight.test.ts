@@ -855,14 +855,27 @@ test("J: formatting-session path still batches without recovery preflight interf
         diagnostics: r.diagnostics,
       };
     },
+    async deleteParagraph(input) {
+      pending = true;
+      const r = await runtime.executeWithBytes!(
+        input.document,
+        { type: "document.delete_paragraph", baseVersionId: input.document.versionId, payload: { target: input.target } },
+        bytes,
+      );
+      if (r.status === "error") return { status: "error", code: r.code, diagnostics: r.diagnostics };
+      bytes = new Uint8Array(r.artifactBytes!);
+      return { status: "pending", operation: "document.delete_paragraph", diagnostics: r.diagnostics };
+    },
     async flushPendingFormatting() {
       if (!pending) return { status: "noop" as const };
       pending = false;
-      return base.insertParagraph({
+      const flushed = await base.insertParagraph({
         document: docxRef,
         text: "flush-marker",
         placement: { kind: "end" },
       });
+      if (flushed.status === "pending") throw new Error("in-memory flush must persist");
+      return flushed;
     },
   };
 
@@ -880,6 +893,11 @@ test("J: formatting-session path still batches without recovery preflight interf
             id: "fmt2",
             name: DOCUMENT_TOOL_NAMES.setParagraphStyle,
             input: { target: { text: "Body" }, style: "Normal" },
+          },
+          {
+            id: "delete",
+            name: DOCUMENT_TOOL_NAMES.deleteParagraph,
+            input: { target: { text: "Remove me" } },
           },
         ]),
       () => assistantOnlyResponse("Done — formatted."),
@@ -900,7 +918,7 @@ test("J: formatting-session path still batches without recovery preflight interf
     instruction: "format batch",
   });
 
-  assert.equal(executeWithBytes, 2, "formatting ops use working bytes");
+  assert.equal(executeWithBytes, 3, "formatting and structural ops use one working-byte chain");
   assert.equal(appendViaExecute, 1, "one durable flush promote");
   assert.ok(
     !events.events.some(

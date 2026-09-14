@@ -14,7 +14,8 @@
  */
 
 import {
-  FORMATTING_MUTATION_TYPES,
+  STRUCTURAL_WORKING_BYTE_MUTATION_TYPES,
+  WORKING_BYTE_MUTATION_TYPES,
   type DocumentMutationExecutor,
 } from "../document-mutation.js";
 import { collectOpaqueHandlesFromToolInput } from "../artifact-handles.js";
@@ -72,6 +73,7 @@ import {
   createDocumentToolContext,
   type DocumentRunState,
 } from "./run-state.js";
+import { agentDebugLifecycle } from "../debug-lifecycle.js";
 
 type DocumentToolFamily = "read" | "content" | "formatting" | "tables" | "layout" | "media";
 
@@ -315,12 +317,17 @@ function createDocumentToolTurnLifecycle(
   mutations: DocumentMutationExecutor | undefined,
 ): ToolTurnLifecycle {
   const pendingMutations = mutations;
-  let priorFlush: Exclude<Awaited<ReturnType<NonNullable<DocumentMutationExecutor["flushPendingFormatting"]>>>, { status: "noop" }> | undefined;
+  let priorFlush: Exclude<Awaited<ReturnType<NonNullable<DocumentMutationExecutor["flushPendingMutations"]>>>, { status: "noop" }> | undefined;
   let turnBaseVersionId: string | undefined;
-  async function flush(context: { readonly runId: string; readonly events: AgentEventSink }) {
-    const flushed = pendingMutations?.flushPendingFormatting
-      ? await pendingMutations.flushPendingFormatting()
+  let structuralMutationApplied = false;
+  let pendingOperationCount = 0;
+  async function flush(context: { readonly runId: string; readonly events: AgentEventSink }, reason: string) {
+    const flushed = pendingMutations?.flushPendingMutations
+      ? await pendingMutations.flushPendingMutations()
+      : pendingMutations?.flushPendingFormatting
+        ? await pendingMutations.flushPendingFormatting()
       : { status: "noop" as const };
+    agentDebugLifecycle("WORKING_BYTE_SESSION_FLUSH", { run: context.runId, reason, operationCount: pendingOperationCount, status: flushed.status });
     if (flushed.status !== "success") return flushed;
     priorFlush = flushed;
     advanceDocumentWorkingState(state, flushed.document, true);
@@ -336,8 +343,17 @@ function createDocumentToolTurnLifecycle(
     begin() {
       priorFlush = undefined;
       turnBaseVersionId = state.primary?.versionId;
+      structuralMutationApplied = false;
+      pendingOperationCount = 0;
     },
     async beforeTool(context) {
+      if (
+        pendingOperationCount > 0 &&
+        (context.toolName === DOCUMENT_TOOL_NAMES.inspect || context.toolName === DOCUMENT_TOOL_NAMES.find)
+      ) {
+        const flushed = await flush(context, "read-boundary");
+        if (flushed.status === "error") throw new Error(flushed.diagnostics[0].message);
+      }
       if (context.toolName === DOCUMENT_TOOL_NAMES.inspect) {
         const skip = maybeSkipRedundantInspect(state, context);
         if (skip) return skip;
@@ -346,8 +362,14 @@ function createDocumentToolTurnLifecycle(
       const recoverySkip = maybeSkipRecoveryMutation(state, context);
       if (recoverySkip) return recoverySkip;
 
-      if (pendingMutations && !FORMATTING_MUTATION_TYPES.has(context.toolName)) {
-        const flushed = await flush(context);
+      const handles = collectOpaqueHandlesFromToolInput(context.toolCall.input);
+      if (structuralMutationApplied && turnBaseVersionId && handles.some((handle) => state.handles.origin(handle) === turnBaseVersionId)) {
+        const flushed = await flush(context, "handle-sensitive-boundary");
+        if (flushed.status === "error") throw new Error(flushed.diagnostics[0].message);
+        return { summary: "Not executed because an earlier structural mutation made this inspected handle stale" } satisfies ToolCallDeferral;
+      }
+      if (pendingMutations && !WORKING_BYTE_MUTATION_TYPES.has(context.toolName)) {
+        const flushed = await flush(context, context.toolName === DOCUMENT_TOOL_NAMES.inspect || context.toolName === DOCUMENT_TOOL_NAMES.find ? "read-boundary" : "incompatible-mutation");
         if (flushed.status === "error") throw new Error(flushed.diagnostics[0].message);
         if (flushed.status === "success") {
           emitProgressEvent(context.events, {
@@ -359,7 +381,6 @@ function createDocumentToolTurnLifecycle(
         }
       }
       if (!pendingMutations || !turnBaseVersionId || state.primary?.versionId === turnBaseVersionId) return;
-      const handles = collectOpaqueHandlesFromToolInput(context.toolCall.input);
       if (!handles.some((handle) => state.handles.origin(handle) === turnBaseVersionId)) return;
       return {
         summary: "Not executed because an earlier tool call advanced the document version",
@@ -367,6 +388,13 @@ function createDocumentToolTurnLifecycle(
     },
     async afterTool(context) {
       const { outcome } = context;
+      if (outcome.status === "succeeded" && isPendingOutcome(outcome) && STRUCTURAL_WORKING_BYTE_MUTATION_TYPES.has(outcome.toolName)) {
+        structuralMutationApplied = true;
+      }
+      if (outcome.status === "succeeded" && isPendingOutcome(outcome)) {
+        pendingOperationCount += 1;
+        if (pendingOperationCount === 1) agentDebugLifecycle("WORKING_BYTE_SESSION_STARTED", { run: context.runId });
+      }
       if (
         outcome.status === "succeeded" &&
         isDocumentMutationToolName(outcome.toolName) &&
@@ -409,7 +437,7 @@ function createDocumentToolTurnLifecycle(
     },
     async finalize(context) {
       if (!pendingMutations) return context.toolOutcomes;
-      const flushed = priorFlush ?? await flush(context);
+      const flushed = priorFlush ?? await flush(context, "turn-end");
       if (flushed.status === "noop") return context.toolOutcomes;
       if (flushed.status === "error") {
         return context.toolOutcomes.map((outcome) =>
@@ -439,7 +467,10 @@ function createDocumentToolTurnLifecycle(
         };
       });
     },
-    abandon() { pendingMutations?.abandonPendingFormatting?.(); },
+    abandon(context) {
+      agentDebugLifecycle("WORKING_BYTE_SESSION_ABANDONED", { run: context.runId, operationCount: pendingOperationCount });
+      pendingMutations?.abandonPendingMutations?.() ?? pendingMutations?.abandonPendingFormatting?.();
+    },
   };
 }
 

@@ -162,7 +162,7 @@ test("production benchmark harness runs deterministic targeting and formatting p
     const ambiguous = result.toolOutcomes.filter((outcome) => outcome.diagnostic?.code === "TARGET_AMBIGUOUS");
     assert.equal(ambiguous.length, id === "target-recovery" ? 1 : 0);
     if (id === "greenfield-poems") {
-      assert.equal(events.filter((event) => event.type === "document.version.advanced").length, 2);
+      assert.equal(events.filter((event) => event.type === "document.version.advanced").length, 1);
     }
   }
 });
@@ -234,7 +234,7 @@ test("table presentation shares one formatting transaction and expires handles a
   assert.equal(stale?.diagnostic?.code, "STALE_HANDLE");
 });
 
-test("a structural tool flushes pending table formatting first", async () => {
+test("a structural tool shares pending table formatting working bytes", async () => {
   const harness = await createProductionBenchHarness();
   const document = harness.seedDocument(buildNameRoleTableDocx({ withGrid: true }));
   const inspection = await harness.runtime.inspect(document, {
@@ -274,10 +274,10 @@ test("a structural tool flushes pending table formatting first", async () => {
 
   assert.ok(result.toolOutcomes.every((outcome) => outcome.status === "succeeded"));
   const advances = events.filter((event) => event.type === "document.version.advanced");
-  assert.equal(advances.length, 2);
+  assert.equal(advances.length, 1);
   const note = result.toolOutcomes.find((outcome) => outcome.toolCallId === "insert-note");
   assert.equal(note?.status, "succeeded");
-  assert.equal((note?.output as { baseVersionId?: string }).baseVersionId, advances[0]?.versionId);
+  assert.equal((note?.output as { baseVersionId?: string }).baseVersionId, document.versionId);
 });
 
 test("a disjoint bullet request persists before the next same-turn mutation", async () => {

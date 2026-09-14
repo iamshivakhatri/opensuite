@@ -7,7 +7,7 @@ import type {
   OperationResult,
   DocumentOperation,
 } from "@opensuite/agent-core";
-import { FORMATTING_MUTATION_TYPES } from "@opensuite/agent-core";
+import { WORKING_BYTE_MUTATION_TYPES } from "@opensuite/agent-core";
 
 import {
   DocumentAccessError,
@@ -274,6 +274,9 @@ export interface FormattingMutationSession {
   >;
   abandon(): void;
 }
+
+/** @deprecated The session now supports conservative structural mutations too. */
+export type WorkingByteMutationSession = FormattingMutationSession;
 
 /**
  * Application-owned mutation lifecycle:
@@ -653,7 +656,7 @@ export function createDocumentMutationService(
         payload: input.payload,
       });
     },
-    async createFormattingSession(input: {
+    async createWorkingByteSession(input: {
       readonly documentId: string;
       readonly ownerUserId: string;
       readonly baseVersionId: string;
@@ -676,7 +679,7 @@ export function createDocumentMutationService(
         };
       }
       if (!input.runtime.loadBytes || !input.runtime.executeWithBytes) {
-        return { status: "error", code: "UNSUPPORTED_CAPABILITY", diagnostics: [{ code: "UNSUPPORTED_CAPABILITY", severity: "error", message: "Document runtime does not support formatting sessions" }] };
+        return { status: "error", code: "UNSUPPORTED_CAPABILITY", diagnostics: [{ code: "UNSUPPORTED_CAPABILITY", severity: "error", message: "Document runtime does not support working-byte sessions" }] };
       }
       let workingBytes: Uint8Array;
       try {
@@ -692,8 +695,8 @@ export function createDocumentMutationService(
           if (state !== "active") {
             throw new Error(`Formatting session is ${state}`);
           }
-          if (!FORMATTING_MUTATION_TYPES.has(operation.type)) {
-            throw new Error(`Formatting session does not support ${operation.type}`);
+          if (!WORKING_BYTE_MUTATION_TYPES.has(operation.type)) {
+            throw new Error(`Working-byte session does not support ${operation.type}`);
           }
           const result = await input.runtime.executeWithBytes!(
             document,

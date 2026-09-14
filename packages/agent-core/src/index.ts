@@ -180,6 +180,8 @@ export type {
 } from "./document-mutation.js";
 export {
   FORMATTING_MUTATION_TYPES,
+  STRUCTURAL_WORKING_BYTE_MUTATION_TYPES,
+  WORKING_BYTE_MUTATION_TYPES,
   createInMemoryDocumentMutationExecutor,
   isPersistedDocumentMutationToolResult,
   isPersistedReplaceTextToolResult,

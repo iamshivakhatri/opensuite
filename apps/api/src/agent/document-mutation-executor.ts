@@ -4,19 +4,20 @@ import type {
   DocumentMutationResult,
   DocumentRuntime,
 } from "@opensuite/agent-core";
-import { FORMATTING_MUTATION_TYPES } from "@opensuite/agent-core";
+import { FORMATTING_MUTATION_TYPES, WORKING_BYTE_MUTATION_TYPES } from "@opensuite/agent-core";
 
 import {
   createDocumentMutationService,
   type DocumentMutationService,
   type ApplyDocumentMutationResult,
-  type FormattingMutationSession,
+  type WorkingByteMutationSession,
 } from "../documents/mutation.js";
 import type { DocumentService } from "../documents/service.js";
 
 /**
  * Adapts DocumentMutationService apply* methods to agent-core's
- * DocumentMutationExecutor. One tool call → one engine execute → one append.
+ * DocumentMutationExecutor. Compatible same-turn calls share verified bytes
+ * and append once at the lifecycle boundary.
  */
 export function createAgentDocumentMutationExecutor(input: {
   readonly documents: Pick<
@@ -29,27 +30,27 @@ export function createAgentDocumentMutationExecutor(input: {
 }): DocumentMutationExecutor {
   const mutations =
     input.mutations ?? createDocumentMutationService(input.documents);
-  let formattingSession: FormattingMutationSession | undefined;
-  let formattingDocumentId: string | undefined;
+  let workingSession: WorkingByteMutationSession | undefined;
+  let workingDocumentId: string | undefined;
 
-  async function applyFormatting(
+  async function applyWorkingBytes(
     document: { documentId: string; versionId: string },
     type: string,
     payload: Record<string, unknown>,
   ): Promise<DocumentMutationExecutionResult> {
-    if (!formattingSession) {
-      const created = await mutations.createFormattingSession({
+    if (!workingSession) {
+      const created = await mutations.createWorkingByteSession({
         documentId: document.documentId, ownerUserId: input.ownerUserId,
         baseVersionId: document.versionId, runtime: input.runtime,
       });
       if (!("apply" in created)) return toExecutorResult(created, document.versionId);
-      formattingSession = created;
-      formattingDocumentId = document.documentId;
+      workingSession = created;
+      workingDocumentId = document.documentId;
     }
-    if (formattingDocumentId !== document.documentId) {
-      return { status: "error", code: "VERSION_CONFLICT", diagnostics: [{ code: "VERSION_CONFLICT", severity: "error", message: "Formatting session belongs to another document" }] };
+    if (workingDocumentId !== document.documentId) {
+      return { status: "error", code: "VERSION_CONFLICT", diagnostics: [{ code: "VERSION_CONFLICT", severity: "error", message: "Working-byte session belongs to another document" }] };
     }
-    const result = await formattingSession.apply({ type, payload });
+    const result = await workingSession.apply({ type, payload });
     if (result.status === "error") {
       return { status: "error", code: result.code, diagnostics: result.diagnostics };
     }
@@ -83,11 +84,11 @@ export function createAgentDocumentMutationExecutor(input: {
   }
 
   return {
-    async flushPendingFormatting() {
-      if (!formattingSession) return { status: "noop" as const };
-      const session = formattingSession;
-      formattingSession = undefined;
-      formattingDocumentId = undefined;
+    async flushPendingMutations() {
+      if (!workingSession) return { status: "noop" as const };
+      const session = workingSession;
+      workingSession = undefined;
+      workingDocumentId = undefined;
       const flushed = await session.flush();
       if (flushed.status === "noop") return { status: "noop" as const };
       if (flushed.status === "error") {
@@ -101,10 +102,10 @@ export function createAgentDocumentMutationExecutor(input: {
         diagnostics: [],
       };
     },
-    abandonPendingFormatting() {
-      formattingSession?.abandon();
-      formattingSession = undefined;
-      formattingDocumentId = undefined;
+    abandonPendingMutations() {
+      workingSession?.abandon();
+      workingSession = undefined;
+      workingDocumentId = undefined;
     },
     async preflightMutate(request) {
       if (FORMATTING_MUTATION_TYPES.has(request.type)) {
@@ -139,8 +140,8 @@ export function createAgentDocumentMutationExecutor(input: {
       return toExecutorResult(applied, request.document.versionId);
     },
     async mutate(request): Promise<DocumentMutationExecutionResult> {
-      if (FORMATTING_MUTATION_TYPES.has(request.type)) {
-        return applyFormatting(request.document, request.type, request.payload);
+      if (WORKING_BYTE_MUTATION_TYPES.has(request.type)) {
+        return applyWorkingBytes(request.document, request.type, request.payload);
       }
       const applied = await mutations.applyOperation({
         documentId: request.document.documentId,
@@ -152,7 +153,8 @@ export function createAgentDocumentMutationExecutor(input: {
       });
       return toExecutorResult(applied, request.document.versionId);
     },
-    async replaceText(request): Promise<DocumentMutationResult> {
+    async replaceText(request): Promise<DocumentMutationExecutionResult> {
+      if (WORKING_BYTE_MUTATION_TYPES.has("document.replace_text")) return applyWorkingBytes(request.document, "document.replace_text", { find: request.find, replace: request.replace, ...(request.expectedCurrentText !== undefined ? { expectedCurrentText: request.expectedCurrentText } : {}), ...(request.occurrence !== undefined ? { occurrence: request.occurrence } : {}), });
       const applied = await mutations.applyReplaceText({
         documentId: request.document.documentId,
         ownerUserId: input.ownerUserId,
@@ -170,7 +172,8 @@ export function createAgentDocumentMutationExecutor(input: {
       return toExecutorResult(applied, request.document.versionId);
     },
 
-    async insertParagraph(request): Promise<DocumentMutationResult> {
+    async insertParagraph(request): Promise<DocumentMutationExecutionResult> {
+      if (WORKING_BYTE_MUTATION_TYPES.has("document.insert_paragraph")) return applyWorkingBytes(request.document, "document.insert_paragraph", { text: request.text, placement: request.placement });
       const applied = await mutations.applyInsertParagraph({
         documentId: request.document.documentId,
         ownerUserId: input.ownerUserId,
@@ -182,7 +185,8 @@ export function createAgentDocumentMutationExecutor(input: {
       return toExecutorResult(applied, request.document.versionId);
     },
 
-    async insertParagraphs(request): Promise<DocumentMutationResult> {
+    async insertParagraphs(request): Promise<DocumentMutationExecutionResult> {
+      if (WORKING_BYTE_MUTATION_TYPES.has("document.insert_paragraphs")) return applyWorkingBytes(request.document, "document.insert_paragraphs", { texts: request.texts, placement: request.placement });
       const applied = await mutations.applyInsertParagraphs({
         documentId: request.document.documentId,
         ownerUserId: input.ownerUserId,
@@ -194,7 +198,8 @@ export function createAgentDocumentMutationExecutor(input: {
       return toExecutorResult(applied, request.document.versionId);
     },
 
-    async deleteParagraph(request): Promise<DocumentMutationResult> {
+    async deleteParagraph(request): Promise<DocumentMutationExecutionResult> {
+      if (WORKING_BYTE_MUTATION_TYPES.has("document.delete_paragraph")) return applyWorkingBytes(request.document, "document.delete_paragraph", { target: request.target });
       const applied = await mutations.applyDeleteParagraph({
         documentId: request.document.documentId,
         ownerUserId: input.ownerUserId,
@@ -206,13 +211,13 @@ export function createAgentDocumentMutationExecutor(input: {
     },
 
     async setParagraphStyle(request): Promise<DocumentMutationExecutionResult> {
-      return applyFormatting(request.document, "document.set_paragraph_style", {
+      return applyWorkingBytes(request.document, "document.set_paragraph_style", {
         target: request.target, ...(request.style !== undefined ? { style: request.style } : {}),
       });
     },
 
     async setParagraphFormatting(request): Promise<DocumentMutationExecutionResult> {
-      return applyFormatting(request.document, "document.set_paragraph_formatting", {
+      return applyWorkingBytes(request.document, "document.set_paragraph_formatting", {
         target: request.target,
         ...(request.alignment !== undefined
           ? { alignment: request.alignment }
@@ -227,7 +232,7 @@ export function createAgentDocumentMutationExecutor(input: {
     },
 
     async setTextFormatting(request): Promise<DocumentMutationExecutionResult> {
-      return applyFormatting(request.document, "document.set_text_formatting", {
+      return applyWorkingBytes(request.document, "document.set_text_formatting", {
         target: request.target,
         ...(request.bold !== undefined ? { bold: request.bold } : {}),
         ...(request.italic !== undefined ? { italic: request.italic } : {}),
@@ -245,7 +250,8 @@ export function createAgentDocumentMutationExecutor(input: {
       });
     },
 
-    async setTableCellsText(request): Promise<DocumentMutationResult> {
+    async setTableCellsText(request): Promise<DocumentMutationExecutionResult> {
+      if (WORKING_BYTE_MUTATION_TYPES.has("document.set_table_cells_text")) return applyWorkingBytes(request.document, "document.set_table_cells_text", { table: request.table, updates: request.updates });
       const applied = await mutations.applySetTableCellsText({
         documentId: request.document.documentId,
         ownerUserId: input.ownerUserId,
@@ -257,7 +263,8 @@ export function createAgentDocumentMutationExecutor(input: {
       return toExecutorResult(applied, request.document.versionId);
     },
 
-    async insertTableRows(request): Promise<DocumentMutationResult> {
+    async insertTableRows(request): Promise<DocumentMutationExecutionResult> {
+      if (WORKING_BYTE_MUTATION_TYPES.has("document.insert_table_rows")) return applyWorkingBytes(request.document, "document.insert_table_rows", { table: request.table, after: request.after, rows: request.rows });
       const applied = await mutations.applyInsertTableRows({
         documentId: request.document.documentId,
         ownerUserId: input.ownerUserId,
@@ -270,7 +277,8 @@ export function createAgentDocumentMutationExecutor(input: {
       return toExecutorResult(applied, request.document.versionId);
     },
 
-    async insertTableColumn(request): Promise<DocumentMutationResult> {
+    async insertTableColumn(request): Promise<DocumentMutationExecutionResult> {
+      if (WORKING_BYTE_MUTATION_TYPES.has("document.insert_table_column")) return applyWorkingBytes(request.document, "document.insert_table_column", { table: request.table, header: request.header, cells: request.cells, ...(request.afterColumnHeader !== undefined ? { afterColumnHeader: request.afterColumnHeader } : {}), ...(request.afterColumnHandle !== undefined ? { afterColumnHandle: request.afterColumnHandle } : {}), });
       const applied = await mutations.applyInsertTableColumn({
         documentId: request.document.documentId,
         ownerUserId: input.ownerUserId,
@@ -289,7 +297,8 @@ export function createAgentDocumentMutationExecutor(input: {
       return toExecutorResult(applied, request.document.versionId);
     },
 
-    async createTable(request): Promise<DocumentMutationResult> {
+    async createTable(request): Promise<DocumentMutationExecutionResult> {
+      if (WORKING_BYTE_MUTATION_TYPES.has("document.create_table")) return applyWorkingBytes(request.document, "document.create_table", { rows: request.rows, placement: request.placement });
       const applied = await mutations.applyCreateTable({
         documentId: request.document.documentId,
         ownerUserId: input.ownerUserId,
@@ -301,7 +310,8 @@ export function createAgentDocumentMutationExecutor(input: {
       return toExecutorResult(applied, request.document.versionId);
     },
 
-    async deleteTable(request): Promise<DocumentMutationResult> {
+    async deleteTable(request): Promise<DocumentMutationExecutionResult> {
+      if (WORKING_BYTE_MUTATION_TYPES.has("document.delete_table")) return applyWorkingBytes(request.document, "document.delete_table", { table: request.table });
       const applied = await mutations.applyDeleteTable({
         documentId: request.document.documentId,
         ownerUserId: input.ownerUserId,
@@ -312,7 +322,8 @@ export function createAgentDocumentMutationExecutor(input: {
       return toExecutorResult(applied, request.document.versionId);
     },
 
-    async deleteTableRow(request): Promise<DocumentMutationResult> {
+    async deleteTableRow(request): Promise<DocumentMutationExecutionResult> {
+      if (WORKING_BYTE_MUTATION_TYPES.has("document.delete_table_row")) return applyWorkingBytes(request.document, "document.delete_table_row", { table: request.table, row: request.row });
       const applied = await mutations.applyDeleteTableRow({
         documentId: request.document.documentId,
         ownerUserId: input.ownerUserId,
@@ -324,7 +335,8 @@ export function createAgentDocumentMutationExecutor(input: {
       return toExecutorResult(applied, request.document.versionId);
     },
 
-    async deleteTableColumn(request): Promise<DocumentMutationResult> {
+    async deleteTableColumn(request): Promise<DocumentMutationExecutionResult> {
+      if (WORKING_BYTE_MUTATION_TYPES.has("document.delete_table_column")) return applyWorkingBytes(request.document, "document.delete_table_column", { table: request.table, ...(request.columnHeader !== undefined ? { columnHeader: request.columnHeader } : {}), ...(request.columnHandle !== undefined ? { columnHandle: request.columnHandle } : {}), });
       const applied = await mutations.applyDeleteTableColumn({
         documentId: request.document.documentId,
         ownerUserId: input.ownerUserId,
@@ -342,7 +354,7 @@ export function createAgentDocumentMutationExecutor(input: {
     },
 
     async setTableFormatting(request): Promise<DocumentMutationExecutionResult> {
-      return applyFormatting(request.document, "document.set_table_formatting", {
+      return applyWorkingBytes(request.document, "document.set_table_formatting", {
         table: request.table,
         ...(request.alignment !== undefined
           ? { alignment: request.alignment }
