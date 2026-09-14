@@ -9,7 +9,7 @@ import {
   summarizeDebugError,
   watchAbortSignal,
 } from "./debug-lifecycle.js";
-import { AgentCoreError, isAbortError } from "./errors.js";
+import { AgentCoreError, isAbortError, isToolPolicySkipError } from "./errors.js";
 import {
   noopEventSink,
   type AgentEvent,
@@ -1000,6 +1000,27 @@ export class AgentRunner {
     } catch (error) {
       if (this.isCancellation(error, signal)) {
         throw error;
+      }
+      if (isToolPolicySkipError(error)) {
+        const wallMs = elapsedMs(toolStartedAt);
+        await this.emitTelemetry({
+          type: "tool.execution.metrics",
+          runId: request.runId,
+          toolCallId: call.id,
+          toolName: tool.name,
+          at: this.timestamp(),
+          wallMs,
+          inputBytes,
+          resultBytes: measureJsonBytes(error.output),
+          success: true,
+        });
+        return {
+          toolCallId: call.id,
+          toolName: tool.name,
+          status: "skipped",
+          summary: error.summary,
+          output: error.output,
+        };
       }
       const wallMs = elapsedMs(toolStartedAt);
       const diagnostic = this.toDiagnostic(

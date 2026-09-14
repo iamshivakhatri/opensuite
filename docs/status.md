@@ -6,7 +6,7 @@ _Read this before starting any work. Keep it a concise current-state handoff, no
 
 * Workspace shell, Casual Docs DOCX, engine-backed inspect/mutate, blank create, workspace agent.
 * **Agent Efficiency v1–v6.6** + **AgentCore v2 Steps 1–5C**.
-* **Agent Progress Control** — Progress Ledger + Stagnation Guard + **One-Failure Recovery Mode v1**.
+* **Agent Progress Control** — Progress Ledger + Stagnation Guard + One-Failure Recovery Mode + **Recovery Preflight v1**.
 * **Document Authoring Intelligence v1** + list≠grouping + **insert_paragraphs rejects embedded newlines**.
 * **Agent Panel UX v1.1** — live status from last activity (no premature Finishing up); inspect=`checks`; recovered details muted; slim composer.
 * Confirmation bridge; Frontend Phases 1–6B; hosted-alpha foundation.
@@ -15,7 +15,7 @@ _Read this before starting any work. Keep it a concise current-state handoff, no
 
 ## Just Completed
 
-* **One-Failure Recovery Mode v1** — first eligible document failure activates recovery; same-response later mutations deferred (`RECOVERY_DEFERRED`); exact failed signature blocked (`RECOVERY_REPEAT_BLOCKED`); compact recovery steering by class (TARGET/STALE_STATE/INPUT_CONTRACT/UNSUPPORTED); clears on corrected mutation; composes with stagnation guard; provider failures stay separate.
+* **Recovery Preflight v1** — while recovery active, eligible DOCX content mutations validate via `loadBytes` + `executeWithBytes` then promote exact verified bytes (no double execute). Invalid candidates return `RECOVERY_PREFLIGHT_REJECTED` (skipped, not `tool.failed`); formatting mutations excluded (separate session). Exact-repeat blocked; **3** distinct rejections → `RECOVERY_EXHAUSTED`. Persist failure after preflight success stays real infra failure.
 
 ## Current Decisions
 
@@ -31,17 +31,19 @@ _Read this before starting any work. Keep it a concise current-state handoff, no
 
 | Check | Status |
 |---|---|
-| agent-core tests/typecheck | **Pass** (242; progress-stagnation + progress-recovery) |
-| api typecheck | **Pass** |
+| agent-core tests/typecheck | **Pass** (252; +progress-preflight) |
+| api typecheck + mutation preflight test | **Pass** |
+| formatting / persist mutation tests | **Pass** |
+| `git diff --check` | **Pass** |
 | api `app.test.ts` | **Pass** prior |
 | db / web | **Pass** prior |
 
 ## Intentionally Deferred
 
-* Recovery preflight (validate candidate mutations before durable failure)
+* Recovery Preflight for formatting-session mutations / PPTX/XLSX
 * Engine keepNext/keepLines/lineSpacing/indent fields
 * Live in-app agent screenshot pass (needs signed-in session)
 
 ## Recommended Next Step
 
-Dogfood recovery mode on a multi-write failure scenario with `AGENT_DEBUG_LIFECYCLE=1`, then design Recovery Preflight.
+Dogfood recovery+preflight on a multi-write TARGET_NOT_FOUND scenario with `AGENT_DEBUG_LIFECYCLE=1`.

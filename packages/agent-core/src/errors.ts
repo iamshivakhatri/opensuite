@@ -44,3 +44,26 @@ export function isAbortError(error: unknown): boolean {
     ("code" in error && error.code === "CANCELLED")
   );
 }
+
+/**
+ * Domain policy chose not to run / not to count a hard tool failure
+ * (e.g. recovery preflight rejection). AgentRunner maps this to `skipped`
+ * without emitting `tool.failed` or incrementing repeated-failure counts.
+ */
+export class ToolPolicySkipError extends Error {
+  readonly summary: string;
+  readonly output: unknown;
+
+  constructor(summary: string, output?: unknown) {
+    super(summary);
+    this.name = "ToolPolicySkipError";
+    this.summary = summary;
+    this.output = output;
+  }
+}
+
+export function isToolPolicySkipError(
+  error: unknown,
+): error is ToolPolicySkipError {
+  return error instanceof ToolPolicySkipError;
+}

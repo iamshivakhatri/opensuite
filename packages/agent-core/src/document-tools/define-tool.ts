@@ -1,7 +1,9 @@
-import { AgentCoreError } from "../errors.js";
+import { AgentCoreError, ToolPolicySkipError } from "../errors.js";
 import type {
   DocumentMutationExecutor,
   DocumentMutationExecutionResult,
+  DocumentMutationResult,
+  DocumentPreflightMutateResult,
   PersistedDocumentMutationToolResult,
 } from "../document-mutation.js";
 import { FORMATTING_MUTATION_TYPES } from "../document-mutation.js";
@@ -21,6 +23,13 @@ import {
   type Diagnostic,
   type DocumentRef,
 } from "../types.js";
+import {
+  emitProgressEvent,
+  isPreflightEligibleMutation,
+  isRecoveryActive,
+  notePreflightRejection,
+  toolCallSignature,
+} from "./progress-ledger.js";
 
 /**
  * Declarative document-tool descriptor.
@@ -143,6 +152,10 @@ export function requireMutations(
  * validate handles → mutations executor → immutable N+1 → advance RunDocumentState
  * → emit document.version.advanced.
  * Does not advance or emit on error. Does not call Rust when handles are stale/unknown.
+ *
+ * When Recovery Mode is active and the tool is preflight-eligible, routes through
+ * `mutations.preflightMutate` (validate once → promote exact bytes) instead of a
+ * normal durable failure for semantic rejects.
  */
 export async function executePersistedMutation(
   ctx: ToolExecutionContext,
@@ -153,14 +166,62 @@ export async function executePersistedMutation(
   ) => Promise<DocumentMutationExecutionResult>,
   toolInput?: unknown,
 ): Promise<PersistedDocumentMutationToolResult> {
-  if (toolInput !== undefined) {
-    requireCurrentArtifactHandles(ctx, toolInput);
+  const ledger = ctx.documentProgress;
+  const recoveryPreflight =
+    ledger !== undefined &&
+    isRecoveryActive(ledger) &&
+    !ledger.recovery?.exhausted &&
+    isPreflightEligibleMutation(toolName) &&
+    typeof ctx.mutations?.preflightMutate === "function";
+
+  try {
+    if (toolInput !== undefined) {
+      requireCurrentArtifactHandles(ctx, toolInput);
+    }
+  } catch (error) {
+    if (
+      recoveryPreflight &&
+      error instanceof AgentCoreError &&
+      (error.code === "STALE_HANDLE" || error.code === "UNKNOWN_HANDLE")
+    ) {
+      throwPreflightRejection(
+        ctx,
+        toolName,
+        toolInput,
+        error.code,
+        error.diagnostic ? [error.diagnostic] : undefined,
+      );
+    }
+    throw error;
   }
+
   const mutations = requireMutations(ctx, toolName);
   const { document } = requireDocumentRuntime(ctx);
   await requireRuntimeCapability(ctx, Capabilities.DocumentMutate);
 
-  const result = await apply(document, mutations);
+  let result: DocumentMutationExecutionResult;
+  if (recoveryPreflight && mutations.preflightMutate) {
+    emitProgressEvent(ctx.events, {
+      runId: ctx.runId,
+      classification: "RECOVERY_PREFLIGHT_START",
+      document,
+      toolName,
+      recoveryClass: ledger!.recovery!.recoveryClass,
+      failureCode: ledger!.recovery!.failureCode,
+      ledger: ledger!,
+    });
+    const routed = createPreflightRoutingExecutor(
+      mutations,
+      mutations.preflightMutate.bind(mutations),
+      ctx,
+      toolName,
+      toolInput,
+    );
+    result = await apply(document, routed);
+  } else {
+    result = await apply(document, mutations);
+  }
+
   if (result.status === "pending") {
     // Internal only: the document tool-turn finalizer will replace this with
     // one durable result before transcript/SSE delivery.
@@ -173,6 +234,18 @@ export async function executePersistedMutation(
   const recentParagraphs = recentParagraphTexts(toolName, toolInput);
   if (recentParagraphs) {
     ctx.recordRecentParagraphTargets?.(result.document, recentParagraphs);
+  }
+  if (recoveryPreflight && ledger) {
+    emitProgressEvent(ctx.events, {
+      runId: ctx.runId,
+      classification: "RECOVERY_PREFLIGHT_PROMOTED",
+      document: result.document,
+      toolName,
+      recoveryClass: ledger.recovery?.recoveryClass,
+      failureCode: ledger.recovery?.failureCode,
+      bytesPromoted: true,
+      ledger,
+    });
   }
   // Domain event: emit here so AgentRunner stays mutation-result-agnostic.
   // Order relative to runner emits: tool.started → this → tool.completed.
@@ -196,6 +269,295 @@ export async function executePersistedMutation(
       ? { versionNumber: result.versionNumber }
       : {}),
     baseVersionId: result.baseVersionId,
+  };
+}
+
+function throwPreflightRejection(
+  ctx: ToolExecutionContext,
+  toolName: string,
+  toolInput: unknown,
+  code: string,
+  diagnostics?: readonly unknown[],
+): never {
+  const ledger = ctx.documentProgress;
+  if (!ledger) {
+    throw new ToolPolicySkipError(`Recovery preflight rejected (${code})`, {
+      progress: "RECOVERY_PREFLIGHT_REJECTED",
+      code,
+    });
+  }
+  const noted = notePreflightRejection(
+    ledger,
+    toolCallSignature(toolName, toolInput),
+    code,
+    diagnostics,
+  );
+  emitProgressEvent(ctx.events, {
+    runId: ctx.runId,
+    classification: noted.exhausted
+      ? "RECOVERY_EXHAUSTED"
+      : "RECOVERY_PREFLIGHT_REJECTED",
+    document: ctx.primaryDocument,
+    toolName,
+    recoveryClass: ledger.recovery?.recoveryClass,
+    failureCode: code,
+    exactRepeatBlocked: noted.isExactRepeat,
+    ledger,
+  });
+  throw new ToolPolicySkipError(noted.output.message, noted.output);
+}
+
+/**
+ * Routes typed mutation methods through `preflightMutate` so tools keep their
+ * existing apply callbacks while validate-once/promote-once stays in the executor.
+ */
+function createPreflightRoutingExecutor(
+  base: DocumentMutationExecutor,
+  preflightMutate: (
+    input: {
+      readonly document: DocumentRef;
+      readonly type: string;
+      readonly payload: Record<string, unknown>;
+      readonly signal?: AbortSignal;
+      readonly runId?: string;
+    },
+  ) => Promise<DocumentPreflightMutateResult>,
+  ctx: ToolExecutionContext,
+  toolName: string,
+  toolInput: unknown,
+): DocumentMutationExecutor {
+  async function route(
+    type: string,
+    document: DocumentRef,
+    payload: Record<string, unknown>,
+    signal?: AbortSignal,
+    runId?: string,
+  ): Promise<DocumentMutationResult> {
+    const result = await preflightMutate({
+      document,
+      type,
+      payload,
+      signal,
+      runId,
+    });
+    if (result.status === "preflight_rejected") {
+      throwPreflightRejection(
+        ctx,
+        toolName,
+        toolInput,
+        result.code,
+        result.diagnostics,
+      );
+    }
+    if (result.status === "error") {
+      throw diagnosticError(result.diagnostics[0]!);
+    }
+    return result;
+  }
+
+  return {
+    ...base,
+    flushPendingFormatting: base.flushPendingFormatting?.bind(base),
+    abandonPendingFormatting: base.abandonPendingFormatting?.bind(base),
+    async mutate(input) {
+      return route(input.type, input.document, input.payload, input.signal, input.runId);
+    },
+    async replaceText(input) {
+      return route(
+        "document.replace_text",
+        input.document,
+        {
+          find: input.find,
+          replace: input.replace,
+          ...(input.expectedCurrentText !== undefined
+            ? { expectedCurrentText: input.expectedCurrentText }
+            : {}),
+          ...(input.occurrence !== undefined ? { occurrence: input.occurrence } : {}),
+        },
+        input.signal,
+        input.runId,
+      );
+    },
+    async insertParagraph(input) {
+      return route(
+        "document.insert_paragraph",
+        input.document,
+        { text: input.text, placement: input.placement },
+        input.signal,
+        input.runId,
+      );
+    },
+    async insertParagraphs(input) {
+      return route(
+        "document.insert_paragraphs",
+        input.document,
+        { texts: input.texts, placement: input.placement },
+        input.signal,
+        input.runId,
+      );
+    },
+    async deleteParagraph(input) {
+      return route(
+        "document.delete_paragraph",
+        input.document,
+        { target: input.target },
+        input.signal,
+        input.runId,
+      );
+    },
+    async setParagraphStyle(input) {
+      return route(
+        "document.set_paragraph_style",
+        input.document,
+        {
+          target: input.target,
+          ...(input.style !== undefined ? { style: input.style } : {}),
+        },
+        input.signal,
+        input.runId,
+      );
+    },
+    async setParagraphFormatting(input) {
+      return route(
+        "document.set_paragraph_formatting",
+        input.document,
+        {
+          target: input.target,
+          ...(input.alignment !== undefined ? { alignment: input.alignment } : {}),
+          ...(input.spacingBeforeTwips !== undefined
+            ? { spacingBeforeTwips: input.spacingBeforeTwips }
+            : {}),
+          ...(input.spacingAfterTwips !== undefined
+            ? { spacingAfterTwips: input.spacingAfterTwips }
+            : {}),
+        },
+        input.signal,
+        input.runId,
+      );
+    },
+    async setTextFormatting(input) {
+      return route(
+        "document.set_text_formatting",
+        input.document,
+        {
+          target: input.target,
+          ...(input.bold !== undefined ? { bold: input.bold } : {}),
+          ...(input.italic !== undefined ? { italic: input.italic } : {}),
+          ...(input.fontSizeHalfPoints !== undefined
+            ? { fontSizeHalfPoints: input.fontSizeHalfPoints }
+            : {}),
+          ...(input.fontFamily !== undefined ? { fontFamily: input.fontFamily } : {}),
+        },
+        input.signal,
+        input.runId,
+      );
+    },
+    async setTableCellsText(input) {
+      return route(
+        "document.set_table_cells_text",
+        input.document,
+        { table: input.table, updates: input.updates },
+        input.signal,
+        input.runId,
+      );
+    },
+    async insertTableRows(input) {
+      return route(
+        "document.insert_table_rows",
+        input.document,
+        { table: input.table, after: input.after, rows: input.rows },
+        input.signal,
+        input.runId,
+      );
+    },
+    async insertTableColumn(input) {
+      return route(
+        "document.insert_table_column",
+        input.document,
+        {
+          table: input.table,
+          ...(input.afterColumnHeader !== undefined
+            ? { afterColumnHeader: input.afterColumnHeader }
+            : {}),
+          ...(input.afterColumnHandle !== undefined
+            ? { afterColumnHandle: input.afterColumnHandle }
+            : {}),
+          header: input.header,
+          cells: input.cells,
+        },
+        input.signal,
+        input.runId,
+      );
+    },
+    async createTable(input) {
+      return route(
+        "document.create_table",
+        input.document,
+        { rows: input.rows, placement: input.placement },
+        input.signal,
+        input.runId,
+      );
+    },
+    async deleteTable(input) {
+      return route(
+        "document.delete_table",
+        input.document,
+        { table: input.table },
+        input.signal,
+        input.runId,
+      );
+    },
+    async deleteTableRow(input) {
+      return route(
+        "document.delete_table_row",
+        input.document,
+        { table: input.table, row: input.row },
+        input.signal,
+        input.runId,
+      );
+    },
+    async deleteTableColumn(input) {
+      return route(
+        "document.delete_table_column",
+        input.document,
+        {
+          table: input.table,
+          ...(input.columnHeader !== undefined
+            ? { columnHeader: input.columnHeader }
+            : {}),
+          ...(input.columnHandle !== undefined
+            ? { columnHandle: input.columnHandle }
+            : {}),
+        },
+        input.signal,
+        input.runId,
+      );
+    },
+    async setTableFormatting(input) {
+      return route(
+        "document.set_table_formatting",
+        input.document,
+        {
+          table: input.table,
+          ...(input.alignment !== undefined ? { alignment: input.alignment } : {}),
+          ...(input.borders !== undefined ? { borders: input.borders } : {}),
+          ...(input.cellMarginTopTwips !== undefined
+            ? { cellMarginTopTwips: input.cellMarginTopTwips }
+            : {}),
+          ...(input.cellMarginRightTwips !== undefined
+            ? { cellMarginRightTwips: input.cellMarginRightTwips }
+            : {}),
+          ...(input.cellMarginBottomTwips !== undefined
+            ? { cellMarginBottomTwips: input.cellMarginBottomTwips }
+            : {}),
+          ...(input.cellMarginLeftTwips !== undefined
+            ? { cellMarginLeftTwips: input.cellMarginLeftTwips }
+            : {}),
+        },
+        input.signal,
+        input.runId,
+      );
+    },
   };
 }
 

@@ -265,5 +265,6 @@ export function createDocumentToolContext(
       recordRecentParagraphTargets(state, document, texts),
     reuseInspection: (focus) => findDocumentInspection(state, focus),
     handles: state.handles,
+    documentProgress: state.progress,
   });
 }

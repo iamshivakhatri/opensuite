@@ -26,7 +26,7 @@ export {
 } from "./types.js";
 
 export type { AgentCoreErrorCode } from "./errors.js";
-export { AgentCoreError, isAbortError } from "./errors.js";
+export { AgentCoreError, isAbortError, ToolPolicySkipError, isToolPolicySkipError } from "./errors.js";
 
 export {
   ArtifactHandleRegistry,
@@ -158,6 +158,8 @@ export type {
   DocumentMutationExecutor,
   DocumentMutationResult,
   DocumentMutationExecutionResult,
+  DocumentPreflightMutateResult,
+  DocumentPreflightRejectedResult,
   PendingDocumentMutationResult,
   DocumentParagraphAlignment,
   DocumentParagraphPlacement,
@@ -236,8 +238,10 @@ export {
   isInspectKnowledgeSatisfied,
   isRecoveryActivatingFailure,
   isRecoveryActive,
+  isPreflightEligibleMutation,
   normalizeInspectFocus,
   noteKnowledgeProgress,
+  notePreflightRejection,
   noteRedundantInspect,
   noteStateProgress,
   activateRecovery,
@@ -245,6 +249,9 @@ export {
   classifyRecovery,
   toolCallSignature,
   stableJson,
+  MAX_DISTINCT_PREFLIGHT_REJECTIONS,
+  buildPreflightRejectedOutput,
+  buildRecoveryExhaustedOutput,
   createSlidesUpdateTextTool,
   createWorkbookSetCellsTool,
   discoverDocumentToolsFromRuntime,
@@ -300,6 +307,7 @@ export type {
   InspectCoverageEntry,
   ProgressClassification,
   RecoveryClass,
+  RecoveryPreflightRejectedOutput,
   RedundantInspectOutput,
   RecentParagraphTarget,
   DocumentToolContextOptions,

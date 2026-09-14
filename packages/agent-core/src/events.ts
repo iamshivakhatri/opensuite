@@ -183,7 +183,11 @@ export type AgentEvent =
         | "RECOVERY_DEFERRED"
         | "RECOVERY_REPEAT_BLOCKED"
         | "RECOVERY_EVIDENCE"
-        | "RECOVERY_CLEARED";
+        | "RECOVERY_CLEARED"
+        | "RECOVERY_PREFLIGHT_START"
+        | "RECOVERY_PREFLIGHT_REJECTED"
+        | "RECOVERY_PREFLIGHT_PROMOTED"
+        | "RECOVERY_EXHAUSTED";
       readonly documentId?: string;
       readonly versionId?: string;
       readonly readSignature?: string;
@@ -205,6 +209,10 @@ export type AgentEvent =
       readonly turnsSinceKnowledgeProgress?: number | null;
       readonly redundantReadCount?: number;
       readonly turnIndex?: number;
+      readonly preflightRejectionCount?: number;
+      readonly exactRepeatBlocked?: boolean;
+      readonly bytesPromoted?: boolean;
+      readonly toolName?: string;
     };
 
 /**

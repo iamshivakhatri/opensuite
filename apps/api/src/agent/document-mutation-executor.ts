@@ -106,6 +106,38 @@ export function createAgentDocumentMutationExecutor(input: {
       formattingSession = undefined;
       formattingDocumentId = undefined;
     },
+    async preflightMutate(request) {
+      if (FORMATTING_MUTATION_TYPES.has(request.type)) {
+        return {
+          status: "preflight_rejected" as const,
+          code: "UNSUPPORTED_OPERATION",
+          diagnostics: [
+            {
+              code: "UNSUPPORTED_OPERATION" as const,
+              severity: "error" as const,
+              message:
+                "Formatting mutations are excluded from Recovery Preflight v1",
+            },
+          ],
+        };
+      }
+      const applied = await mutations.applyPreflightAndPromote({
+        documentId: request.document.documentId,
+        ownerUserId: input.ownerUserId,
+        baseVersionId: request.document.versionId,
+        runtime: input.runtime,
+        type: request.type,
+        payload: request.payload,
+      });
+      if (applied.status === "preflight_rejected") {
+        return {
+          status: "preflight_rejected" as const,
+          code: applied.code,
+          diagnostics: applied.diagnostics,
+        };
+      }
+      return toExecutorResult(applied, request.document.versionId);
+    },
     async mutate(request): Promise<DocumentMutationExecutionResult> {
       if (FORMATTING_MUTATION_TYPES.has(request.type)) {
         return applyFormatting(request.document, request.type, request.payload);

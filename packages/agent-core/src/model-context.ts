@@ -311,7 +311,9 @@ export function projectToolResultForModel(
       (
         (message.output as { progress: string }).progress === "REDUNDANT_READ" ||
         (message.output as { progress: string }).progress === "RECOVERY_DEFERRED" ||
-        (message.output as { progress: string }).progress === "RECOVERY_REPEAT_BLOCKED"
+        (message.output as { progress: string }).progress === "RECOVERY_REPEAT_BLOCKED" ||
+        (message.output as { progress: string }).progress === "RECOVERY_PREFLIGHT_REJECTED" ||
+        (message.output as { progress: string }).progress === "RECOVERY_EXHAUSTED"
       )
     ) {
       return {

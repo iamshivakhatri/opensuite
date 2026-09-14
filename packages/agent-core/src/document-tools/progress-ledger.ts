@@ -24,7 +24,11 @@ export type ProgressClassification =
   | "RECOVERY_DEFERRED"
   | "RECOVERY_REPEAT_BLOCKED"
   | "RECOVERY_EVIDENCE"
-  | "RECOVERY_CLEARED";
+  | "RECOVERY_CLEARED"
+  | "RECOVERY_PREFLIGHT_START"
+  | "RECOVERY_PREFLIGHT_REJECTED"
+  | "RECOVERY_PREFLIGHT_PROMOTED"
+  | "RECOVERY_EXHAUSTED";
 
 /** Generic recovery taxonomy — not format/workflow-specific. */
 export type RecoveryClass =
@@ -32,6 +36,12 @@ export type RecoveryClass =
   | "STALE_STATE"
   | "INPUT_CONTRACT"
   | "UNSUPPORTED";
+
+/**
+ * Distinct invalid recovery candidates before forcing truthful stop.
+ * ponytail: small bound; upgrade path = Recovery Preflight v2 with richer budgets.
+ */
+export const MAX_DISTINCT_PREFLIGHT_REJECTIONS = 3;
 
 /** Normalized paging coverage for one inspect focus kind on the current version. */
 export interface InspectCoverageEntry {
@@ -56,6 +66,10 @@ export interface DocumentRecoveryState {
   evidenceObtained: boolean;
   failedStrategyBlocked: boolean;
   pendingGuidance: string | null;
+  /** Distinct preflight-rejected call signatures → diagnostic code. */
+  rejectedPreflightSignatures: Map<string, string>;
+  preflightRejectionCount: number;
+  exhausted: boolean;
 }
 
 export interface DocumentProgressLedger {
@@ -231,6 +245,9 @@ export function emitProgressEvent(
     readonly failedTool?: string;
     readonly recoveryClass?: RecoveryClass;
     readonly failureCode?: string;
+    readonly toolName?: string;
+    readonly exactRepeatBlocked?: boolean;
+    readonly bytesPromoted?: boolean;
     readonly ledger: DocumentProgressLedger;
   },
 ): void {
@@ -244,6 +261,9 @@ export function emitProgressEvent(
     failedTool,
     recoveryClass,
     failureCode,
+    toolName,
+    exactRepeatBlocked,
+    bytesPromoted,
     ledger,
   } = input;
   const payload = {
@@ -257,10 +277,14 @@ export function emitProgressEvent(
     ...(failedTool !== undefined ? { failedTool } : {}),
     ...(recoveryClass !== undefined ? { recoveryClass } : {}),
     ...(failureCode !== undefined ? { failureCode } : {}),
+    ...(toolName !== undefined ? { toolName } : {}),
+    ...(exactRepeatBlocked !== undefined ? { exactRepeatBlocked } : {}),
+    ...(bytesPromoted !== undefined ? { bytesPromoted } : {}),
     ...(ledger.recovery?.active
       ? {
           recoveryActive: true,
           recoveryEvidenceObtained: ledger.recovery.evidenceObtained,
+          preflightRejectionCount: ledger.recovery.preflightRejectionCount,
         }
       : {}),
     turnsSinceStateProgress: turnsSince(ledger, ledger.lastStateProgressTurn),
@@ -348,6 +372,9 @@ export function activateRecovery(
     evidenceObtained: false,
     failedStrategyBlocked: false,
     pendingGuidance,
+    rejectedPreflightSignatures: new Map(),
+    preflightRejectionCount: 0,
+    exhausted: false,
   };
   ledger.recovery = recovery;
   return recovery;
@@ -355,6 +382,122 @@ export function activateRecovery(
 
 export function clearRecovery(ledger: DocumentProgressLedger): void {
   ledger.recovery = null;
+}
+
+/** Mutations eligible for Recovery Preflight v1 (byte-pure DOCX content ops). */
+export function isPreflightEligibleMutation(toolName: string): boolean {
+  if (!toolName.startsWith("document.")) return false;
+  // Formatting shares a separate working-byte session — exclude from v1.
+  if (toolName === "document.set_paragraph_style") return false;
+  if (toolName === "document.set_paragraph_formatting") return false;
+  if (toolName === "document.set_text_formatting") return false;
+  if (toolName === "document.set_table_formatting") return false;
+  if (toolName === "document.set_table_column_widths") return false;
+  if (toolName === "document.set_table_cell_shading") return false;
+  if (toolName === "document.inspect" || toolName === "document.find") return false;
+  if (toolName === "document.capabilities") return false;
+  return true;
+}
+
+export function notePreflightRejection(
+  ledger: DocumentProgressLedger,
+  signature: string,
+  diagnosticCode: string,
+  diagnostics?: readonly unknown[],
+): {
+  readonly exhausted: boolean;
+  readonly isExactRepeat: boolean;
+  readonly output: RecoveryPreflightRejectedOutput;
+} {
+  const recovery = ledger.recovery;
+  if (!recovery?.active) {
+    return {
+      exhausted: false,
+      isExactRepeat: false,
+      output: buildPreflightRejectedOutput(diagnosticCode, "TARGET", false, false, diagnostics),
+    };
+  }
+  const priorCode = recovery.rejectedPreflightSignatures.get(signature);
+  const isExactRepeat = priorCode !== undefined;
+  if (!isExactRepeat) {
+    recovery.rejectedPreflightSignatures.set(signature, diagnosticCode);
+    recovery.preflightRejectionCount += 1;
+  }
+  if (recovery.preflightRejectionCount >= MAX_DISTINCT_PREFLIGHT_REJECTIONS) {
+    recovery.exhausted = true;
+    recovery.pendingGuidance = buildRecoveryExhaustedGuidance(recovery);
+  }
+  return {
+    exhausted: recovery.exhausted,
+    isExactRepeat,
+    output: buildPreflightRejectedOutput(
+      isExactRepeat ? priorCode : diagnosticCode,
+      recovery.recoveryClass,
+      recovery.exhausted,
+      isExactRepeat,
+      diagnostics,
+    ),
+  };
+}
+
+export function buildPreflightRejectedOutput(
+  code: string,
+  recoveryClass: RecoveryClass,
+  exhausted: boolean,
+  exactRepeat = false,
+  diagnostics?: readonly unknown[],
+): RecoveryPreflightRejectedOutput {
+  const baseMessage = exactRepeat
+    ? `Recovery preflight candidate repeated exactly (${code}). Blocked without re-running the runtime.`
+    : `Recovery preflight rejected (${code}). No document version was created. Correct the operation using current evidence.`;
+  return {
+    progress: "RECOVERY_PREFLIGHT_REJECTED",
+    code,
+    recoveryClass,
+    message: exhausted
+      ? `Recovery preflight rejected (${code}). Recovery attempts are exhausted — summarize what succeeded and stop inventing further mutations.`
+      : baseMessage,
+    ...(exhausted ? { exhausted: true } : {}),
+    ...(exactRepeat ? { exactRepeat: true } : {}),
+    ...(diagnostics !== undefined && diagnostics.length > 0
+      ? { diagnostics }
+      : {}),
+  };
+}
+
+export interface RecoveryPreflightRejectedOutput {
+  readonly progress: "RECOVERY_PREFLIGHT_REJECTED";
+  readonly code: string;
+  readonly recoveryClass: RecoveryClass;
+  readonly message: string;
+  readonly exhausted?: boolean;
+  readonly exactRepeat?: boolean;
+  /** Authoritative engine/diagnostic details when already available. */
+  readonly diagnostics?: readonly unknown[];
+}
+
+export function buildRecoveryExhaustedOutput(
+  recovery: DocumentRecoveryState,
+): {
+  readonly progress: "RECOVERY_EXHAUSTED";
+  readonly code: string;
+  readonly recoveryClass: RecoveryClass;
+  readonly message: string;
+} {
+  return {
+    progress: "RECOVERY_EXHAUSTED",
+    code: recovery.failureCode,
+    recoveryClass: recovery.recoveryClass,
+    message: buildRecoveryExhaustedGuidance(recovery),
+  };
+}
+
+function buildRecoveryExhaustedGuidance(recovery: DocumentRecoveryState): string {
+  return (
+    `Runtime policy: RECOVERY EXHAUSTED after ${recovery.preflightRejectionCount} distinct invalid recovery attempts ` +
+    `(original failure: ${recovery.failureCode}). Do not call further document mutation tools. ` +
+    "Summarize what already succeeded, what failed, and ask the user how to proceed."
+  );
 }
 
 export function buildRecoveryDeferredOutput(failureCode: string): {

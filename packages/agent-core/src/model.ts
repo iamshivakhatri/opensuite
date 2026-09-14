@@ -1,4 +1,5 @@
 import type { DocumentMutationExecutor } from "./document-mutation.js";
+import type { DocumentProgressLedger } from "./document-tools/progress-ledger.js";
 import type { AgentEventSink } from "./events.js";
 import type { ArtifactHandleRegistry } from "./artifact-handles.js";
 import type { DocumentInspectFocus, DocumentRuntime } from "./runtime.js";
@@ -174,6 +175,11 @@ export interface ToolExecutionContext {
    * Populated by document.inspect; validated before handle-based mutations.
    */
   readonly handles?: ArtifactHandleRegistry;
+  /**
+   * Document-policy progress ledger (recovery / stagnation). Owned by
+   * DocumentRunState — AgentRunner does not interpret it.
+   */
+  readonly documentProgress?: DocumentProgressLedger;
 }
 
 /**

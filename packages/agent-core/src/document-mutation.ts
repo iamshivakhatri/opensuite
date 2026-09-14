@@ -233,6 +233,20 @@ export type DocumentMutationResult =
       readonly diagnostics: NonEmptyDiagnostics;
     };
 
+/**
+ * Controlled recovery preflight rejection — semantic validation failed against
+ * temporary bytes; nothing was persisted. Not a normal durable tool failure.
+ */
+export interface DocumentPreflightRejectedResult {
+  readonly status: "preflight_rejected";
+  readonly code: string;
+  readonly diagnostics: NonEmptyDiagnostics;
+}
+
+export type DocumentPreflightMutateResult =
+  | DocumentMutationResult
+  | DocumentPreflightRejectedResult;
+
 /** Successful working-byte mutation that has not been persisted yet. */
 export interface PendingDocumentMutationResult {
   readonly status: "pending";
@@ -260,6 +274,18 @@ export interface DocumentMutationExecutor {
   flushPendingFormatting?(): Promise<DocumentMutationResult | { readonly status: "noop" }>;
   /** Discard unpersisted formatting working bytes. */
   abandonPendingFormatting?(): void;
+  /**
+   * Recovery Preflight: validate against temporary current bytes via the
+   * authoritative runtime, then promote exact verified bytes on success.
+   * Rejection must not persist a version.
+   */
+  preflightMutate?(input: {
+    readonly document: DocumentRef;
+    readonly type: string;
+    readonly payload: Record<string, unknown>;
+    readonly signal?: AbortSignal;
+    readonly runId?: string;
+  }): Promise<DocumentPreflightMutateResult>;
   /** Typed tool schemas supply `type` and payload; this keeps new engine calls on the same persistence path. */
   mutate?(input: {
     readonly document: DocumentRef;
@@ -417,6 +443,84 @@ export function createInMemoryDocumentMutationExecutor(
   }
 
   return {
+    async preflightMutate(input) {
+      // Prefer loadBytes + executeWithBytes → promote exact bytes (no second execute).
+      if (runtime.loadBytes && runtime.executeWithBytes) {
+        let workingBytes: Uint8Array;
+        try {
+          workingBytes = await runtime.loadBytes(input.document);
+        } catch (error) {
+          throw new Error(
+            error instanceof Error
+              ? error.message
+              : "Could not load document bytes for recovery preflight",
+          );
+        }
+        const result = await runtime.executeWithBytes(
+          input.document,
+          {
+            type: input.type,
+            baseVersionId: input.document.versionId,
+            payload: input.payload,
+          },
+          workingBytes,
+          { signal: input.signal, runId: input.runId },
+        );
+        if (result.status === "error") {
+          return {
+            status: "preflight_rejected",
+            code: result.code,
+            diagnostics: result.diagnostics,
+          };
+        }
+        if (!result.artifactBytes || result.artifactBytes.byteLength === 0) {
+          return {
+            status: "preflight_rejected",
+            code: "RUNTIME_MISSING_ARTIFACT",
+            diagnostics: [
+              {
+                code: "RUNTIME_MISSING_ARTIFACT",
+                severity: "error",
+                message:
+                  "Preflight reported success without verified artifact bytes",
+              },
+            ],
+          };
+        }
+        // Promote exact verified bytes as N+1 (in-memory: synthesize version id).
+        sequence += 1;
+        const next: DocumentRef = {
+          documentId: input.document.documentId,
+          versionId: `${input.document.versionId}+${sequence}`,
+          format: input.document.format,
+        };
+        return {
+          status: "success",
+          document: next,
+          versionNumber: sequence + 1,
+          baseVersionId: input.document.versionId,
+          ...(result.change !== undefined ? { change: result.change } : {}),
+          diagnostics: result.diagnostics,
+        };
+      }
+
+      // Fallback: single execute; map semantic error → preflight_rejected (still one call).
+      const executed = await executeOnce(
+        input.document,
+        input.type,
+        input.payload,
+        input.signal,
+        input.runId,
+      );
+      if (executed.status === "error") {
+        return {
+          status: "preflight_rejected",
+          code: executed.code,
+          diagnostics: executed.diagnostics,
+        };
+      }
+      return executed;
+    },
     async mutate(input) {
       return executeOnce(input.document, input.type, input.payload, input.signal, input.runId);
     },

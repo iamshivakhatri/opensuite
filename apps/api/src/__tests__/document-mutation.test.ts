@@ -578,3 +578,108 @@ test("table shading diagnostics prevent persistence", async () => {
   if (result.status === "error") assert.equal(result.diagnostics[0].reasonCode, "INVALID_COLOR");
   assert.equal(appended, 0);
 });
+
+test("recovery preflight rejects without append; success promotes exact executeWithBytes bytes", async () => {
+  const documentId = randomUUID();
+  const baseVersionId = randomUUID();
+  const nextVersionId = randomUUID();
+  const baseBytes = buildMinimalDocx(["base"]);
+  const promotedBytes = buildMinimalDocx(["promoted"]);
+  let appendCalls = 0;
+  let executeCalls = 0;
+  let executeWithBytesCalls = 0;
+
+  const documents = {
+    async getOwnedDocument() {
+      return listedDoc({ id: documentId, latestVersionId: baseVersionId });
+    },
+    async appendDocumentVersion(input: {
+      baseVersionId: string;
+      source: "user" | "agent" | "system";
+      bytes: Buffer;
+    }): Promise<AppendedDocumentDto> {
+      appendCalls += 1;
+      assert.deepEqual(input.bytes, Buffer.from(promotedBytes));
+      return {
+        document: listedDoc({ id: documentId, latestVersionId: nextVersionId }),
+        version: {
+          id: nextVersionId,
+          documentId,
+          versionNumber: 2,
+          parentVersionId: input.baseVersionId,
+          sizeBytes: input.bytes.length,
+          sha256: "hash",
+          source: input.source,
+          createdByUserId: "user-1",
+          createdAt: new Date().toISOString(),
+        },
+      };
+    },
+  } as Pick<DocumentService, "getOwnedDocument" | "appendDocumentVersion">;
+
+  const runtime: DocumentRuntime = {
+    ...createFakeRuntime(async () => {
+      executeCalls += 1;
+      throw new Error("execute must not run during preflight");
+    }),
+    async loadBytes() {
+      return baseBytes;
+    },
+    async executeWithBytes(_doc, _op, working) {
+      executeWithBytesCalls += 1;
+      assert.deepEqual(working, baseBytes);
+      return {
+        status: "error",
+        code: "TARGET_NOT_FOUND",
+        diagnostics: [
+          {
+            code: "TARGET_NOT_FOUND",
+            severity: "error",
+            message: "missing",
+          },
+        ],
+      };
+    },
+  };
+
+  const mutations = createDocumentMutationService(documents);
+  const rejected = await mutations.applyPreflightAndPromote({
+    documentId,
+    ownerUserId: "user-1",
+    baseVersionId,
+    runtime,
+    type: "document.delete_paragraph",
+    payload: { target: { text: "missing" } },
+  });
+  assert.equal(rejected.status, "preflight_rejected");
+  if (rejected.status === "preflight_rejected") {
+    assert.equal(rejected.code, "TARGET_NOT_FOUND");
+  }
+  assert.equal(appendCalls, 0);
+  assert.equal(executeCalls, 0);
+  assert.equal(executeWithBytesCalls, 1);
+
+  const successRuntime: DocumentRuntime = {
+    ...runtime,
+    async executeWithBytes() {
+      executeWithBytesCalls += 1;
+      return {
+        status: "success",
+        diagnostics: [],
+        artifactBytes: promotedBytes,
+      };
+    },
+  };
+  const promoted = await mutations.applyPreflightAndPromote({
+    documentId,
+    ownerUserId: "user-1",
+    baseVersionId,
+    runtime: successRuntime,
+    type: "document.insert_paragraph",
+    payload: { text: "ok", placement: { kind: "end" } },
+  });
+  assert.equal(promoted.status, "success");
+  assert.equal(appendCalls, 1);
+  assert.equal(executeCalls, 0);
+  assert.equal(executeWithBytesCalls, 2);
+});

@@ -52,13 +52,16 @@ import { DOCUMENT_TOOL_NAMES } from "./names.js";
 import {
   activateRecovery,
   buildRecoveryDeferredOutput,
+  buildRecoveryExhaustedOutput,
   buildRecoveryRepeatBlockedOutput,
   clearRecovery,
   emitProgressEvent,
   isInspectKnowledgeSatisfied,
+  isPreflightEligibleMutation,
   isRecoveryActivatingFailure,
   isRecoveryActive,
   noteModelTurn,
+  notePreflightRejection,
   noteRedundantInspect,
   toolCallSignature,
 } from "./progress-ledger.js";
@@ -457,6 +460,26 @@ function maybeSkipRecoveryMutation(
     context.toolCall.name,
     context.toolCall.input,
   );
+
+  if (recovery.exhausted) {
+    const output = buildRecoveryExhaustedOutput(recovery);
+    emitProgressEvent(context.events, {
+      runId: context.runId,
+      classification: "RECOVERY_EXHAUSTED",
+      document: state.primary,
+      failedTool: recovery.failedToolName,
+      recoveryClass: recovery.recoveryClass,
+      failureCode: recovery.failureCode,
+      toolName: context.toolName,
+      ledger: state.progress,
+    });
+    return {
+      skip: true,
+      summary: output.message,
+      output,
+    };
+  }
+
   if (signature === recovery.failedCallSignature) {
     recovery.failedStrategyBlocked = true;
     const output = buildRecoveryRepeatBlockedOutput(recovery.failureCode);
@@ -473,6 +496,37 @@ function maybeSkipRecoveryMutation(
       skip: true,
       summary: output.message,
       output,
+    };
+  }
+
+  // Exact repeated preflight-rejected candidate — block without runtime.
+  if (
+    isPreflightEligibleMutation(context.toolName) &&
+    recovery.rejectedPreflightSignatures.has(signature)
+  ) {
+    const priorCode =
+      recovery.rejectedPreflightSignatures.get(signature) ?? recovery.failureCode;
+    const noted = notePreflightRejection(
+      state.progress,
+      signature,
+      priorCode,
+    );
+    emitProgressEvent(context.events, {
+      runId: context.runId,
+      classification: noted.exhausted
+        ? "RECOVERY_EXHAUSTED"
+        : "RECOVERY_PREFLIGHT_REJECTED",
+      document: state.primary,
+      toolName: context.toolName,
+      recoveryClass: recovery.recoveryClass,
+      failureCode: noted.output.code,
+      exactRepeatBlocked: true,
+      ledger: state.progress,
+    });
+    return {
+      skip: true,
+      summary: noted.output.message,
+      output: noted.output,
     };
   }
 
@@ -697,6 +751,14 @@ function selectToolsForModel(
       POST_CREATE_AUTHORING_TOOL_NAMES.has(tool.name),
     );
     return narrowed.length > 0 ? narrowed : defs;
+  }
+  // Recovery exhausted: hide write tools so the model must summarize instead of looping.
+  if (state.progress.recovery?.exhausted) {
+    const readOnly = defs.filter((tool) => {
+      const family = DOCUMENT_TOOL_FAMILIES[tool.name];
+      return family === "read" || family === undefined;
+    });
+    return readOnly.length > 0 ? readOnly : defs.filter((t) => t.name === "document.inspect");
   }
   const families = new Set(DEFAULT_WORKING_FAMILIES);
   for (const outcome of outcomes) {

@@ -443,7 +443,216 @@ export function createDocumentMutationService(
     };
   }
 
+  /**
+   * Recovery Preflight: load current durable bytes → executeWithBytes → on
+   * semantic error return preflight_rejected (no version); on success append
+   * the exact verified bytes as N+1. Persistence failures remain status error.
+   */
+  async function applyPreflightAndPromote(input: {
+    readonly documentId: string;
+    readonly ownerUserId: string;
+    readonly baseVersionId: string;
+    readonly runtime: DocumentRuntime;
+    readonly operationType: string;
+    readonly payload: Record<string, unknown>;
+  }): Promise<
+    | ApplyDocumentMutationResult
+    | {
+        readonly status: "preflight_rejected";
+        readonly code: string;
+        readonly diagnostics: NonEmptyDiagnostics;
+      }
+  > {
+    let owned: ListedDocumentDto;
+    try {
+      owned = await documents.getOwnedDocument({
+        documentId: input.documentId,
+        ownerUserId: input.ownerUserId,
+      });
+    } catch (error) {
+      return mapAccessError(error);
+    }
+
+    if (owned.format !== "docx") {
+      return {
+        status: "error",
+        code: "UNSUPPORTED_FORMAT",
+        statusCode: 400,
+        diagnostics: [
+          {
+            code: "UNSUPPORTED_FORMAT",
+            severity: "error",
+            message: `${input.operationType} only supports DOCX (got ${owned.format})`,
+            details: { format: owned.format },
+          },
+        ],
+      };
+    }
+
+    if (owned.latestVersion.id !== input.baseVersionId) {
+      return {
+        status: "error",
+        code: "VERSION_CONFLICT",
+        statusCode: 409,
+        diagnostics: [
+          {
+            code: "VERSION_CONFLICT",
+            severity: "error",
+            message:
+              "Document was updated; reload the latest version before mutating",
+            details: {
+              baseVersionId: input.baseVersionId,
+              latestVersionId: owned.latestVersion.id,
+            },
+          },
+        ],
+      };
+    }
+
+    if (!input.runtime.loadBytes || !input.runtime.executeWithBytes) {
+      return {
+        status: "error",
+        code: "UNSUPPORTED_CAPABILITY",
+        diagnostics: [
+          {
+            code: "UNSUPPORTED_CAPABILITY",
+            severity: "error",
+            message:
+              "DocumentRuntime does not support loadBytes/executeWithBytes for recovery preflight",
+          },
+        ],
+      };
+    }
+
+    const documentRef = {
+      documentId: input.documentId,
+      versionId: input.baseVersionId,
+      format: "docx" as const,
+    };
+
+    let workingBytes: Uint8Array;
+    try {
+      workingBytes = await input.runtime.loadBytes(documentRef);
+    } catch (error) {
+      return {
+        status: "error",
+        code: "STORAGE_OBJECT_MISSING",
+        diagnostics: [
+          {
+            code: "STORAGE_OBJECT_MISSING",
+            severity: "error",
+            message:
+              error instanceof Error
+                ? error.message
+                : "Could not load document bytes for recovery preflight",
+          },
+        ],
+      };
+    }
+
+    let runtimeResult: OperationResult;
+    try {
+      runtimeResult = await input.runtime.executeWithBytes(
+        documentRef,
+        {
+          type: input.operationType,
+          baseVersionId: input.baseVersionId,
+          payload: input.payload,
+        },
+        workingBytes,
+      );
+    } catch (error) {
+      const message =
+        error instanceof Error
+          ? error.message
+          : "DocumentRuntime executeWithBytes failed";
+      return {
+        status: "error",
+        code: "VALIDATION_FAILED",
+        diagnostics: [
+          {
+            code: "VALIDATION_FAILED",
+            severity: "error",
+            message,
+          },
+        ],
+      };
+    }
+
+    if (runtimeResult.status === "error") {
+      return {
+        status: "preflight_rejected",
+        code: runtimeResult.code,
+        diagnostics: runtimeResult.diagnostics,
+      };
+    }
+
+    if (
+      !runtimeResult.artifactBytes ||
+      runtimeResult.artifactBytes.byteLength === 0
+    ) {
+      return {
+        status: "preflight_rejected",
+        code: "RUNTIME_MISSING_ARTIFACT",
+        diagnostics: [
+          {
+            code: "RUNTIME_MISSING_ARTIFACT",
+            severity: "error",
+            message:
+              "Preflight reported success without verified artifact bytes; nothing was persisted",
+          },
+        ],
+      };
+    }
+
+    if (options.beforePersist) {
+      await options.beforePersist({
+        documentId: input.documentId,
+        baseVersionId: input.baseVersionId,
+        artifactBytes: runtimeResult.artifactBytes,
+      });
+    }
+
+    let appended: AppendedDocumentDto;
+    try {
+      appended = await documents.appendDocumentVersion({
+        documentId: input.documentId,
+        ownerUserId: input.ownerUserId,
+        baseVersionId: input.baseVersionId,
+        source: "agent",
+        bytes: Buffer.from(runtimeResult.artifactBytes),
+      });
+    } catch (error) {
+      return mapAccessError(error);
+    }
+
+    return {
+      status: "success",
+      document: appended.document,
+      version: appended.version,
+      change: runtimeResult.change,
+      diagnostics: runtimeResult.diagnostics,
+    };
+  }
+
   return {
+    async applyPreflightAndPromote(input: {
+      readonly documentId: string;
+      readonly ownerUserId: string;
+      readonly baseVersionId: string;
+      readonly runtime: DocumentRuntime;
+      readonly type: string;
+      readonly payload: Record<string, unknown>;
+    }) {
+      return applyPreflightAndPromote({
+        documentId: input.documentId,
+        ownerUserId: input.ownerUserId,
+        baseVersionId: input.baseVersionId,
+        runtime: input.runtime,
+        operationType: input.type,
+        payload: input.payload,
+      });
+    },
     async createFormattingSession(input: {
       readonly documentId: string;
       readonly ownerUserId: string;

@@ -150,10 +150,12 @@ export {
   createProgressLedger,
   inspectReadSignature,
   isInspectKnowledgeSatisfied,
+  isPreflightEligibleMutation,
   isRecoveryActivatingFailure,
   isRecoveryActive,
   normalizeInspectFocus,
   noteKnowledgeProgress,
+  notePreflightRejection,
   noteRedundantInspect,
   noteStateProgress,
   activateRecovery,
@@ -161,6 +163,9 @@ export {
   classifyRecovery,
   toolCallSignature,
   stableJson,
+  MAX_DISTINCT_PREFLIGHT_REJECTIONS,
+  buildPreflightRejectedOutput,
+  buildRecoveryExhaustedOutput,
 } from "./progress-ledger.js";
 export type {
   DocumentProgressLedger,
@@ -168,6 +173,7 @@ export type {
   InspectCoverageEntry,
   ProgressClassification,
   RecoveryClass,
+  RecoveryPreflightRejectedOutput,
   RedundantInspectOutput,
 } from "./progress-ledger.js";
 
