@@ -148,6 +148,17 @@ function toLiveAgentEvent(
           error: truncate(event.error, 500),
         },
       };
+    case "document.version.advanced":
+      return {
+        runId: event.runId,
+        type: event.type,
+        at: event.at,
+        data: {
+          documentId: event.documentId,
+          versionId: event.versionId,
+          versionNumber: event.versionNumber,
+        },
+      };
     default: {
       const _exhaustive: never = event;
       void _exhaustive;

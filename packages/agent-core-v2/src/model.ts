@@ -7,6 +7,8 @@ import {
 } from "ai";
 import { createOpenRouter } from "@openrouter/ai-sdk-provider";
 
+import { isDocumentWriteTool } from "./document-tools.js";
+
 export type { ModelMessage, ToolSet } from "ai";
 export type V2Model = LanguageModel;
 
@@ -26,6 +28,7 @@ export interface RunModelResult {
   readonly cachedInputTokens?: number;
   readonly outputTokens?: number;
   readonly turns: number;
+  readonly toolCalls?: number;
 }
 
 export type AgentEvent =
@@ -54,6 +57,8 @@ export interface RunAgentInput extends RunModelInput {
   readonly tools?: ToolSet;
   readonly maxTurns?: number;
   readonly onEvent?: (event: AgentEvent) => void | Promise<void>;
+  /** Short run id for backend turn/tool logs (e.g. first 8 of UUID). */
+  readonly runId?: string;
 }
 
 export class MaxTurnsExceededError extends Error {
@@ -98,6 +103,7 @@ export async function runModel(input: RunModelInput): Promise<RunModelResult> {
     cachedInputTokens: usage.inputTokenDetails.cacheReadTokens,
     outputTokens: usage.outputTokens,
     turns: 1,
+    toolCalls: 0,
   };
 }
 
@@ -110,7 +116,10 @@ export async function runAgent(input: RunAgentInput): Promise<RunModelResult> {
   await input.onEvent?.({ type: "started" });
   const maxTurns = input.maxTurns ?? DEFAULT_MAX_TURNS;
   const workingMessages: ModelMessage[] = [...input.messages];
+  const run = input.runId ?? "local";
+  const runStarted = Date.now();
   let turns = 0;
+  let toolCallCount = 0;
   let inputTokens = 0;
   let cachedInputTokens = 0;
   let outputTokens = 0;
@@ -124,6 +133,8 @@ export async function runAgent(input: RunAgentInput): Promise<RunModelResult> {
         throw new MaxTurnsExceededError(maxTurns);
       }
       turns += 1;
+      const turnStarted = Date.now();
+      console.info(`[agent-v2] turn_start run=${run} turn=${turns}`);
 
       // Schema-only tools so AI SDK does not auto-execute (it would parallelize).
       const response = streamText({
@@ -149,11 +160,22 @@ export async function runAgent(input: RunAgentInput): Promise<RunModelResult> {
           response.responseMessages,
         ]);
 
-      inputTokens += usage.inputTokens ?? 0;
-      cachedInputTokens += usage.inputTokenDetails.cacheReadTokens ?? 0;
-      outputTokens += usage.outputTokens ?? 0;
+      const turnInput = usage.inputTokens ?? 0;
+      const turnCached = usage.inputTokenDetails.cacheReadTokens ?? 0;
+      const turnOutput = usage.outputTokens ?? 0;
+      inputTokens += turnInput;
+      cachedInputTokens += turnCached;
+      outputTokens += turnOutput;
+
+      const toolNames = toolCalls.map((c) => c.toolName).join(",") || "-";
+      console.info(
+        `[agent-v2] turn_done run=${run} turn=${turns} elapsedMs=${Date.now() - turnStarted} inputTokens=${turnInput} cachedInputTokens=${turnCached} outputTokens=${turnOutput} finishReason=${finishReason} toolCalls=${toolCalls.length} tools=${toolNames}`,
+      );
 
       if (toolCalls.length === 0) {
+        console.info(
+          `[agent-v2] run_done run=${run} turns=${turns} toolCalls=${toolCallCount} inputTokens=${inputTokens} cachedInputTokens=${cachedInputTokens} outputTokens=${outputTokens} elapsedMs=${Date.now() - runStarted}`,
+        );
         const result: RunModelResult = {
           text,
           finishReason,
@@ -161,6 +183,7 @@ export async function runAgent(input: RunAgentInput): Promise<RunModelResult> {
           cachedInputTokens,
           outputTokens,
           turns,
+          toolCalls: toolCallCount,
         };
         await input.onEvent?.({ type: "completed", text });
         return result;
@@ -169,15 +192,50 @@ export async function runAgent(input: RunAgentInput): Promise<RunModelResult> {
       workingMessages.push(...responseMessages);
 
       const toolContent: ToolResultPart[] = [];
+      let writeFailed = false;
 
-      for (const call of toolCalls) {
+      for (let i = 0; i < toolCalls.length; i += 1) {
+        const call = toolCalls[i]!;
         if (input.signal?.aborted) {
           throw abortError(input.signal);
         }
 
         const toolName = call.toolName;
         const toolCallId = call.toolCallId;
+        const indexLabel = `${i + 1}/${toolCalls.length}`;
+        toolCallCount += 1;
+
+        if (writeFailed && isDocumentWriteTool(toolName)) {
+          const skipped = {
+            ok: false,
+            status: "skipped",
+            reasonCode: "PRIOR_WRITE_FAILED",
+            message:
+              "Skipped: a prior write in this tool batch failed",
+          };
+          console.info(
+            `[agent-v2] tool_done run=${run} turn=${turns} tool=${toolName} elapsedMs=0 status=failed reasonCode=PRIOR_WRITE_FAILED`,
+          );
+          toolContent.push({
+            type: "tool-result",
+            toolCallId,
+            toolName,
+            output: { type: "json", value: skipped as never },
+          });
+          await input.onEvent?.({
+            type: "tool_failed",
+            toolCallId,
+            toolName,
+            error: "PRIOR_WRITE_FAILED",
+          });
+          continue;
+        }
+
+        console.info(
+          `[agent-v2] tool_start run=${run} turn=${turns} index=${indexLabel} tool=${toolName}`,
+        );
         await input.onEvent?.({ type: "tool_started", toolCallId, toolName });
+        const toolStarted = Date.now();
 
         try {
           const tool = input.tools?.[toolName];
@@ -196,6 +254,7 @@ export async function runAgent(input: RunAgentInput): Promise<RunModelResult> {
             context: {},
           });
 
+          const failure = readToolFailure(output);
           toolContent.push({
             type: "tool-result",
             toolCallId,
@@ -208,12 +267,37 @@ export async function runAgent(input: RunAgentInput): Promise<RunModelResult> {
                     value: (output === undefined ? null : output) as never,
                   },
           });
-          await input.onEvent?.({ type: "tool_completed", toolCallId, toolName });
+
+          if (failure) {
+            if (isDocumentWriteTool(toolName)) writeFailed = true;
+            console.info(
+              `[agent-v2] tool_done run=${run} turn=${turns} tool=${toolName} elapsedMs=${Date.now() - toolStarted} status=failed${failure.reasonCode ? ` reasonCode=${failure.reasonCode}` : ""}`,
+            );
+            await input.onEvent?.({
+              type: "tool_failed",
+              toolCallId,
+              toolName,
+              error: failure.reasonCode ?? "TOOL_FAILED",
+            });
+          } else {
+            console.info(
+              `[agent-v2] tool_done run=${run} turn=${turns} tool=${toolName} elapsedMs=${Date.now() - toolStarted} status=ok`,
+            );
+            await input.onEvent?.({
+              type: "tool_completed",
+              toolCallId,
+              toolName,
+            });
+          }
         } catch (error) {
           if (input.signal?.aborted) {
             throw error;
           }
+          if (isDocumentWriteTool(toolName)) writeFailed = true;
           const message = errorMessage(error);
+          console.info(
+            `[agent-v2] tool_done run=${run} turn=${turns} tool=${toolName} elapsedMs=${Date.now() - toolStarted} status=failed reasonCode=TOOL_EXCEPTION`,
+          );
           toolContent.push({
             type: "tool-result",
             toolCallId,
@@ -249,6 +333,19 @@ function schemaOnlyTools(tools: ToolSet): ToolSet {
     out[name] = rest;
   }
   return out as ToolSet;
+}
+
+function readToolFailure(
+  output: unknown,
+): { reasonCode?: string } | null {
+  if (!output || typeof output !== "object") return null;
+  const record = output as { ok?: unknown; reasonCode?: unknown };
+  if (record.ok !== false) return null;
+  return {
+    ...(typeof record.reasonCode === "string"
+      ? { reasonCode: record.reasonCode }
+      : {}),
+  };
 }
 
 function errorMessage(error: unknown): string {

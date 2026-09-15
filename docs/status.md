@@ -5,7 +5,7 @@ _Read this before starting any work. Keep it a concise current-state handoff, no
 ## What Exists
 
 * Workspace shell, Casual Docs DOCX, engine-backed inspect/mutate, blank create, workspace agent.
-* **Agent Core V2, Phase 2A** — Phase-1 tool loop + server-bound DOCX read tools (`document.capabilities` / `inspect` / `find`) via `bindDocxDocument` → N-API. Mutations not exposed yet.
+* **Agent Core V2, Phase 2B** — Phase-1 tool loop + server-bound DOCX read/write tools via `bindDocxDocument` → N-API. Capability-gated typed mutations; immutable version persist mid-run; turn/tool backend logs.
 * Existing Agent panel and hosted-alpha foundation.
 * **AI Settings** — active strip select switches managed ↔ BYOK; setup cards only browse. Account tab shows read-only AI / storage / appearance glance. OpenRouter BYOK has model picker + pricing.
 * **DB availability UX** — pool `connectionTimeoutMillis` 5s; `/health` includes `database`; API maps outages to `503 DATABASE_UNAVAILABLE`; web banner + auth-gate hold (no false sign-out); pg pool reconnects on next checkout.
@@ -13,13 +13,12 @@ _Read this before starting any work. Keep it a concise current-state handoff, no
 
 ## Just Completed
 
-* Phase 2A: deleted V1 DocumentRuntime bridge (`OpenSuiteEngineAdapter`, mutation/runtime/artifact-loader). Added `bindDocxDocument` + `createDocumentTools`; API binds exact primary version before `runAgent`.
-* Real engine tests for caps/inspect/find; V2 tool binding + multi-tool-turn tests.
+* Phase 2B: mutable `bindDocxDocument` (bytes evolve + persist callback); `createDocumentTools` exposes engine mutation caps as typed tools; API `appendDocumentVersion` + `document.version.advanced` SSE; `runAgent` turn/tool/run_done logs + sibling write-stop after failure.
 
 ## Current Decisions
 
 * Soft-delete; optimistic concurrency; Rust SoT; `pnpm dev:api` builds API workspace deps first (`api^...`).
-* Managed AI gateway = OpenRouter; Agent Core V2 owns the model/tool loop; API owns app shell + document binding.
+* Managed AI gateway = OpenRouter; Agent Core V2 owns the model/tool loop; API owns app shell + document binding + persistence.
 * Engine keep*/indent deferred until visible multi-page need.
 * Agent progress presentation stays in `apps/web` (not agent-core).
 * Managed model is server-chosen (`OPENROUTER_MODEL`); users do not pick it.
@@ -32,19 +31,20 @@ _Read this before starting any work. Keep it a concise current-state handoff, no
 
 | Check | Status |
 |---|---|
-| engine-client tests (incl. real N-API bind) | Pass |
-| agent-core-v2 tests | Pass (10) |
+| engine-client tests (incl. mutate bind) | Pass (9) |
+| agent-core-v2 tests | Pass (14) |
 | API typecheck | Pass |
 | git diff --check | Pass |
 | Manual Agent panel dogfood | pending (user) |
 
 ## Intentionally Deferred
 
-* Phase 2B document mutations (replace/insert/format/tables/…)
+* Semantic document map / get_context / compaction / recovery / Progress Ledger
 * Parallel sibling tool execution
 * Engine keepNext/keepLines/lineSpacing/indent fields
+* Frontend exposure of model-turn logs
 * First npm publish of `@opensuite/engine` (needs `NPM_TOKEN` + `@opensuite` scope)
 
 ## Recommended Next Step
 
-Manually dogfood Agent panel with a DOCX open (capabilities/inspect/find), then Phase 2B mutations.
+Manually dogfood Agent panel: multi-edit DOCX, refresh, download/reopen; confirm backend `turn_*` / `tool_*` / `run_done` logs.

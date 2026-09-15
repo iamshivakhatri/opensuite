@@ -6,6 +6,8 @@ export {
 } from "./model.js";
 export {
   createDocumentTools,
+  isDocumentWriteTool,
+  type BoundDocumentHost,
   type BoundDocumentReads,
   type InspectFocus,
 } from "./document-tools.js";

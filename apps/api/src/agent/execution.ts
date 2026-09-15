@@ -33,6 +33,14 @@ export type AgentEvent =
   | { readonly type: "tool.started"; readonly runId: string; readonly at: string; readonly toolCallId: string; readonly toolName: string }
   | { readonly type: "tool.completed"; readonly runId: string; readonly at: string; readonly toolCallId: string; readonly toolName: string }
   | { readonly type: "tool.failed"; readonly runId: string; readonly at: string; readonly toolCallId: string; readonly toolName: string; readonly error: string }
+  | {
+      readonly type: "document.version.advanced";
+      readonly runId: string;
+      readonly at: string;
+      readonly documentId: string;
+      readonly versionId: string;
+      readonly versionNumber: number;
+    }
   | { readonly type: "agent.completed"; readonly runId: string; readonly at: string }
   | { readonly type: "agent.cancelled"; readonly runId: string; readonly at: string }
   | { readonly type: "agent.failed"; readonly runId: string; readonly at: string; readonly code: string };
@@ -94,7 +102,7 @@ export interface AgentExecutionServiceDeps {
   readonly persistence: AgentPersistenceService;
   readonly documents: Pick<
     DocumentService,
-    "getOwnedDocument" | "readExactVersionBytes"
+    "getOwnedDocument" | "readExactVersionBytes" | "appendDocumentVersion"
   >;
   readonly resolveModel: (userId: string) => Promise<ResolvedV2ExecutionModel>;
   readonly docxBinding?: DocxEngineBinding;
@@ -241,8 +249,9 @@ async function runExecution(input: {
       ownerUserId: input.ownerUserId,
       status: "running",
     });
+    const runShort = input.run.id.slice(0, 8);
     console.info(
-      `[agent-v2] model_start run=${input.run.id.slice(0, 8)} provider=openrouter model=${input.model.usageAttribution?.model ?? "unknown"}`,
+      `[agent-v2] run_start run=${runShort} provider=openrouter model=${input.model.usageAttribution?.model ?? "unknown"}`,
     );
     if (
       input.model.usageAttribution?.provider === "openrouter" &&
@@ -251,25 +260,33 @@ async function runExecution(input: {
       await input.deps.managedTrial?.beforeManagedCall(input.ownerUserId);
     }
 
-    const tools = await createPrimaryDocxTools({
+    const boundTools = await createPrimaryDocxTools({
       binding: input.deps.docxBinding,
       documents: input.deps.documents,
       ownerUserId: input.ownerUserId,
       documentId: input.primaryDocumentId,
       versionId: input.run.baseDocumentVersionId,
+      onVersionAdvanced: async (advanced) => {
+        await input.liveEvents?.emit({
+          type: "document.version.advanced",
+          runId: input.run.id,
+          at: new Date().toISOString(),
+          documentId: advanced.documentId,
+          versionId: advanced.versionId,
+          versionNumber: advanced.versionNumber,
+        });
+      },
     });
 
     // The one API → agent-core-v2 execution call.
     const result = await runAgent({
       model: input.model.model,
       messages,
-      ...(tools ? { tools } : {}),
+      ...(boundTools ? { tools: boundTools.tools } : {}),
       signal: input.signal,
+      runId: runShort,
       onEvent: (event) => relayEvent(event, input.liveEvents, input.run.id, messageId),
     });
-    console.info(
-      `[agent-v2] model_done run=${input.run.id.slice(0, 8)} inputTokens=${result.inputTokens ?? "?"} outputTokens=${result.outputTokens ?? "?"} finishReason=${result.finishReason}`,
-    );
 
     if (input.deps.modelUsage && input.model.usageAttribution) {
       const usage = await input.deps.modelUsage.recordFromProviderResponse({

@@ -4,7 +4,10 @@ import { test } from "node:test";
 import { asSchema } from "ai";
 import { MockLanguageModelV4, simulateReadableStream } from "ai/test";
 
-import { createDocumentTools, type BoundDocumentReads } from "./document-tools.js";
+import {
+  createDocumentTools,
+  type BoundDocumentHost,
+} from "./document-tools.js";
 import { runAgent } from "./model.js";
 
 const emptyUsage = {
@@ -55,46 +58,109 @@ function toolCallChunks(
   ];
 }
 
-function fakeDocument(): BoundDocumentReads & {
+function fakeDocument(options?: {
+  readonly caps?: readonly string[];
+  readonly withMutate?: boolean;
+}): BoundDocumentHost & {
   calls: string[];
+  states: string[];
   lastInspect: unknown;
   lastFind: unknown;
+  mutateOps: Array<{ capability: string; operation: unknown }>;
+  failNextMutate?: boolean;
 } {
-  const state = {
+  let state = "v0";
+  const state_obj = {
     calls: [] as string[],
+    states: [] as string[],
     lastInspect: undefined as unknown,
     lastFind: undefined as unknown,
+    mutateOps: [] as Array<{ capability: string; operation: unknown }>,
+    failNextMutate: false,
     capabilities() {
-      state.calls.push("capabilities");
+      // Called at tool-build time for gating — not part of run call history.
       return {
         ok: true,
         protocolVersion: 1,
         engineVersion: "test",
-        formats: [{ format: "docx", capabilities: ["inspect", "find"] }],
+        formats: [
+          {
+            format: "docx",
+            capabilities: options?.caps ?? [
+              "inspect",
+              "find_text",
+              "replace_text",
+              "insert_paragraph",
+              "set_text_formatting",
+            ],
+          },
+        ],
       };
     },
     async inspect(request: { focus: unknown }) {
-      state.calls.push("inspect");
-      state.lastInspect = request;
-      return { ok: true, focus: "overview", overview: { paragraphCount: 2 } };
+      state_obj.calls.push("inspect");
+      state_obj.states.push(state);
+      state_obj.lastInspect = request;
+      return { ok: true, focus: "overview", overview: { paragraphCount: 2 }, state };
     },
     async find(request: { text: string }) {
-      state.calls.push("find");
-      state.lastFind = request;
-      return { ok: true, query: request.text, matchCount: 1, matches: [] };
+      state_obj.calls.push("find");
+      state_obj.states.push(state);
+      state_obj.lastFind = request;
+      return { ok: true, query: request.text, matchCount: 1, matches: [], state };
     },
+    ...(options?.withMutate === false
+      ? {}
+      : {
+          async mutate(capability: string, operation: Record<string, unknown>) {
+            state_obj.calls.push(`mutate:${capability}`);
+            state_obj.mutateOps.push({ capability, operation });
+            if (state_obj.failNextMutate) {
+              state_obj.failNextMutate = false;
+              return {
+                ok: false,
+                capability,
+                status: "error",
+                reasonCode: "EXPECTED_TEXT_MISMATCH",
+                diagnostics: [
+                  {
+                    code: "EXPECTED_TEXT_MISMATCH",
+                    severity: "error",
+                    message: "expected text mismatch",
+                    reasonCode: "EXPECTED_TEXT_MISMATCH",
+                  },
+                ],
+              };
+            }
+            const before = state;
+            state = `${before}->${capability}`;
+            state_obj.states.push(state);
+            return {
+              ok: true,
+              capability,
+              status: "success",
+              diagnostics: [],
+              changes: [],
+              versionId: state,
+              stateFrom: before,
+            };
+          },
+        }),
   };
-  return state;
+  return state_obj;
 }
 
-test("document tools expose capabilities/inspect/find without document IDs", async () => {
+test("document tools expose reads + gated mutations without document IDs", async () => {
   const doc = fakeDocument();
   const tools = createDocumentTools(doc);
 
   assert.deepEqual(Object.keys(tools).sort(), [
     "document.capabilities",
     "document.find",
+    "document.insert_paragraph",
     "document.inspect",
+    "document.replace_text",
+    "document.set_text_formatting",
   ]);
 
   for (const name of Object.keys(tools)) {
@@ -124,8 +190,27 @@ test("document tools expose capabilities/inspect/find without document IDs", asy
   assert.deepEqual(doc.lastFind, { text: "hello" });
 });
 
+test("mutations are omitted when host has no mutate or engine omits caps", async () => {
+  const noMutate = fakeDocument({ withMutate: false });
+  assert.deepEqual(Object.keys(createDocumentTools(noMutate)).sort(), [
+    "document.capabilities",
+    "document.find",
+    "document.inspect",
+  ]);
+
+  const readOnlyCaps = fakeDocument({
+    caps: ["inspect", "find_text"],
+    withMutate: true,
+  });
+  assert.deepEqual(Object.keys(createDocumentTools(readOnlyCaps)).sort(), [
+    "document.capabilities",
+    "document.find",
+    "document.inspect",
+  ]);
+});
+
 test("inspect + find in one model turn both run before next turn", async () => {
-  const doc = fakeDocument();
+  const doc = fakeDocument({ withMutate: false });
   const tools = createDocumentTools(doc);
   let invocations = 0;
 
@@ -162,4 +247,201 @@ test("inspect + find in one model turn both run before next turn", async () => {
   assert.equal(invocations, 2);
   assert.equal(result.turns, 2);
   assert.equal(result.text, "done");
+});
+
+test("multi-mutation siblings evolve state sequentially with exactly two model turns", async () => {
+  const doc = fakeDocument();
+  const tools = createDocumentTools(doc);
+  let invocations = 0;
+
+  const model = new MockLanguageModelV4({
+    doStream: async () => {
+      invocations += 1;
+      if (invocations === 1) {
+        return {
+          stream: simulateReadableStream({
+            chunks: toolCallChunks([
+              {
+                id: "a",
+                name: "document.replace_text",
+                input: {
+                  target: { text: "A" },
+                  expectedCurrentText: "A",
+                  replacement: "B",
+                },
+              },
+              {
+                id: "b",
+                name: "document.insert_paragraph",
+                input: { text: "P", placement: { kind: "end" } },
+              },
+              {
+                id: "c",
+                name: "document.set_text_formatting",
+                input: { target: { text: "B" }, bold: true },
+              },
+            ]),
+          }),
+        };
+      }
+      assert.equal(invocations, 2);
+      assert.deepEqual(doc.calls, [
+        "mutate:replace_text",
+        "mutate:insert_paragraph",
+        "mutate:set_text_formatting",
+      ]);
+      assert.deepEqual(doc.states, [
+        "v0->replace_text",
+        "v0->replace_text->insert_paragraph",
+        "v0->replace_text->insert_paragraph->set_text_formatting",
+      ]);
+      return {
+        stream: simulateReadableStream({ chunks: textFinish("edited") }),
+      };
+    },
+  });
+
+  const result = await runAgent({
+    model,
+    messages: [{ role: "user", content: "edit three" }],
+    tools,
+    runId: "test-multi",
+  });
+
+  assert.equal(invocations, 2);
+  assert.equal(result.turns, 2);
+  assert.equal(result.toolCalls, 3);
+  assert.equal(result.text, "edited");
+});
+
+test("mutation failure returns diagnostic, skips later writes, no hidden model turn", async () => {
+  const doc = fakeDocument();
+  doc.failNextMutate = true;
+  const tools = createDocumentTools(doc);
+  let invocations = 0;
+  let sawFailurePayload = false;
+
+  const model = new MockLanguageModelV4({
+    doStream: async (options) => {
+      invocations += 1;
+      if (invocations === 1) {
+        return {
+          stream: simulateReadableStream({
+            chunks: toolCallChunks([
+              {
+                id: "bad",
+                name: "document.replace_text",
+                input: {
+                  target: { text: "x" },
+                  expectedCurrentText: "x",
+                  replacement: "y",
+                },
+              },
+              {
+                id: "skip",
+                name: "document.insert_paragraph",
+                input: { text: "nope", placement: { kind: "end" } },
+              },
+            ]),
+          }),
+        };
+      }
+      const toolMsg = options.prompt.find((m) => m.role === "tool") as
+        | {
+            content: Array<{
+              output: { type: string; value: unknown };
+            }>;
+          }
+        | undefined;
+      assert.ok(toolMsg);
+      assert.equal(toolMsg.content.length, 2);
+      const first = toolMsg.content[0]?.output.value as {
+        ok: boolean;
+        reasonCode?: string;
+      };
+      assert.equal(first.ok, false);
+      assert.equal(first.reasonCode, "EXPECTED_TEXT_MISMATCH");
+      const second = toolMsg.content[1]?.output.value as {
+        ok: boolean;
+        reasonCode?: string;
+      };
+      assert.equal(second.ok, false);
+      assert.equal(second.reasonCode, "PRIOR_WRITE_FAILED");
+      sawFailurePayload = true;
+      return {
+        stream: simulateReadableStream({ chunks: textFinish("failed ok") }),
+      };
+    },
+  });
+
+  const result = await runAgent({
+    model,
+    messages: [{ role: "user", content: "fail write" }],
+    tools,
+  });
+
+  assert.equal(invocations, 2);
+  assert.equal(result.turns, 2);
+  assert.equal(sawFailurePayload, true);
+  assert.deepEqual(doc.calls, ["mutate:replace_text"]);
+  assert.equal(doc.states.length, 0);
+});
+
+test("read after write in same run uses mutated state", async () => {
+  const doc = fakeDocument();
+  const tools = createDocumentTools(doc);
+  let invocations = 0;
+
+  const model = new MockLanguageModelV4({
+    doStream: async () => {
+      invocations += 1;
+      if (invocations === 1) {
+        return {
+          stream: simulateReadableStream({
+            chunks: toolCallChunks([
+              {
+                id: "w",
+                name: "document.replace_text",
+                input: {
+                  target: { text: "A" },
+                  expectedCurrentText: "A",
+                  replacement: "B",
+                },
+              },
+            ]),
+          }),
+        };
+      }
+      if (invocations === 2) {
+        assert.deepEqual(doc.states, ["v0->replace_text"]);
+        return {
+          stream: simulateReadableStream({
+            chunks: toolCallChunks([
+              {
+                id: "r",
+                name: "document.inspect",
+                input: { kind: "overview" },
+              },
+            ]),
+          }),
+        };
+      }
+      assert.deepEqual(doc.calls, ["mutate:replace_text", "inspect"]);
+      assert.deepEqual(doc.states, ["v0->replace_text", "v0->replace_text"]);
+      return {
+        stream: simulateReadableStream({ chunks: textFinish("read ok") }),
+      };
+    },
+  });
+
+  const result = await runAgent({
+    model,
+    messages: [{ role: "user", content: "write then read" }],
+    tools,
+  });
+
+  assert.equal(invocations, 3);
+  assert.equal(result.turns, 3);
+  assert.equal(result.toolCalls, 2);
+  assert.equal(result.text, "read ok");
 });

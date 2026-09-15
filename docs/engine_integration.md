@@ -11,14 +11,12 @@ Application code must never manipulate Office internals as a shortcut around the
 ## Proven mutation path (local N-API)
 
 ```text
-Phase 2A read tools (now)
-  → createDocumentTools(bindDocxDocument({ bytes, binding }))
-  → DocxEngineBinding getDocxCapabilities / inspectDocx / findDocxText
+Phase 2B read/write tools
+  → createDocumentTools(bindDocxDocument({ bytes, versionId, binding, persist }))
+  → DocxEngineBinding getDocxCapabilities / inspectDocx / findDocxText / executeDocx*
   → Node N-API (@opensuite/engine)
   → Rust opensuite-engine
-
-Phase 2B mutations (next)
-  → same binding mutate ops → verified artifact bytes → appendDocumentVersion
+  → persist → appendDocumentVersion → host advances bytes/version
 ```
 ### Blank DOCX create (not a DocumentRuntime mutation)
 
@@ -36,19 +34,19 @@ No DocumentRef / runtime / Base64 / static template / TS OOXML.
 Agent run starts at Version N
   → real find/inspect N
   → typed mutation tool
-       → DocumentMutationExecutor (apps/api)
-       → apply* (engine once + appendDocumentVersion)
+       → bound host mutate(capability, op)
+       → Rust verify → appendDocumentVersion(source: agent)
        → immutable Version N+1
-  → run advances active DocumentRef to N+1
-  → subsequent tools read N+1
+  → host advances bytes/version for later tools in the same run
   → SSE document.version.advanced → UI reloads persisted version
 ```
 
 * Raw engine `artifactBytes` success is **not** tool success — persistence must complete.
 * agent-core-v2 never imports apps/api; application persistence stays in the API.
 * No engine source identities cross the tool boundary.
-* VERSION_CONFLICT / TARGET_NOT_FOUND / PRECONDITION_FAILED / UNSUPPORTED_OPERATION / persistence failure → tool failed; DocumentRef unchanged.
+* VERSION_CONFLICT / TARGET_NOT_FOUND / PRECONDITION_FAILED / UNSUPPORTED_OPERATION / persistence failure → tool failed; host version unchanged.
 * Multi-cell / multi-row updates are atomic **inside one engine operation**; separate tool calls remain separate versions.
+* After a write failure in a sibling batch, later writes in that batch are skipped (`PRIOR_WRITE_FAILED`).
 
 ### Real DOCX read+write flow (service layer)
 
@@ -167,7 +165,7 @@ These types are plain, JSON-shaped TypeScript (no classes, enums-as-objects, or 
 
 * **`EngineTransport` / `EngineClient` / `MockEngineTransport`** — existing contracts inspect seam (still mock-backed).
 * **`DocxEngineBinding`** — hides N-API (caps, blank, find, inspect, replace, paragraph authoring, create/delete table + row/column, set cells, insert rows/column).
-* **`bindDocxDocument`** — tiny Phase 2A read host over exact version bytes + binding.
+* **`bindDocxDocument`** — Phase 2B host over evolving version bytes + optional persist callback.
 
 Swapping N-API for a future remote engine service only requires a new `DocxEngineBinding`.
 
