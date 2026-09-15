@@ -11,12 +11,14 @@ Application code must never manipulate Office internals as a shortcut around the
 ## Proven mutation path (local N-API)
 
 ```text
-Future V2 document operation
-  → application document service
-  → OpenSuiteEngineAdapter (@opensuite/engine-client)
+Phase 2A read tools (now)
+  → createDocumentTools(bindDocxDocument({ bytes, binding }))
+  → DocxEngineBinding getDocxCapabilities / inspectDocx / findDocxText
   → Node N-API (@opensuite/engine)
   → Rust opensuite-engine
-  → verified artifact bytes → appendDocumentVersion
+
+Phase 2B mutations (next)
+  → same binding mutate ops → verified artifact bytes → appendDocumentVersion
 ```
 ### Blank DOCX create (not a DocumentRuntime mutation)
 
@@ -91,7 +93,7 @@ exact immutable version N
   app rejects handle-only column insert as `VALIDATION_FAILED` before N-API (avoids process abort).
 * Limits: simple top-level rectangular tables; column insert needs explicit `w:tblGrid`; merged/nested/complex → `UNSUPPORTED_OPERATION`.
 * Find `mode: "semantic"` is unsupported on the real adapter (use `text`).
-* `MockDocumentRuntime` remains for isolated tests; API DOCX default is OpenSuiteEngineAdapter; PPTX/XLSX remain mock.
+* Phase 2A DOCX reads use `bindDocxDocument` + N-API; PPTX/XLSX engine tools remain unwired.
 * Real DOCX never falls back to mock inspect semantics.
 * Application owns version history; engine never writes DB/storage.
 
@@ -165,8 +167,7 @@ These types are plain, JSON-shaped TypeScript (no classes, enums-as-objects, or 
 
 * **`EngineTransport` / `EngineClient` / `MockEngineTransport`** — existing contracts inspect seam (still mock-backed).
 * **`DocxEngineBinding`** — hides N-API (caps, blank, find, inspect, replace, paragraph authoring, create/delete table + row/column, set cells, insert rows/column).
-* **`OpenSuiteEngineAdapter`** — real DOCX `DocumentRuntime`.
-* **`DocumentArtifactLoader`** — injected exact-version byte loader (application storage owns resolution).
+* **`bindDocxDocument`** — tiny Phase 2A read host over exact version bytes + binding.
 
 Swapping N-API for a future remote engine service only requires a new `DocxEngineBinding`.
 

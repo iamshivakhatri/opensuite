@@ -1,8 +1,8 @@
 /**
- * Narrow Node-binding surface used by OpenSuiteEngineAdapter.
+ * Narrow Node-binding surface for opensuite-engine N-API.
  *
- * Hides N-API / Buffer details from DocumentRuntime callers. A future HTTP
- * or remote transport can implement the same shape without changing agents.
+ * Hides Buffer details from callers. A future HTTP or remote transport can
+ * implement the same shape without changing agents.
  */
 
 export interface DocxReplaceTextTarget {

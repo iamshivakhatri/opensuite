@@ -5,11 +5,14 @@ import {
   type V2Model,
 } from "@opensuite/agent-core-v2";
 
+import type { DocxEngineBinding } from "@opensuite/engine-client";
+
 import type { CredentialSource } from "../ai-preferences/types.js";
 import type { ProviderCredentialProvider } from "../credentials/types.js";
 import type { DocumentService } from "../documents/service.js";
 import type { ManagedTrialService } from "../managed-trial/service.js";
 import type { ModelUsageService } from "../model-usage/service.js";
+import { createPrimaryDocxTools } from "./docx-tools.js";
 import {
   AgentPersistenceError,
   type AgentMessage,
@@ -89,8 +92,12 @@ export interface AgentExecutionHandle {
 
 export interface AgentExecutionServiceDeps {
   readonly persistence: AgentPersistenceService;
-  readonly documents: Pick<DocumentService, "getOwnedDocument">;
+  readonly documents: Pick<
+    DocumentService,
+    "getOwnedDocument" | "readExactVersionBytes"
+  >;
   readonly resolveModel: (userId: string) => Promise<ResolvedV2ExecutionModel>;
+  readonly docxBinding?: DocxEngineBinding;
   readonly modelUsage?: ModelUsageService;
   readonly managedTrial?: ManagedTrialService;
   readonly lease?: AgentExecutionLeaseService;
@@ -114,7 +121,7 @@ export function createAgentExecutionService(deps: AgentExecutionServiceDeps) {
 
     try {
       const model = await resolveModel(deps, input.userId);
-      const baseDocumentVersionId = await resolveBaseDocumentVersion(
+      const primaryDocument = await resolvePrimaryDocument(
         deps.documents,
         thread,
         input.userId,
@@ -131,7 +138,7 @@ export function createAgentExecutionService(deps: AgentExecutionServiceDeps) {
             ownerUserId: input.userId,
             createdByUserId: input.userId,
             triggeringMessageId: userMessage.id,
-            baseDocumentVersionId,
+            baseDocumentVersionId: primaryDocument?.versionId ?? null,
             status: "queued",
           },
           tx,
@@ -146,6 +153,7 @@ export function createAgentExecutionService(deps: AgentExecutionServiceDeps) {
         thread,
         userMessage: started.userMessage,
         run: started.run,
+        primaryDocumentId: primaryDocument?.documentId ?? null,
         ownerUserId: input.userId,
         instruction: input.instruction,
         signal: input.signal,
@@ -183,12 +191,12 @@ async function resolveModel(
   }
 }
 
-async function resolveBaseDocumentVersion(
+async function resolvePrimaryDocument(
   documents: Pick<DocumentService, "getOwnedDocument">,
   thread: AgentThread,
   userId: string,
   documentIds: readonly string[] | undefined,
-): Promise<string | null> {
+): Promise<{ documentId: string; versionId: string } | null> {
   const documentId = documentIds?.[0] ?? thread.documentId;
   if (!documentId) return null;
   try {
@@ -196,7 +204,7 @@ async function resolveBaseDocumentVersion(
     if (document.workspaceId !== thread.workspaceId) {
       throw new AgentExecutionError("DOCUMENT_NOT_FOUND", "Document is not in this workspace");
     }
-    return document.latestVersion.id;
+    return { documentId, versionId: document.latestVersion.id };
   } catch (error) {
     if (error instanceof AgentExecutionError) throw error;
     throw new AgentExecutionError("DOCUMENT_NOT_FOUND", "Document not found for agent run");
@@ -209,6 +217,7 @@ async function runExecution(input: {
   readonly thread: AgentThread;
   readonly userMessage: AgentMessage;
   readonly run: AgentRun;
+  readonly primaryDocumentId: string | null;
   readonly ownerUserId: string;
   readonly instruction: string;
   readonly signal?: AbortSignal;
@@ -242,10 +251,19 @@ async function runExecution(input: {
       await input.deps.managedTrial?.beforeManagedCall(input.ownerUserId);
     }
 
+    const tools = await createPrimaryDocxTools({
+      binding: input.deps.docxBinding,
+      documents: input.deps.documents,
+      ownerUserId: input.ownerUserId,
+      documentId: input.primaryDocumentId,
+      versionId: input.run.baseDocumentVersionId,
+    });
+
     // The one API → agent-core-v2 execution call.
     const result = await runAgent({
       model: input.model.model,
       messages,
+      ...(tools ? { tools } : {}),
       signal: input.signal,
       onEvent: (event) => relayEvent(event, input.liveEvents, input.run.id, messageId),
     });

@@ -262,6 +262,7 @@ export async function buildApp(
     createAgentExecutionService({
       persistence: agentPersistence,
       documents,
+      ...(docxBinding ? { docxBinding } : {}),
       resolveModel: async (userId: string) => {
         const resolved = await aiModelResolver!.resolve(userId);
         if (resolved.provider !== "openrouter") {
