@@ -4,13 +4,9 @@ import { z } from "zod";
 import {
   toAgentMessageDto,
   toAgentRunDto,
-  toAgentStepDto,
   toAgentThreadDto,
 } from "../agent/dto.js";
-import {
-  AgentExecutionError,
-  type AgentExecutionService,
-} from "../agent/execution.js";
+import { AgentExecutionError } from "../agent/execution.js";
 import {
   AgentPersistenceError,
   type AgentPersistenceService,
@@ -23,15 +19,6 @@ import {
 } from "../agent/run-manager.js";
 import type { AgentExecutionLeaseService } from "../agent/execution-lease.js";
 import { getRequestUser, type SessionAuth } from "../auth/session.js";
-import {
-  DocumentAccessError,
-  type DocumentService,
-} from "../documents/service.js";
-
-const DocumentIdParams = z.object({
-  documentId: z.uuid("documentId must be a UUID"),
-});
-
 const WorkspaceIdParams = z.object({
   workspaceId: z.uuid("workspaceId must be a UUID"),
 });
@@ -79,9 +66,7 @@ function unauthenticated() {
 
 export interface AgentRouteDeps {
   readonly auth: SessionAuth;
-  readonly documents: DocumentService;
   readonly persistence: AgentPersistenceService;
-  readonly execution: AgentExecutionService;
   readonly runManager: AgentRunManager;
   readonly lease?: AgentExecutionLeaseService;
   /** Required on hijacked SSE — reply.hijack bypasses @fastify/cors. */
@@ -95,15 +80,13 @@ const TERMINAL_RUN_STATUSES = new Set([
 ]);
 
 /**
- * Workspace-scoped agent threads + document-scoped legacy routes + async run + SSE.
- * POST /runs returns 202 quickly; progress via SSE; recovery via GET /runs.
+ * Workspace agent threads, asynchronous runs, and SSE updates.
  */
 export function registerAgentRoutes(
   app: FastifyInstance,
   deps: AgentRouteDeps,
 ): void {
-  const { auth, documents, persistence, runManager, lease, webOrigin } =
-    deps;
+  const { auth, persistence, runManager, lease, webOrigin } = deps;
 
   app.get(
     "/api/workspaces/:workspaceId/agent/threads",
@@ -175,124 +158,6 @@ export function registerAgentRoutes(
           workspaceId: params.data.workspaceId,
           ownerUserId: user.id,
           documentId: null,
-          createdByUserId: user.id,
-          title: body.data.title,
-        });
-        return reply.status(201).send({ thread: toAgentThreadDto(thread) });
-      } catch (error) {
-        return mapPersistenceError(reply, error);
-      }
-    },
-  );
-
-  app.get(
-    "/api/documents/:documentId/agent/threads",
-    async (request, reply) => {
-      const user = await getRequestUser(auth, request);
-      if (!user) {
-        return reply.status(401).send(unauthenticated());
-      }
-
-      const params = DocumentIdParams.safeParse(request.params);
-      if (!params.success) {
-        return reply.status(400).send({
-          error: {
-            statusCode: 400,
-            message: params.error.issues[0]?.message ?? "Invalid document id",
-            code: "INVALID_DOCUMENT_ID",
-          },
-        });
-      }
-
-      let document;
-      try {
-        document = await documents.getOwnedDocument({
-          documentId: params.data.documentId,
-          ownerUserId: user.id,
-        });
-      } catch (error) {
-        if (error instanceof DocumentAccessError) {
-          return reply.status(error.statusCode).send({
-            error: {
-              statusCode: error.statusCode,
-              message: error.message,
-              code: error.code,
-            },
-          });
-        }
-        throw error;
-      }
-
-      try {
-        const threads = await persistence.listThreadsForWorkspace({
-          workspaceId: document.workspaceId,
-          ownerUserId: user.id,
-          documentId: document.id,
-          includeArchived: false,
-        });
-        return reply.send({
-          threads: threads.map(toAgentThreadDto),
-        });
-      } catch (error) {
-        return mapPersistenceError(reply, error);
-      }
-    },
-  );
-
-  app.post(
-    "/api/documents/:documentId/agent/threads",
-    async (request, reply) => {
-      const user = await getRequestUser(auth, request);
-      if (!user) {
-        return reply.status(401).send(unauthenticated());
-      }
-
-      const params = DocumentIdParams.safeParse(request.params);
-      if (!params.success) {
-        return reply.status(400).send({
-          error: {
-            statusCode: 400,
-            message: params.error.issues[0]?.message ?? "Invalid document id",
-            code: "INVALID_DOCUMENT_ID",
-          },
-        });
-      }
-
-      const body = CreateThreadBody.safeParse(request.body ?? {});
-      if (!body.success) {
-        return reply.status(400).send({
-          error: {
-            statusCode: 400,
-            message: body.error.issues[0]?.message ?? "Invalid thread title",
-            code: "INVALID_AGENT_THREAD_TITLE",
-          },
-        });
-      }
-
-      let document;
-      try {
-        document = await documents.getOwnedDocument({
-          documentId: params.data.documentId,
-          ownerUserId: user.id,
-        });
-      } catch (error) {
-        if (error instanceof DocumentAccessError) {
-          return reply.status(error.statusCode).send({
-            error: {
-              statusCode: error.statusCode,
-              message: error.message,
-              code: error.code,
-            },
-          });
-        }
-        throw error;
-      }
-
-      try {
-        const thread = await persistence.createThread({
-          workspaceId: document.workspaceId,
-          ownerUserId: user.id,
-          documentId: document.id,
           createdByUserId: user.id,
           title: body.data.title,
         });
@@ -452,14 +317,9 @@ export function registerAgentRoutes(
         });
       }
 
-      const steps = await persistence.listStepsForRun({
-        runId: run.id,
-        ownerUserId: user.id,
-      });
-
       return reply.send({
         run: toAgentRunDto(run),
-        steps: steps.map(toAgentStepDto),
+        steps: [],
       });
     } catch (error) {
       return mapPersistenceError(reply, error);
@@ -522,14 +382,9 @@ export function registerAgentRoutes(
         });
       }
 
-      const steps = await persistence.listStepsForRun({
-        runId: current.id,
-        ownerUserId: user.id,
-      });
-
       return reply.send({
         run: toAgentRunDto(current),
-        steps: steps.map(toAgentStepDto),
+        steps: [],
       });
     } catch (error) {
       return mapPersistenceError(reply, error);

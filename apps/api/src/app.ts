@@ -263,18 +263,18 @@ export async function buildApp(
       persistence: agentPersistence,
       documents,
       resolveModel: async (userId: string) => {
-              const resolved = await aiModelResolver!.resolve(userId);
-              if (resolved.provider !== "openrouter") {
-                throw new Error("Agent Core V2 currently requires OpenRouter");
-              }
-              return {
-                model: createOpenRouterModel(resolved),
-                usageAttribution: {
-                  provider: resolved.provider,
-                  model: resolved.model,
-                  credentialSource: resolved.credentialSource,
-                },
-              };
+        const resolved = await aiModelResolver!.resolve(userId);
+        if (resolved.provider !== "openrouter") {
+          throw new Error("Agent Core V2 currently requires OpenRouter");
+        }
+        return {
+          model: createOpenRouterModel(resolved),
+          usageAttribution: {
+            provider: resolved.provider,
+            model: resolved.model,
+            credentialSource: resolved.credentialSource,
+          },
+        };
       },
       modelUsage,
       lease: agentExecutionLease,
@@ -311,9 +311,7 @@ export async function buildApp(
   registerSearchRoutes(app, deps.auth, search);
   registerAgentRoutes(app, {
     auth: deps.auth,
-    documents,
     persistence: agentPersistence,
-    execution: agentExecution,
     runManager: agentRunManager,
     lease: agentExecutionLease,
     webOrigin: config.webOrigin,

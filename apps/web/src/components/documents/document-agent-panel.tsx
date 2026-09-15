@@ -28,12 +28,10 @@ import {
   isActiveAgentRunStatus,
   listDocuments,
   listWorkspaceAgentThreads,
-  resolveAgentConfirmation,
   startAgentRun,
   subscribeAgentRunEvents,
   type AgentMessage,
   type AgentRun,
-  type AgentRunStatus,
   type AgentThread,
   type ListedDocument,
 } from "@/lib/api";
@@ -130,17 +128,6 @@ export function DocumentAgentPanel({
   const [byokModelLabel, setByokModelLabel] = React.useState<string | null>(
     null,
   );
-  /** Detail for the currently pending confirmation.required tool, if any. */
-  const [pendingConfirmation, setPendingConfirmation] = React.useState<{
-    toolCallId: string;
-    toolName: string;
-    reason: string;
-  } | null>(null);
-  /** True while an Approve/Deny request is in flight. */
-  const [confirmingDecision, setConfirmingDecision] = React.useState(false);
-  const [confirmationError, setConfirmationError] = React.useState<
-    string | null
-  >(null);
   const [submitting, setSubmitting] = React.useState(false);
   const [cancelling, setCancelling] = React.useState(false);
   const [creatingChat, setCreatingChat] = React.useState(false);
@@ -293,7 +280,6 @@ export function DocumentAgentPanel({
       setRunNotice(null);
       setCanRetryRun(false);
     }
-    setPendingConfirmation(null);
 
     if (!isActiveAgentRunStatus(run.status)) {
       if (ms !== null) {
@@ -359,9 +345,6 @@ export function DocumentAgentPanel({
       setRunError(message);
       setRunNotice(null);
       setCanRetryRun(true);
-      setPendingConfirmation(null);
-      setConfirmationError(null);
-      setConfirmingDecision(false);
       setActiveRun(null);
       runIdRef.current = null;
       reconnectAttemptsRef.current = 0;
@@ -390,9 +373,6 @@ export function DocumentAgentPanel({
       setRunNotice(null);
       if (!options?.preserveDraft) {
         setCanRetryRun(false);
-        setPendingConfirmation(null);
-        setConfirmationError(null);
-        setConfirmingDecision(false);
         setLiveDraft(null);
         reconnectAttemptsRef.current = 0;
         const startedAt = Date.now();
@@ -448,13 +428,6 @@ export function DocumentAgentPanel({
             if (messageId) {
               setLiveDraft({ messageId, content });
             }
-          } else if (event.type === "confirmation.required") {
-            setConfirmationError(null);
-            setPendingConfirmation({
-              toolCallId: String(event.data.toolCallId ?? ""),
-              toolName: String(event.data.toolName ?? "this action"),
-              reason: String(event.data.reason ?? ""),
-            });
           } else if (event.type === "document.version.advanced") {
             const advancedDocumentId = String(event.data.documentId ?? "");
             if (advancedDocumentId) {
@@ -495,9 +468,6 @@ export function DocumentAgentPanel({
           ) {
             // Confirmation is resolved (approved/denied) once the tool
             // starts, fails, or the run ends — server decides synchronously.
-            setPendingConfirmation(null);
-            setConfirmingDecision(false);
-            setConfirmationError(null);
           }
 
           if (
@@ -619,9 +589,6 @@ export function DocumentAgentPanel({
     setRunNotice(null);
     setCanRetryRun(false);
     setVersionNotice(null);
-    setPendingConfirmation(null);
-    setConfirmationError(null);
-    setConfirmingDecision(false);
     runIdRef.current = null;
     runStartedAtRef.current = null;
     setLiveDraft(null);
@@ -744,7 +711,6 @@ export function DocumentAgentPanel({
     runNotice,
     versionNotice,
     canRetryRun,
-    pendingConfirmation,
     busy,
     runTotalMs,
     timelineOpen,
@@ -846,9 +812,6 @@ export function DocumentAgentPanel({
     setRunNotice(null);
     setCanRetryRun(false);
     setVersionNotice(null);
-    setPendingConfirmation(null);
-    setConfirmationError(null);
-    setConfirmingDecision(false);
     setMentionOpen(false);
 
     const optimisticId = `local-${Date.now()}`;
@@ -932,34 +895,6 @@ export function DocumentAgentPanel({
     await submitInstruction(lastUserMessage.content, resolveDocumentIdsForRun());
   }
 
-  /**
-   * Approve or deny the currently pending confirmation. The run's own SSE
-   * stream (tool.started / tool.failed) is the source of truth for what
-   * happens next — this only submits the decision.
-   */
-  async function handleConfirmationDecision(decision: "approve" | "deny") {
-    const runId = runIdRef.current ?? activeRun?.id;
-    if (!runId || !pendingConfirmation || confirmingDecision) {
-      return;
-    }
-    setConfirmingDecision(true);
-    setConfirmationError(null);
-    try {
-      await resolveAgentConfirmation(runId, {
-        toolCallId: pendingConfirmation.toolCallId,
-        decision,
-      });
-      // Success: leave `confirmingDecision` true until the SSE
-      // tool.started/tool.failed event clears `pendingConfirmation` — avoids
-      // a flash of re-enabled buttons before the run actually moves on.
-    } catch (error) {
-      setConfirmingDecision(false);
-      setConfirmationError(
-        userFacingError(error, "Could not submit that decision. Try again."),
-      );
-    }
-  }
-
   async function handleCancel() {
     const runId = runIdRef.current ?? activeRun?.id;
     if (!runId || cancelling) {
@@ -984,9 +919,6 @@ export function DocumentAgentPanel({
       progressRef.current = nextProgress;
       setProgress(nextProgress);
       setLiveDraft(null);
-      setPendingConfirmation(null);
-      setConfirmationError(null);
-      setConfirmingDecision(false);
       applyTerminalRunStatus(snapshot.run);
     } catch (error) {
       if (error instanceof ApiError && error.statusCode === 404) {
@@ -1017,9 +949,6 @@ export function DocumentAgentPanel({
     setRunNotice(null);
     setCanRetryRun(false);
     setVersionNotice(null);
-    setPendingConfirmation(null);
-    setConfirmationError(null);
-    setConfirmingDecision(false);
     setLiveDraft(null);
     setDraft("");
     runIdRef.current = null;
@@ -1098,9 +1027,6 @@ export function DocumentAgentPanel({
       setRunTotalMs(null);
       setCanRetryRun(false);
       setVersionNotice(null);
-      setPendingConfirmation(null);
-      setConfirmationError(null);
-      setConfirmingDecision(false);
       setLiveDraft(null);
       setDraft("");
       setTagged([]);
@@ -1461,16 +1387,6 @@ export function DocumentAgentPanel({
                 </button>
               ) : null}
 
-              {activeRun && isActiveAgentRunStatus(activeRun.status) ? (
-                <RunStatusHint
-                  status={activeRun.status}
-                  pendingConfirmation={pendingConfirmation}
-                  confirming={confirmingDecision}
-                  confirmationError={confirmationError}
-                  onApprove={() => void handleConfirmationDecision("approve")}
-                  onDeny={() => void handleConfirmationDecision("deny")}
-                />
-              ) : null}
             </div>
           </>
         ) : null}
@@ -1620,97 +1536,5 @@ export function DocumentAgentPanel({
         </div>
       </div>
     </aside>
-  );
-}
-
-/**
- * Confirmation banner while a run waits for approve/deny.
- */
-function RunStatusHint({
-  status,
-  pendingConfirmation,
-  confirming,
-  confirmationError,
-  onApprove,
-  onDeny,
-}: {
-  status: AgentRunStatus;
-  pendingConfirmation: {
-    toolCallId: string;
-    toolName: string;
-    reason: string;
-  } | null;
-  confirming: boolean;
-  confirmationError: string | null;
-  onApprove: () => void;
-  onDeny: () => void;
-}) {
-  if (status !== "waiting_for_confirmation") {
-    return null;
-  }
-  // The banner is only actionable once the toolCallId to approve/deny is
-  // known — a bare `waiting_for_confirmation` snapshot (e.g. right after a
-  // page reload, before the SSE event replays) has nothing to submit yet.
-  const canAct = pendingConfirmation !== null;
-  return (
-    <div
-      className="rounded-[var(--radius-md)] border border-accent-line bg-accent-soft/80 px-2.5 py-2.5"
-      role="region"
-      aria-label="Confirmation needed"
-    >
-      <p className="text-[length:var(--text-panel)] font-semibold tracking-[-0.01em] text-ink">
-        Confirmation needed
-        {pendingConfirmation?.toolName
-          ? ` · ${pendingConfirmation.toolName}`
-          : ""}
-      </p>
-      {pendingConfirmation?.reason ? (
-        <p className="mt-1 text-[length:var(--text-panel)] leading-snug text-ink-soft">
-          {pendingConfirmation.reason}
-        </p>
-      ) : (
-        <p className="mt-1 text-[length:var(--text-xs)] text-ink-faint">
-          The agent needs your decision before continuing.
-        </p>
-      )}
-      {canAct ? (
-        <div className="mt-2 flex items-center gap-1.5">
-          <Button
-            type="button"
-            variant="primary"
-            size="sm"
-            onClick={onApprove}
-            disabled={confirming}
-            className="h-7 px-2.5 text-[length:var(--text-xs)]"
-          >
-            Approve
-          </Button>
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            onClick={onDeny}
-            disabled={confirming}
-            className="h-7 px-2.5 text-[length:var(--text-xs)]"
-          >
-            Deny
-          </Button>
-          {confirming ? (
-            <span className="text-[length:var(--text-2xs)] text-ink-faint">
-              Submitting…
-            </span>
-          ) : null}
-        </div>
-      ) : (
-        <p className="mt-1.5 text-[length:var(--text-2xs)] text-ink-faint">
-          Reconnecting to the pending confirmation…
-        </p>
-      )}
-      {confirmationError ? (
-        <p className="mt-1.5 text-[length:var(--text-2xs)] text-danger">
-          {confirmationError}
-        </p>
-      ) : null}
-    </div>
   );
 }

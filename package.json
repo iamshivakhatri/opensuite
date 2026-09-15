@@ -9,14 +9,14 @@
   "scripts": {
     "build": "turbo run build",
     "dev": "turbo run dev",
-    "dev:api": "pnpm --filter @opensuite/agent-core-v2 build && pnpm --filter @opensuite/api dev",
+    "dev:api": "pnpm --filter \"@opensuite/api^...\" build && pnpm --filter @opensuite/api dev",
     "dev:web": "pnpm --filter @opensuite/web dev",
     "lint": "turbo run lint",
     "typecheck": "turbo run typecheck",
     "test": "turbo run test",
     "db:generate": "pnpm --filter @opensuite/db db:generate",
     "db:migrate": "pnpm --filter @opensuite/db db:migrate",
-    "db:check": "pnpm --filter @opensuite/db db:check",
+    "db:check": "pnpm --filter @opensuite/db db:check"
   },
   "devDependencies": {
     "turbo": "^2.3.3",

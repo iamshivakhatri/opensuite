@@ -575,9 +575,7 @@ export async function saveDocumentVersion(
 
 export type AgentRunStatus =
   | "queued"
-  | "planning"
   | "running"
-  | "waiting_for_confirmation"
   | "completed"
   | "failed"
   | "cancelled";
@@ -608,18 +606,6 @@ export interface AgentRun {
   readonly completedAt: string | null;
 }
 
-export interface AgentStep {
-  readonly id: string;
-  readonly sequence: number;
-  readonly kind: string;
-  readonly status: string;
-  readonly name: string;
-  readonly summary: string | null;
-  readonly createdAt: string;
-  readonly startedAt: string | null;
-  readonly completedAt: string | null;
-}
-
 export interface AgentLiveEvent {
   readonly id: number;
   readonly runId: string;
@@ -630,49 +616,11 @@ export interface AgentLiveEvent {
 
 const ACTIVE_RUN_STATUSES = new Set<AgentRunStatus>([
   "queued",
-  "planning",
   "running",
-  "waiting_for_confirmation",
 ]);
 
 export function isActiveAgentRunStatus(status: AgentRunStatus): boolean {
   return ACTIVE_RUN_STATUSES.has(status);
-}
-
-export async function listDocumentAgentThreads(
-  documentId: string,
-): Promise<AgentThread[]> {
-  const response = await apiFetch(
-    `/api/documents/${documentId}/agent/threads`,
-  );
-  if (!response.ok) {
-    throw await parseError(response);
-  }
-  const body = (await response.json()) as { threads: AgentThread[] };
-  return body.threads;
-}
-
-export async function createDocumentAgentThread(
-  documentId: string,
-  title?: string | null,
-): Promise<AgentThread> {
-  const response = await apiFetch(
-    `/api/documents/${documentId}/agent/threads`,
-    {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(
-        title === undefined || title === null || title === ""
-          ? {}
-          : { title },
-      ),
-    },
-  );
-  if (!response.ok) {
-    throw await parseError(response);
-  }
-  const body = (await response.json()) as { thread: AgentThread };
-  return body.thread;
 }
 
 /** Workspace-scoped agent threads (Cursor-style chat, not bound to one file). */
@@ -756,13 +704,12 @@ export async function startAgentRun(
 
 export async function getAgentRun(runId: string): Promise<{
   run: AgentRun;
-  steps: AgentStep[];
 }> {
   const response = await apiFetch(`/api/agent/runs/${runId}`);
   if (!response.ok) {
     throw await parseError(response);
   }
-  return (await response.json()) as { run: AgentRun; steps: AgentStep[] };
+  return (await response.json()) as { run: AgentRun };
 }
 
 /**
@@ -773,7 +720,7 @@ export async function getAgentRun(runId: string): Promise<{
 export async function waitForAgentRunTerminal(
   runId: string,
   options?: { timeoutMs?: number; intervalMs?: number; signal?: AbortSignal },
-): Promise<{ run: AgentRun; steps: AgentStep[] }> {
+): Promise<{ run: AgentRun }> {
   const timeoutMs = options?.timeoutMs ?? 15_000;
   const baseIntervalMs = options?.intervalMs ?? 500;
   const started = Date.now();
@@ -798,30 +745,9 @@ export async function waitForAgentRunTerminal(
 
 export async function cancelAgentRun(runId: string): Promise<{
   run: AgentRun;
-  steps: AgentStep[];
 }> {
   const response = await apiFetch(`/api/agent/runs/${runId}/cancel`, {
     method: "POST",
-  });
-  if (!response.ok) {
-    throw await parseError(response);
-  }
-  return (await response.json()) as { run: AgentRun; steps: AgentStep[] };
-}
-
-/**
- * Approve or deny a pending `waiting_for_confirmation` tool call. Throws
- * `ApiError` with code `CONFIRMATION_NOT_PENDING` (409) for a stale,
- * duplicate, unknown, or already-resolved `toolCallId`.
- */
-export async function resolveAgentConfirmation(
-  runId: string,
-  input: { toolCallId: string; decision: "approve" | "deny" },
-): Promise<{ run: AgentRun }> {
-  const response = await apiFetch(`/api/agent/runs/${runId}/confirmation`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(input),
   });
   if (!response.ok) {
     throw await parseError(response);

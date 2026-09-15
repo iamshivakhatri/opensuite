@@ -7,9 +7,9 @@ import { test } from "node:test";
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = join(here, "../../../..");
 
-test("agent-core does not depend on @opensuite/engine N-API package", () => {
+test("agent-core-v2 does not depend on @opensuite/engine N-API package", () => {
   const pkg = JSON.parse(
-    readFileSync(join(repoRoot, "packages/agent-core/package.json"), "utf8"),
+    readFileSync(join(repoRoot, "packages/agent-core-v2/package.json"), "utf8"),
   ) as {
     dependencies?: Record<string, string>;
     optionalDependencies?: Record<string, string>;

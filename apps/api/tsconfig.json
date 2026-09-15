@@ -5,6 +5,11 @@
     "rootDir": "src"
   },
   "include": ["src"],
+  "exclude": [
+    "src/documents/artifact-loader.ts",
+    "src/documents/mutation.ts",
+    "src/documents/runtime.ts"
+  ],
   "references": [
     { "path": "../../packages/agent-core-v2" },
     { "path": "../../packages/contracts" },

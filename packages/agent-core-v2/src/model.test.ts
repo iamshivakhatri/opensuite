@@ -3,7 +3,7 @@ import { test } from "node:test";
 
 import { MockLanguageModelV4, simulateReadableStream } from "ai/test";
 
-import { runModel } from "./model.js";
+import { runAgent, runModel } from "./model.js";
 
 test("runModel streams text and returns the final response", async () => {
   const model = new MockLanguageModelV4({
@@ -41,4 +41,38 @@ test("runModel streams text and returns the final response", async () => {
   assert.equal(result.text, "Hello OpenSuite");
   assert.equal(result.inputTokens, 3);
   assert.equal(result.outputTokens, 2);
+});
+
+test("runAgent relays the small Phase 0 event sequence", async () => {
+  const model = new MockLanguageModelV4({
+    doStream: async () => ({
+      stream: simulateReadableStream({
+        chunks: [
+          { type: "stream-start", warnings: [] },
+          { type: "text-start", id: "text" },
+          { type: "text-delta", id: "text", delta: "Hello" },
+          { type: "text-end", id: "text" },
+          {
+            type: "finish",
+            finishReason: { unified: "stop", raw: "stop" },
+            usage: {
+              inputTokens: { total: 1, noCache: 1, cacheRead: 0, cacheWrite: 0 },
+              outputTokens: { total: 1, text: 1, reasoning: 0 },
+            },
+          },
+        ],
+      }),
+    }),
+  });
+  const events: string[] = [];
+
+  await runAgent({
+    model,
+    messages: [{ role: "user", content: "Say hello" }],
+    onEvent: (event) => {
+      events.push(event.type);
+    },
+  });
+
+  assert.deepEqual(events, ["started", "text_delta", "completed"]);
 });

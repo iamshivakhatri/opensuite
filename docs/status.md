@@ -5,25 +5,22 @@ _Read this before starting any work. Keep it a concise current-state handoff, no
 ## What Exists
 
 * Workspace shell, Casual Docs DOCX, engine-backed inspect/mutate, blank create, workspace agent.
-* **Agent Efficiency v1–v6.6** + **AgentCore v2 Steps 1–5C**.
-* **Agent Core V2 runtime, Phase 0A** — separate one-shot OpenRouter stream behind `AGENT_RUNTIME=v2`; V1 remains default; live acceptance pending a V2-started API process.
-* **Agent Progress Control** — Progress Ledger + Stagnation Guard + One-Failure Recovery + Recovery Preflight v1.
-* **Document Authoring Intelligence v1** + list≠grouping + **insert_paragraphs rejects embedded newlines**.
-* **Agent Panel UX v1.1** — live status from last activity (no premature Finishing up); inspect=`checks`; recovered details muted; slim composer.
-* Confirmation bridge; Frontend Phases 1–6B; hosted-alpha foundation.
+* **Agent Core V2, Phase 0B** — the only agent runtime: one OpenRouter stream, persisted messages/runs, and small SSE events. Tool execution and document mutations are not part of V2 yet.
+* Existing Agent panel and hosted-alpha foundation.
 * **AI Settings** — active strip select switches managed ↔ BYOK; setup cards only browse. Account tab shows read-only AI / storage / appearance glance. OpenRouter BYOK has model picker + pricing.
 * **DB availability UX** — pool `connectionTimeoutMillis` 5s; `/health` includes `database`; API maps outages to `503 DATABASE_UNAVAILABLE`; web banner + auth-gate hold (no false sign-out); pg pool reconnects on next checkout.
 * **Deploy scaffolding** — Atlas API-only compose; soft-boot without native engine; `@opensuite/engine` via npm (local `pnpm.overrides` → sibling link). See `docs/deploy.md`.
 
 ## Just Completed
 
-* Agent execution lease: clear orphans on API boot + release on SSE `RUN_ABANDONED`; true-busy 409 includes `activeThreadId` so UI can switch to that chat.
-* Soft-boot API without engine; Docker stub by default; local still uses sibling `link:` for `@opensuite/engine` (~2.6MB .node — fine for GitHub later). npm publish deferred.
+* Phase 0B: removed the old agent runtime and runtime switching. The API now validates and persists application data, then calls `agent-core-v2` once per run.
+* V1 fallout cleanup: deleted dead `@opensuite/agent-core` tests; Phase-2 adapter/loader sources kept on disk but excluded from `tsc` until DocumentRuntime types return.
+* Engine document adapters remain in place for Phase 2; they are not wired into the current V2 runtime.
 
 ## Current Decisions
 
-* Soft-delete; optimistic concurrency; Rust SoT; `pnpm dev:api` rebuilds agent-core first.
-* Managed AI gateway = OpenRouter; **AgentCore v2 frozen** unless evidence-backed fixes.
+* Soft-delete; optimistic concurrency; Rust SoT; `pnpm dev:api` builds API workspace deps first (`api^...`).
+* Managed AI gateway = OpenRouter; Agent Core V2 is intentionally one streamed model call for Phase 0.
 * Engine keep*/indent deferred until visible multi-page need.
 * Agent progress presentation stays in `apps/web` (not agent-core).
 * Managed model is server-chosen (`OPENROUTER_MODEL`); users do not pick it.
@@ -36,17 +33,16 @@ _Read this before starting any work. Keep it a concise current-state handoff, no
 
 | Check | Status |
 |---|---|
-| api soft-boot / config | soft-boot wired; config tests prior **Pass** (21) |
+| V2 runtime / API shell | engine-client + agent-core-v2 build; API typecheck |
 | Docker image build | not run here |
 | Local engine require (darwin) | **Pass** after loader change |
 
 ## Intentionally Deferred
 
-* Recovery Preflight for formatting-session mutations / PPTX/XLSX
-* Authoring Guidance v2 (structure/list/table quality)
+* Phase 1 agent tools and document operations
 * Engine keepNext/keepLines/lineSpacing/indent fields
 * First npm publish of `@opensuite/engine` (needs `NPM_TOKEN` + `@opensuite` scope)
 
 ## Recommended Next Step
 
-Redeploy Atlas (soft-boot stops restart loop). Publish `@opensuite/engine` from opensuite-engine CI, then rebuild with `USE_PUBLISHED_ENGINE=true`.
+Manually test the Agent panel with a V2-started API process, then begin Phase 1 only after that path is accepted.

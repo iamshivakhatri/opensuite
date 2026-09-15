@@ -9,10 +9,6 @@ import type {
   AgentPersistenceService,
   AgentRun,
 } from "./persistence.js";
-import {
-  agentDebugLifecycle,
-  watchAbortSignal,
-} from "./debug-lifecycle.js";
 
 /** Application-owned live event for SSE — no CoT / provider / huge payloads. */
 export interface LiveAgentEvent {
@@ -171,7 +167,7 @@ export interface StartedLiveRun {
 
 /**
  * In-process live run tracker + SSE event hub.
- * Not durable across API process restarts — GET /runs + AgentSteps recover history.
+ * Not durable across API process restarts — GET /runs recovers status.
  */
 export function createAgentRunManager(deps: AgentRunManagerDeps) {
   const active = new Map<string, ActiveRun>();
@@ -201,15 +197,6 @@ export function createAgentRunManager(deps: AgentRunManagerDeps) {
         : {}),
       signal: abort.signal,
       liveEvents,
-    });
-
-    // TEMP: agent lifecycle diagnosis
-    agentDebugLifecycle("RUN_MANAGER_START", {
-      run: handle.run.id,
-      abort: abort.signal.aborted,
-    });
-    watchAbortSignal(abort.signal, "run-controller", {
-      run: handle.run.id,
     });
 
     const entry: ActiveRun = {
@@ -292,11 +279,6 @@ export function createAgentRunManager(deps: AgentRunManagerDeps) {
       return false;
     }
     if (!entry.abort.signal.aborted) {
-      // TEMP: agent lifecycle diagnosis
-      agentDebugLifecycle("USER_CANCEL", {
-        run: input.runId,
-        source: "runManager.cancel",
-      });
       entry.abort.abort();
     }
     return true;

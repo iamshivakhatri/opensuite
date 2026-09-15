@@ -39,8 +39,7 @@ function loadEnvFile(): void {
         value = value.slice(1, -1);
       }
 
-      // An explicit shell value must win. This makes commands such as
-      // `AGENT_RUNTIME=v2 pnpm dev:api` reliable even when .env has a default.
+      // An explicit shell value must win over a local default.
       if (process.env[key] === undefined) {
         process.env[key] = value;
       }

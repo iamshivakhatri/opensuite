@@ -5,6 +5,10 @@
     "rootDir": "src"
   },
   "include": ["src"],
+  "exclude": [
+    "src/opensuite-engine-adapter.ts",
+    "src/document-artifact-loader.ts"
+  ],
   "references": [
     { "path": "../contracts" }
   ]

@@ -11,14 +11,8 @@ Application code must never manipulate Office internals as a shortcut around the
 ## Proven mutation path (local N-API)
 
 ```text
-AgentRunner
-  → AgentTool (replace_text | insert_paragraph | insert_paragraphs | delete_paragraph
-               | set_paragraph_style | set_paragraph_formatting | set_text_formatting
-               | create_table | set_table_cells_text | insert_table_rows | insert_table_column
-               | delete_table | delete_table_row | delete_table_column | set_table_formatting)
-  → DocumentMutationExecutor (injected by apps/api)
-  → apply* (shared authorize → execute → appendDocumentVersion)
-  → DocumentRuntime.execute (once)
+Future V2 document operation
+  → application document service
   → OpenSuiteEngineAdapter (@opensuite/engine-client)
   → Node N-API (@opensuite/engine)
   → Rust opensuite-engine
@@ -49,7 +43,7 @@ Agent run starts at Version N
 ```
 
 * Raw engine `artifactBytes` success is **not** tool success — persistence must complete.
-* agent-core never imports apps/api; persistence is injected.
+* agent-core-v2 never imports apps/api; application persistence stays in the API.
 * No engine source identities cross the tool boundary.
 * VERSION_CONFLICT / TARGET_NOT_FOUND / PRECONDITION_FAILED / UNSUPPORTED_OPERATION / persistence failure → tool failed; DocumentRef unchanged.
 * Multi-cell / multi-row updates are atomic **inside one engine operation**; separate tool calls remain separate versions.
@@ -174,6 +168,6 @@ These types are plain, JSON-shaped TypeScript (no classes, enums-as-objects, or 
 * **`OpenSuiteEngineAdapter`** — real DOCX `DocumentRuntime`.
 * **`DocumentArtifactLoader`** — injected exact-version byte loader (application storage owns resolution).
 
-Swapping N-API for a future remote engine service only requires a new `DocxEngineBinding` — AgentRunner and AgentTools do not change.
+Swapping N-API for a future remote engine service only requires a new `DocxEngineBinding`.
 
 N-API paragraph formatting currently maps alignment + spacingBefore/AfterTwips only; fuller protocol patch fields (indent/keep*) await N-API exposure. Do not invent app-side substitutes.

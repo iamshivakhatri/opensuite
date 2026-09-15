@@ -43,11 +43,9 @@ Web
  ↓
 API / Product Services
  ↓
-Agent Core
+Agent Core V2
  ↓
-DocumentRuntime (interface in agent-core)
- ↓
-Engine Adapter → Engine Client
+Engine Client (when Phase 1 document work is added)
  ↓
 OpenSuite Engine
 ```
@@ -58,7 +56,7 @@ Higher layers may orchestrate lower layers.
 
 Lower layers should not know about higher-layer product concepts.
 
-Agent Core responsibilities and its execution loop are documented separately in [`agent_core.md`](./agent_core.md).
+The current V2 core performs one streamed model call. Future document work must still use `engine-client`.
 
 ## Repository Layout
 
@@ -70,7 +68,7 @@ apps/
   api/            # API / Product Services
 
 packages/
-  agent-core/     # Agent Core
+  agent-core-v2/  # Agent Core V2
   engine-client/  # Engine Client
   contracts/      # Shared types/schemas used across the layers above
   db/             # Persistence for users, workspaces, files, versions, conversations
