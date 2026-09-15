@@ -27,6 +27,9 @@ export type AgentEvent =
   | { readonly type: "agent.started"; readonly runId: string; readonly at: string }
   | { readonly type: "message.delta"; readonly runId: string; readonly messageId: string; readonly delta: string; readonly at: string }
   | { readonly type: "message.completed"; readonly runId: string; readonly messageId: string; readonly content: string; readonly at: string }
+  | { readonly type: "tool.started"; readonly runId: string; readonly at: string; readonly toolCallId: string; readonly toolName: string }
+  | { readonly type: "tool.completed"; readonly runId: string; readonly at: string; readonly toolCallId: string; readonly toolName: string }
+  | { readonly type: "tool.failed"; readonly runId: string; readonly at: string; readonly toolCallId: string; readonly toolName: string; readonly error: string }
   | { readonly type: "agent.completed"; readonly runId: string; readonly at: string }
   | { readonly type: "agent.cancelled"; readonly runId: string; readonly at: string }
   | { readonly type: "agent.failed"; readonly runId: string; readonly at: string; readonly code: string };
@@ -302,6 +305,34 @@ async function relayEvent(
   const at = new Date().toISOString();
   if (event.type === "started") return sink.emit({ type: "agent.started", runId, at });
   if (event.type === "text_delta") return sink.emit({ type: "message.delta", runId, messageId, delta: event.delta, at });
+  if (event.type === "tool_started") {
+    return sink.emit({
+      type: "tool.started",
+      runId,
+      at,
+      toolCallId: event.toolCallId,
+      toolName: event.toolName,
+    });
+  }
+  if (event.type === "tool_completed") {
+    return sink.emit({
+      type: "tool.completed",
+      runId,
+      at,
+      toolCallId: event.toolCallId,
+      toolName: event.toolName,
+    });
+  }
+  if (event.type === "tool_failed") {
+    return sink.emit({
+      type: "tool.failed",
+      runId,
+      at,
+      toolCallId: event.toolCallId,
+      toolName: event.toolName,
+      error: event.error,
+    });
+  }
   if (event.type === "completed") return sink.emit({ type: "message.completed", runId, messageId, content: event.text, at });
 }
 

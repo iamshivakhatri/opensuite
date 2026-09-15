@@ -126,6 +126,28 @@ function toLiveAgentEvent(
           content: truncate(event.content, 8_000),
         },
       };
+    case "tool.started":
+    case "tool.completed":
+      return {
+        runId: event.runId,
+        type: event.type,
+        at: event.at,
+        data: {
+          toolCallId: event.toolCallId,
+          toolName: event.toolName,
+        },
+      };
+    case "tool.failed":
+      return {
+        runId: event.runId,
+        type: event.type,
+        at: event.at,
+        data: {
+          toolCallId: event.toolCallId,
+          toolName: event.toolName,
+          error: truncate(event.error, 500),
+        },
+      };
     default: {
       const _exhaustive: never = event;
       void _exhaustive;
