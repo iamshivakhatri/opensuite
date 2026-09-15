@@ -88,6 +88,7 @@ test("createPrimaryDocxTools emits document.version.advanced after mutate", asyn
   });
 
   assert.ok(tools);
+  assert.equal(tools.tools["document.capabilities"], undefined);
   const mutate = tools.tools["document.insert_paragraph"];
   assert.ok(mutate?.execute);
   await mutate.execute(

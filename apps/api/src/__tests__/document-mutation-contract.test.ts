@@ -13,6 +13,7 @@ import {
   HIDDEN_BINARY_MUTATION_CAPABILITIES,
   MODEL_MUTATION_CAPABILITIES,
 } from "../agent/document-tools.js";
+import { buildAgentOperatingInstruction } from "../agent/operating-instruction.js";
 
 /**
  * Cross-package invariant: every model-exposed mutation has a real dispatcher,
@@ -43,7 +44,7 @@ test("real bound DOCX exposes only executable mutation tools with V3 kinds", asy
   const bound = bindDocxDocument({ binding, bytes, versionId: "v1" });
   const tools = createDocumentTools(bound);
 
-  assert.equal(tools["document.capabilities"]?.kind, "read");
+  assert.equal(tools["document.capabilities"], undefined);
   assert.equal(tools["document.inspect"]?.kind, "read");
   assert.equal(tools["document.find"]?.kind, "read");
 
@@ -51,7 +52,6 @@ test("real bound DOCX exposes only executable mutation tools with V3 kinds", asy
     .filter(
       (name) =>
         name.startsWith("document.") &&
-        name !== "document.capabilities" &&
         name !== "document.inspect" &&
         name !== "document.find",
     )
@@ -92,4 +92,25 @@ test("real bound DOCX exposes only executable mutation tools with V3 kinds", asy
     }
     assert.ok(tools[`document.${cap}`], `missing model tool for ${cap}`);
   }
+});
+
+test("operating instruction mirrors gated toolset; no capabilities or hidden pictures", async () => {
+  const binding = await createNapiDocxEngineBinding();
+  const bytes = new Uint8Array(buildMinimalDocx(["Ops list"]));
+  const bound = bindDocxDocument({ binding, bytes, versionId: "v1" });
+  const tools = createDocumentTools(bound);
+  const system = buildAgentOperatingInstruction([
+    ...Object.keys(tools),
+    "finish",
+  ]);
+
+  assert.equal(tools["document.capabilities"], undefined);
+  assert.equal(system.includes("document.capabilities"), false);
+  for (const hidden of HIDDEN_BINARY_MUTATION_CAPABILITIES) {
+    assert.equal(tools[`document.${hidden}`], undefined);
+    assert.equal(system.includes(`document.${hidden}`), false);
+  }
+  assert.match(system, /- document\.find/);
+  assert.match(system, /- document\.inspect/);
+  assert.match(system, /- document\.replace_text/);
 });

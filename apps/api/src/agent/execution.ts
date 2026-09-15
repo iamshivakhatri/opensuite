@@ -17,7 +17,7 @@ import type { DocumentService } from "../documents/service.js";
 import type { ManagedTrialService } from "../managed-trial/service.js";
 import type { ModelUsageService } from "../model-usage/service.js";
 import { createPrimaryDocxTools } from "./docx-tools.js";
-import { AGENT_OPERATING_INSTRUCTION } from "./operating-instruction.js";
+import { buildAgentOperatingInstruction } from "./operating-instruction.js";
 import {
   type AgentMessage,
   type AgentPersistenceService,
@@ -299,7 +299,7 @@ async function runExecution(input: {
     const executeAgent = input.deps.runAgent ?? runAgent;
     const result = await executeAgent({
       model: input.model.model,
-      system: AGENT_OPERATING_INSTRUCTION,
+      system: buildAgentOperatingInstruction(Object.keys(tools)),
       messages,
       tools,
       signal: input.signal,

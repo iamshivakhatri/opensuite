@@ -34,12 +34,6 @@ export type InspectFocus =
       readonly after?: number;
     };
 
-const emptyInput = jsonSchema<{ _?: never }>({
-  type: "object",
-  properties: {},
-  additionalProperties: false,
-});
-
 const findInput = jsonSchema<{ text: string }>({
   type: "object",
   properties: {
@@ -529,14 +523,7 @@ function docxCapabilitySet(capabilities: unknown): Set<string> {
 /** V3 AgentTools for the live loop. Names match product progress labels. */
 export function createDocumentTools(document: BoundDocumentHost): AgentToolSet {
   const caps = docxCapabilitySet(document.capabilities());
-  const tools: AgentToolSet = {
-    "document.capabilities": defineTool({
-      kind: "read",
-      description: "List real DOCX engine capabilities for the bound document.",
-      inputSchema: emptyInput,
-      execute: async () => document.capabilities(),
-    }),
-  };
+  const tools: AgentToolSet = {};
 
   if (caps.has(READ_CAPS.inspect)) {
     tools["document.inspect"] = defineTool({

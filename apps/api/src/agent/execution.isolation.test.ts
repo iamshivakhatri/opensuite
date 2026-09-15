@@ -191,8 +191,12 @@ async function collectUnhandledRejections(
 test("successful V3 finish_tool settles completed + agent.completed", async () => {
   const persistence = memoryPersistence("user-1");
   const events: AgentEvent[] = [];
+  let sawSystem: string | undefined;
   const execution = createAgentExecutionService(
-    baseDeps(persistence, async () => softResult("finish_tool", "All done")),
+    baseDeps(persistence, async (input) => {
+      sawSystem = input.system;
+      return softResult("finish_tool", "All done");
+    }),
   );
 
   const result = await (
@@ -212,6 +216,12 @@ test("successful V3 finish_tool settles completed + agent.completed", async () =
   assert.equal(result.assistantMessage?.content, "All done");
   assert.ok(events.some((e) => e.type === "agent.completed"));
   assert.equal(events.some((e) => e.type === "agent.failed"), false);
+  assert.ok(sawSystem);
+  assert.match(sawSystem!, /You are OpenSuite's document editing agent/);
+  assert.match(sawSystem!, /Use finish when the requested work is complete/);
+  // No bound DOCX in this isolation fixture → only finish is exposed.
+  assert.match(sawSystem!, /No document operations are available in this run/);
+  assert.equal(sawSystem!.includes("document.capabilities"), false);
 });
 
 test("successful V3 completed (no tools) settles completed", async () => {

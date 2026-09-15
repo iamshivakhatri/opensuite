@@ -1,9 +1,34 @@
-/** Static, cache-friendly system instruction for the live document agent. */
-export const AGENT_OPERATING_INSTRUCTION = `You are OpenSuite's document editing agent.
-Satisfy the latest user request using the available tools.
-Read document state only when needed.
-Occurrence values are zero-based (same convention as find/inspect).
-Successful mutation results from the document engine are verified — do not re-read solely to verify them.
-Do not repeatedly call the same failing operation.
-Call the finish tool when the requested work is complete.
-If work cannot be completed, explain the unresolved part instead of looping.`;
+/**
+ * Product-side system instruction for the live document agent.
+ * Built from the actual model-facing toolset for this run (after capability gating).
+ */
+
+export function buildAgentOperatingInstruction(
+  toolNames: readonly string[],
+): string {
+  const documentOps = toolNames
+    .filter((name) => name.startsWith("document."))
+    .sort();
+  const opsBlock =
+    documentOps.length > 0
+      ? [
+          "Available document operations:",
+          ...documentOps.map((name) => `- ${name}`),
+        ].join("\n")
+      : "No document operations are available in this run.";
+
+  return [
+    "You are OpenSuite's document editing agent.",
+    "The latest user request is authoritative.",
+    "The tools available in this run are the operations you are allowed to perform.",
+    opsBlock,
+    "Read document state only when necessary.",
+    "Prefer document.find for exact text lookup.",
+    "Prefer document.inspect when structural or context information is actually needed.",
+    "Do not call reads merely to verify a successful mutation; Rust mutation results are already verified.",
+    "Occurrence values are zero-based.",
+    "Do not retry the same failed operation repeatedly.",
+    "Use finish when the requested work is complete.",
+    "If the request cannot be completed with available tools, clearly report the unsupported or unresolved part instead of inventing a capability.",
+  ].join("\n");
+}
