@@ -14,7 +14,6 @@ import type { ManagedTrialService } from "../managed-trial/service.js";
 import type { ModelUsageService } from "../model-usage/service.js";
 import { createPrimaryDocxTools } from "./docx-tools.js";
 import {
-  AgentPersistenceError,
   type AgentMessage,
   type AgentPersistenceService,
   type AgentRun,
@@ -109,6 +108,8 @@ export interface AgentExecutionServiceDeps {
   readonly modelUsage?: ModelUsageService;
   readonly managedTrial?: ManagedTrialService;
   readonly lease?: AgentExecutionLeaseService;
+  /** Test seam — production uses agent-core-v2 `runAgent`. */
+  readonly runAgent?: typeof runAgent;
 }
 
 /** Product shell: resolve and persist here; execute once in agent-core-v2. */
@@ -167,10 +168,10 @@ export function createAgentExecutionService(deps: AgentExecutionServiceDeps) {
         signal: input.signal,
         liveEvents: input.liveEvents,
       });
+      // Background observation/ownership lives in run-manager (not here).
       const protectedResult = lease
         ? keepLeaseUntilFinished(deps.lease!, lease, result)
         : result;
-      void protectedResult.catch(() => undefined);
       return { thread, userMessage: started.userMessage, run: started.run, result: protectedResult };
     } catch (error) {
       if (lease) await releaseLease(deps.lease!, lease);
@@ -279,7 +280,8 @@ async function runExecution(input: {
     });
 
     // The one API → agent-core-v2 execution call.
-    const result = await runAgent({
+    const executeAgent = input.deps.runAgent ?? runAgent;
+    const result = await executeAgent({
       model: input.model.model,
       messages,
       ...(boundTools ? { tools: boundTools.tools } : {}),
@@ -311,22 +313,19 @@ async function runExecution(input: {
     await input.liveEvents?.emit({ type: "agent.completed", runId: input.run.id, at: new Date().toISOString() });
     return { thread: input.thread, userMessage: input.userMessage, ...finalized };
   } catch (error) {
-    const cancelled = input.signal?.aborted === true;
-    await updateRunAfterError(input.deps.persistence, input.ownerUserId, input.run.id, cancelled);
-    await input.liveEvents?.emit(
-      cancelled
-        ? { type: "agent.cancelled", runId: input.run.id, at: new Date().toISOString() }
-        : { type: "agent.failed", runId: input.run.id, at: new Date().toISOString(), code: "AGENT_EXECUTION_FAILED" },
-    );
-    if (cancelled) {
-      return {
-        thread: input.thread,
-        userMessage: input.userMessage,
-        run: await requireRun(input.deps.persistence, input.ownerUserId, input.run.id),
-        assistantMessage: null,
-      };
-    }
-    throw new AgentExecutionError("AGENT_EXECUTION_FAILED", "Agent execution failed");
+    // Convert every run failure into terminal product state and settle normally.
+    // Re-throwing here used to reject the background promise; combined with an
+    // unobserved Promise.finally in run-manager, Node treated that as fatal.
+    return settleTerminalRunFailure({
+      error,
+      cancelled: input.signal?.aborted === true,
+      persistence: input.deps.persistence,
+      ownerUserId: input.ownerUserId,
+      thread: input.thread,
+      userMessage: input.userMessage,
+      run: input.run,
+      liveEvents: input.liveEvents,
+    });
   }
 }
 
@@ -391,32 +390,103 @@ async function finalizeCompletedRun(input: {
   });
 }
 
+async function settleTerminalRunFailure(input: {
+  readonly error: unknown;
+  readonly cancelled: boolean;
+  readonly persistence: AgentPersistenceService;
+  readonly ownerUserId: string;
+  readonly thread: AgentThread;
+  readonly userMessage: AgentMessage;
+  readonly run: AgentRun;
+  readonly liveEvents?: AgentEventSink;
+}): Promise<AgentExecutionResult> {
+  const runShort = input.run.id.slice(0, 8);
+
+  try {
+    await updateRunAfterError(
+      input.persistence,
+      input.ownerUserId,
+      input.run.id,
+      input.cancelled,
+    );
+  } catch (finalizeError) {
+    console.error(
+      `[agent] run=${runShort} terminal_finalize_failed reason=${summarizeError(finalizeError)}`,
+    );
+  }
+
+  try {
+    await input.liveEvents?.emit(
+      input.cancelled
+        ? { type: "agent.cancelled", runId: input.run.id, at: new Date().toISOString() }
+        : {
+            type: "agent.failed",
+            runId: input.run.id,
+            at: new Date().toISOString(),
+            code: "AGENT_EXECUTION_FAILED",
+          },
+    );
+  } catch (emitError) {
+    console.error(
+      `[agent] run=${runShort} terminal_emit_failed reason=${summarizeError(emitError)}`,
+    );
+  }
+
+  if (!input.cancelled) {
+    console.error(`[agent] run=${runShort} failed reason=${summarizeError(input.error)}`);
+  }
+
+  return {
+    thread: input.thread,
+    userMessage: input.userMessage,
+    run: await loadTerminalRun(input.persistence, input.ownerUserId, input.run, input.cancelled),
+    assistantMessage: null,
+  };
+}
+
+function summarizeError(error: unknown): string {
+  if (error instanceof Error) {
+    return `${error.name}: ${error.message}`.slice(0, 240);
+  }
+  return String(error).slice(0, 240);
+}
+
 async function updateRunAfterError(
   persistence: AgentPersistenceService,
   ownerUserId: string,
   runId: string,
   cancelled: boolean,
 ): Promise<void> {
-  try {
-    await persistence.updateRunStatus({
-      runId,
-      ownerUserId,
-      status: cancelled ? "cancelled" : "failed",
-      ...(cancelled ? {} : { errorCode: "AGENT_EXECUTION_FAILED", errorMessage: "Agent execution failed" }),
-    });
-  } catch (error) {
-    if (!(error instanceof AgentPersistenceError)) throw error;
-  }
+  await persistence.updateRunStatus({
+    runId,
+    ownerUserId,
+    status: cancelled ? "cancelled" : "failed",
+    ...(cancelled
+      ? {}
+      : { errorCode: "AGENT_EXECUTION_FAILED", errorMessage: "Agent execution failed" }),
+  });
 }
 
-async function requireRun(
+async function loadTerminalRun(
   persistence: AgentPersistenceService,
   ownerUserId: string,
-  runId: string,
+  fallback: AgentRun,
+  cancelled: boolean,
 ): Promise<AgentRun> {
-  const run = await persistence.getRun({ runId, ownerUserId });
-  if (!run) throw new AgentExecutionError("AGENT_PERSISTENCE_FAILED", "Agent run was not found");
-  return run;
+  const terminalStatus = cancelled ? "cancelled" : "failed";
+  try {
+    const run = await persistence.getRun({ runId: fallback.id, ownerUserId });
+    if (run?.status === terminalStatus) return run;
+  } catch {
+    // fall through to in-memory terminal snapshot
+  }
+  return {
+    ...fallback,
+    status: terminalStatus,
+    completedAt: new Date().toISOString(),
+    errorCode: cancelled ? null : "AGENT_EXECUTION_FAILED",
+    errorMessage: cancelled ? null : "Agent execution failed",
+  };
 }
 
 function keepLeaseUntilFinished<T>(leases: AgentExecutionLeaseService, lease: AgentExecutionLease, result: Promise<T>): Promise<T> {

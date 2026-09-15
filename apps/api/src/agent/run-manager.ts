@@ -241,17 +241,28 @@ export function createAgentRunManager(deps: AgentRunManagerDeps) {
     };
     active.set(handle.run.id, entry);
 
-    void handle.result.catch(() => undefined);
-    void handle.result.finally(() => {
-      const timer = setTimeout(() => {
-        const current = active.get(handle.run.id);
-        if (current === entry) {
-          current.hub.close();
-          active.delete(handle.run.id);
-        }
-      }, liveGraceMs);
-      timer.unref?.();
-    });
+    // ONE ownership boundary for the background run promise.
+    // Important: Promise.finally returns a *new* promise that re-rejects when
+    // the source rejects. Leaving that derived promise unobserved terminates
+    // Node (unhandledRejection → throw). Chain .catch on the finally result.
+    void handle.result
+      .finally(() => {
+        const timer = setTimeout(() => {
+          const current = active.get(handle.run.id);
+          if (current === entry) {
+            current.hub.close();
+            active.delete(handle.run.id);
+          }
+        }, liveGraceMs);
+        timer.unref?.();
+      })
+      .catch((error) => {
+        console.error(
+          `[agent] run=${handle.run.id.slice(0, 8)} background_unhandled reason=${
+            error instanceof Error ? `${error.name}: ${error.message}`.slice(0, 240) : String(error).slice(0, 240)
+          }`,
+        );
+      });
 
     return {
       run: handle.run,

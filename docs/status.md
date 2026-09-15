@@ -13,12 +13,12 @@ _Read this before starting any work. Keep it a concise current-state handoff, no
 
 ## Just Completed
 
-* Phase 2B: mutable `bindDocxDocument` (bytes evolve + persist callback); `createDocumentTools` exposes engine mutation caps as typed tools; API `appendDocumentVersion` + `document.version.advanced` SSE; `runAgent` turn/tool/run_done logs + sibling write-stop after failure.
+* **P0 agent-run isolation** — run failures (maxTurns, provider/tool throws) convert to terminal product state (`failed`/`cancelled` + SSE) and must not kill the API process. Root cause: unobserved `Promise.finally` re-rejection in `run-manager` + rethrow after failure conversion in `execution`.
 
 ## Current Decisions
 
 * Soft-delete; optimistic concurrency; Rust SoT; `pnpm dev:api` builds API workspace deps first (`api^...`).
-* Managed AI gateway = OpenRouter; Agent Core V2 owns the model/tool loop; API owns app shell + document binding + persistence.
+* Managed AI gateway = OpenRouter; Agent Core V2 owns the model/tool loop; API owns app shell + document binding + persistence + background-run containment.
 * Engine keep*/indent deferred until visible multi-page need.
 * Agent progress presentation stays in `apps/web` (not agent-core).
 * Managed model is server-chosen (`OPENROUTER_MODEL`); users do not pick it.
@@ -31,11 +31,10 @@ _Read this before starting any work. Keep it a concise current-state handoff, no
 
 | Check | Status |
 |---|---|
-| engine-client tests (incl. mutate bind) | Pass (9) |
-| agent-core-v2 tests | Pass (14) |
+| agent isolation tests (execution + run-manager) | Pass (5) |
 | API typecheck | Pass |
 | git diff --check | Pass |
-| Manual Agent panel dogfood | pending (user) |
+| Manual Agent panel dogfood (maxTurns / failed run) | pending (user) |
 
 ## Intentionally Deferred
 
@@ -44,7 +43,8 @@ _Read this before starting any work. Keep it a concise current-state handoff, no
 * Engine keepNext/keepLines/lineSpacing/indent fields
 * Frontend exposure of model-turn logs
 * First npm publish of `@opensuite/engine` (needs `NPM_TOKEN` + `@opensuite` scope)
+* Mutation schema / document tool correctness / repeated-failure / context cleanup (separate milestones)
 
 ## Recommended Next Step
 
-Manually dogfood Agent panel: multi-edit DOCX, refresh, download/reopen; confirm backend `turn_*` / `tool_*` / `run_done` logs.
+Manually reproduce a maxTurns/failed agent run and confirm API stays up, run status=`failed`, and UI leaves "Finishing up...".
