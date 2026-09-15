@@ -53,6 +53,29 @@ test("BYOK resolution uses the selected user's credential when present", async (
   assert.deepEqual(users, ["user-a", "user-b"]);
 });
 
+test("OpenRouter BYOK works without a managed OpenRouter environment key", async () => {
+  const resolver = createAiModelResolver({
+    preferences: {
+      get: async () => ({
+        provider: "openrouter",
+        model: "openai/gpt-4.1-mini",
+        credentialSource: "byok",
+        createdAt: "",
+        updatedAt: "",
+      }),
+    } as never,
+    credentials: { getSecret: async () => "stored-user-key" } as never,
+    managed: { ...managed, openrouterApiKey: null, openrouterModel: null },
+  });
+
+  assert.deepEqual(await resolver.resolve("user-a"), {
+    provider: "openrouter",
+    model: "openai/gpt-4.1-mini",
+    credentialSource: "byok",
+    apiKey: "stored-user-key",
+  });
+});
+
 test("managed resolution does not read a user's BYOK credential", async () => {
   let readCredential = false;
   const resolver = createAiModelResolver({

@@ -17,6 +17,10 @@ export interface AgentExecutionLeaseService {
   acquire(userId: string): Promise<AgentExecutionLease | null>;
   renew(lease: AgentExecutionLease): Promise<boolean>;
   release(lease: AgentExecutionLease): Promise<boolean>;
+  /** Drop a user's lease regardless of token (orphan cleanup after crash). */
+  releaseUser(userId: string): Promise<boolean>;
+  /** Drop every lease — safe on single-process boot (live runs are in-memory). */
+  clearAll(): Promise<number>;
 }
 
 /** One row per user; conflict update only takes an expired row. */
@@ -74,6 +78,21 @@ export function createAgentExecutionLeaseService(
         )
         .returning({ userId: schema.agentExecutionLease.userId });
       return rows.length === 1;
+    },
+
+    async releaseUser(userId) {
+      const rows = await db
+        .delete(schema.agentExecutionLease)
+        .where(eq(schema.agentExecutionLease.userId, userId))
+        .returning({ userId: schema.agentExecutionLease.userId });
+      return rows.length === 1;
+    },
+
+    async clearAll() {
+      const rows = await db
+        .delete(schema.agentExecutionLease)
+        .returning({ userId: schema.agentExecutionLease.userId });
+      return rows.length;
     },
   };
 }

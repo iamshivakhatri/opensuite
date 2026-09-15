@@ -2,16 +2,9 @@ import Fastify, { type FastifyError, type FastifyInstance } from "fastify";
 import cors from "@fastify/cors";
 import multipart from "@fastify/multipart";
 
-import {
-  mutableDocumentCapabilities,
-  type AgentModel,
-  type ConfirmationGate,
-  type DocumentRuntime,
-  type RuntimeCapabilities,
-  type SteeringSource,
-  type ToolRegistry,
-} from "@opensuite/agent-core";
 import type { Db } from "@opensuite/db";
+import { createOpenRouterModel } from "@opensuite/agent-core-v2";
+import { createNapiDocxEngineBinding } from "@opensuite/engine-client";
 
 import {
   databaseUnavailableBody,
@@ -33,11 +26,6 @@ import { createAgentExecutionLeaseService } from "./agent/execution-lease.js";
 import { createManagedTrialRepository } from "./managed-trial/repository.js";
 import { createManagedTrialService } from "./managed-trial/service.js";
 import { createStorageAccountingService } from "./storage-accounting/service.js";
-import type { ConfirmationBridge } from "./agent/confirmation-bridge.js";
-import {
-  createConfiguredAgentModel,
-  createResolvedAgentModel,
-} from "./agent/model/index.js";
 import { createAiModelResolver } from "./ai-preferences/resolver.js";
 import { createAiPreferenceService } from "./ai-preferences/service.js";
 import type { SessionAuth } from "./auth/session.js";
@@ -53,10 +41,6 @@ import {
   type ProviderCredentialService,
 } from "./credentials/service.js";
 import { createDocumentService } from "./documents/service.js";
-import {
-  createDocumentRuntimeResolver,
-  loadDocxEngineBinding,
-} from "./documents/runtime.js";
 import { createDocumentPreferenceService } from "./documents/preferences.js";
 import { createSearchService } from "./documents/search.js";
 import { createModelUsageRepository } from "./model-usage/repository.js";
@@ -81,29 +65,12 @@ import { createWorkspaceService } from "./workspaces/service.js";
 import { isDevConsole, requestPath } from "./dev-log.js";
 
 /**
- * Optional agent stack overrides for tests / future provider wiring.
- * Routes never construct FakeAgentModel — inject model/tools (or a full
- * execution service) from composition. Production model comes from
- * createConfiguredAgentModel(config) unless overridden here.
+ * Optional product-shell overrides for tests.
  */
 export interface AgentAppDependencies {
   readonly persistence?: AgentPersistenceService;
   readonly execution?: AgentExecutionService;
   readonly runManager?: AgentRunManager;
-  readonly model?: AgentModel;
-  readonly tools?: ToolRegistry;
-  readonly runtime?: DocumentRuntime;
-  readonly confirmation?: ConfirmationGate;
-  /**
-   * Interactive HTTP approve/deny bridge. When set (and `confirmation` is
-   * not separately overridden), it becomes the execution service's
-   * confirmation gate AND the resolver the confirm/deny route calls into.
-   * Omitted → confirmation semantics are unchanged (deny-all by default).
-   */
-  readonly confirmationBridge?: ConfirmationBridge;
-  readonly steering?: SteeringSource;
-  readonly capabilities?: RuntimeCapabilities;
-  readonly maxTurns?: number;
   /** Shorter grace for SSE tests. */
   readonly liveGraceMs?: number;
 }
@@ -217,10 +184,7 @@ export async function buildApp(
       apiKey: config.agent.openrouterApiKey,
     });
   const aiModelResolver =
-    config.agent.provider === "anthropic" ||
-    config.agent.provider === "openai" ||
-    config.agent.provider === "openrouter" ||
-    Boolean(config.agent.openrouterApiKey)
+    Boolean(config.agent.openrouterApiKey) || Boolean(credentials)
       ? createAiModelResolver({
           preferences: aiPreferences,
           credentials,
@@ -229,25 +193,21 @@ export async function buildApp(
         })
       : null;
 
-  // Production: load N-API once for DOCX runtime + blank DOCX creation.
-  // Tests may inject runtime and/or createBlankDocxBytes without the native binding.
-  let resolveRuntime: import("./documents/runtime.js").DocumentRuntimeResolver | undefined;
-  let documentRuntime = deps.agent?.runtime;
+  // Production: load N-API once for blank DOCX creation.
   let createBlankDocxBytes:
     | (() => Uint8Array | Promise<Uint8Array>)
     | undefined = deps.createBlankDocxBytes;
   let docxBinding: import("@opensuite/engine-client").DocxEngineBinding | undefined;
 
-  if (!documentRuntime || !createBlankDocxBytes) {
+  if (!createBlankDocxBytes) {
     try {
-      docxBinding = await loadDocxEngineBinding();
+      docxBinding = await createNapiDocxEngineBinding();
     } catch (error) {
-      if (!documentRuntime) {
-        throw error;
-      }
-      app.log.warn(
+      // Soft-boot: API stays up for auth/workspaces/etc. DOCX mutate/blank
+      // stay unavailable until @opensuite/engine (native) is installed.
+      app.log.error(
         { err: error },
-        "DOCX engine binding unavailable; blank document creation disabled",
+        "DOCX engine binding unavailable; blank document creation is unavailable",
       );
     }
   }
@@ -293,50 +253,32 @@ export async function buildApp(
 
   const agentPersistence =
     deps.agent?.persistence ?? createAgentPersistenceService(deps.db);
-  const documentCapabilities =
-    deps.agent?.capabilities ?? mutableDocumentCapabilities();
-  // Prefer per-run capability discovery in AgentRunner when tools are not
-  // explicitly injected (tests may still pass a fixed registry).
-  const documentTools = deps.agent?.tools;
-
-  if (!documentRuntime && docxBinding) {
-    resolveRuntime = createDocumentRuntimeResolver({
-      documents,
-      binding: docxBinding,
-    });
+  const agentExecutionLease = createAgentExecutionLeaseService(deps.db);
+  if (!aiModelResolver && !deps.agent?.execution) {
+    throw new Error("OpenRouter configuration is required for Agent Core V2");
   }
-
   const agentExecution =
     deps.agent?.execution ??
     createAgentExecutionService({
       persistence: agentPersistence,
       documents,
-      model: deps.agent?.model ?? createConfiguredAgentModel(config),
-      ...(aiModelResolver && !deps.agent?.model
-        ? {
-            resolveModel: async (userId: string) => {
-              const resolved = await aiModelResolver.resolve(userId);
+      resolveModel: async (userId: string) => {
+              const resolved = await aiModelResolver!.resolve(userId);
+              if (resolved.provider !== "openrouter") {
+                throw new Error("Agent Core V2 currently requires OpenRouter");
+              }
               return {
-                model: createResolvedAgentModel(resolved),
+                model: createOpenRouterModel(resolved),
                 usageAttribution: {
                   provider: resolved.provider,
                   model: resolved.model,
                   credentialSource: resolved.credentialSource,
                 },
               };
-            },
-            modelUsage,
-          }
-        : {}),
-      lease: createAgentExecutionLeaseService(deps.db),
+      },
+      modelUsage,
+      lease: agentExecutionLease,
       managedTrial,
-      tools: documentTools,
-      runtime: documentRuntime,
-      resolveRuntime,
-      confirmation: deps.agent?.confirmation ?? deps.agent?.confirmationBridge,
-      steering: deps.agent?.steering,
-      capabilities: documentCapabilities,
-      maxTurns: deps.agent?.maxTurns,
     });
   const agentRunManager =
     deps.agent?.runManager ??
@@ -373,7 +315,7 @@ export async function buildApp(
     persistence: agentPersistence,
     execution: agentExecution,
     runManager: agentRunManager,
-    confirmationBridge: deps.agent?.confirmationBridge,
+    lease: agentExecutionLease,
     webOrigin: config.webOrigin,
   });
 

@@ -1,6 +1,6 @@
-import type { AgentEvent, AgentEventSink } from "@opensuite/agent-core";
-
 import type {
+  AgentEvent,
+  AgentEventSink,
   AgentExecutionResult,
   AgentExecutionService,
 } from "./execution.js";
@@ -105,106 +105,9 @@ function toLiveAgentEvent(
         type: event.type,
         at: event.at,
         data: {
-          code: event.diagnostic.code,
+          code: event.code,
           // Never stream raw provider/model exception text over SSE.
           message: "Agent run failed",
-        },
-      };
-    case "tool.started":
-      return {
-        runId: event.runId,
-        type: event.type,
-        at: event.at,
-        data: {
-          toolCallId: event.toolCallId,
-          toolName: event.toolName,
-        },
-      };
-    case "tool.completed":
-      return {
-        runId: event.runId,
-        type: event.type,
-        at: event.at,
-        data: {
-          toolCallId: event.toolCallId,
-          toolName: event.toolName,
-          ...(event.summary !== undefined ? { summary: event.summary } : {}),
-        },
-      };
-    case "tool.deferred":
-      return {
-        runId: event.runId,
-        type: event.type,
-        at: event.at,
-        data: {
-          toolCallId: event.toolCallId,
-          toolName: event.toolName,
-          summary: event.summary,
-        },
-      };
-    case "tool.failed":
-      return {
-        runId: event.runId,
-        type: event.type,
-        at: event.at,
-        data: {
-          toolCallId: event.toolCallId,
-          toolName: event.toolName,
-          code: event.diagnostic.code,
-          message: truncate(event.diagnostic.message, 200),
-        },
-      };
-    case "confirmation.required":
-      return {
-        runId: event.runId,
-        type: event.type,
-        at: event.at,
-        data: {
-          toolCallId: event.toolCallId,
-          toolName: event.toolName,
-          reason: event.reason,
-        },
-      };
-    case "document.version.advanced":
-      return {
-        runId: event.runId,
-        type: event.type,
-        at: event.at,
-        data: {
-          documentId: event.documentId,
-          versionId: event.versionId,
-          baseVersionId: event.baseVersionId,
-          ...(event.versionNumber !== undefined
-            ? { versionNumber: event.versionNumber }
-            : {}),
-        },
-      };
-    case "document.created":
-      return {
-        runId: event.runId,
-        type: event.type,
-        at: event.at,
-        data: {
-          documentId: event.documentId,
-          versionId: event.versionId,
-          name: event.name,
-          format: event.format,
-        },
-      };
-    case "turn.started":
-    case "turn.completed":
-    case "model.turn.metrics":
-    case "tool.execution.metrics":
-    case "agent.progress":
-      return null;
-    case "message.started":
-      return {
-        runId: event.runId,
-        type: event.type,
-        at: event.at,
-        data: {
-          messageId: event.messageId,
-          role: event.role,
         },
       };
     case "message.delta":
@@ -214,7 +117,6 @@ function toLiveAgentEvent(
         at: event.at,
         data: {
           messageId: event.messageId,
-          role: event.role,
           delta: truncate(event.delta, 2_000),
         },
       };
@@ -225,7 +127,6 @@ function toLiveAgentEvent(
         at: event.at,
         data: {
           messageId: event.messageId,
-          role: event.role,
           content: truncate(event.content, 8_000),
         },
       };
@@ -244,9 +145,15 @@ function truncate(value: string, max: number): string {
 
 interface ActiveRun {
   readonly ownerUserId: string;
+  readonly threadId: string;
   readonly hub: EventHub;
   readonly abort: AbortController;
   readonly result: Promise<AgentExecutionResult>;
+}
+
+export interface LiveOwnerRun {
+  readonly runId: string;
+  readonly threadId: string;
 }
 
 export interface AgentRunManagerDeps {
@@ -307,6 +214,7 @@ export function createAgentRunManager(deps: AgentRunManagerDeps) {
 
     const entry: ActiveRun = {
       ownerUserId: input.userId,
+      threadId: handle.run.threadId,
       hub,
       abort,
       result: handle.result,
@@ -355,6 +263,24 @@ export function createAgentRunManager(deps: AgentRunManagerDeps) {
     return active.has(runId);
   }
 
+  function hasLiveForOwner(ownerUserId: string): boolean {
+    for (const entry of active.values()) {
+      if (entry.ownerUserId === ownerUserId) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  function getLiveForOwner(ownerUserId: string): LiveOwnerRun | null {
+    for (const [runId, entry] of active) {
+      if (entry.ownerUserId === ownerUserId) {
+        return { runId, threadId: entry.threadId };
+      }
+    }
+    return null;
+  }
+
   /**
    * Abort an in-process run. Returns false when the run is not live for this
    * owner (already finished / never tracked / wrong owner). Aborting twice is
@@ -396,6 +322,8 @@ export function createAgentRunManager(deps: AgentRunManagerDeps) {
     startRun,
     subscribeEvents,
     isLive,
+    hasLiveForOwner,
+    getLiveForOwner,
     cancel,
     waitForRun,
     waitForIdle,

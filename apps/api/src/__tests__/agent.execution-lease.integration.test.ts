@@ -57,6 +57,13 @@ test(
       assert.notEqual(recovered.leaseId, second.leaseId);
       assert.equal(await leases.release(second), false);
       assert.equal(await leases.release(recovered), true);
+
+      assert.ok(await leases.acquire(userId));
+      assert.equal(await leases.releaseUser(userId), true);
+      assert.equal(await leases.releaseUser(userId), false);
+      assert.ok(await leases.acquire(userId));
+      assert.equal(await leases.clearAll(), 1);
+      assert.equal(await leases.clearAll(), 0);
     } finally {
       await client.db.delete(schema.user).where(eq(schema.user.id, userId));
       await client.db.delete(schema.user).where(eq(schema.user.id, otherUserId));

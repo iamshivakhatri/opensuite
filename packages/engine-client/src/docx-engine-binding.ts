@@ -708,7 +708,7 @@ export async function createNapiDocxEngineBinding(): Promise<DocxEngineBinding> 
     const message =
       error instanceof Error ? error.message : String(error);
     throw new Error(
-      `Failed to load @opensuite/engine Node binding. Build opensuite-engine/crates/opensuite-node (npm run build) and link it into this repo. Underlying error: ${message}`,
+      `Failed to load @opensuite/engine Node binding. Install/publish @opensuite/engine (npm) or build opensuite-engine/crates/opensuite-node and use the local pnpm override. Underlying error: ${message}`,
     );
   }
 

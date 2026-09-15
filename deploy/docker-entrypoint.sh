@@ -3,9 +3,11 @@ set -eu
 
 ENGINE_DIR="packages/engine-client/node_modules/@opensuite/engine"
 if [ ! -f "$ENGINE_DIR/package.json" ]; then
-  echo "[opensuite] ERROR: @opensuite/engine missing in the image." >&2
-  echo "[opensuite] Rebuild with ENGINE_GIT_URL=<opensuite-engine git URL>." >&2
-  exit 1
+  echo "[opensuite] WARN: @opensuite/engine not installed — DOCX features disabled." >&2
+  echo "[opensuite] Install/publish @opensuite/engine (see docs/deploy.md)." >&2
+elif ! ls "$ENGINE_DIR"/opensuite_node.*.node >/dev/null 2>&1 \
+  && ! ls "$ENGINE_DIR"/node_modules/@opensuite/engine-*/opensuite_node.*.node >/dev/null 2>&1; then
+  echo "[opensuite] WARN: @opensuite/engine has no native .node binary — DOCX features disabled." >&2
 fi
 
 echo "[opensuite] running database migrations…"

@@ -6,7 +6,7 @@
   },
   "include": ["src"],
   "references": [
-    { "path": "../../packages/agent-core" },
+    { "path": "../../packages/agent-core-v2" },
     { "path": "../../packages/contracts" },
     { "path": "../../packages/db" },
     { "path": "../../packages/engine-client" }

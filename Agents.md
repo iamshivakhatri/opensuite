@@ -18,6 +18,7 @@ apps/
 
 packages/
   agent-core/     # model runtime + tool orchestration
+  agent-core-v2/  # small one-shot streaming runtime; separate from agent-core
   engine-client/  # only package that talks to opensuite-engine
   contracts/      # cross-boundary contracts
   db/             # PostgreSQL + Drizzle
@@ -30,6 +31,7 @@ docs/             # architecture + current-state docs look up to find more info 
 
 * Preserve boundaries between `web`, `api`, `agent-core`, `engine-client`, `contracts`, `db`, and `opensuite-engine`.
 * `agent-core` must not directly access DB, storage, auth, UI, or Office internals.
+* `agent-core-v2` must not directly access DB, storage, auth, UI, or Office internals. Keep it to one model call; do not import `agent-core` or add tool-loop machinery until a later phase asks for it.
 * `engine-client` is the only product package allowed to communicate with `opensuite-engine`.
 * Document mutations must use typed engine operations.
 * Do not add arbitrary shell/filesystem capabilities to the document agent.

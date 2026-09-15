@@ -59,12 +59,19 @@ export interface LibraryDocument {
 export class ApiError extends Error {
   readonly statusCode: number;
   readonly code: string;
+  readonly details: Record<string, unknown> | undefined;
 
-  constructor(statusCode: number, code: string, message: string) {
+  constructor(
+    statusCode: number,
+    code: string,
+    message: string,
+    details?: Record<string, unknown>,
+  ) {
     super(message);
     this.name = "ApiError";
     this.statusCode = statusCode;
     this.code = code;
+    this.details = details;
   }
 }
 
@@ -82,12 +89,27 @@ function requireApiBaseUrl(): string {
 async function parseError(response: Response): Promise<ApiError> {
   try {
     const body = (await response.json()) as {
-      error?: { statusCode?: number; code?: string; message?: string };
+      error?: {
+        statusCode?: number;
+        code?: string;
+        message?: string;
+        activeRunId?: string;
+        activeThreadId?: string;
+      };
     };
+    const error = body.error;
+    const details: Record<string, unknown> = {};
+    if (typeof error?.activeRunId === "string") {
+      details.activeRunId = error.activeRunId;
+    }
+    if (typeof error?.activeThreadId === "string") {
+      details.activeThreadId = error.activeThreadId;
+    }
     return new ApiError(
-      body.error?.statusCode ?? response.status,
-      body.error?.code ?? "REQUEST_FAILED",
-      body.error?.message ?? "Something went wrong. Please try again.",
+      error?.statusCode ?? response.status,
+      error?.code ?? "REQUEST_FAILED",
+      error?.message ?? "Something went wrong. Please try again.",
+      Object.keys(details).length > 0 ? details : undefined,
     );
   } catch {
     return new ApiError(

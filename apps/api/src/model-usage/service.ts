@@ -1,5 +1,3 @@
-import type { ModelTokenUsage } from "@opensuite/agent-core";
-
 import {
   OPENROUTER_USAGE_COST_SOURCE,
   usdToCostMicros,
@@ -19,6 +17,13 @@ import type {
   ModelUsageTokens,
   RecordModelUsageInput,
 } from "./types.js";
+
+type ModelTokenUsage = {
+  readonly inputTokens?: number;
+  readonly outputTokens?: number;
+  readonly cachedInputTokens?: number;
+  readonly reasoningTokens?: number;
+};
 
 /**
  * Normalize provider-neutral adapter usage into ledger token fields.

@@ -1,69 +1,48 @@
 import {
-  AgentRunner,
-  ToolRegistry,
-  createDocumentAgentRunnerOptions,
-  createDocumentAgentRunnerPolicyOptions,
-  createDocumentRunState,
-  createDocumentToolContext,
-  listDocumentToolDescriptors,
-  shapeDiagnosticForToolResult,
-  type AgentEvent,
-  type AgentEventSink,
-  type AgentModel,
-  type AgentRequest,
-  type AgentResource,
-  type AgentResult,
-  type ConfirmationGate,
-  type DocumentMutationExecutor,
-  type DocumentRef,
-  type DocumentRuntime,
-  type RuntimeCapabilities,
-  type SteeringSource,
-} from "@opensuite/agent-core";
+  runAgent,
+  type AgentEvent as CoreAgentEvent,
+  type ModelMessage,
+  type V2Model,
+} from "@opensuite/agent-core-v2";
 
-import {
-  DocumentAccessError,
-  type DocumentService,
-} from "../documents/service.js";
-import type { DocumentRuntimeResolver } from "../documents/runtime.js";
 import type { CredentialSource } from "../ai-preferences/types.js";
 import type { ProviderCredentialProvider } from "../credentials/types.js";
-import { createMeteredAgentModel } from "../model-usage/meter.js";
+import type { DocumentService } from "../documents/service.js";
 import type { ManagedTrialService } from "../managed-trial/service.js";
 import type { ModelUsageService } from "../model-usage/service.js";
-import { createAgentDocumentMutationExecutor } from "./document-mutation-executor.js";
 import {
   AgentPersistenceError,
   type AgentMessage,
   type AgentPersistenceService,
   type AgentRun,
-  type AgentRunStatus,
-  type AgentStep,
-  type AgentStepStatus,
   type AgentThread,
 } from "./persistence.js";
-import { createWorkspaceCreateBlankDocxTool } from "./workspace-tools.js";
 import {
   AGENT_EXECUTION_LEASE_RENEW_MS,
   type AgentExecutionLease,
   type AgentExecutionLeaseService,
 } from "./execution-lease.js";
-import {
-  agentDebugLifecycle,
-  summarizeDebugError,
-  watchAbortSignal,
-} from "./debug-lifecycle.js";
-import { devLog } from "../dev-log.js";
 
-/** Trusted usage attribution resolved with the model (never from model output). */
+export type AgentEvent =
+  | { readonly type: "agent.started"; readonly runId: string; readonly at: string }
+  | { readonly type: "message.delta"; readonly runId: string; readonly messageId: string; readonly delta: string; readonly at: string }
+  | { readonly type: "message.completed"; readonly runId: string; readonly messageId: string; readonly content: string; readonly at: string }
+  | { readonly type: "agent.completed"; readonly runId: string; readonly at: string }
+  | { readonly type: "agent.cancelled"; readonly runId: string; readonly at: string }
+  | { readonly type: "agent.failed"; readonly runId: string; readonly at: string; readonly code: string };
+
+export interface AgentEventSink {
+  emit(event: AgentEvent): void | Promise<void>;
+}
+
 export interface AgentModelUsageAttribution {
   readonly provider: ProviderCredentialProvider;
   readonly model: string;
   readonly credentialSource: CredentialSource;
 }
 
-export interface ResolvedAgentExecutionModel {
-  readonly model: AgentModel;
+export interface ResolvedV2ExecutionModel {
+  readonly model: V2Model;
   readonly usageAttribution?: AgentModelUsageAttribution;
 }
 
@@ -76,12 +55,9 @@ export type AgentExecutionErrorCode =
   | "AGENT_PERSISTENCE_FAILED";
 
 export class AgentExecutionError extends Error {
-  readonly code: AgentExecutionErrorCode;
-
-  constructor(code: AgentExecutionErrorCode, message: string) {
+  constructor(readonly code: AgentExecutionErrorCode, message: string) {
     super(message);
     this.name = "AgentExecutionError";
-    this.code = code;
   }
 }
 
@@ -89,17 +65,8 @@ export interface AgentExecutionInput {
   readonly userId: string;
   readonly threadId: string;
   readonly instruction: string;
-  /**
-   * Tagged workspace documents for this run (Cursor-style @ attachments).
-   * First id becomes primary; remaining become contextualResources.
-   * When omitted/empty, falls back to thread.documentId (legacy document chat).
-   */
   readonly documentIds?: readonly string[];
   readonly signal?: AbortSignal;
-  /**
-   * Optional live sink (SSE hub). Non-terminal events fan out after the
-   * persistence bridge; terminal events are emitted only after durable finalize.
-   */
   readonly liveEvents?: AgentEventSink;
 }
 
@@ -108,88 +75,28 @@ export interface AgentExecutionResult {
   readonly userMessage: AgentMessage;
   readonly run: AgentRun;
   readonly assistantMessage: AgentMessage | null;
-  readonly steps: readonly AgentStep[];
-  readonly result: AgentResult;
 }
 
-/** Returned as soon as the user message + queued run are durable. */
 export interface AgentExecutionHandle {
   readonly thread: AgentThread;
   readonly userMessage: AgentMessage;
   readonly run: AgentRun;
-  /** Settles when the in-process runner + final persistence finish. */
   readonly result: Promise<AgentExecutionResult>;
 }
 
 export interface AgentExecutionServiceDeps {
   readonly persistence: AgentPersistenceService;
-  /**
-   * Resolve latest DocumentRef + persist agent mutations
-   * (getOwnedDocument + appendDocumentVersion).
-   */
-  readonly documents: Pick<
-    DocumentService,
-    | "getOwnedDocument"
-    | "appendDocumentVersion"
-    | "createBlankDocxDocument"
-  >;
-  readonly model: AgentModel;
-  /** Resolves a user-scoped model before a run is made durable. */
-  readonly resolveModel?: (
-    userId: string,
-  ) => Promise<AgentModel | ResolvedAgentExecutionModel>;
-  /** Append-only model usage ledger (optional; tests may omit). */
+  readonly documents: Pick<DocumentService, "getOwnedDocument">;
+  readonly resolveModel: (userId: string) => Promise<ResolvedV2ExecutionModel>;
   readonly modelUsage?: ModelUsageService;
   readonly managedTrial?: ManagedTrialService;
-  /** Required by the application; omitted only by existing isolated tests. */
   readonly lease?: AgentExecutionLeaseService;
-  /**
-   * Optional fixed tool registry (tests). When omitted, the runner discovers
-   * document tools once from DocumentRuntime.capabilities(primaryDocument).
-   */
-  readonly tools?: ToolRegistry;
-  /**
-   * Fixed runtime (tests). When `resolveRuntime` is set, it wins for
-   * production format-aware DOCX → engine / PPTX|XLSX → mock selection.
-   */
-  readonly runtime?: DocumentRuntime;
-  /**
-   * Per-run runtime selection. Prefer this in production so DOCX uses the
-   * real engine adapter with an owner-scoped artifact loader.
-   */
-  readonly resolveRuntime?: DocumentRuntimeResolver;
-  /**
-   * Optional fixed mutation executor (tests). When omitted, DOCX runs get
-   * createAgentDocumentMutationExecutor → apply* (replace/table mutations).
-   */
-  readonly mutations?: DocumentMutationExecutor;
-  /**
-   * Confirmation gate for destructive tools. Omit → agent-core denies.
-   * Tests may inject AutoApproveConfirmationGate / denyAllConfirmationGate.
-   * Durable wait/resume is deferred.
-   */
-  readonly confirmation?: ConfirmationGate;
-  /** In-memory only for this milestone (e.g. InMemorySteeringQueue). */
-  readonly steering?: SteeringSource;
-  readonly capabilities?: RuntimeCapabilities;
-  readonly maxTurns?: number;
 }
 
-/**
- * Application orchestration: durable Thread/Message/Run/Step ↔ AgentRunner.
- * `start` returns after the queued run is durable; runner continues in-process.
- * `execute` awaits the full result (tests / sync callers).
- *
- * Step sequences are assigned by an in-memory monotonic counter owned by the
- * per-run event adapter (safe for one in-process execution; not distributed).
- */
+/** Product shell: resolve and persist here; execute once in agent-core-v2. */
 export function createAgentExecutionService(deps: AgentExecutionServiceDeps) {
-  const { persistence, documents } = deps;
-
-  async function start(
-    input: AgentExecutionInput,
-  ): Promise<AgentExecutionHandle> {
-    const thread = await persistence.getOwnedThread({
+  async function start(input: AgentExecutionInput): Promise<AgentExecutionHandle> {
+    const thread = await deps.persistence.getOwnedThread({
       threadId: input.threadId,
       ownerUserId: input.userId,
     });
@@ -199,156 +106,255 @@ export function createAgentExecutionService(deps: AgentExecutionServiceDeps) {
 
     const lease = await deps.lease?.acquire(input.userId);
     if (deps.lease && !lease) {
-      throw new AgentExecutionError(
-        "AGENT_EXECUTION_BUSY",
-        "Another agent execution is already active.",
+      throw new AgentExecutionError("AGENT_EXECUTION_BUSY", "Another agent execution is already active.");
+    }
+
+    try {
+      const model = await resolveModel(deps, input.userId);
+      const baseDocumentVersionId = await resolveBaseDocumentVersion(
+        deps.documents,
+        thread,
+        input.userId,
+        input.documentIds,
       );
-    }
-
-    try {
-      let model = deps.model;
-    let usageAttribution: AgentModelUsageAttribution | undefined;
-    if (deps.resolveModel) {
-      try {
-        const resolved = await deps.resolveModel(input.userId);
-        if (isResolvedAgentExecutionModel(resolved)) {
-          model = resolved.model;
-          usageAttribution = resolved.usageAttribution;
-        } else {
-          model = resolved;
-        }
-      } catch (error) {
-        throw new AgentExecutionError(
-          "AI_CONFIGURATION_INVALID",
-          error instanceof Error ? error.message : "AI configuration is unavailable",
-        );
-      }
-    }
-
-    const resolved = await resolveRunDocuments(
-      documents,
-      thread,
-      input.userId,
-      input.documentIds,
-    );
-    const primaryDocument = resolved.primary;
-    const contextualResources = resolved.contextualResources;
-
-    let userMessage: AgentMessage;
-    let run: AgentRun;
-    try {
-      const started = await persistence.withTransaction(async (tx) => {
-        const message = await persistence.appendMessage(
-          {
-            threadId: thread.id,
-            ownerUserId: input.userId,
-            role: "user",
-            content: input.instruction,
-          },
+      const started = await deps.persistence.withTransaction(async (tx) => {
+        const userMessage = await deps.persistence.appendMessage(
+          { threadId: thread.id, ownerUserId: input.userId, role: "user", content: input.instruction },
           tx,
         );
-        const createdRun = await persistence.createRun(
+        const run = await deps.persistence.createRun(
           {
             threadId: thread.id,
             ownerUserId: input.userId,
             createdByUserId: input.userId,
-            triggeringMessageId: message.id,
-            baseDocumentVersionId: primaryDocument?.versionId ?? null,
+            triggeringMessageId: userMessage.id,
+            baseDocumentVersionId,
             status: "queued",
           },
           tx,
         );
-        return { message, createdRun };
+        return { userMessage, run };
       });
-      userMessage = started.message;
-      run = started.createdRun;
-    } catch (error) {
-      throw mapStartPersistenceError(error);
-    }
 
-    if (deps.modelUsage && usageAttribution) {
-      const isManagedOpenRouter =
-        usageAttribution.credentialSource === "managed" &&
-        usageAttribution.provider === "openrouter";
-      model = createMeteredAgentModel(model, {
-        attribution: {
-          userId: input.userId,
-          provider: usageAttribution.provider,
-          model: usageAttribution.model,
-          credentialSource: usageAttribution.credentialSource,
-          agentRunId: run.id,
-        },
-        usage: deps.modelUsage,
-        ...(isManagedOpenRouter && deps.managedTrial
-          ? {
-              beforeComplete: () => deps.managedTrial!.beforeManagedCall(input.userId),
-              afterRecord: (event) => deps.managedTrial!.applyManagedUsage(event),
-              failClosed: true,
-            }
-          : {}),
-        async onRecordError(error) {
-          devLog(
-            `agent ${run.id.slice(0, 8)} model usage record failed: ${
-              error instanceof Error ? error.message : String(error)
-            }`,
-          );
-          if (isManagedOpenRouter && deps.managedTrial) {
-            await deps.managedTrial.block(input.userId);
-          }
-        },
+      console.info(`[agent] runtime=v2 run=${started.run.id.slice(0, 8)}`);
+      const result = runExecution({
+        deps,
+        model,
+        thread,
+        userMessage: started.userMessage,
+        run: started.run,
+        ownerUserId: input.userId,
+        instruction: input.instruction,
+        signal: input.signal,
+        liveEvents: input.liveEvents,
       });
-    }
-
-    const result = continueExecution({
-      deps,
-      model,
-      persistence,
-      thread,
-      userMessage,
-      run,
-      ownerUserId: input.userId,
-      instruction: enrichInstructionWithWorkingSet(
-        input.instruction,
-        resolved.workingSetLabels,
-      ),
-      primaryDocument,
-      contextualResources,
-      signal: input.signal,
-      liveEvents: input.liveEvents,
-    });
-    const protectedResult = lease
-      ? keepLeaseUntilFinished(deps.lease!, lease, result)
-      : result;
-    // Detached callers (HTTP 202) must not leave unhandled rejections.
-    void protectedResult.catch(() => undefined);
-
-      return { thread, userMessage, run, result: protectedResult };
+      const protectedResult = lease
+        ? keepLeaseUntilFinished(deps.lease!, lease, result)
+        : result;
+      void protectedResult.catch(() => undefined);
+      return { thread, userMessage: started.userMessage, run: started.run, result: protectedResult };
     } catch (error) {
-      if (lease) {
-        await releaseLease(deps.lease!, lease);
-      }
+      if (lease) await releaseLease(deps.lease!, lease);
       throw error;
     }
   }
 
-  async function execute(
-    input: AgentExecutionInput,
-  ): Promise<AgentExecutionResult> {
-    const handle = await start(input);
-    return handle.result;
+  async function execute(input: AgentExecutionInput): Promise<AgentExecutionResult> {
+    return (await start(input)).result;
   }
 
   return { start, execute };
 }
 
-function keepLeaseUntilFinished<T>(
-  leases: AgentExecutionLeaseService,
-  lease: AgentExecutionLease,
-  result: Promise<T>,
-): Promise<T> {
-  const timer = setInterval(() => {
-    void leases.renew(lease).catch(() => undefined);
-  }, AGENT_EXECUTION_LEASE_RENEW_MS);
+async function resolveModel(
+  deps: AgentExecutionServiceDeps,
+  userId: string,
+): Promise<ResolvedV2ExecutionModel> {
+  try {
+    return await deps.resolveModel(userId);
+  } catch (error) {
+    throw new AgentExecutionError(
+      "AI_CONFIGURATION_INVALID",
+      error instanceof Error ? error.message : "AI configuration is unavailable",
+    );
+  }
+}
+
+async function resolveBaseDocumentVersion(
+  documents: Pick<DocumentService, "getOwnedDocument">,
+  thread: AgentThread,
+  userId: string,
+  documentIds: readonly string[] | undefined,
+): Promise<string | null> {
+  const documentId = documentIds?.[0] ?? thread.documentId;
+  if (!documentId) return null;
+  try {
+    const document = await documents.getOwnedDocument({ documentId, ownerUserId: userId });
+    if (document.workspaceId !== thread.workspaceId) {
+      throw new AgentExecutionError("DOCUMENT_NOT_FOUND", "Document is not in this workspace");
+    }
+    return document.latestVersion.id;
+  } catch (error) {
+    if (error instanceof AgentExecutionError) throw error;
+    throw new AgentExecutionError("DOCUMENT_NOT_FOUND", "Document not found for agent run");
+  }
+}
+
+async function runExecution(input: {
+  readonly deps: AgentExecutionServiceDeps;
+  readonly model: ResolvedV2ExecutionModel;
+  readonly thread: AgentThread;
+  readonly userMessage: AgentMessage;
+  readonly run: AgentRun;
+  readonly ownerUserId: string;
+  readonly instruction: string;
+  readonly signal?: AbortSignal;
+  readonly liveEvents?: AgentEventSink;
+}): Promise<AgentExecutionResult> {
+  const priorMessages = await input.deps.persistence.listMessagesForThread({
+    threadId: input.thread.id,
+    ownerUserId: input.ownerUserId,
+  });
+  const messages: ModelMessage[] = [
+    ...priorMessages
+      .filter((message) => message.id !== input.userMessage.id)
+      .map((message) => ({ role: message.role, content: message.content })),
+    { role: "user", content: input.instruction },
+  ];
+  const messageId = `v2-${input.run.id}`;
+
+  try {
+    await input.deps.persistence.updateRunStatus({
+      runId: input.run.id,
+      ownerUserId: input.ownerUserId,
+      status: "running",
+    });
+    console.info(
+      `[agent-v2] model_start run=${input.run.id.slice(0, 8)} provider=openrouter model=${input.model.usageAttribution?.model ?? "unknown"}`,
+    );
+    if (
+      input.model.usageAttribution?.provider === "openrouter" &&
+      input.model.usageAttribution.credentialSource === "managed"
+    ) {
+      await input.deps.managedTrial?.beforeManagedCall(input.ownerUserId);
+    }
+
+    // The one API → agent-core-v2 execution call.
+    const result = await runAgent({
+      model: input.model.model,
+      messages,
+      signal: input.signal,
+      onEvent: (event) => relayEvent(event, input.liveEvents, input.run.id, messageId),
+    });
+    console.info(
+      `[agent-v2] model_done run=${input.run.id.slice(0, 8)} inputTokens=${result.inputTokens ?? "?"} outputTokens=${result.outputTokens ?? "?"} finishReason=${result.finishReason}`,
+    );
+
+    if (input.deps.modelUsage && input.model.usageAttribution) {
+      const usage = await input.deps.modelUsage.recordFromProviderResponse({
+        attribution: { ...input.model.usageAttribution, userId: input.ownerUserId, agentRunId: input.run.id },
+        usage: result,
+      });
+      if (
+        input.model.usageAttribution.provider === "openrouter" &&
+        input.model.usageAttribution.credentialSource === "managed"
+      ) {
+        await input.deps.managedTrial?.applyManagedUsage(usage);
+      }
+    }
+
+    const finalized = await finalizeCompletedRun({
+      persistence: input.deps.persistence,
+      ownerUserId: input.ownerUserId,
+      threadId: input.thread.id,
+      runId: input.run.id,
+      content: result.text,
+    });
+    await input.liveEvents?.emit({ type: "agent.completed", runId: input.run.id, at: new Date().toISOString() });
+    return { thread: input.thread, userMessage: input.userMessage, ...finalized };
+  } catch (error) {
+    const cancelled = input.signal?.aborted === true;
+    await updateRunAfterError(input.deps.persistence, input.ownerUserId, input.run.id, cancelled);
+    await input.liveEvents?.emit(
+      cancelled
+        ? { type: "agent.cancelled", runId: input.run.id, at: new Date().toISOString() }
+        : { type: "agent.failed", runId: input.run.id, at: new Date().toISOString(), code: "AGENT_EXECUTION_FAILED" },
+    );
+    if (cancelled) {
+      return {
+        thread: input.thread,
+        userMessage: input.userMessage,
+        run: await requireRun(input.deps.persistence, input.ownerUserId, input.run.id),
+        assistantMessage: null,
+      };
+    }
+    throw new AgentExecutionError("AGENT_EXECUTION_FAILED", "Agent execution failed");
+  }
+}
+
+async function relayEvent(
+  event: CoreAgentEvent,
+  sink: AgentEventSink | undefined,
+  runId: string,
+  messageId: string,
+): Promise<void> {
+  if (!sink) return;
+  const at = new Date().toISOString();
+  if (event.type === "started") return sink.emit({ type: "agent.started", runId, at });
+  if (event.type === "text_delta") return sink.emit({ type: "message.delta", runId, messageId, delta: event.delta, at });
+  if (event.type === "completed") return sink.emit({ type: "message.completed", runId, messageId, content: event.text, at });
+}
+
+async function finalizeCompletedRun(input: {
+  readonly persistence: AgentPersistenceService;
+  readonly ownerUserId: string;
+  readonly threadId: string;
+  readonly runId: string;
+  readonly content: string;
+}): Promise<{ run: AgentRun; assistantMessage: AgentMessage | null }> {
+  return input.persistence.withTransaction(async (tx) => {
+    const content = input.content.trim();
+    const assistantMessage = content
+      ? await input.persistence.appendMessage({ threadId: input.threadId, ownerUserId: input.ownerUserId, role: "assistant", content }, tx)
+      : null;
+    const run = await input.persistence.updateRunStatus(
+      { runId: input.runId, ownerUserId: input.ownerUserId, status: "completed" },
+      tx,
+    );
+    return { run, assistantMessage };
+  });
+}
+
+async function updateRunAfterError(
+  persistence: AgentPersistenceService,
+  ownerUserId: string,
+  runId: string,
+  cancelled: boolean,
+): Promise<void> {
+  try {
+    await persistence.updateRunStatus({
+      runId,
+      ownerUserId,
+      status: cancelled ? "cancelled" : "failed",
+      ...(cancelled ? {} : { errorCode: "AGENT_EXECUTION_FAILED", errorMessage: "Agent execution failed" }),
+    });
+  } catch (error) {
+    if (!(error instanceof AgentPersistenceError)) throw error;
+  }
+}
+
+async function requireRun(
+  persistence: AgentPersistenceService,
+  ownerUserId: string,
+  runId: string,
+): Promise<AgentRun> {
+  const run = await persistence.getRun({ runId, ownerUserId });
+  if (!run) throw new AgentExecutionError("AGENT_PERSISTENCE_FAILED", "Agent run was not found");
+  return run;
+}
+
+function keepLeaseUntilFinished<T>(leases: AgentExecutionLeaseService, lease: AgentExecutionLease, result: Promise<T>): Promise<T> {
+  const timer = setInterval(() => void leases.renew(lease).catch(() => undefined), AGENT_EXECUTION_LEASE_RENEW_MS);
   timer.unref?.();
   return result.finally(async () => {
     clearInterval(timer);
@@ -356,1023 +362,8 @@ function keepLeaseUntilFinished<T>(
   });
 }
 
-async function releaseLease(
-  leases: AgentExecutionLeaseService,
-  lease: AgentExecutionLease,
-): Promise<void> {
-  try {
-    await leases.release(lease);
-  } catch (error) {
-    devLog(
-      `agent execution lease release failed: ${
-        error instanceof Error ? error.message : String(error)
-      }`,
-    );
-  }
+async function releaseLease(leases: AgentExecutionLeaseService, lease: AgentExecutionLease): Promise<void> {
+  await leases.release(lease).catch(() => undefined);
 }
 
-async function continueExecution(input: {
-  deps: AgentExecutionServiceDeps;
-  model: AgentModel;
-  persistence: AgentPersistenceService;
-  thread: AgentThread;
-  userMessage: AgentMessage;
-  run: AgentRun;
-  ownerUserId: string;
-  instruction: string;
-  primaryDocument: DocumentRef | null;
-  contextualResources: readonly AgentResource[];
-  signal?: AbortSignal;
-  liveEvents?: AgentEventSink;
-}): Promise<AgentExecutionResult> {
-  const {
-    deps,
-    model,
-    persistence,
-    thread,
-    userMessage,
-    run,
-    ownerUserId,
-    instruction,
-    primaryDocument,
-    contextualResources,
-    signal,
-    liveEvents,
-  } = input;
-
-  const executionStartedAt = Date.now();
-  // TEMP: agent lifecycle diagnosis
-  agentDebugLifecycle("RUN_START", {
-    run: run.id,
-    thread: thread.id.slice(0, 8),
-    abort: signal?.aborted ?? false,
-    hasLiveEvents: Boolean(liveEvents),
-    primaryDoc: primaryDocument?.documentId?.slice(0, 8),
-    primaryVer: primaryDocument?.versionId?.slice(0, 8),
-    modelTurnTimeoutMs: 90_000,
-    overallRunTimeoutMs: "none",
-    executionServiceTimeoutMs: "none",
-  });
-  watchAbortSignal(signal, "run-controller", { run: run.id });
-
-  const priorMessages = (
-    await persistence.listMessagesForThread({
-      threadId: thread.id,
-      ownerUserId,
-    })
-  )
-    .filter((message) => message.id !== userMessage.id)
-    .map((message) => ({
-      role: message.role,
-      content: message.content,
-    }));
-
-  const request: AgentRequest = {
-    instruction,
-    threadId: thread.id,
-    runId: run.id,
-    priorMessages,
-    primaryDocument,
-    contextualResources,
-  };
-
-  const bridge = createRunEventBridge({
-    persistence,
-    ownerUserId,
-    runId: run.id,
-  });
-
-  // Defer terminal live SSE until after durable finalize. Otherwise the UI can
-  // receive agent.completed/failed, GET /runs while status is still active,
-  // drop the SSE subscription, and stick on "Working…".
-  // Stream tokens to the hub before the persistence queue so DB latency cannot
-  // batch message.delta behind unrelated step writes.
-  const shortRun = run.id.slice(0, 8);
-  const events: AgentEventSink = liveEvents
-    ? {
-        async emit(event) {
-          logAgentTurn(shortRun, event);
-          if (
-            event.type === "agent.completed" ||
-            event.type === "agent.failed" ||
-            event.type === "agent.cancelled"
-          ) {
-            await bridge.emit(event);
-            return;
-          }
-          if (
-            event.type === "message.started" ||
-            event.type === "message.delta" ||
-            event.type === "message.completed"
-          ) {
-            await liveEvents.emit(event);
-            await bridge.emit(event);
-            return;
-          }
-          await bridge.emit(event);
-          await liveEvents.emit(event);
-        },
-      }
-    : {
-        async emit(event) {
-          logAgentTurn(shortRun, event);
-          await bridge.emit(event);
-        },
-      };
-
-  // Prefer DOCX engine when no primary yet so blank-create → edit works in-run.
-  const runtime =
-    deps.resolveRuntime?.({
-      format: primaryDocument?.format ?? "docx",
-      ownerUserId,
-    }) ?? deps.runtime;
-
-  const mutations =
-    deps.mutations ??
-    (runtime
-      ? createAgentDocumentMutationExecutor({
-          documents: deps.documents,
-          ownerUserId,
-          runtime,
-        })
-      : undefined);
-
-  const workspaceTools = ToolRegistry.create([
-    createWorkspaceCreateBlankDocxTool({
-      workspaceId: thread.workspaceId,
-      ownerUserId,
-      documents: deps.documents,
-    }),
-  ]);
-
-  // Fixed tools (tests) skip capability discovery; still need OpenSuite-owned
-  // run state so primaryDocument / handles / mutations stay outside AgentRunner.
-  const documentRun = deps.tools
-    ? {
-        tools: deps.tools,
-        ...createDocumentAgentRunnerPolicyOptions(),
-        createToolContext: createDocumentToolContext({
-          state: createDocumentRunState(primaryDocument),
-          runtime,
-          mutations,
-        }),
-      }
-    : createDocumentAgentRunnerOptions({
-        tools: workspaceTools,
-        documentToolCatalog: listDocumentToolDescriptors(),
-        runtime,
-        mutations,
-        primaryDocument,
-      });
-
-  const runner = new AgentRunner({
-    model,
-    ...documentRun,
-    events,
-    confirmation: deps.confirmation,
-    steering: deps.steering,
-    capabilities: deps.capabilities,
-    maxTurns: deps.maxTurns,
-  });
-
-  let agentResult: AgentResult;
-  try {
-    // TEMP: agent lifecycle diagnosis
-    agentDebugLifecycle("RUNNER_INVOKE", {
-      run: run.id,
-      elapsedMs: Date.now() - executionStartedAt,
-      abort: signal?.aborted ?? false,
-    });
-    agentResult = await runner.run(request, { signal });
-    // TEMP: agent lifecycle diagnosis
-    agentDebugLifecycle("RUNNER_RESOLVED", {
-      run: run.id,
-      status: agentResult.status,
-      summary: agentResult.summary.slice(0, 160),
-      diagnostics: agentResult.diagnostics.length,
-      toolOutcomes: agentResult.toolOutcomes.length,
-      elapsedMs: Date.now() - executionStartedAt,
-    });
-  } catch (error) {
-    // TEMP: agent lifecycle diagnosis — original error before normalization
-    agentDebugLifecycle("RUNNER_REJECTED", {
-      run: run.id,
-      elapsedMs: Date.now() - executionStartedAt,
-      ...summarizeDebugError(error),
-    });
-    agentDebugLifecycle("CATCH_ENTERED", {
-      run: run.id,
-      source: "runner.run",
-      elapsedMs: Date.now() - executionStartedAt,
-    });
-    agentDebugLifecycle("STATUS", {
-      run: run.id,
-      from: "running?",
-      to: "failed",
-      source: "continueExecution.catch→bestEffortFailRun",
-      errorCode: "AGENT_EXECUTION_FAILED",
-    });
-    await bestEffortFailRun(
-      persistence,
-      ownerUserId,
-      run.id,
-      "AGENT_EXECUTION_FAILED",
-      "Agent runner failed unexpectedly",
-    );
-    await emitTerminalLive(liveEvents, {
-      type: "agent.failed",
-      runId: run.id,
-      at: new Date().toISOString(),
-      diagnostic: {
-        code: "AGENT_EXECUTION_FAILED",
-        severity: "error",
-        message: "Agent runner failed unexpectedly",
-      },
-    });
-    agentDebugLifecycle("RUN_FAILED", {
-      run: run.id,
-      source: "runner-throw",
-      elapsedMs: Date.now() - executionStartedAt,
-    });
-    throw new AgentExecutionError(
-      "AGENT_EXECUTION_FAILED",
-      "Agent runner failed unexpectedly",
-    );
-  }
-
-  try {
-    await bridge.flush();
-  } catch (error) {
-    // TEMP: agent lifecycle diagnosis
-    agentDebugLifecycle("CATCH_ENTERED", {
-      run: run.id,
-      source: "bridge.flush",
-      elapsedMs: Date.now() - executionStartedAt,
-      ...summarizeDebugError(error),
-    });
-    agentDebugLifecycle("STATUS", {
-      run: run.id,
-      from: "running?",
-      to: "failed",
-      source: "bridge.flush→bestEffortFailRun",
-      errorCode: "AGENT_PERSISTENCE_FAILED",
-    });
-    await bestEffortFailRun(
-      persistence,
-      ownerUserId,
-      run.id,
-      "AGENT_PERSISTENCE_FAILED",
-      "Failed to persist agent steps",
-    );
-    await emitTerminalLive(liveEvents, {
-      type: "agent.failed",
-      runId: run.id,
-      at: new Date().toISOString(),
-      diagnostic: {
-        code: "AGENT_PERSISTENCE_FAILED",
-        severity: "error",
-        message: "Failed to persist agent steps",
-      },
-    });
-    agentDebugLifecycle("RUN_FAILED", {
-      run: run.id,
-      source: "bridge-flush",
-      elapsedMs: Date.now() - executionStartedAt,
-    });
-    throw new AgentExecutionError(
-      "AGENT_PERSISTENCE_FAILED",
-      "Failed to persist agent steps",
-    );
-  }
-
-  let assistantMessage: AgentMessage | null = null;
-  let finalRun: AgentRun | undefined;
-
-  try {
-    if (agentResult.status === "completed") {
-      agentDebugLifecycle("STATUS", {
-        run: run.id,
-        from: "running",
-        to: "completed",
-        source: "finalizeCompletedRun",
-      });
-      const finalized = await finalizeCompletedRun({
-        persistence,
-        ownerUserId,
-        threadId: thread.id,
-        runId: run.id,
-        summary: agentResult.summary,
-      });
-      assistantMessage = finalized.assistantMessage;
-      finalRun = finalized.run;
-      await emitTerminalLive(liveEvents, {
-        type: "agent.completed",
-        runId: run.id,
-        at: new Date().toISOString(),
-      });
-      agentDebugLifecycle("RUN_COMPLETED", {
-        run: run.id,
-        elapsedMs: Date.now() - executionStartedAt,
-      });
-    } else if (agentResult.status === "cancelled") {
-      await bridge.cancelOpenSteps();
-      agentDebugLifecycle("STATUS", {
-        run: run.id,
-        from: "running",
-        to: "cancelled",
-        source: "agentResult.cancelled",
-      });
-      finalRun = await persistence.updateRunStatus({
-        runId: run.id,
-        ownerUserId,
-        status: "cancelled",
-      });
-      await emitTerminalLive(liveEvents, {
-        type: "agent.cancelled",
-        runId: run.id,
-        at: new Date().toISOString(),
-      });
-      agentDebugLifecycle("RUN_CANCELLED", {
-        run: run.id,
-        elapsedMs: Date.now() - executionStartedAt,
-      });
-    } else {
-      // Diagnostics retain every recovered tool failure in chronological order.
-      // A failed AgentResult appends the diagnostic that actually ended the run.
-      const diagnostic = agentResult.diagnostics.at(-1);
-      const errorCode = safeErrorCode(
-        diagnostic?.code,
-        "AGENT_EXECUTION_FAILED",
-      );
-      const errorMessage = safeErrorMessage(
-        diagnostic?.message ?? agentResult.summary,
-        "Agent run failed",
-      );
-      agentDebugLifecycle("STATUS", {
-        run: run.id,
-        from: "running",
-        to: "failed",
-        source: "agentResult.failed→updateRunStatus",
-        errorCode,
-        errorMessage,
-        diagnosticCode: diagnostic?.code,
-        diagnosticMessage: diagnostic?.message?.slice(0, 200),
-        resultSummary: agentResult.summary.slice(0, 200),
-      });
-      finalRun = await persistence.updateRunStatus({
-        runId: run.id,
-        ownerUserId,
-        status: "failed",
-        errorCode,
-        errorMessage,
-      });
-      await emitTerminalLive(liveEvents, {
-        type: "agent.failed",
-        runId: run.id,
-        at: new Date().toISOString(),
-        diagnostic: {
-          ...diagnostic,
-          code: errorCode,
-          severity: diagnostic?.severity ?? "error",
-          message: errorMessage,
-        },
-      });
-      agentDebugLifecycle("RUN_FAILED", {
-        run: run.id,
-        source: "agentResult.failed",
-        errorCode,
-        errorMessage,
-        elapsedMs: Date.now() - executionStartedAt,
-      });
-    }
-  } catch (error) {
-    if (
-      error instanceof AgentPersistenceError ||
-      error instanceof AgentExecutionError
-    ) {
-      // TEMP: agent lifecycle diagnosis
-      agentDebugLifecycle("CATCH_ENTERED", {
-        run: run.id,
-        source: "finalize",
-        elapsedMs: Date.now() - executionStartedAt,
-        ...summarizeDebugError(error),
-      });
-      agentDebugLifecycle("STATUS", {
-        run: run.id,
-        from: "running?",
-        to: "failed",
-        source: "finalize→bestEffortFailRun",
-        errorCode: "AGENT_PERSISTENCE_FAILED",
-      });
-      await bestEffortFailRun(
-        persistence,
-        ownerUserId,
-        run.id,
-        "AGENT_PERSISTENCE_FAILED",
-        "Failed to finalize agent run",
-      );
-      await emitTerminalLive(liveEvents, {
-        type: "agent.failed",
-        runId: run.id,
-        at: new Date().toISOString(),
-        diagnostic: {
-          code: "AGENT_PERSISTENCE_FAILED",
-          severity: "error",
-          message: "Failed to finalize agent run",
-        },
-      });
-      agentDebugLifecycle("RUN_FAILED", {
-        run: run.id,
-        source: "finalize",
-        elapsedMs: Date.now() - executionStartedAt,
-      });
-      throw new AgentExecutionError(
-        "AGENT_PERSISTENCE_FAILED",
-        "Failed to finalize agent run",
-      );
-    }
-    // TEMP: agent lifecycle diagnosis
-    agentDebugLifecycle("CATCH_ENTERED", {
-      run: run.id,
-      source: "finalize-unexpected",
-      elapsedMs: Date.now() - executionStartedAt,
-      ...summarizeDebugError(error),
-    });
-    throw error;
-  } finally {
-    // TEMP: agent lifecycle diagnosis
-    agentDebugLifecycle("RUN_END", {
-      run: run.id,
-      elapsedMs: Date.now() - executionStartedAt,
-      finalStatus: finalRun?.status ?? "unknown",
-    });
-  }
-
-  if (!finalRun) {
-    throw new AgentExecutionError(
-      "AGENT_EXECUTION_FAILED",
-      "Agent run finalized without a durable status",
-    );
-  }
-
-  const steps = await persistence.listStepsForRun({
-    runId: finalRun.id,
-    ownerUserId,
-  });
-
-  return {
-    thread,
-    userMessage,
-    run: finalRun,
-    assistantMessage,
-    steps,
-    result: agentResult,
-  };
-}
-
-async function emitTerminalLive(
-  liveEvents: AgentEventSink | undefined,
-  event: Extract<
-    AgentEvent,
-    | { type: "agent.completed" }
-    | { type: "agent.failed" }
-    | { type: "agent.cancelled" }
-  >,
-): Promise<void> {
-  if (!liveEvents) {
-    return;
-  }
-  await liveEvents.emit(event);
-}
-
-/** Dev one-liners for agent turns — skip token spam (message.delta). */
-function logAgentTurn(shortRun: string, event: AgentEvent): void {
-  switch (event.type) {
-    case "agent.started":
-      devLog(`agent ${shortRun} started`);
-      return;
-    case "turn.started":
-      devLog(`agent ${shortRun} turn ${event.turnId.slice(0, 8)}`);
-      return;
-    case "model.turn.metrics": {
-      const tokens =
-        event.inputTokens !== undefined || event.outputTokens !== undefined
-          ? ` in=${event.inputTokens ?? "?"} out=${event.outputTokens ?? "?"}` +
-            (event.cachedInputTokens !== undefined
-              ? ` cached=${event.cachedInputTokens}`
-              : "")
-          : "";
-      devLog(
-        `agent ${shortRun} model turn#${event.turnIndex} ${event.modelWallMs}ms tools=${event.toolCallCount} ctx=${event.contextMessageBytes}B catalog=${event.toolCatalogBytes}B args=${event.toolArgumentBytes}B${tokens}`,
-      );
-      return;
-    }
-    case "tool.started":
-      devLog(`agent ${shortRun} → ${event.toolName}`);
-      return;
-    case "tool.execution.metrics":
-      devLog(
-        `agent ${shortRun} tool ${event.toolName} ${event.wallMs}ms in=${event.inputBytes}B out=${event.resultBytes}B ${event.success ? "ok" : "fail"}`,
-      );
-      return;
-    case "agent.progress":
-      devLog(
-        `agent ${shortRun} progress ${event.classification}` +
-          (event.readSignature ? ` sig=${event.readSignature}` : "") +
-          (event.nextOffset !== undefined ? ` next=${event.nextOffset}` : "") +
-          (event.redundantReadCount !== undefined
-            ? ` redundant=${event.redundantReadCount}`
-            : ""),
-      );
-      return;
-    case "tool.completed": {
-      const note = event.summary ? ` — ${event.summary}` : "";
-      devLog(`agent ${shortRun} ✓ ${event.toolName}${note}`);
-      return;
-    }
-    case "tool.deferred":
-      devLog(`agent ${shortRun} deferred ${event.toolName}`);
-      return;
-    case "tool.failed":
-      devLog(
-        `agent ${shortRun} ✗ ${event.toolName} ${event.diagnostic.code}: ${event.diagnostic.message}`,
-      );
-      return;
-    case "document.version.advanced":
-      devLog(
-        `agent ${shortRun} version → #${event.versionNumber ?? "?"} (${event.versionId.slice(0, 8)})`,
-      );
-      return;
-    case "document.created":
-      devLog(
-        `agent ${shortRun} created ${event.name} (${event.documentId.slice(0, 8)})`,
-      );
-      return;
-    case "agent.completed":
-      devLog(`agent ${shortRun} completed`);
-      return;
-    case "agent.failed":
-      devLog(
-        `agent ${shortRun} failed ${event.diagnostic.code}: ${event.diagnostic.message}`,
-      );
-      return;
-    case "agent.cancelled":
-      devLog(`agent ${shortRun} cancelled`);
-      return;
-    default:
-      return;
-  }
-}
-
-export type AgentExecutionService = ReturnType<
-  typeof createAgentExecutionService
->;
-
-function isResolvedAgentExecutionModel(
-  value: AgentModel | ResolvedAgentExecutionModel,
-): value is ResolvedAgentExecutionModel {
-  return (
-    typeof value === "object" &&
-    value !== null &&
-    "model" in value &&
-    typeof (value as ResolvedAgentExecutionModel).model?.complete === "function"
-  );
-}
-
-async function resolveRunDocuments(
-  documents: Pick<DocumentService, "getOwnedDocument">,
-  thread: AgentThread,
-  ownerUserId: string,
-  documentIds: readonly string[] | undefined,
-): Promise<{
-  primary: DocumentRef | null;
-  contextualResources: readonly AgentResource[];
-  workingSetLabels: readonly string[];
-}> {
-  const tagged = [...new Set((documentIds ?? []).filter(Boolean))];
-  const ids =
-    tagged.length > 0
-      ? tagged
-      : thread.documentId
-        ? [thread.documentId]
-        : [];
-
-  if (ids.length === 0) {
-    return {
-      primary: null,
-      contextualResources: [],
-      workingSetLabels: [],
-    };
-  }
-
-  const loaded: Array<{ ref: DocumentRef; name: string }> = [];
-  for (const documentId of ids) {
-    try {
-      const document = await documents.getOwnedDocument({
-        documentId,
-        ownerUserId,
-      });
-      if (document.workspaceId !== thread.workspaceId) {
-        throw new AgentExecutionError(
-          "DOCUMENT_NOT_FOUND",
-          "Document is not in this workspace",
-        );
-      }
-      loaded.push({
-        ref: {
-          documentId: document.id,
-          versionId: document.latestVersion.id,
-          format: document.format,
-        },
-        name: document.name,
-      });
-    } catch (error) {
-      if (
-        error instanceof DocumentAccessError &&
-        error.code === "DOCUMENT_NOT_FOUND"
-      ) {
-        throw new AgentExecutionError(
-          "DOCUMENT_NOT_FOUND",
-          "Document not found for agent run",
-        );
-      }
-      throw error;
-    }
-  }
-
-  const [primaryEntry, ...rest] = loaded;
-  return {
-    primary: primaryEntry?.ref ?? null,
-    contextualResources: rest.map((entry) => ({
-      kind: "document" as const,
-      document: entry.ref,
-      role: "context" as const,
-    })),
-    workingSetLabels: loaded.map((entry, index) =>
-      index === 0 ? `${entry.name} (primary)` : entry.name,
-    ),
-  };
-}
-
-function enrichInstructionWithWorkingSet(
-  instruction: string,
-  labels: readonly string[],
-): string {
-  if (labels.length === 0) {
-    return instruction;
-  }
-  return `Attached documents for this turn:\n${labels
-    .map((label) => `- ${label}`)
-    .join("\n")}\n\n${instruction}`;
-}
-
-function mapStartPersistenceError(error: unknown): AgentExecutionError {
-  if (
-    error instanceof AgentPersistenceError &&
-    error.code === "THREAD_NOT_FOUND"
-  ) {
-    return new AgentExecutionError("THREAD_NOT_FOUND", "Agent thread not found");
-  }
-  return new AgentExecutionError(
-    "AGENT_PERSISTENCE_FAILED",
-    "Failed to start agent execution",
-  );
-}
-
-async function finalizeCompletedRun(input: {
-  persistence: AgentPersistenceService;
-  ownerUserId: string;
-  threadId: string;
-  runId: string;
-  summary: string;
-}): Promise<{ run: AgentRun; assistantMessage: AgentMessage | null }> {
-  const content = input.summary.trim();
-  return input.persistence.withTransaction(async (tx) => {
-    let assistantMessage: AgentMessage | null = null;
-    if (content.length > 0) {
-      assistantMessage = await input.persistence.appendMessage(
-        {
-          threadId: input.threadId,
-          ownerUserId: input.ownerUserId,
-          role: "assistant",
-          content,
-        },
-        tx,
-      );
-    }
-
-    const run = await input.persistence.updateRunStatus(
-      {
-        runId: input.runId,
-        ownerUserId: input.ownerUserId,
-        status: "completed",
-      },
-      tx,
-    );
-
-    return { run, assistantMessage };
-  });
-}
-
-async function bestEffortFailRun(
-  persistence: AgentPersistenceService,
-  ownerUserId: string,
-  runId: string,
-  errorCode: string,
-  errorMessage: string,
-): Promise<void> {
-  try {
-    const existing = await persistence.getRun({ runId, ownerUserId });
-    if (!existing) {
-      return;
-    }
-    if (
-      existing.status === "completed" ||
-      existing.status === "failed" ||
-      existing.status === "cancelled"
-    ) {
-      // TEMP: agent lifecycle diagnosis
-      agentDebugLifecycle("STATUS", {
-        run: runId,
-        from: existing.status,
-        to: existing.status,
-        source: "bestEffortFailRun.skip-terminal",
-        errorCode,
-      });
-      return;
-    }
-    // TEMP: agent lifecycle diagnosis
-    agentDebugLifecycle("STATUS", {
-      run: runId,
-      from: existing.status,
-      to: "failed",
-      source: "bestEffortFailRun",
-      errorCode,
-      errorMessage,
-    });
-    await persistence.updateRunStatus({
-      runId,
-      ownerUserId,
-      status: "failed",
-      errorCode,
-      errorMessage,
-    });
-  } catch (error) {
-    // Best-effort only — caller already has the primary error.
-    // TEMP: agent lifecycle diagnosis
-    agentDebugLifecycle("CATCH_ENTERED", {
-      run: runId,
-      source: "bestEffortFailRun",
-      ...summarizeDebugError(error),
-    });
-  }
-}
-
-function safeErrorCode(code: string | undefined, fallback: string): string {
-  if (!code || code.length > 64 || /[\r\n]/.test(code)) {
-    return fallback;
-  }
-  return code;
-}
-
-function safeErrorMessage(message: string, fallback: string): string {
-  const trimmed = message.trim();
-  if (!trimmed) {
-    return fallback;
-  }
-  // Avoid dumping stacks / huge internals into durable user-facing fields.
-  return trimmed.length > 500 ? `${trimmed.slice(0, 497)}...` : trimmed;
-}
-
-function toJsonRecord(value: unknown): Record<string, unknown> | null {
-  if (value == null) {
-    return null;
-  }
-  if (typeof value === "object" && !Array.isArray(value)) {
-    return value as Record<string, unknown>;
-  }
-  return { value };
-}
-
-interface StepBinding {
-  readonly stepId: string;
-  readonly kind: "tool" | "confirmation";
-}
-
-/**
- * Maps selected AgentEvents → durable AgentSteps for one in-process run.
- * Serializes event handling so parallel tool emits stay race-free while tools
- * themselves may still execute concurrently after their started events land.
- */
-function createRunEventBridge(input: {
-  persistence: AgentPersistenceService;
-  ownerUserId: string;
-  runId: string;
-}): AgentEventSink & {
-  flush(): Promise<void>;
-  cancelOpenSteps(): Promise<void>;
-} {
-  let nextSequence = 0;
-  let runStatus: AgentRunStatus = "queued";
-  const byToolCallId = new Map<string, StepBinding>();
-  let queue: Promise<void> = Promise.resolve();
-
-  const enqueue = (work: () => Promise<void>): Promise<void> => {
-    const next = queue.then(work, work);
-    queue = next.then(
-      () => undefined,
-      () => undefined,
-    );
-    return next;
-  };
-
-  async function setRunStatus(status: AgentRunStatus): Promise<void> {
-    if (runStatus === status) {
-      return;
-    }
-    if (
-      runStatus === "completed" ||
-      runStatus === "failed" ||
-      runStatus === "cancelled"
-    ) {
-      return;
-    }
-    // TEMP: agent lifecycle diagnosis
-    agentDebugLifecycle("STATUS", {
-      run: input.runId,
-      from: runStatus,
-      to: status,
-      source: "eventBridge.setRunStatus",
-    });
-    await input.persistence.updateRunStatus({
-      runId: input.runId,
-      ownerUserId: input.ownerUserId,
-      status,
-    });
-    runStatus = status;
-  }
-
-  async function handle(event: AgentEvent): Promise<void> {
-    switch (event.type) {
-      case "agent.started": {
-        await setRunStatus("running");
-        return;
-      }
-      case "confirmation.required": {
-        await setRunStatus("waiting_for_confirmation");
-        const sequence = nextSequence;
-        nextSequence += 1;
-        const step = await input.persistence.appendStep({
-          runId: input.runId,
-          ownerUserId: input.ownerUserId,
-          sequence,
-          kind: "confirmation",
-          name: event.toolName,
-          status: "running",
-          summary: event.reason,
-          input: toJsonRecord(event.input),
-        });
-        byToolCallId.set(event.toolCallId, {
-          stepId: step.id,
-          kind: "confirmation",
-        });
-        return;
-      }
-      case "tool.started": {
-        if (runStatus === "waiting_for_confirmation") {
-          const pending = byToolCallId.get(event.toolCallId);
-          if (pending?.kind === "confirmation") {
-            await input.persistence.updateStepStatus({
-              stepId: pending.stepId,
-              ownerUserId: input.ownerUserId,
-              status: "completed",
-              summary: "Confirmation approved",
-            });
-          }
-          await setRunStatus("running");
-        } else {
-          await setRunStatus("running");
-        }
-
-        const sequence = nextSequence;
-        nextSequence += 1;
-        const step = await input.persistence.appendStep({
-          runId: input.runId,
-          ownerUserId: input.ownerUserId,
-          sequence,
-          kind: "tool",
-          name: event.toolName,
-          status: "running",
-          input: toJsonRecord(event.input),
-        });
-        byToolCallId.set(event.toolCallId, {
-          stepId: step.id,
-          kind: "tool",
-        });
-        return;
-      }
-      case "tool.completed": {
-        const binding = byToolCallId.get(event.toolCallId);
-        if (!binding || binding.kind !== "tool") {
-          return;
-        }
-        await input.persistence.updateStepStatus({
-          stepId: binding.stepId,
-          ownerUserId: input.ownerUserId,
-          status: "completed",
-          summary: event.summary ?? null,
-          output: toJsonRecord(event.output),
-        });
-        return;
-      }
-      case "tool.deferred":
-        return;
-      case "tool.failed": {
-        const binding = byToolCallId.get(event.toolCallId);
-        const output = {
-          ...shapeDiagnosticForToolResult(event.diagnostic),
-          message: safeErrorMessage(event.diagnostic.message, "Tool failed"),
-        };
-        if (binding) {
-          await input.persistence.updateStepStatus({
-            stepId: binding.stepId,
-            ownerUserId: input.ownerUserId,
-            status: "failed",
-            summary: event.diagnostic.message,
-            output,
-          });
-          // Denied confirmation leaves run waiting — resume so terminal
-          // transitions remain valid after the model continues.
-          if (
-            binding.kind === "confirmation" &&
-            runStatus === "waiting_for_confirmation"
-          ) {
-            await setRunStatus("running");
-          }
-          return;
-        }
-        // Unknown tool / invalid input failed before tool.started.
-        const sequence = nextSequence;
-        nextSequence += 1;
-        await input.persistence.appendStep({
-          runId: input.runId,
-          ownerUserId: input.ownerUserId,
-          sequence,
-          kind: "tool",
-          name: event.toolName,
-          status: "failed",
-          summary: event.diagnostic.message,
-          output,
-        });
-        return;
-      }
-      case "document.version.advanced":
-        // Version advance is also captured on tool.completed output
-        // (baseVersionId / resulting document). No separate step row.
-        return;
-      case "document.created":
-        return;
-      case "agent.cancelled":
-      case "agent.completed":
-      case "agent.failed":
-      case "turn.started":
-      case "turn.completed":
-      case "message.started":
-      case "message.delta":
-      case "message.completed":
-      case "model.turn.metrics":
-      case "tool.execution.metrics":
-      case "agent.progress":
-        return;
-      default: {
-        const _exhaustive: never = event;
-        void _exhaustive;
-      }
-    }
-  }
-
-  return {
-    emit(event: AgentEvent): Promise<void> {
-      return enqueue(() => handle(event));
-    },
-    async flush(): Promise<void> {
-      await queue;
-    },
-    async cancelOpenSteps(): Promise<void> {
-      await queue;
-      const steps = await input.persistence.listStepsForRun({
-        runId: input.runId,
-        ownerUserId: input.ownerUserId,
-      });
-      for (const step of steps) {
-        if (step.status === "pending" || step.status === "running") {
-          await input.persistence.updateStepStatus({
-            stepId: step.id,
-            ownerUserId: input.ownerUserId,
-            status: "cancelled" satisfies AgentStepStatus,
-          });
-        }
-      }
-    },
-  };
-}
+export type AgentExecutionService = ReturnType<typeof createAgentExecutionService>;

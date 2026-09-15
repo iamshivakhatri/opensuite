@@ -248,6 +248,9 @@ GET /runs/:id/events → SSE (live ordered events; heartbeat comments)
 Inject model/tools via `buildApp` deps / `createConfiguredAgentModel(config)`.
 `AGENT_MODEL_PROVIDER=unconfigured|fake|anthropic|openai|openrouter`
 (fake banned in production; OpenRouter requires explicit `OPENROUTER_MODEL`).
+
+`AGENT_RUNTIME=v1|v2` defaults to `v1`. Phase 0A V2 lives separately in
+`packages/agent-core-v2`: one AI SDK/OpenRouter streaming call, no tools or loop.
 Provider SDKs/adapters live in `apps/api` — not agent-core.
 Document workspace Agent panel is wired.
 

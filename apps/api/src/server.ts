@@ -7,13 +7,14 @@ import {
 
 import { createAuth } from "./auth/index.js";
 import { buildApp } from "./app.js";
-import { createHttpConfirmationBridge } from "./agent/confirmation-bridge.js";
+import { createAgentExecutionLeaseService } from "./agent/execution-lease.js";
 import { loadConfig } from "./config/index.js";
 import { createResendEmailSender } from "./email/index.js";
 import { createS3ObjectStorage } from "./storage/index.js";
 
 async function main(): Promise<void> {
   const config = loadConfig();
+  console.info("[agent] runtime=v2");
   const dbClient = createDbClient(
     { databaseUrl: config.databaseUrl },
     {
@@ -23,20 +24,22 @@ async function main(): Promise<void> {
       },
     },
   );
+  // Live runs are in-process only; a prior crash/force-kill leaves durable leases
+  // that would falsely block new runs until expiry.
+  const cleared = await createAgentExecutionLeaseService(dbClient.db).clearAll();
+  if (cleared > 0) {
+    console.info(`[agent] cleared ${cleared} orphaned execution lease(s) on boot`);
+  }
   const emailSender = createResendEmailSender({
     apiKey: config.resendApiKey,
     from: config.emailFrom,
   });
   const auth = createAuth(config, dbClient.db, emailSender);
   const storage = createS3ObjectStorage(config.s3);
-  // Real interactive confirmation: destructive tools wait for an explicit
-  // Approve/Deny over HTTP instead of defaulting to deny-all.
-  const confirmationBridge = createHttpConfirmationBridge();
   const app = await buildApp(config, {
     auth,
     db: dbClient.db,
     storage,
-    agent: { confirmationBridge },
   });
 
   try {

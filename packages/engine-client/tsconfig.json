@@ -6,7 +6,6 @@
   },
   "include": ["src"],
   "references": [
-    { "path": "../contracts" },
-    { "path": "../agent-core" }
+    { "path": "../contracts" }
   ]
 }

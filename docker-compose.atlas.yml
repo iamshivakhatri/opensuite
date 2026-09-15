@@ -2,10 +2,9 @@
 # Uses your existing Postgres + MinIO via the same .env as local/dev.
 # Dokploy: select this compose file; inject env from your .env (or Dokploy UI).
 #
-# The process listens on container port 3000 (PORT below). You do NOT need to
-# publish host :3000 — point Dokploy's domain/proxy at container port 3000.
-#
-# Build needs ENGINE_GIT_URL (opensuite-engine git) for the linux N-API binding.
+# Container listens on 3000; point Dokploy's domain/proxy at that port.
+# Engine: stub by default (soft-boot, no DOCX). After npm publish of
+# @opensuite/engine, set USE_PUBLISHED_ENGINE=true.
 #
 # First user: ALLOW_SIGNUP=true (+ web NEXT_PUBLIC_ALLOW_SIGNUP=true), then lock.
 
@@ -15,24 +14,16 @@ services:
       context: .
       dockerfile: Dockerfile
       args:
-        ENGINE_GIT_URL: ${ENGINE_GIT_URL:-}
-        ENGINE_GIT_REF: ${ENGINE_GIT_REF:-main}
+        USE_PUBLISHED_ENGINE: ${USE_PUBLISHED_ENGINE:-false}
     restart: unless-stopped
-    # Optional raw host publish (skip if Dokploy/Traefik terminates TLS for you):
-    # ports:
-    #   - "${API_PUBLISH_PORT:-3000}:3000"
     expose:
       - "3000"
-    # Same keys as local `.env`. Dokploy: paste that env into the project UI
-    # (env_file is optional if the platform injects env for you).
     env_file:
       - path: .env
         required: false
     environment:
       NODE_ENV: production
       HOST: 0.0.0.0
-      # Internal listen port only — not your public URL port.
       PORT: 3000
-      # Hosted defaults — override in .env if needed.
       ALLOW_SIGNUP: ${ALLOW_SIGNUP:-false}
       AUTH_CROSS_ORIGIN: ${AUTH_CROSS_ORIGIN:-true}

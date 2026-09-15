@@ -33,6 +33,7 @@ test("loadConfig applies defaults when auth/database env vars are provided", () 
   assert.equal(config.uploadMaxBytes, 25 * 1024 * 1024);
   assert.equal(config.aiCredentialEncryptionKey, null);
   assert.equal(config.agent.provider, "unconfigured");
+  assert.equal(config.agentRuntime, "v1");
   assert.equal(config.agent.anthropicApiKey, null);
   assert.equal(config.agent.anthropicModel, "claude-sonnet-4-5");
   assert.equal(config.agent.openaiApiKey, null);
@@ -51,6 +52,10 @@ test("loadConfig parses ALLOW_SIGNUP and AUTH_CROSS_ORIGIN", () => {
   });
   assert.equal(config.allowSignup, false);
   assert.equal(config.authCrossOrigin, true);
+});
+
+test("loadConfig accepts the V2 agent runtime switch", () => {
+  assert.equal(loadConfig({ ...baseEnv, AGENT_RUNTIME: "v2" }).agentRuntime, "v2");
 });
 
 test("loadConfig accepts legacy MINIO_* aliases for S3 settings", () => {

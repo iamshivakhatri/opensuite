@@ -2,49 +2,17 @@
 #   docker build -t opensuite-api .
 # Atlas/Dokploy: docker-compose.atlas.yml (API only; external DB + MinIO).
 #
-# Native DOCX engine: set build-arg ENGINE_GIT_URL to the opensuite-engine git
-# URL (HTTPS). Without it, the image builds but the API will not start until
-# @opensuite/engine is present (see docs/deploy.md).
+# Engine: default in-repo stub (API soft-boots without DOCX).
+# After publishing @opensuite/engine to npm, rebuild with:
+#   --build-arg USE_PUBLISHED_ENGINE=true
 
 # syntax=docker/dockerfile:1.7
 
 ARG NODE_VERSION=22
 
-# ── optional: build linux N-API engine from a separate git repo ───────────────
-FROM node:${NODE_VERSION}-bookworm AS engine
-ARG ENGINE_GIT_URL=
-ARG ENGINE_GIT_REF=main
-RUN apt-get update \
-  && apt-get install -y --no-install-recommends build-essential ca-certificates curl git python3 \
-  && rm -rf /var/lib/apt/lists/* \
-  && curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
-ENV PATH="/root/.cargo/bin:${PATH}"
-WORKDIR /src
-RUN --mount=type=secret,id=engine_git_token,required=false \
-  if [ -z "$ENGINE_GIT_URL" ]; then \
-    mkdir -p /out && echo "ENGINE_GIT_URL unset — skipping engine build" > /out/SKIP; \
-  else \
-    TOKEN=""; \
-    if [ -f /run/secrets/engine_git_token ]; then TOKEN="$(cat /run/secrets/engine_git_token)"; fi; \
-    CLONE_URL="$ENGINE_GIT_URL"; \
-    if [ -n "$TOKEN" ]; then \
-      CLONE_URL="$(echo "$ENGINE_GIT_URL" | sed "s#https://#https://x-access-token:${TOKEN}@#")"; \
-    fi; \
-    git clone --depth 1 --branch "$ENGINE_GIT_REF" "$CLONE_URL" . \
-    && cd crates/opensuite-node \
-    && npm ci \
-    && npm run build \
-    && EXPECTED="opensuite_node.$(node -p 'process.platform')-$(node -p 'process.arch').node" \
-    && if [ ! -f "$EXPECTED" ]; then \
-         BUILT="$(ls opensuite_node.*.node | head -n 1)"; \
-         cp "$BUILT" "$EXPECTED"; \
-       fi \
-    && mkdir -p /out \
-    && cp -a package.json index.js index.d.ts opensuite_node.*.node /out/; \
-  fi
-
-# ── install + build API workspace packages ───────────────────────────────────
 FROM node:${NODE_VERSION}-bookworm-slim AS build
+ARG USE_PUBLISHED_ENGINE=false
+ENV USE_PUBLISHED_ENGINE=${USE_PUBLISHED_ENGINE}
 RUN apt-get update \
   && apt-get install -y --no-install-recommends ca-certificates \
   && rm -rf /var/lib/apt/lists/* \
@@ -57,31 +25,35 @@ COPY packages/contracts/package.json packages/contracts/
 COPY packages/db/package.json packages/db/
 COPY packages/agent-core/package.json packages/agent-core/
 COPY packages/engine-client/package.json packages/engine-client/
+COPY vendor/opensuite-engine vendor/opensuite-engine
 
-# Lockfile expects optional link:../../../opensuite-engine/... (sibling of this
-# repo). Stub it so frozen install works; real .node is copied after build.
-RUN mkdir -p /opensuite-engine/crates/opensuite-node \
-  && printf '%s\n' '{"name":"@opensuite/engine","version":"0.1.0","private":true,"main":"index.js"}' \
-       >/opensuite-engine/crates/opensuite-node/package.json \
-  && printf '%s\n' 'module.exports = {};' \
-       >/opensuite-engine/crates/opensuite-node/index.js
+# Drop sibling-repo pnpm.overrides; resolve engine from npm or the in-repo stub.
+RUN node -e "\
+const fs=require('fs');\
+const usePublished=process.env.USE_PUBLISHED_ENGINE==='true';\
+const root=JSON.parse(fs.readFileSync('package.json','utf8'));\
+if(root.pnpm&&root.pnpm.overrides){\
+  delete root.pnpm.overrides['@opensuite/engine'];\
+  if(!Object.keys(root.pnpm.overrides).length) delete root.pnpm.overrides;\
+  if(root.pnpm&&!Object.keys(root.pnpm).length) delete root.pnpm;\
+}\
+fs.writeFileSync('package.json',JSON.stringify(root,null,2)+'\\n');\
+const eng=JSON.parse(fs.readFileSync('packages/engine-client/package.json','utf8'));\
+eng.optionalDependencies=eng.optionalDependencies||{};\
+eng.optionalDependencies['@opensuite/engine']=usePublished?'^0.1.0':'file:../../vendor/opensuite-engine';\
+fs.writeFileSync('packages/engine-client/package.json',JSON.stringify(eng,null,2)+'\\n');\
+console.log('engine dep ->',eng.optionalDependencies['@opensuite/engine']);\
+"
 
-RUN pnpm install --frozen-lockfile --filter @opensuite/api...
+RUN pnpm install --no-frozen-lockfile --filter @opensuite/api...
 
 COPY packages ./packages
 COPY apps/api ./apps/api
 COPY deploy ./deploy
+COPY vendor/opensuite-engine vendor/opensuite-engine
 
 RUN pnpm --filter @opensuite/api... build
 
-# Drop the engine package into a place Node can require from engine-client.
-COPY --from=engine /out /tmp/engine-out
-RUN if [ ! -f /tmp/engine-out/SKIP ]; then \
-      mkdir -p packages/engine-client/node_modules/@opensuite/engine \
-      && cp -a /tmp/engine-out/. packages/engine-client/node_modules/@opensuite/engine/; \
-    fi
-
-# ── runtime ──────────────────────────────────────────────────────────────────
 FROM node:${NODE_VERSION}-bookworm-slim AS runtime
 RUN apt-get update \
   && apt-get install -y --no-install-recommends ca-certificates curl \

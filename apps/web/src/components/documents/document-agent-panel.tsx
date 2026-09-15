@@ -862,8 +862,8 @@ export function DocumentAgentPanel({
       },
     ]);
 
+    let id = threadId;
     try {
-      let id = threadId;
       if (!id) {
         const thread = await createWorkspaceAgentThread(workspaceId);
         id = thread.id;
@@ -879,6 +879,17 @@ export function DocumentAgentPanel({
       setMessages((prev) => prev.filter((m) => m.id !== optimisticId));
       if (options?.restoreDraftOnError) {
         setDraft(instruction);
+      }
+      const busyThreadId =
+        error instanceof ApiError &&
+        error.code === "AGENT_EXECUTION_BUSY" &&
+        typeof error.details?.activeThreadId === "string"
+          ? error.details.activeThreadId
+          : null;
+      if (busyThreadId && busyThreadId !== id) {
+        setRunNotice("Switched to the chat that already has an active run.");
+        await handleSelectThread(busyThreadId);
+        return;
       }
       setRunError(
         userFacingError(error, "Could not start the agent run. Try again."),

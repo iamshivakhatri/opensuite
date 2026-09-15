@@ -21,10 +21,7 @@ import {
   type AgentRunManager,
   type LiveEvent,
 } from "../agent/run-manager.js";
-import {
-  agentDebugLifecycle,
-} from "../agent/debug-lifecycle.js";
-import type { ConfirmationBridge } from "../agent/confirmation-bridge.js";
+import type { AgentExecutionLeaseService } from "../agent/execution-lease.js";
 import { getRequestUser, type SessionAuth } from "../auth/session.js";
 import {
   DocumentAccessError,
@@ -68,15 +65,6 @@ const CreateRunBody = z.object({
     .optional(),
 });
 
-const ConfirmationDecisionBody = z.object({
-  toolCallId: z
-    .string()
-    .trim()
-    .min(1, "toolCallId is required")
-    .max(200, "toolCallId is too long"),
-  decision: z.enum(["approve", "deny"]),
-});
-
 const SSE_HEARTBEAT_MS = 15_000;
 
 function unauthenticated() {
@@ -95,12 +83,7 @@ export interface AgentRouteDeps {
   readonly persistence: AgentPersistenceService;
   readonly execution: AgentExecutionService;
   readonly runManager: AgentRunManager;
-  /**
-   * Resolves a pending `waiting_for_confirmation` tool call. Omitted when no
-   * interactive confirmation gate is wired — the confirm route then reports
-   * cleanly that nothing is pending instead of throwing.
-   */
-  readonly confirmationBridge?: ConfirmationBridge;
+  readonly lease?: AgentExecutionLeaseService;
   /** Required on hijacked SSE — reply.hijack bypasses @fastify/cors. */
   readonly webOrigin: string;
 }
@@ -119,7 +102,7 @@ export function registerAgentRoutes(
   app: FastifyInstance,
   deps: AgentRouteDeps,
 ): void {
-  const { auth, documents, persistence, runManager, confirmationBridge, webOrigin } =
+  const { auth, documents, persistence, runManager, lease, webOrigin } =
     deps;
 
   app.get(
@@ -430,7 +413,10 @@ export function registerAgentRoutes(
         run: toAgentRunDto(started.run),
       });
     } catch (error) {
-      return mapExecutionError(reply, error);
+      return mapExecutionError(reply, error, {
+        runManager,
+        userId: user.id,
+      });
     }
   });
 
@@ -550,90 +536,6 @@ export function registerAgentRoutes(
     }
   });
 
-  app.post("/api/agent/runs/:runId/confirmation", async (request, reply) => {
-    const user = await getRequestUser(auth, request);
-    if (!user) {
-      return reply.status(401).send(unauthenticated());
-    }
-
-    const params = RunIdParams.safeParse(request.params);
-    if (!params.success) {
-      return reply.status(400).send({
-        error: {
-          statusCode: 400,
-          message: params.error.issues[0]?.message ?? "Invalid run id",
-          code: "INVALID_RUN_ID",
-        },
-      });
-    }
-
-    const body = ConfirmationDecisionBody.safeParse(request.body);
-    if (!body.success) {
-      return reply.status(400).send({
-        error: {
-          statusCode: 400,
-          message:
-            body.error.issues[0]?.message ?? "Invalid confirmation decision",
-          code: "INVALID_CONFIRMATION_DECISION",
-        },
-      });
-    }
-
-    try {
-      // Ownership check first, exactly like /cancel — never leak whether a
-      // run exists to a caller who doesn't own its workspace.
-      const run = await persistence.getRun({
-        runId: params.data.runId,
-        ownerUserId: user.id,
-      });
-      if (!run) {
-        return reply.status(404).send({
-          error: {
-            statusCode: 404,
-            message: "Agent run not found",
-            code: "RUN_NOT_FOUND",
-          },
-        });
-      }
-
-      if (run.status !== "waiting_for_confirmation" || !confirmationBridge) {
-        return reply.status(409).send({
-          error: {
-            statusCode: 409,
-            message: "No confirmation is pending for this run",
-            code: "CONFIRMATION_NOT_PENDING",
-          },
-        });
-      }
-
-      const outcome = confirmationBridge.resolve({
-        runId: run.id,
-        toolCallId: body.data.toolCallId,
-        approve: body.data.decision === "approve",
-      });
-      if (outcome === "not_found") {
-        return reply.status(409).send({
-          error: {
-            statusCode: 409,
-            message: "No confirmation is pending for this run",
-            code: "CONFIRMATION_NOT_PENDING",
-          },
-        });
-      }
-
-      // Best-effort refresh — the tool.started/tool.failed transition that
-      // follows resolution happens asynchronously in the runner; the SSE
-      // stream (not this response) is the source of truth for that.
-      const current = (await persistence.getRun({
-        runId: run.id,
-        ownerUserId: user.id,
-      })) ?? run;
-      return reply.send({ run: toAgentRunDto(current) });
-    } catch (error) {
-      return mapPersistenceError(reply, error);
-    }
-  });
-
   app.get("/api/agent/runs/:runId/events", async (request, reply) => {
     const user = await getRequestUser(auth, request);
     if (!user) {
@@ -693,13 +595,6 @@ export function registerAgentRoutes(
     reply.raw.write(formatSseComment("connected"));
     raw.flush?.();
 
-    // TEMP: agent lifecycle diagnosis
-    agentDebugLifecycle("SSE_OPEN", {
-      run: run.id,
-      runStatus: run.status,
-      cancelsRun: false,
-    });
-
     const terminalStatuses = TERMINAL_RUN_STATUSES;
     let cleaned = false;
     let unsubscribe: (() => void) | null = null;
@@ -717,26 +612,12 @@ export function registerAgentRoutes(
       unsubscribe?.();
       unsubscribe = null;
       request.raw.off("close", onRequestClose);
-      // TEMP: agent lifecycle diagnosis — SSE close does NOT cancel the run
-      agentDebugLifecycle("SSE_CLOSE", {
-        run: run.id,
-        reason,
-        cancelsRun: false,
-        runStatus: run.status,
-      });
       if (!reply.raw.writableEnded) {
         reply.raw.end();
       }
     };
 
     const onRequestClose = () => {
-      // TEMP: agent lifecycle diagnosis
-      agentDebugLifecycle("SSE_CLIENT_ABORT", {
-        run: run.id,
-        cancelsRun: false,
-        note: "unsubscribe-only; runManager.abort untouched",
-        runStatus: run.status,
-      });
       cleanup("client-close");
     };
 
@@ -788,14 +669,6 @@ export function registerAgentRoutes(
       ) {
         let durable = run;
         try {
-          // TEMP: agent lifecycle diagnosis
-          agentDebugLifecycle("STATUS", {
-            run: run.id,
-            from: run.status,
-            to: "failed",
-            source: "sse.not_live→RUN_ABANDONED",
-            errorCode: "RUN_ABANDONED",
-          });
           durable = await persistence.updateRunStatus({
             runId: run.id,
             ownerUserId: user.id,
@@ -804,6 +677,11 @@ export function registerAgentRoutes(
             errorMessage:
               "Agent run is no longer live (process exit or restart)",
           });
+          // Lease outlives the in-memory run after crash/restart; drop it when
+          // nothing else is live for this user so new runs are not blocked.
+          if (lease && !runManager.hasLiveForOwner(user.id)) {
+            await lease.releaseUser(user.id).catch(() => undefined);
+          }
         } catch {
           const refreshed = await persistence.getRun({
             runId: run.id,
@@ -923,7 +801,14 @@ function mapPersistenceError(reply: FastifyReply, error: unknown) {
   throw error;
 }
 
-function mapExecutionError(reply: FastifyReply, error: unknown) {
+function mapExecutionError(
+  reply: FastifyReply,
+  error: unknown,
+  context?: {
+    runManager: AgentRunManager;
+    userId: string;
+  },
+) {
   if (error instanceof AgentExecutionError) {
     if (error.code === "THREAD_NOT_FOUND") {
       return reply.status(404).send({
@@ -944,11 +829,18 @@ function mapExecutionError(reply: FastifyReply, error: unknown) {
       });
     }
     if (error.code === "AGENT_EXECUTION_BUSY") {
+      const live = context?.runManager.getLiveForOwner(context.userId) ?? null;
       return reply.status(409).send({
         error: {
           statusCode: 409,
           message: "Another agent execution is already active.",
           code: "AGENT_EXECUTION_BUSY",
+          ...(live
+            ? {
+                activeRunId: live.runId,
+                activeThreadId: live.threadId,
+              }
+            : {}),
         },
       });
     }
