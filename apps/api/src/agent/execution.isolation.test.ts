@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { MaxTurnsExceededError, type V2Model } from "@opensuite/agent-core-v2";
+import type { RunAgentResult, V3Model } from "@opensuite/agent-core-v3";
 
 import {
   createAgentExecutionService,
@@ -132,6 +132,22 @@ function memoryPersistence(ownerUserId: string): AgentPersistenceService & {
   };
 }
 
+function softResult(
+  stopReason: RunAgentResult["stopReason"],
+  text = "",
+): RunAgentResult {
+  return {
+    text,
+    finishReason: "stop",
+    inputTokens: 0,
+    cachedInputTokens: 0,
+    outputTokens: 0,
+    turns: 1,
+    toolCalls: 0,
+    stopReason,
+  };
+}
+
 function baseDeps(
   persistence: AgentPersistenceService,
   runAgentImpl: NonNullable<AgentExecutionServiceDeps["runAgent"]>,
@@ -148,7 +164,7 @@ function baseDeps(
       },
     },
     resolveModel: async () => ({
-      model: { provider: "test", modelId: "test" } as unknown as V2Model,
+      model: { provider: "test", modelId: "test" } as unknown as V3Model,
     }),
     runAgent: runAgentImpl,
   };
@@ -164,7 +180,6 @@ async function collectUnhandledRejections(
   process.on("unhandledRejection", onUnhandled);
   try {
     await work();
-    // Allow microtasks/macrotasks from finally chains to settle.
     await new Promise((resolve) => setImmediate(resolve));
     await new Promise((resolve) => setImmediate(resolve));
   } finally {
@@ -173,38 +188,106 @@ async function collectUnhandledRejections(
   return seen;
 }
 
-test("TEST A — maxTurns becomes failed run + agent.failed without escaping rejection", async () => {
+test("successful V3 finish_tool settles completed + agent.completed", async () => {
   const persistence = memoryPersistence("user-1");
   const events: AgentEvent[] = [];
   const execution = createAgentExecutionService(
-    baseDeps(persistence, async () => {
-      throw new MaxTurnsExceededError(10);
-    }),
+    baseDeps(persistence, async () => softResult("finish_tool", "All done")),
   );
 
-  const unhandled = await collectUnhandledRejections(async () => {
-    const handle = await execution.start({
+  const result = await (
+    await execution.start({
       userId: "user-1",
       threadId: "thread-1",
-      instruction: "edit the doc",
+      instruction: "edit",
       liveEvents: {
         emit(event) {
           events.push(event);
         },
       },
-    });
-    const result = await handle.result;
+    })
+  ).result;
+
+  assert.equal(result.run.status, "completed");
+  assert.equal(result.assistantMessage?.content, "All done");
+  assert.ok(events.some((e) => e.type === "agent.completed"));
+  assert.equal(events.some((e) => e.type === "agent.failed"), false);
+});
+
+test("successful V3 completed (no tools) settles completed", async () => {
+  const persistence = memoryPersistence("user-1");
+  const execution = createAgentExecutionService(
+    baseDeps(persistence, async () => softResult("completed", "Hello")),
+  );
+  const result = await (
+    await execution.start({
+      userId: "user-1",
+      threadId: "thread-1",
+      instruction: "hi",
+    })
+  ).result;
+  assert.equal(result.run.status, "completed");
+});
+
+test("max_turns soft stop becomes failed + AGENT_MAX_TURNS, not completed", async () => {
+  const persistence = memoryPersistence("user-1");
+  const events: AgentEvent[] = [];
+  const execution = createAgentExecutionService(
+    baseDeps(persistence, async () => softResult("max_turns")),
+  );
+
+  const unhandled = await collectUnhandledRejections(async () => {
+    const result = await (
+      await execution.start({
+        userId: "user-1",
+        threadId: "thread-1",
+        instruction: "edit the doc",
+        liveEvents: {
+          emit(event) {
+            events.push(event);
+          },
+        },
+      })
+    ).result;
     assert.equal(result.run.status, "failed");
-    assert.equal(result.run.errorCode, "AGENT_EXECUTION_FAILED");
+    assert.equal(result.run.errorCode, "AGENT_MAX_TURNS");
     assert.equal(result.assistantMessage, null);
   });
 
   assert.equal(unhandled.length, 0);
   assert.ok(events.some((event) => event.type === "agent.failed"));
-  assert.equal([...persistence.runs.values()][0]?.status, "failed");
+  assert.equal(events.some((e) => e.type === "agent.completed"), false);
+  const failed = events.find((e) => e.type === "agent.failed");
+  assert.equal(failed && failed.type === "agent.failed" && failed.code, "AGENT_MAX_TURNS");
 });
 
-test("TEST B — arbitrary runAgent throw is isolated as failed product state", async () => {
+test("deadline soft stop becomes failed + AGENT_DEADLINE, not completed", async () => {
+  const persistence = memoryPersistence("user-1");
+  const events: AgentEvent[] = [];
+  const execution = createAgentExecutionService(
+    baseDeps(persistence, async () => softResult("deadline")),
+  );
+
+  const result = await (
+    await execution.start({
+      userId: "user-1",
+      threadId: "thread-1",
+      instruction: "edit",
+      liveEvents: {
+        emit(event) {
+          events.push(event);
+        },
+      },
+    })
+  ).result;
+
+  assert.equal(result.run.status, "failed");
+  assert.equal(result.run.errorCode, "AGENT_DEADLINE");
+  assert.ok(events.some((e) => e.type === "agent.failed"));
+  assert.equal(events.some((e) => e.type === "agent.completed"), false);
+});
+
+test("arbitrary runAgent throw is isolated as failed product state", async () => {
   const persistence = memoryPersistence("user-1");
   const events: AgentEvent[] = [];
   const execution = createAgentExecutionService(
@@ -232,7 +315,7 @@ test("TEST B — arbitrary runAgent throw is isolated as failed product state", 
   assert.ok(events.some((event) => event.type === "agent.failed"));
 });
 
-test("TEST C — persistence failure while recording failure stays contained", async () => {
+test("persistence failure while recording failure stays contained", async () => {
   const persistence = memoryPersistence("user-1");
   persistence.failOnStatus = "failed";
   const events: AgentEvent[] = [];
@@ -254,7 +337,6 @@ test("TEST C — persistence failure while recording failure stays contained", a
       },
     });
     const result = await handle.result;
-    // Still settles; may use in-memory terminal snapshot when DB write failed.
     assert.equal(result.run.status, "failed");
   });
 
@@ -293,6 +375,39 @@ test("cancellation remains cancelled, not failed", async () => {
     events.some((event) => event.type === "agent.failed"),
     false,
   );
+});
+
+test("event relay maps V3 tool_skipped onto product tool.failed", async () => {
+  const persistence = memoryPersistence("user-1");
+  const events: AgentEvent[] = [];
+  const execution = createAgentExecutionService(
+    baseDeps(persistence, async (input) => {
+      await input.onEvent?.({
+        type: "tool_skipped",
+        toolCallId: "c1",
+        toolName: "document.replace_text",
+        reason: "FUSE_TRIPPED",
+      });
+      return softResult("finish_tool", "ok");
+    }),
+  );
+
+  await (
+    await execution.start({
+      userId: "user-1",
+      threadId: "thread-1",
+      instruction: "edit",
+      liveEvents: {
+        emit(event) {
+          events.push(event);
+        },
+      },
+    })
+  ).result;
+
+  const failed = events.find((e) => e.type === "tool.failed");
+  assert.ok(failed);
+  assert.equal(failed.type === "tool.failed" && failed.error, "FUSE_TRIPPED");
 });
 
 test("run-manager ownership: rejecting background result does not produce unhandledRejection", async () => {

@@ -1,9 +1,13 @@
 import {
+  createFinishTool,
+  isSuccessfulStop,
   runAgent,
   type AgentEvent as CoreAgentEvent,
+  type AgentToolSet,
   type ModelMessage,
-  type V2Model,
-} from "@opensuite/agent-core-v2";
+  type StopReason,
+  type V3Model,
+} from "@opensuite/agent-core-v3";
 
 import type { DocxEngineBinding } from "@opensuite/engine-client";
 
@@ -13,6 +17,7 @@ import type { DocumentService } from "../documents/service.js";
 import type { ManagedTrialService } from "../managed-trial/service.js";
 import type { ModelUsageService } from "../model-usage/service.js";
 import { createPrimaryDocxTools } from "./docx-tools.js";
+import { AGENT_OPERATING_INSTRUCTION } from "./operating-instruction.js";
 import {
   type AgentMessage,
   type AgentPersistenceService,
@@ -54,10 +59,13 @@ export interface AgentModelUsageAttribution {
   readonly credentialSource: CredentialSource;
 }
 
-export interface ResolvedV2ExecutionModel {
-  readonly model: V2Model;
+export interface ResolvedV3ExecutionModel {
+  readonly model: V3Model;
   readonly usageAttribution?: AgentModelUsageAttribution;
 }
+
+/** @deprecated Use ResolvedV3ExecutionModel — alias during V3 cutover. */
+export type ResolvedV2ExecutionModel = ResolvedV3ExecutionModel;
 
 export type AgentExecutionErrorCode =
   | "THREAD_NOT_FOUND"
@@ -103,16 +111,16 @@ export interface AgentExecutionServiceDeps {
     DocumentService,
     "getOwnedDocument" | "readExactVersionBytes" | "appendDocumentVersion"
   >;
-  readonly resolveModel: (userId: string) => Promise<ResolvedV2ExecutionModel>;
+  readonly resolveModel: (userId: string) => Promise<ResolvedV3ExecutionModel>;
   readonly docxBinding?: DocxEngineBinding;
   readonly modelUsage?: ModelUsageService;
   readonly managedTrial?: ManagedTrialService;
   readonly lease?: AgentExecutionLeaseService;
-  /** Test seam — production uses agent-core-v2 `runAgent`. */
+  /** Test seam — production uses agent-core-v3 `runAgent`. */
   readonly runAgent?: typeof runAgent;
 }
 
-/** Product shell: resolve and persist here; execute once in agent-core-v2. */
+/** Product shell: resolve and persist here; execute once in agent-core-v3. */
 export function createAgentExecutionService(deps: AgentExecutionServiceDeps) {
   async function start(input: AgentExecutionInput): Promise<AgentExecutionHandle> {
     const thread = await deps.persistence.getOwnedThread({
@@ -155,7 +163,7 @@ export function createAgentExecutionService(deps: AgentExecutionServiceDeps) {
         return { userMessage, run };
       });
 
-      console.info(`[agent] runtime=v2 run=${started.run.id.slice(0, 8)}`);
+      console.info(`[agent] runtime=v3 run=${started.run.id.slice(0, 8)}`);
       const result = runExecution({
         deps,
         model,
@@ -189,7 +197,7 @@ export function createAgentExecutionService(deps: AgentExecutionServiceDeps) {
 async function resolveModel(
   deps: AgentExecutionServiceDeps,
   userId: string,
-): Promise<ResolvedV2ExecutionModel> {
+): Promise<ResolvedV3ExecutionModel> {
   try {
     return await deps.resolveModel(userId);
   } catch (error) {
@@ -222,7 +230,7 @@ async function resolvePrimaryDocument(
 
 async function runExecution(input: {
   readonly deps: AgentExecutionServiceDeps;
-  readonly model: ResolvedV2ExecutionModel;
+  readonly model: ResolvedV3ExecutionModel;
   readonly thread: AgentThread;
   readonly userMessage: AgentMessage;
   readonly run: AgentRun;
@@ -242,7 +250,7 @@ async function runExecution(input: {
       .map((message) => ({ role: message.role, content: message.content })),
     { role: "user", content: input.instruction },
   ];
-  const messageId = `v2-${input.run.id}`;
+  const messageId = `v3-${input.run.id}`;
 
   try {
     await input.deps.persistence.updateRunStatus({
@@ -252,7 +260,7 @@ async function runExecution(input: {
     });
     const runShort = input.run.id.slice(0, 8);
     console.info(
-      `[agent-v2] run_start run=${runShort} provider=openrouter model=${input.model.usageAttribution?.model ?? "unknown"}`,
+      `[agent-v3] run_start run=${runShort} provider=openrouter model=${input.model.usageAttribution?.model ?? "unknown"}`,
     );
     if (
       input.model.usageAttribution?.provider === "openrouter" &&
@@ -279,16 +287,40 @@ async function runExecution(input: {
       },
     });
 
-    // The one API → agent-core-v2 execution call.
+    const finish = createFinishTool({
+      description: "Call when the requested work is complete. Ends the run.",
+    });
+    const tools: AgentToolSet = {
+      ...(boundTools?.tools ?? {}),
+      [finish.name]: finish.tool,
+    };
+
+    // The one API → agent-core-v3 execution call.
     const executeAgent = input.deps.runAgent ?? runAgent;
     const result = await executeAgent({
       model: input.model.model,
+      system: AGENT_OPERATING_INSTRUCTION,
       messages,
-      ...(boundTools ? { tools: boundTools.tools } : {}),
+      tools,
       signal: input.signal,
       runId: runShort,
       onEvent: (event) => relayEvent(event, input.liveEvents, input.run.id, messageId),
     });
+
+    if (!isSuccessfulStop(result.stopReason)) {
+      return settleTerminalRunFailure({
+        error: new Error(`Agent stopped: ${result.stopReason}`),
+        cancelled: input.signal?.aborted === true,
+        persistence: input.deps.persistence,
+        ownerUserId: input.ownerUserId,
+        thread: input.thread,
+        userMessage: input.userMessage,
+        run: input.run,
+        liveEvents: input.liveEvents,
+        failureCode: failureCodeForStopReason(result.stopReason),
+        failureMessage: `Agent stopped with ${result.stopReason}`,
+      });
+    }
 
     if (input.deps.modelUsage && input.model.usageAttribution) {
       const usage = await input.deps.modelUsage.recordFromProviderResponse({
@@ -329,6 +361,12 @@ async function runExecution(input: {
   }
 }
 
+function failureCodeForStopReason(stopReason: StopReason): string {
+  if (stopReason === "max_turns") return "AGENT_MAX_TURNS";
+  if (stopReason === "deadline") return "AGENT_DEADLINE";
+  return "AGENT_EXECUTION_FAILED";
+}
+
 async function relayEvent(
   event: CoreAgentEvent,
   sink: AgentEventSink | undefined,
@@ -367,6 +405,17 @@ async function relayEvent(
       error: event.error,
     });
   }
+  // Map skips onto the existing tool.failed product event (no frontend change).
+  if (event.type === "tool_skipped") {
+    return sink.emit({
+      type: "tool.failed",
+      runId,
+      at,
+      toolCallId: event.toolCallId,
+      toolName: event.toolName,
+      error: event.reason,
+    });
+  }
   if (event.type === "completed") return sink.emit({ type: "message.completed", runId, messageId, content: event.text, at });
 }
 
@@ -399,8 +448,12 @@ async function settleTerminalRunFailure(input: {
   readonly userMessage: AgentMessage;
   readonly run: AgentRun;
   readonly liveEvents?: AgentEventSink;
+  readonly failureCode?: string;
+  readonly failureMessage?: string;
 }): Promise<AgentExecutionResult> {
   const runShort = input.run.id.slice(0, 8);
+  const failureCode = input.failureCode ?? "AGENT_EXECUTION_FAILED";
+  const failureMessage = input.failureMessage ?? "Agent execution failed";
 
   try {
     await updateRunAfterError(
@@ -408,6 +461,8 @@ async function settleTerminalRunFailure(input: {
       input.ownerUserId,
       input.run.id,
       input.cancelled,
+      failureCode,
+      failureMessage,
     );
   } catch (finalizeError) {
     console.error(
@@ -423,7 +478,7 @@ async function settleTerminalRunFailure(input: {
             type: "agent.failed",
             runId: input.run.id,
             at: new Date().toISOString(),
-            code: "AGENT_EXECUTION_FAILED",
+            code: failureCode,
           },
     );
   } catch (emitError) {
@@ -439,7 +494,14 @@ async function settleTerminalRunFailure(input: {
   return {
     thread: input.thread,
     userMessage: input.userMessage,
-    run: await loadTerminalRun(input.persistence, input.ownerUserId, input.run, input.cancelled),
+    run: await loadTerminalRun(
+      input.persistence,
+      input.ownerUserId,
+      input.run,
+      input.cancelled,
+      failureCode,
+      failureMessage,
+    ),
     assistantMessage: null,
   };
 }
@@ -456,6 +518,8 @@ async function updateRunAfterError(
   ownerUserId: string,
   runId: string,
   cancelled: boolean,
+  failureCode: string,
+  failureMessage: string,
 ): Promise<void> {
   await persistence.updateRunStatus({
     runId,
@@ -463,7 +527,7 @@ async function updateRunAfterError(
     status: cancelled ? "cancelled" : "failed",
     ...(cancelled
       ? {}
-      : { errorCode: "AGENT_EXECUTION_FAILED", errorMessage: "Agent execution failed" }),
+      : { errorCode: failureCode, errorMessage: failureMessage }),
   });
 }
 
@@ -472,6 +536,8 @@ async function loadTerminalRun(
   ownerUserId: string,
   fallback: AgentRun,
   cancelled: boolean,
+  failureCode: string,
+  failureMessage: string,
 ): Promise<AgentRun> {
   const terminalStatus = cancelled ? "cancelled" : "failed";
   try {
@@ -484,8 +550,8 @@ async function loadTerminalRun(
     ...fallback,
     status: terminalStatus,
     completedAt: new Date().toISOString(),
-    errorCode: cancelled ? null : "AGENT_EXECUTION_FAILED",
-    errorMessage: cancelled ? null : "Agent execution failed",
+    errorCode: cancelled ? null : failureCode,
+    errorMessage: cancelled ? null : failureMessage,
   };
 }
 

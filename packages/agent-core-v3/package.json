@@ -1,0 +1,31 @@
+{
+  "name": "@opensuite/agent-core-v3",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Generic streaming model + tool-loop runtime for OpenSuite (v3). No product/document policy.",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "dev": "tsc -w -p tsconfig.json",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "test": "tsc -p tsconfig.json && node --test \"dist/**/*.test.js\"",
+    "eval": "tsc -p tsconfig.json && tsx evals/run-evals.ts"
+  },
+  "dependencies": {
+    "@openrouter/ai-sdk-provider": "^3.0.0",
+    "ai": "^7.0.99"
+  },
+  "devDependencies": {
+    "@types/node": "^26.5.1",
+    "tsx": "^4.23.13",
+    "typescript": "^5.9.3"
+  }
+}

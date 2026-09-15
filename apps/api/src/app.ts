@@ -3,7 +3,7 @@ import cors from "@fastify/cors";
 import multipart from "@fastify/multipart";
 
 import type { Db } from "@opensuite/db";
-import { createOpenRouterModel } from "@opensuite/agent-core-v2";
+import { createOpenRouterModel } from "@opensuite/agent-core-v3";
 import { createNapiDocxEngineBinding } from "@opensuite/engine-client";
 
 import {
@@ -255,7 +255,7 @@ export async function buildApp(
     deps.agent?.persistence ?? createAgentPersistenceService(deps.db);
   const agentExecutionLease = createAgentExecutionLeaseService(deps.db);
   if (!aiModelResolver && !deps.agent?.execution) {
-    throw new Error("OpenRouter configuration is required for Agent Core V2");
+    throw new Error("OpenRouter configuration is required for Agent Core V3");
   }
   const agentExecution =
     deps.agent?.execution ??
@@ -266,7 +266,7 @@ export async function buildApp(
       resolveModel: async (userId: string) => {
         const resolved = await aiModelResolver!.resolve(userId);
         if (resolved.provider !== "openrouter") {
-          throw new Error("Agent Core V2 currently requires OpenRouter");
+          throw new Error("Agent Core V3 currently requires OpenRouter");
         }
         return {
           model: createOpenRouterModel(resolved),

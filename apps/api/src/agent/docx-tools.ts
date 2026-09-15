@@ -1,17 +1,17 @@
 import {
-  createDocumentTools,
-  type BoundDocumentHost,
-  type ToolSet,
-} from "@opensuite/agent-core-v2";
-import {
   bindDocxDocument,
   type DocxEngineBinding,
 } from "@opensuite/engine-client";
+import type { AgentToolSet } from "@opensuite/agent-core-v3";
 
 import type { DocumentService } from "../documents/service.js";
+import {
+  createDocumentTools,
+  type BoundDocumentHost,
+} from "./document-tools.js";
 
 export interface PrimaryDocxToolsResult {
-  readonly tools: ToolSet;
+  readonly tools: AgentToolSet;
   readonly documentId: string;
 }
 
