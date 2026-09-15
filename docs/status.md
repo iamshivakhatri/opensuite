@@ -5,7 +5,7 @@ _Read this before starting any work. Keep it a concise current-state handoff, no
 ## What Exists
 
 * Workspace shell, Casual Docs DOCX, engine-backed inspect/mutate, blank create, workspace agent.
-* **Agent Core V2, Phase 2B** — Phase-1 tool loop + server-bound DOCX read/write tools via `bindDocxDocument` → N-API. Capability-gated typed mutations; immutable version persist mid-run; turn/tool backend logs.
+* **Agent Core V2, Phase 2B.2** — mutation contracts truthful: zero-based occurrence (matches find/inspect), closed tool schemas, `VALIDATION_FAILED` for bad shapes (not `DISPATCH_FAILED`), capability gated by schema + dispatcher. 28 model mutation tools; `insert_picture`/`replace_picture` hidden (binary).
 * Existing Agent panel and hosted-alpha foundation.
 * **AI Settings** — active strip select switches managed ↔ BYOK; setup cards only browse. Account tab shows read-only AI / storage / appearance glance. OpenRouter BYOK has model picker + pricing.
 * **DB availability UX** — pool `connectionTimeoutMillis` 5s; `/health` includes `database`; API maps outages to `503 DATABASE_UNAVAILABLE`; web banner + auth-gate hold (no false sign-out); pg pool reconnects on next checkout.
@@ -13,7 +13,7 @@ _Read this before starting any work. Keep it a concise current-state handoff, no
 
 ## Just Completed
 
-* **P0 agent-run isolation** — run failures (maxTurns, provider/tool throws) convert to terminal product state (`failed`/`cancelled` + SSE) and must not kill the API process. Root cause: unobserved `Promise.finally` re-rejection in `run-manager` + rethrow after failure conversion in `execution`.
+* **Phase 2B.2 mutation contract correctness** — root causes: (1) `toNativeTextTarget` wrongly subtracted 1 from occurrence → `TARGET_NOT_FOUND` when model used inspect’s 0-based values; (2) permissive `set_table_cells_text` schemas let malformed updates throw in the TS bridge → `DISPATCH_FAILED`. Fixed pass-through + closed schemas + arg validation. Proven E2E: style / text formatting / table cells against real N-API fixtures.
 
 ## Current Decisions
 
@@ -31,10 +31,11 @@ _Read this before starting any work. Keep it a concise current-state handoff, no
 
 | Check | Status |
 |---|---|
-| agent isolation tests (execution + run-manager) | Pass (5) |
-| API typecheck | Pass |
+| engine-client bound-docx mutation tests | Pass (13) |
+| agent-core-v2 document tool tests | Pass (15) |
+| API document-mutation-contract tests | Pass (2) |
 | git diff --check | Pass |
-| Manual Agent panel dogfood (maxTurns / failed run) | pending (user) |
+| Manual Agent panel dogfood (mutation tools) | pending (user) |
 
 ## Intentionally Deferred
 
@@ -43,8 +44,8 @@ _Read this before starting any work. Keep it a concise current-state handoff, no
 * Engine keepNext/keepLines/lineSpacing/indent fields
 * Frontend exposure of model-turn logs
 * First npm publish of `@opensuite/engine` (needs `NPM_TOKEN` + `@opensuite` scope)
-* Mutation schema / document tool correctness / repeated-failure / context cleanup (separate milestones)
+* Phase 2B.3 — repeated inspect/find, failure fuse, turn efficiency, history contamination
 
 ## Recommended Next Step
 
-Manually reproduce a maxTurns/failed agent run and confirm API stays up, run status=`failed`, and UI leaves "Finishing up...".
+Manually dogfood Agent mutations (`set_table_cells_text`, `set_paragraph_style`, `set_text_formatting`) with zero-based occurrence / cell handles, then Phase 2B.3 efficiency.

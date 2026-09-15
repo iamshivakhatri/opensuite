@@ -77,6 +77,9 @@ exact immutable version N
 * Rust is capability / semantic source of truth.
 * Inspect focuses: overview, headings, paragraphs, tables, body_blocks, context — paged collections use offset/limit (default 20, max 100).
 * `body_blocks`: ordered direct body paragraphs/tables with opaque `handle` (`bN` opaque to TS), optional text / tableHandle; used for insert_paragraph before/after.
+* Occurrence is **zero-based** everywhere at the V2/engine boundary (find matches, inspect `targetOccurrence` / table occurrence, mutation `target.occurrence`). Do not invent 1-based remapping in TypeScript.
+* Model mutation tools require a schema in `MODEL_MUTATION_CAPABILITIES` + a dispatcher in `DISPATCHABLE_MUTATION_CAPABILITIES`. Binary picture insert/replace stay dispatchable but hidden from the model (JSON cannot carry Buffer).
+* Structural arg mistakes return `VALIDATION_FAILED`; Rust semantic failures (`TARGET_NOT_FOUND`, …) pass through. `DISPATCH_FAILED` is only for unexpected adapter/runtime errors.
 * Occurrence/order from inspect is VERSION-LOCAL — never persist as durable identity.
 * Table inspect returns opaque artifact-local handles (table/column/row/cell). Mutations accept those
   handles alongside semantic selectors. Prefer handles for blank/duplicate targets; re-inspect after N→N+1.

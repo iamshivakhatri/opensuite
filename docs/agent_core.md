@@ -7,11 +7,13 @@ Phase 2B loop:
 ```text
 API binds primary DOCX version bytes + persist callback
   → createDocumentTools(boundDocument)  # reads + capability-gated mutations
-  → agent-core-v2 runAgent (Phase-1 tool loop + turn/tool logs)
-    → document.* tools
+    → agent-core-v2 runAgent (Phase-1 tool loop + turn/tool logs)
+    → document.* tools (MODEL_MUTATION_CAPABILITIES ∩ engine caps ∩ host.mutate)
     → engine-client bindDocxDocument → DocxEngineBinding → Rust
     → on write success: appendDocumentVersion → host advances bytes/version
 ```
+
+Mutation tools: closed schemas (no `additionalProperties`), zero-based occurrence matching find/inspect. Binary picture insert/replace are not model-exposed.
 
 The core has no database, HTTP, authentication, storage, or UI.
 Document tools call a server-bound host; they never select document IDs.

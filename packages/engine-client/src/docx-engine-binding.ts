@@ -908,15 +908,37 @@ export async function createNapiDocxEngineBinding(): Promise<DocxEngineBinding> 
     },
 
     async executeDocxSetTableCellsText(input, operation) {
+      if (!Array.isArray(operation.updates)) {
+        throw new MutationArgError("updates must be a non-empty array");
+      }
+      if (operation.updates.length === 0) {
+        throw new MutationArgError("updates must be a non-empty array");
+      }
+      const updates = operation.updates.map((update, index) => {
+        if (!update || typeof update !== "object") {
+          throw new MutationArgError(`updates[${index}] must be an object`);
+        }
+        if (typeof update.expectedCurrentText !== "string") {
+          throw new MutationArgError(
+            `updates[${index}].expectedCurrentText is required`,
+          );
+        }
+        if (typeof update.replacement !== "string") {
+          throw new MutationArgError(
+            `updates[${index}].replacement is required`,
+          );
+        }
+        return {
+          target: toNativeCellTarget(update.target),
+          expectedCurrentText: update.expectedCurrentText,
+          replacement: update.replacement,
+        };
+      });
       const response = await native.executeDocxSetTableCellsText(
         Buffer.from(input),
         {
           table: toNativeTableTarget(operation.table),
-          updates: operation.updates.map((update) => ({
-            target: toNativeCellTarget(update.target),
-            expectedCurrentText: update.expectedCurrentText,
-            replacement: update.replacement,
-          })),
+          updates,
           ...(operation.baseRevision !== undefined
             ? { baseRevision: operation.baseRevision }
             : {}),
@@ -1056,14 +1078,27 @@ export async function createNapiDocxEngineBinding(): Promise<DocxEngineBinding> 
     },
 
     async executeDocxSetTableCellShading(input, operation) {
-      const response = await native.executeDocxSetTableCellShading(Buffer.from(input), {
-        table: toNativeTableTarget(operation.table),
-        updates: operation.updates.map((update) => ({
-          target: toNativeCellTarget(update.target),
-          ...(update.fill !== undefined ? { fill: update.fill } : {}),
-        })),
-        ...(operation.baseRevision !== undefined ? { baseRevision: operation.baseRevision } : {}),
-      });
+      if (!Array.isArray(operation.updates) || operation.updates.length === 0) {
+        throw new MutationArgError("updates must be a non-empty array");
+      }
+      const response = await native.executeDocxSetTableCellShading(
+        Buffer.from(input),
+        {
+          table: toNativeTableTarget(operation.table),
+          updates: operation.updates.map((update, index) => {
+            if (!update || typeof update !== "object") {
+              throw new MutationArgError(`updates[${index}] must be an object`);
+            }
+            return {
+              target: toNativeCellTarget(update.target),
+              ...(update.fill !== undefined ? { fill: update.fill } : {}),
+            };
+          }),
+          ...(operation.baseRevision !== undefined
+            ? { baseRevision: operation.baseRevision }
+            : {}),
+        },
+      );
       return mapMutationBindingResponse(response);
     },
 
@@ -1093,18 +1128,45 @@ function toNativeParagraphPlacement(
   };
 }
 
+/**
+ * Pass occurrence through unchanged. Engine TextTarget / find / inspect
+ * (targetOccurrence, match.occurrence) are all zero-based.
+ */
 function toNativeTextTarget(target: DocxTextTarget): Record<string, unknown> {
+  if (!target || typeof target.text !== "string") {
+    throw new MutationArgError("target.text is required");
+  }
+  if (
+    target.occurrence !== undefined &&
+    (!Number.isInteger(target.occurrence) || target.occurrence < 0)
+  ) {
+    throw new MutationArgError(
+      "target.occurrence must be a non-negative integer (zero-based)",
+    );
+  }
   return {
     text: target.text,
-    // Agent/document tools expose occurrences as 1-based; the native target
-    // selector is zero-based.
     ...(target.occurrence !== undefined
-      ? { occurrence: target.occurrence - 1 }
+      ? { occurrence: target.occurrence }
       : {}),
   };
 }
 
+/** Thrown for structurally invalid model args — mapped to VALIDATION_FAILED. */
+export class MutationArgError extends Error {
+  readonly reasonCode = "VALIDATION_FAILED" as const;
+  constructor(message: string) {
+    super(message);
+    this.name = "MutationArgError";
+  }
+}
+
 function toNativeTableTarget(table: DocxTableTarget): Record<string, unknown> {
+  if (!table || typeof table !== "object") {
+    throw new MutationArgError(
+      "table must be an object with handle and/or headerCells",
+    );
+  }
   return {
     ...(table.headerCells !== undefined
       ? { headerCells: [...table.headerCells] }
@@ -1125,14 +1187,31 @@ function toNativeRowAnchor(after: DocxTableRowAnchor): Record<string, unknown> {
 }
 
 function toNativeCellTarget(target: DocxTableCellTarget): Record<string, unknown> {
-  if ("handle" in target) {
+  if (!target || typeof target !== "object") {
+    throw new MutationArgError(
+      "updates[].target must be { handle } or { rowLabel, columnHeader, occurrence? }",
+    );
+  }
+  if ("handle" in target && typeof target.handle === "string") {
     return { handle: target.handle };
   }
-  return {
-    rowLabel: target.rowLabel,
-    columnHeader: target.columnHeader,
-    ...(target.occurrence !== undefined ? { occurrence: target.occurrence } : {}),
-  };
+  if (
+    "rowLabel" in target &&
+    typeof target.rowLabel === "string" &&
+    "columnHeader" in target &&
+    typeof target.columnHeader === "string"
+  ) {
+    return {
+      rowLabel: target.rowLabel,
+      columnHeader: target.columnHeader,
+      ...(target.occurrence !== undefined
+        ? { occurrence: target.occurrence }
+        : {}),
+    };
+  }
+  throw new MutationArgError(
+    "updates[].target must be { handle } or { rowLabel, columnHeader, occurrence? }",
+  );
 }
 
 function mapMutationBindingResponse(response: {

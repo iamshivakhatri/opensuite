@@ -6,6 +6,8 @@ import { MockLanguageModelV4, simulateReadableStream } from "ai/test";
 
 import {
   createDocumentTools,
+  HIDDEN_BINARY_MUTATION_CAPABILITIES,
+  MODEL_MUTATION_CAPABILITIES,
   type BoundDocumentHost,
 } from "./document-tools.js";
 import { runAgent } from "./model.js";
@@ -207,6 +209,49 @@ test("mutations are omitted when host has no mutate or engine omits caps", async
     "document.find",
     "document.inspect",
   ]);
+});
+
+test("every exposed mutation tool has execute and a closed schema", async () => {
+  const doc = fakeDocument({
+    caps: ["inspect", "find_text", ...MODEL_MUTATION_CAPABILITIES],
+  });
+  const tools = createDocumentTools(doc);
+  const mutationTools = Object.keys(tools).filter(
+    (name) =>
+      name.startsWith("document.") &&
+      name !== "document.capabilities" &&
+      name !== "document.inspect" &&
+      name !== "document.find",
+  );
+
+  assert.equal(mutationTools.length, MODEL_MUTATION_CAPABILITIES.length);
+
+  for (const name of mutationTools) {
+    const capability = name.slice("document.".length);
+    assert.ok(
+      (MODEL_MUTATION_CAPABILITIES as readonly string[]).includes(capability),
+      `${name} is exposed without a model contract`,
+    );
+    assert.equal(typeof tools[name]!.execute, "function");
+    const schema = await asSchema(tools[name]!.inputSchema).jsonSchema;
+    assert.equal(
+      schema.additionalProperties,
+      false,
+      `${name} must not use additionalProperties: true`,
+    );
+    const schemaText = JSON.stringify(schema);
+    if (schemaText.includes("occurrence")) {
+      assert.match(
+        schemaText,
+        /[Zz]ero-based/,
+        `${name} occurrence field must document zero-based semantics`,
+      );
+    }
+  }
+
+  for (const hidden of HIDDEN_BINARY_MUTATION_CAPABILITIES) {
+    assert.equal(tools[`document.${hidden}`], undefined);
+  }
 });
 
 test("inspect + find in one model turn both run before next turn", async () => {
