@@ -19,7 +19,7 @@ import {
  *
  * Stay on the loading screen until the session check settles. A short debounce
  * avoids bouncing logged-in users to `/sign-in` during session hydration races.
- * When Postgres/API is down, show an unavailable state instead of signing out.
+ * Database/API outages use the calm top banner — do not replace the whole app.
  */
 export default function AppLayout({
   children,
@@ -41,24 +41,17 @@ export default function AppLayout({
     return () => window.clearTimeout(timer);
   }, [isPending, session, databaseDown, sessionError, router]);
 
-  if (databaseDown) {
+  // Keep the shell when we still have a session; outage UX is the banner +
+  // per-operation errors, not a full-screen takeover.
+  if (session) {
     return (
-      <div className="grid h-screen place-items-center px-6 text-center">
-        <div className="max-w-md space-y-2">
-          <p className="text-[15px] font-medium text-ink">
-            OpenSuite is temporarily unavailable
-          </p>
-          <p className="os-type-secondary text-ink-soft">
-            We can’t reach the database right now. This page will recover
-            automatically when the connection is restored — you don’t need to
-            sign in again.
-          </p>
-        </div>
-      </div>
+      <CommandPaletteProvider>
+        <div className="h-screen">{children}</div>
+      </CommandPaletteProvider>
     );
   }
 
-  if (isPending || !session) {
+  if (isPending) {
     return (
       <div className="grid h-screen place-items-center text-[13px] text-ink-soft">
         Loading OpenSuite…
@@ -66,9 +59,25 @@ export default function AppLayout({
     );
   }
 
+  // No session and DB/API down — hold calmly (don't force sign-out thrash).
+  if (databaseDown) {
+    return (
+      <div className="grid h-screen place-items-center px-6 text-center">
+        <div className="max-w-sm space-y-1.5">
+          <p className="text-[length:var(--text-sm)] font-medium text-ink">
+            No connection with the database
+          </p>
+          <p className="os-type-secondary text-ink-faint">
+            OpenSuite will reconnect automatically. You can keep this tab open.
+          </p>
+        </div>
+      </div>
+    );
+  }
+
   return (
-    <CommandPaletteProvider>
-      <div className="h-screen">{children}</div>
-    </CommandPaletteProvider>
+    <div className="grid h-screen place-items-center text-[13px] text-ink-soft">
+      Loading OpenSuite…
+    </div>
   );
 }

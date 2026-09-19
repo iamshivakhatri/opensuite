@@ -23,10 +23,11 @@ function reduceAll(
   items: Array<{ type: string; data?: Record<string, unknown> }>,
 ): AgentProgressLine[] {
   let lines: AgentProgressLine[] = [];
-  let t = 1;
+  // Use real-ish wall times so ThinkingElapsed looks sane in fixtures.
+  let t = Date.now() - items.length * 1200;
   for (const item of items) {
     lines = reduceAgentProgress(lines, event(item.type, item.data ?? {}), t);
-    t += 1;
+    t += 1200;
   }
   return lines;
 }
@@ -37,27 +38,23 @@ const activeRun = reduceAll([
   { type: "agent.started" },
   {
     type: "tool.completed",
-    data: { toolCallId: "a", toolName: "workspace.create_blank_docx" },
+    data: { toolCallId: "a", toolName: "document.inspect" },
   },
   {
     type: "tool.completed",
-    data: { toolCallId: "b", toolName: "document.insert_paragraphs" },
-  },
-  {
-    type: "tool.completed",
-    data: { toolCallId: "c", toolName: "document.set_paragraph_style" },
+    data: { toolCallId: "b", toolName: "document.inspect" },
   },
   {
     type: "tool.started",
-    data: { toolCallId: "d", toolName: "document.set_paragraph_formatting" },
+    data: { toolCallId: "c", toolName: "document.insert_table_rows" },
   },
 ]);
 
-/** Mid-run model wait after content — must NOT show Finishing up. */
+/** Mid-run model wait after content — must show Thinking, not Finishing up. */
 const betweenTools = reduceAll([
   {
     type: "tool.completed",
-    data: { toolCallId: "a", toolName: "workspace.create_blank_docx" },
+    data: { toolCallId: "a", toolName: "workspace.create_blank_document" },
   },
   {
     type: "tool.completed",
@@ -66,55 +63,54 @@ const betweenTools = reduceAll([
   { type: "message.started" },
 ]);
 
-const completedLines = reduceAll([
-  {
-    type: "tool.completed",
-    data: { toolCallId: "a", toolName: "workspace.create_blank_docx" },
-  },
-  {
-    type: "tool.completed",
-    data: { toolCallId: "b", toolName: "document.insert_paragraphs" },
-  },
-  {
-    type: "tool.completed",
-    data: { toolCallId: "c", toolName: "document.set_paragraph_style" },
-  },
-  {
-    type: "tool.completed",
-    data: { toolCallId: "d", toolName: "document.set_paragraph_formatting" },
-  },
-  {
-    type: "tool.completed",
-    data: { toolCallId: "e", toolName: "document.set_paragraph_formatting" },
-  },
-  {
-    type: "tool.failed",
-    data: {
-      toolCallId: "f",
-      toolName: "document.set_paragraph_style",
-      code: "TARGET_AMBIGUOUS",
-    },
-  },
-  {
-    type: "tool.completed",
-    data: { toolCallId: "g", toolName: "document.set_paragraph_style" },
-  },
-  {
-    type: "tool.completed",
-    data: { toolCallId: "h", toolName: "document.set_text_formatting" },
-  },
-  { type: "agent.completed" },
-]);
-
-const narrowLines = reduceAll([
+const failedTool = reduceAll([
   {
     type: "tool.completed",
     data: { toolCallId: "a", toolName: "document.inspect" },
   },
   {
-    type: "tool.started",
-    data: { toolCallId: "b", toolName: "document.set_page_number" },
+    type: "tool.failed",
+    data: {
+      toolCallId: "b",
+      toolName: "document.insert_table_rows",
+      code: "TARGET_NOT_FOUND",
+    },
   },
+]);
+
+const lifecycleDup = reduceAll([
+  { type: "agent.started" },
+  {
+    type: "tool.completed",
+    data: {
+      toolCallId: "d",
+      toolName: "workspace.duplicate_current_document",
+    },
+  },
+  {
+    type: "document.created",
+    data: { name: "Weekly Plan copy", kind: "duplicated" },
+  },
+  {
+    type: "tool.started",
+    data: { toolCallId: "r", toolName: "document.replace_text" },
+  },
+]);
+
+const completedLines = reduceAll([
+  {
+    type: "tool.completed",
+    data: { toolCallId: "a", toolName: "document.inspect" },
+  },
+  {
+    type: "tool.completed",
+    data: { toolCallId: "b", toolName: "document.insert_table_rows" },
+  },
+  {
+    type: "tool.completed",
+    data: { toolCallId: "c", toolName: "document.replace_text" },
+  },
+  { type: "agent.completed" },
 ]);
 
 function FixtureCard({
@@ -160,7 +156,6 @@ export default function AgentPanelUxPreviewPage() {
   const [openCompleted, setOpenCompleted] = React.useState(false);
   const [openDetails, setOpenDetails] = React.useState(true);
   const [openActive, setOpenActive] = React.useState(false);
-  const [openNarrow, setOpenNarrow] = React.useState(false);
   const [openJust, setOpenJust] = React.useState(false);
 
   if (process.env.NODE_ENV === "production") {
@@ -174,97 +169,90 @@ export default function AgentPanelUxPreviewPage() {
   return (
     <main className="min-h-screen bg-paper p-6 text-ink">
       <h1 className="mb-4 text-[length:var(--text-lg)] font-semibold tracking-[-0.02em]">
-        Agent panel UX fixtures
+        Agent panel UX fixtures (Phase 3.5)
       </h1>
       <div className="flex flex-wrap gap-6">
-        <FixtureCard title="1 · Just after submit" width={320}>
-          <UserBubble text="Create a short poem collection document" />
+        <FixtureCard title="A · Thinking" width={320}>
+          <UserBubble text="Add a few more milestones to the table." />
           <AgentRunProgress
             presentation={presentAgentRun(justSubmitted, { live: true })}
             status="active"
-            totalElapsed="0.4s"
             expanded={openJust}
             onToggle={() => setOpenJust((v) => !v)}
             live
           />
         </FixtureCard>
 
-        <FixtureCard title="2 · Active formatting" width={320}>
-          <UserBubble text="Create a short poem collection document" />
+        <FixtureCard title="B/C · Read done + mutation active" width={320}>
+          <UserBubble text="Add a few more milestones to the table." />
           <AgentRunProgress
             presentation={presentAgentRun(activeRun, { live: true })}
             status="active"
-            totalElapsed="18s"
             expanded={openActive}
             onToggle={() => setOpenActive((v) => !v)}
             live
           />
         </FixtureCard>
 
-        <FixtureCard title="2b · Between tools (not finishing)" width={320}>
+        <FixtureCard title="D · Between tools (Thinking)" width={320}>
           <UserBubble text="Create a short poem collection document" />
           <AgentRunProgress
             presentation={presentAgentRun(betweenTools, { live: true })}
             status="active"
-            totalElapsed="42s"
             expanded={false}
             onToggle={() => undefined}
             live
           />
         </FixtureCard>
 
-        <FixtureCard title="3 · Completed" width={320}>
-          <UserBubble text="Create a short poem collection document" />
+        <FixtureCard title="E · Completed / collapsed" width={320}>
+          <UserBubble text="Add a few more milestones to the table." />
           <AgentRunProgress
             presentation={presentAgentRun(completedLines, {
-              durationMs: 68_000,
+              durationMs: 12_000,
               outcome: "completed",
             })}
             status="done"
             expanded={openCompleted}
             onToggle={() => setOpenCompleted((v) => !v)}
           />
-          <AgentMarkdown text="Created **Poems of Inspiration.docx** with a title page and three short poems, lightly formatted for reading." />
+          <AgentMarkdown text="Added three milestones to the table." />
         </FixtureCard>
 
-        <FixtureCard title="4 · Expanded details" width={320}>
-          <UserBubble text="Create a short poem collection document" />
+        <FixtureCard title="E · Expanded details" width={320}>
+          <UserBubble text="Add a few more milestones to the table." />
           <AgentRunProgress
             presentation={presentAgentRun(completedLines, {
-              durationMs: 68_000,
+              durationMs: 12_000,
               outcome: "completed",
             })}
             status="done"
             expanded={openDetails}
             onToggle={() => setOpenDetails((v) => !v)}
           />
-          <AgentMarkdown text="Created **Poems of Inspiration.docx**." />
+          <AgentMarkdown text="Added three milestones to the table." />
         </FixtureCard>
 
-        <FixtureCard title="5 · Narrow panel" width={260}>
-          <UserBubble text="Add page numbers and tighten spacing" />
+        <FixtureCard title="F · Duplicate lifecycle" width={320}>
+          <UserBubble text="Create another copy and rename Key HighStone." />
           <AgentRunProgress
-            presentation={presentAgentRun(narrowLines, { live: true })}
+            presentation={presentAgentRun(lifecycleDup, { live: true })}
             status="active"
-            totalElapsed="6.2s"
-            expanded={openNarrow}
-            onToggle={() => setOpenNarrow((v) => !v)}
+            expanded={false}
+            onToggle={() => undefined}
             live
           />
         </FixtureCard>
 
-        <FixtureCard title="6 · Dark completed" width={320} className="bg-sidebar">
-          <UserBubble text="Create a short poem collection document" />
+        <FixtureCard title="G · Failed tool" width={320}>
+          <UserBubble text="Add rows to the wrong table." />
           <AgentRunProgress
-            presentation={presentAgentRun(completedLines, {
-              durationMs: 68_000,
-              outcome: "completed",
-            })}
-            status="done"
+            presentation={presentAgentRun(failedTool, { live: true })}
+            status="active"
             expanded={false}
             onToggle={() => undefined}
+            live
           />
-          <AgentMarkdown text="Created **Poems of Inspiration.docx**." />
         </FixtureCard>
       </div>
     </main>

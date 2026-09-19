@@ -145,6 +145,15 @@ function softResult(
     turns: 1,
     toolCalls: 0,
     stopReason,
+    metrics: {
+      startedAtMs: 0,
+      completedAtMs: 0,
+      modelTurns: [],
+      toolCalls: [],
+      fuseEvents: [],
+      usage: { inputTokens: 0, cachedInputTokens: 0, outputTokens: 0 },
+      stopReason,
+    },
   };
 }
 
@@ -161,6 +170,12 @@ function baseDeps(
       readExactVersionBytes: async () => Buffer.alloc(0),
       appendDocumentVersion: async () => {
         throw new Error("no append");
+      },
+      createBlankDocxDocument: async () => {
+        throw new Error("no blank");
+      },
+      createOfficeDocumentFromBytes: async () => {
+        throw new Error("no create");
       },
     },
     resolveModel: async () => ({
@@ -217,10 +232,12 @@ test("successful V3 finish_tool settles completed + agent.completed", async () =
   assert.ok(events.some((e) => e.type === "agent.completed"));
   assert.equal(events.some((e) => e.type === "agent.failed"), false);
   assert.ok(sawSystem);
-  assert.match(sawSystem!, /You are OpenSuite's document editing agent/);
-  assert.match(sawSystem!, /Use finish when the requested work is complete/);
-  // No bound DOCX in this isolation fixture → only finish is exposed.
-  assert.match(sawSystem!, /No document operations are available in this run/);
+  assert.match(sawSystem!, /You are OpenSuite's document agent/);
+  assert.match(sawSystem!, /AVAILABLE CAPABILITIES/);
+  assert.match(sawSystem!, /Use the finish operation when the requested work is complete/);
+  // Isolation fixture has no bound DOCX → only finish is exposed.
+  assert.match(sawSystem!, /- finish/);
+  assert.equal(sawSystem!.includes("document."), false);
   assert.equal(sawSystem!.includes("document.capabilities"), false);
 });
 

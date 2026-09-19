@@ -238,14 +238,14 @@ export function DocumentAgentPanel({
 
   progressRef.current = progress;
 
-  // Tick while a run is live so headline + wall-clock total stay accurate.
+  // Wall-clock for stop button — ~1s; Thinking elapsed is local to ActivityRow.
   React.useEffect(() => {
     const live =
       busy ||
       progress.some((line) => line.status === "active") ||
       runStartedAtRef.current !== null;
     if (!live) return;
-    const id = window.setInterval(() => setNowTick(Date.now()), 250);
+    const id = window.setInterval(() => setNowTick(Date.now()), 1000);
     return () => window.clearInterval(id);
   }, [busy, progress]);
 
@@ -384,7 +384,7 @@ export function DocumentAgentPanel({
         setProgress([
           {
             id: "thinking",
-            label: "Thinking…",
+            label: "Thinking",
             status: "active",
             startedAt,
           },
@@ -701,8 +701,7 @@ export function DocumentAgentPanel({
   React.useEffect(() => {
     const el = scrollRef.current;
     if (!el || !stickToBottomRef.current) return;
-    // Smooth scroll for structural changes — not every streamed token.
-    el.scrollTo({ top: el.scrollHeight, behavior: "smooth" });
+    el.scrollTo({ top: el.scrollHeight, behavior: "auto" });
   }, [
     messages.length,
     progress.length,

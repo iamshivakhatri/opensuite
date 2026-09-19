@@ -7,6 +7,7 @@ import { MockLanguageModelV4, simulateReadableStream } from "ai/test";
 import { createFinishTool } from "./finish-tool.js";
 import { runModel } from "./model.js";
 import { runAgent } from "./run.js";
+import { getRunMetricsFromError } from "./run-metrics.js";
 import { defineTool, type AgentToolSet } from "./types.js";
 
 const emptyUsage = {
@@ -471,4 +472,190 @@ test("projectMessages can rewrite the transcript before each model call", async 
     ],
   });
   assert.equal(sawProjected, true);
+});
+
+test("metrics: successful and failed tool calls recorded once each", async () => {
+  let invocations = 0;
+  const model = new MockLanguageModelV4({
+    doStream: async () => {
+      invocations += 1;
+      if (invocations === 1) {
+        return {
+          stream: simulateReadableStream({
+            chunks: toolCallChunks([
+              { id: "ok", name: "good", input: { n: 1 } },
+              { id: "bad", name: "bad", input: { n: 2 } },
+            ]),
+          }),
+        };
+      }
+      return { stream: simulateReadableStream({ chunks: textChunks("done") }) };
+    },
+  });
+  const tools: AgentToolSet = {
+    good: defineTool<{ n: number }, { ok: true }>({
+      kind: "read",
+      description: "good",
+      inputSchema: nSchema,
+      execute: async () => ({ ok: true }),
+    }),
+    bad: defineTool<{ n: number }, { ok: false; reasonCode: string }>({
+      kind: "read",
+      description: "bad",
+      inputSchema: nSchema,
+      execute: async () => ({ ok: false, reasonCode: "TARGET_NOT_FOUND" }),
+    }),
+  };
+  const result = await runAgent({
+    model,
+    messages: [{ role: "user", content: "go" }],
+    tools,
+  });
+  assert.equal(result.metrics.toolCalls.length, 2);
+  assert.equal(result.metrics.toolCalls[0]!.outcome, "success");
+  assert.equal(result.metrics.toolCalls[1]!.outcome, "failure");
+  assert.equal(result.metrics.toolCalls[1]!.failureCode, "TARGET_NOT_FOUND");
+  assert.deepEqual(
+    result.metrics.toolCalls.map((t) => t.sequence),
+    [1, 2],
+  );
+});
+
+test("metrics: concurrent reads preserve sequence allocation order", async () => {
+  let invocations = 0;
+  const model = new MockLanguageModelV4({
+    doStream: async () => {
+      invocations += 1;
+      if (invocations === 1) {
+        return {
+          stream: simulateReadableStream({
+            chunks: toolCallChunks([
+              { id: "a", name: "slow", input: { n: 1 } },
+              { id: "b", name: "fast", input: { n: 2 } },
+            ]),
+          }),
+        };
+      }
+      return { stream: simulateReadableStream({ chunks: textChunks("done") }) };
+    },
+  });
+  const tools: AgentToolSet = {
+    slow: defineTool<{ n: number }, { ok: true }>({
+      kind: "read",
+      description: "slow",
+      inputSchema: nSchema,
+      execute: async () => {
+        await delay(30);
+        return { ok: true };
+      },
+    }),
+    fast: defineTool<{ n: number }, { ok: true }>({
+      kind: "read",
+      description: "fast",
+      inputSchema: nSchema,
+      execute: async () => ({ ok: true }),
+    }),
+  };
+  const result = await runAgent({
+    model,
+    messages: [{ role: "user", content: "go" }],
+    tools,
+  });
+  const byName = Object.fromEntries(
+    result.metrics.toolCalls.map((t) => [t.toolName, t.sequence]),
+  );
+  assert.equal(byName.slow, 1);
+  assert.equal(byName.fast, 2);
+});
+
+test("metrics: fuse event recorded when identical failing call is skipped", async () => {
+  let invocations = 0;
+  const model = new MockLanguageModelV4({
+    doStream: async () => {
+      invocations += 1;
+      return {
+        stream: simulateReadableStream({
+          chunks: toolCallChunks([
+            { id: `c${invocations}`, name: "boom", input: { n: 1 } },
+          ]),
+        }),
+      };
+    },
+  });
+  const tools: AgentToolSet = {
+    boom: defineTool<{ n: number }, { ok: false; reasonCode: string }>({
+      kind: "read",
+      description: "boom",
+      inputSchema: nSchema,
+      execute: async () => ({ ok: false, reasonCode: "BOOM" }),
+    }),
+  };
+  const result = await runAgent({
+    model,
+    messages: [{ role: "user", content: "go" }],
+    tools,
+    maxAttemptsPerCall: 2,
+    maxTurns: 5,
+  });
+  assert.equal(result.stopReason, "max_turns");
+  assert.ok(result.metrics.fuseEvents.length >= 1);
+  assert.equal(result.metrics.fuseEvents[0]!.reason, "FUSE_TRIPPED");
+  // Only actual executions are metered — fuse skips are not tool-call metrics.
+  assert.equal(result.metrics.toolCalls.length, 2);
+  assert.equal(result.metrics.toolCalls.every((t) => t.outcome === "failure"), true);
+});
+
+test("metrics: max_turns stop reason is on finalized metrics", async () => {
+  let invocations = 0;
+  const model = new MockLanguageModelV4({
+    doStream: async () => {
+      invocations += 1;
+      return {
+        stream: simulateReadableStream({
+          chunks: toolCallChunks([{ id: `t${invocations}`, name: "noop", input: {} }]),
+        }),
+      };
+    },
+  });
+  const tools: AgentToolSet = {
+    noop: defineTool<Record<string, never>, { ok: true }>({
+      kind: "read",
+      description: "noop",
+      inputSchema: emptyObjectSchema,
+      execute: async () => ({ ok: true }),
+    }),
+  };
+  const result = await runAgent({
+    model,
+    messages: [{ role: "user", content: "loop" }],
+    maxTurns: 2,
+    tools,
+  });
+  assert.equal(result.stopReason, "max_turns");
+  assert.equal(result.metrics.stopReason, "max_turns");
+  assert.equal(result.metrics.modelTurns.length, 2);
+});
+
+test("metrics: cancellation attaches metrics with cancelled stop reason", async () => {
+  const abort = new AbortController();
+  const model = new MockLanguageModelV4({
+    doStream: async () => {
+      abort.abort();
+      return { stream: simulateReadableStream({ chunks: textChunks("nope") }) };
+    },
+  });
+  let caught: unknown;
+  try {
+    await runAgent({
+      model,
+      messages: [{ role: "user", content: "stop" }],
+      signal: abort.signal,
+    });
+  } catch (error) {
+    caught = error;
+  }
+  assert.ok(caught);
+  const metrics = getRunMetricsFromError(caught);
+  assert.ok(metrics);
+  assert.equal(metrics!.stopReason, "cancelled");
 });

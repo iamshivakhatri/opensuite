@@ -6,6 +6,8 @@ import {
   type Tool,
 } from "ai";
 
+import type { AgentRunMetrics, NowFn } from "./run-metrics.js";
+
 export type { ModelMessage, ToolSet } from "ai";
 export type V3Model = LanguageModel;
 
@@ -156,8 +158,12 @@ export interface RunAgentInput extends RunModelInput {
   readonly onEvent?: (event: AgentEvent) => void | Promise<void>;
   /** Short run id for backend logs (e.g. first 8 of a UUID). */
   readonly runId?: string;
+  /** Injectable clock for deterministic tests. Default: Date.now. */
+  readonly now?: NowFn;
 }
 
 export interface RunAgentResult extends RunModelResult {
   readonly stopReason: StopReason;
+  /** Finalized generic runtime measurements for this run. */
+  readonly metrics: AgentRunMetrics;
 }

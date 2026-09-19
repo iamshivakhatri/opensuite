@@ -58,12 +58,14 @@ test("createPrimaryDocxTools emits document.version.advanced after mutate", asyn
   const tools = await createPrimaryDocxTools({
     binding,
     ownerUserId: "user-1",
+    workspaceId: "ws-1",
     documentId: "doc-1",
     versionId,
     documents: {
       getOwnedDocument: async () =>
         ({
           id: "doc-1",
+          name: "Primary.docx",
           format: "docx",
           workspaceId: "ws-1",
         }) as never,
@@ -78,12 +80,19 @@ test("createPrimaryDocxTools emits document.version.advanced after mutate", asyn
           version: { id: versionId, versionNumber },
         } as never;
       },
+      createBlankDocxDocument: async () => {
+        throw new Error("unused");
+      },
+      createOfficeDocumentFromBytes: async () => {
+        throw new Error("unused");
+      },
     },
     onVersionAdvanced: async (event) => {
       advanced.push({
         versionId: event.versionId,
         versionNumber: event.versionNumber,
       });
+      assert.equal(event.fromVersionId, "ver-1");
     },
   });
 

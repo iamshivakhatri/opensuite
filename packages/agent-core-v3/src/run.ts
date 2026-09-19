@@ -3,6 +3,13 @@ import type { ModelMessage, ToolResultPart, ToolSet } from "ai";
 import { createFailureFuse, type FailureFuse } from "./fuse.js";
 import { streamTurn } from "./model.js";
 import { abortReason, DEFAULT_INFRA_RETRY } from "./retry.js";
+import {
+  attachRunMetrics,
+  RunMetricsCollector,
+  type MetricsStopReason,
+  type NowFn,
+  type ToolCallKindMetric,
+} from "./run-metrics.js";
 import type {
   AgentEvent,
   AgentTool,
@@ -45,10 +52,11 @@ export async function runAgent(input: RunAgentInput): Promise<RunAgentResult> {
   const fuse = createFailureFuse(
     input.maxAttemptsPerCall ?? DEFAULT_MAX_ATTEMPTS_PER_CALL,
   );
+  const now: NowFn = input.now ?? Date.now;
   const deadlineAt =
-    input.deadlineMs !== undefined ? Date.now() + input.deadlineMs : undefined;
+    input.deadlineMs !== undefined ? now() + input.deadlineMs : undefined;
   const run = input.runId ?? "local";
-  const runStarted = Date.now();
+  const metrics = new RunMetricsCollector(now);
 
   // Mutable working transcript (never includes the system prompt).
   const transcript: ModelMessage[] = [...input.messages];
@@ -62,42 +70,69 @@ export async function runAgent(input: RunAgentInput): Promise<RunAgentResult> {
   let lastText = "";
   let lastFinishReason = "stop";
 
-  const finish = (stopReason: StopReason, text: string): RunAgentResult => ({
-    text,
-    finishReason: lastFinishReason,
-    inputTokens,
-    cachedInputTokens,
-    outputTokens,
-    turns,
-    toolCalls: toolCallCount,
-    stopReason,
-  });
+  const finish = (
+    stopReason: StopReason,
+    text: string,
+  ): RunAgentResult => {
+    const finalized = metrics.finish(stopReason);
+    return {
+      text,
+      finishReason: lastFinishReason,
+      inputTokens,
+      cachedInputTokens,
+      outputTokens,
+      turns,
+      toolCalls: toolCallCount,
+      stopReason,
+      metrics: finalized,
+    };
+  };
 
   try {
     for (;;) {
       if (input.signal?.aborted) throw abortReason(input.signal);
       if (turns >= maxTurns) return finish("max_turns", lastText);
-      if (deadlineAt !== undefined && Date.now() >= deadlineAt) {
+      if (deadlineAt !== undefined && now() >= deadlineAt) {
         return finish("deadline", lastText);
       }
 
       turns += 1;
-      const turnStarted = Date.now();
+      const turnStarted = now();
       const projected = input.projectMessages
         ? [...input.projectMessages(transcript)]
         : transcript;
 
-      const turn = await streamTurn({
-        model: input.model,
-        ...(input.system ? { system: input.system } : {}),
-        messages: projected,
-        ...(schemaTools ? { tools: schemaTools } : {}),
-        signal: input.signal,
-        retry,
-        onTextDelta: async (delta) => {
-          await input.onTextDelta?.(delta);
-          await input.onEvent?.({ type: "text_delta", delta });
-        },
+      let turn;
+      try {
+        turn = await streamTurn({
+          model: input.model,
+          ...(input.system ? { system: input.system } : {}),
+          messages: projected,
+          ...(schemaTools ? { tools: schemaTools } : {}),
+          signal: input.signal,
+          retry,
+          onTextDelta: async (delta) => {
+            await input.onTextDelta?.(delta);
+            await input.onEvent?.({ type: "text_delta", delta });
+          },
+        });
+      } catch (error) {
+        metrics.recordModelTurn({
+          turn: turns,
+          durationMs: now() - turnStarted,
+          inputTokens: 0,
+          cachedInputTokens: 0,
+          outputTokens: 0,
+        });
+        throw error;
+      }
+
+      metrics.recordModelTurn({
+        turn: turns,
+        durationMs: now() - turnStarted,
+        inputTokens: turn.inputTokens,
+        cachedInputTokens: turn.cachedInputTokens,
+        outputTokens: turn.outputTokens,
       });
 
       inputTokens += turn.inputTokens;
@@ -108,7 +143,7 @@ export async function runAgent(input: RunAgentInput): Promise<RunAgentResult> {
 
       const calls = turn.toolCalls as readonly ToolCall[];
       console.info(
-        `[agent-v3] turn run=${run} turn=${turns} elapsedMs=${Date.now() - turnStarted} inputTokens=${turn.inputTokens} cachedInputTokens=${turn.cachedInputTokens} outputTokens=${turn.outputTokens} toolCalls=${calls.length}`,
+        `[agent-v3] turn run=${run} turn=${turns} elapsedMs=${now() - turnStarted} inputTokens=${turn.inputTokens} cachedInputTokens=${turn.cachedInputTokens} outputTokens=${turn.outputTokens} toolCalls=${calls.length}`,
       );
 
       if (calls.length === 0) {
@@ -136,7 +171,16 @@ export async function runAgent(input: RunAgentInput): Promise<RunAgentResult> {
       // Reads: concurrent (side-effect-free enough to overlap).
       await Promise.all(
         reads.map((call) =>
-          runCall({ input, call, fuse, results, messages: transcript }),
+          runCall({
+            input,
+            call,
+            fuse,
+            results,
+            messages: transcript,
+            metrics,
+            turn: turns,
+            now,
+          }),
         ),
       );
 
@@ -154,6 +198,9 @@ export async function runAgent(input: RunAgentInput): Promise<RunAgentResult> {
           fuse,
           results,
           messages: transcript,
+          metrics,
+          turn: turns,
+          now,
         });
         if (outcome !== "ok") mutationFailed = true;
       }
@@ -173,11 +220,16 @@ export async function runAgent(input: RunAgentInput): Promise<RunAgentResult> {
       }
     }
   } catch (error) {
+    const stopReason: MetricsStopReason = input.signal?.aborted
+      ? "cancelled"
+      : "model_error";
     if (input.signal?.aborted) {
       await input.onEvent?.({ type: "cancelled" });
     }
+    const finalized = metrics.finish(stopReason);
+    attachRunMetrics(error, finalized);
     console.info(
-      `[agent-v3] run_aborted_or_failed run=${run} turns=${turns} toolCalls=${toolCallCount} elapsedMs=${Date.now() - runStarted}`,
+      `[agent-v3] run_aborted_or_failed run=${run} turns=${turns} toolCalls=${toolCallCount} elapsedMs=${finalized.completedAtMs - finalized.startedAtMs}`,
     );
     throw error;
   }
@@ -190,17 +242,29 @@ async function runCall(args: {
   readonly fuse: FailureFuse;
   readonly results: Map<string, ToolResultPart>;
   readonly messages: readonly ModelMessage[];
+  readonly metrics: RunMetricsCollector;
+  readonly turn: number;
+  readonly now: NowFn;
 }): Promise<CallOutcome> {
-  const { input, call, fuse, results } = args;
+  const { input, call, fuse, results, metrics, turn, now } = args;
   const { toolName, toolCallId } = call;
   const tool = input.tools?.[toolName] as AgentTool | undefined;
 
   if (fuse.tripped(toolName, call.input)) {
+    metrics.recordFuseEvent({
+      turn,
+      toolName,
+      reason: "FUSE_TRIPPED",
+    });
     recordSkip({ input, call, results, reason: "FUSE_TRIPPED" });
     return "skipped";
   }
 
   await input.onEvent?.({ type: "tool_started", toolCallId, toolName });
+
+  const sequence = metrics.allocToolSequence();
+  const kind = toolKindMetric(tool);
+  const started = now();
 
   try {
     if (call.invalid || !tool || typeof tool.execute !== "function") {
@@ -223,6 +287,17 @@ async function runCall(args: {
 
     if (softFailure) {
       fuse.record(toolName, call.input);
+      metrics.recordToolCall({
+        sequence,
+        turn,
+        toolName,
+        kind,
+        durationMs: now() - started,
+        outcome: "failure",
+        ...(softFailure.reasonCode !== undefined
+          ? { failureCode: softFailure.reasonCode }
+          : {}),
+      });
       await input.onEvent?.({
         type: "tool_failed",
         toolCallId,
@@ -232,12 +307,40 @@ async function runCall(args: {
       return "failed";
     }
 
+    metrics.recordToolCall({
+      sequence,
+      turn,
+      toolName,
+      kind,
+      durationMs: now() - started,
+      outcome: "success",
+    });
     await input.onEvent?.({ type: "tool_completed", toolCallId, toolName });
     return "ok";
   } catch (error) {
-    if (input.signal?.aborted) throw error;
+    const durationMs = now() - started;
+    if (input.signal?.aborted) {
+      metrics.recordToolCall({
+        sequence,
+        turn,
+        toolName,
+        kind,
+        durationMs,
+        outcome: "cancelled",
+      });
+      throw error;
+    }
     fuse.record(toolName, call.input);
     const message = errorMessage(error);
+    metrics.recordToolCall({
+      sequence,
+      turn,
+      toolName,
+      kind,
+      durationMs,
+      outcome: "failure",
+      failureCode: compactFailureCode(message),
+    });
     results.set(toolCallId, {
       type: "tool-result",
       toolCallId,
@@ -247,6 +350,18 @@ async function runCall(args: {
     await input.onEvent?.({ type: "tool_failed", toolCallId, toolName, error: message });
     return "failed";
   }
+}
+
+function toolKindMetric(tool: AgentTool | undefined): ToolCallKindMetric {
+  if (tool?.kind === "read" || tool?.kind === "mutate") return tool.kind;
+  return "other";
+}
+
+/** Prefer short UPPER_SNAKE codes; otherwise a compact generic label. */
+function compactFailureCode(message: string): string {
+  const trimmed = message.trim();
+  if (/^[A-Z][A-Z0-9_]{1,63}$/.test(trimmed)) return trimmed;
+  return "TOOL_FAILED";
 }
 
 function recordSkip(args: {

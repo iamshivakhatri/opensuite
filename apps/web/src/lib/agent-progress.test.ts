@@ -3,6 +3,7 @@ import { test } from "node:test";
 
 import {
   activityFamilyForTool,
+  activityKindForTool,
   agentRunDurationMs,
   detailsAffordanceLabel,
   formatProgressElapsed,
@@ -12,8 +13,8 @@ import {
   progressElapsedLabel,
   progressMarker,
   progressSummaryLabel,
+  projectActivityRows,
   reduceAgentProgress,
-  summarizeAgentActivities,
   technicalProgressLines,
   thoughtForLabel,
   visibleAgentProgress,
@@ -50,13 +51,21 @@ function reduceAll(
   return lines;
 }
 
-test("reduceAgentProgress keeps completed tools then Generating (not Thinking)", () => {
+test("1. active run shows Thinking when model-active", () => {
   const t0 = 1_000;
-  let lines: AgentProgressLine[] = [];
-  lines = reduceAgentProgress(lines, event("agent.started"), t0);
-  assert.equal(lines[0]?.label, "Thinking…");
-  assert.equal(lines[0]?.startedAt, t0);
+  let lines = reduceAgentProgress([], event("agent.started"), t0);
+  assert.equal(lines[0]?.label, "Thinking");
+  assert.equal(lines[0]?.status, "active");
 
+  const live = presentAgentRun(lines, { live: true });
+  assert.equal(live.headline, "Thinking");
+  assert.equal(live.activities[0]?.kind, "thinking");
+  assert.equal(live.activities[0]?.liveElapsed, true);
+});
+
+test("2–4. tool started/completed/failed update same logical activity", () => {
+  const t0 = 1_000;
+  let lines = reduceAgentProgress([], event("agent.started"), t0);
   lines = reduceAgentProgress(
     lines,
     event("tool.started", {
@@ -66,12 +75,14 @@ test("reduceAgentProgress keeps completed tools then Generating (not Thinking)",
     t0 + 100,
   );
   assert.deepEqual(
-    lines.map((line) => ({ status: line.status, label: line.label })),
-    [
-      { status: "done", label: "Thought" },
-      { status: "active", label: "Inspecting document…" },
-    ],
+    lines
+      .filter((l) => !l.id.startsWith("thought:"))
+      .map((line) => ({ status: line.status, label: line.label })),
+    [{ status: "active", label: "Inspecting document" }],
   );
+  let rows = projectActivityRows(lines);
+  assert.equal(rows.some((r) => r.label === "Inspecting document" && r.status === "active"), true);
+  assert.equal(rows.some((r) => r.kind === "thinking" && r.status === "active"), false);
 
   lines = reduceAgentProgress(
     lines,
@@ -81,101 +92,263 @@ test("reduceAgentProgress keeps completed tools then Generating (not Thinking)",
     }),
     t0 + 500,
   );
-  assert.deepEqual(
-    lines.map((line) => ({ status: line.status, label: line.label })),
-    [
-      { status: "done", label: "Thought" },
-      { status: "done", label: "Inspected document" },
-      { status: "active", label: "Generating…" },
-    ],
+  assert.ok(
+    lines.some((line) => line.id === "tool:t1" && line.status === "done"),
   );
-  assert.equal(lines[1]?.toolName, "document.inspect");
-  assert.equal(lines[1]?.startedAt, t0 + 100);
-  assert.equal(lines[1]?.endedAt, t0 + 500);
-  assert.equal(
-    lines.some((line) => line.label === "Thinking…" && line.status === "active"),
-    false,
+  assert.ok(
+    lines.some((line) => line.id === "thinking" && line.status === "active"),
   );
+  rows = projectActivityRows(lines);
+  assert.ok(rows.some((r) => r.label === "Inspected document" && r.status === "done"));
+  assert.ok(rows.some((r) => r.kind === "thinking" && r.status === "active"));
 
   lines = reduceAgentProgress(
     lines,
-    event("tool.started", { toolCallId: "t2", toolName: "document.find" }),
+    event("tool.started", {
+      toolCallId: "t2",
+      toolName: "document.insert_table_rows",
+    }),
     t0 + 600,
   );
-  assert.deepEqual(
-    lines.map((line) => ({ status: line.status, label: line.label })),
-    [
-      { status: "done", label: "Thought" },
-      { status: "done", label: "Inspected document" },
-      { status: "done", label: "Thought" },
-      { status: "active", label: "Searching document…" },
-    ],
+  lines = reduceAgentProgress(
+    lines,
+    event("tool.failed", {
+      toolCallId: "t2",
+      toolName: "document.insert_table_rows",
+      code: "TARGET_NOT_FOUND",
+    }),
+    t0 + 700,
   );
+  assert.ok(
+    lines.some(
+      (line) =>
+        line.id === "tool:t2" &&
+        line.status === "error" &&
+        line.label === "Table row target not found",
+    ),
+  );
+  rows = projectActivityRows(lines);
+  assert.ok(rows.some((r) => r.status === "error"));
+});
+
+test("5. repeated reads group/collapse after completion", () => {
+  const lines = reduceAll([
+    { type: "agent.started", at: 1 },
+    {
+      type: "tool.completed",
+      data: { toolCallId: "a", toolName: "document.inspect" },
+      at: 2,
+    },
+    {
+      type: "tool.completed",
+      data: { toolCallId: "b", toolName: "document.inspect" },
+      at: 3,
+    },
+    {
+      type: "tool.completed",
+      data: { toolCallId: "c", toolName: "document.inspect" },
+      at: 4,
+    },
+  ]);
+  const rows = projectActivityRows(lines);
+  const readGroup = rows.find((r) => r.kind === "read" && r.status === "done");
+  assert.ok(readGroup);
+  assert.equal(readGroup!.detail, "3 inspections");
+  assert.equal(rows.filter((r) => r.kind === "read").length, 1);
+});
+
+test("5b. active repeated read stays visible while running", () => {
+  const lines = reduceAll([
+    {
+      type: "tool.completed",
+      data: { toolCallId: "a", toolName: "document.inspect" },
+      at: 1,
+    },
+    {
+      type: "tool.completed",
+      data: { toolCallId: "b", toolName: "document.inspect" },
+      at: 2,
+    },
+    {
+      type: "tool.started",
+      data: { toolCallId: "c", toolName: "document.inspect" },
+      at: 3,
+    },
+  ]);
+  const rows = projectActivityRows(lines);
+  assert.ok(rows.some((r) => r.detail === "2 inspections"));
+  assert.ok(
+    rows.some(
+      (r) => r.label === "Inspecting document" && r.status === "active",
+    ),
+  );
+});
+
+test("6. mutation activities remain individually visible", () => {
+  const lines = reduceAll([
+    {
+      type: "tool.completed",
+      data: { toolCallId: "a", toolName: "document.insert_table_rows" },
+      at: 1,
+    },
+    {
+      type: "tool.completed",
+      data: { toolCallId: "b", toolName: "document.replace_text" },
+      at: 2,
+    },
+    {
+      type: "tool.started",
+      data: { toolCallId: "c", toolName: "document.set_text_formatting" },
+      at: 3,
+    },
+  ]);
+  const rows = projectActivityRows(lines);
+  assert.ok(rows.some((r) => r.label === "Added table rows" && r.weight === "emphasis"));
+  assert.ok(rows.some((r) => r.label === "Replaced text"));
+  assert.ok(
+    rows.some(
+      (r) =>
+        r.label === "Formatting text" &&
+        r.status === "active" &&
+        r.weight === "emphasis",
+    ),
+  );
+});
+
+test("7. create/duplicate get human-readable lifecycle labels", () => {
+  assert.equal(activityKindForTool("workspace.create_blank_document"), "lifecycle");
+  assert.equal(activityKindForTool("workspace.duplicate_current_document"), "lifecycle");
+
+  let lines = reduceAll([
+    {
+      type: "tool.started",
+      data: {
+        toolCallId: "d",
+        toolName: "workspace.duplicate_current_document",
+      },
+      at: 1,
+    },
+  ]);
+  assert.ok(lines.some((l) => l.label === "Duplicating document"));
 
   lines = reduceAgentProgress(
     lines,
     event("tool.completed", {
-      toolCallId: "t2",
-      toolName: "document.find",
+      toolCallId: "d",
+      toolName: "workspace.duplicate_current_document",
     }),
-    t0 + 900,
-  );
-  assert.ok(lines.some((line) => line.label === "Search complete" && line.status === "done"));
-  assert.ok(lines.some((line) => line.label === "Generating…" && line.status === "active"));
-  assert.equal(
-    lines.filter((line) => line.label === "Thought").length,
     2,
   );
+  assert.ok(lines.some((l) => l.label === "Created copy"));
 
-  lines = reduceAgentProgress(lines, event("message.started"), t0 + 1000);
-  assert.ok(lines.some((line) => line.label === "Generating…" && line.status === "active"));
-});
-
-test("reduceAgentProgress keeps Thinking on empty delta / message.started before tools", () => {
-  let lines = reduceAgentProgress([], event("agent.started"), 1);
-  lines = reduceAgentProgress(lines, event("message.started"), 2);
-  assert.equal(lines[0]?.label, "Thinking…");
-  lines = reduceAgentProgress(lines, event("message.delta", { delta: "" }), 3);
-  assert.equal(lines[0]?.label, "Thinking…");
-});
-
-test("reduceAgentProgress swaps Thinking to Generating on first token", () => {
-  let lines = reduceAgentProgress([], event("agent.started"), 1);
-  lines = reduceAgentProgress(lines, event("message.delta", { delta: "Hi" }), 2);
-  assert.equal(latestProgressHeadline(lines)?.label, "Generating…");
-  assert.ok(lines.some((line) => line.id === "writing" && line.status === "active"));
-  assert.equal(lines.some((line) => line.id === "thinking"), false);
-});
-
-test("reduceAgentProgress freezes active tools on message.completed", () => {
-  let lines = reduceAgentProgress(
-    [],
-    event("tool.started", {
-      toolCallId: "t1",
-      toolName: "document.find",
+  lines = reduceAgentProgress(
+    lines,
+    event("document.created", {
+      documentId: "doc-2",
+      name: "Weekly Plan copy",
+      kind: "duplicated",
     }),
-    10,
+    3,
+  );
+  assert.ok(lines.some((l) => l.label === "Created Weekly Plan copy"));
+});
+
+test("7b. document.created before tool.completed keeps document name", () => {
+  let lines = reduceAll([
+    {
+      type: "tool.started",
+      data: {
+        toolCallId: "d",
+        toolName: "workspace.duplicate_current_document",
+      },
+      at: 1,
+    },
+  ]);
+  lines = reduceAgentProgress(
+    lines,
+    event("document.created", {
+      documentId: "doc-2",
+      name: "Weekly Plan copy",
+      kind: "duplicated",
+    }),
+    2,
   );
   lines = reduceAgentProgress(
     lines,
-    event("message.completed", { content: "done" }),
-    50,
+    event("tool.completed", {
+      toolCallId: "d",
+      toolName: "workspace.duplicate_current_document",
+    }),
+    3,
   );
-  assert.ok(
-    lines.some(
-      (line) => line.id === "tool:t1" && line.status === "done",
-    ),
+  assert.ok(lines.some((l) => l.label === "Created Weekly Plan copy"));
+});
+
+test("8. completed run becomes compact", () => {
+  const lines = reduceAll([
+    {
+      type: "tool.completed",
+      data: { toolCallId: "a", toolName: "document.inspect" },
+      at: 1,
+    },
+    {
+      type: "tool.completed",
+      data: { toolCallId: "b", toolName: "document.insert_table_rows" },
+      at: 2,
+    },
+    { type: "agent.completed", at: 3 },
+  ]);
+  const presentation = presentAgentRun(lines, {
+    durationMs: 12_000,
+    outcome: "completed",
+  });
+  assert.match(presentation.headline, /^Updated document · \d+ actions · 12s$/);
+  assert.ok(presentation.actionCount >= 2);
+  assert.ok(presentation.details.length >= 1);
+});
+
+test("reduceAgentProgress keeps Thinking between tools (not Generating)", () => {
+  const t0 = 1_000;
+  let lines = reduceAgentProgress([], event("agent.started"), t0);
+  lines = reduceAgentProgress(
+    lines,
+    event("tool.started", {
+      toolCallId: "t1",
+      toolName: "document.inspect",
+    }),
+    t0 + 100,
   );
+  lines = reduceAgentProgress(
+    lines,
+    event("tool.completed", {
+      toolCallId: "t1",
+      toolName: "document.inspect",
+    }),
+    t0 + 500,
+  );
+  assert.ok(lines.some((l) => l.id === "thinking" && l.status === "active"));
+  assert.equal(lines.some((l) => l.label === "Generating…"), false);
   assert.equal(
-    lines.some((line) => line.id === "thinking"),
-    false,
+    presentAgentRun(lines, { live: true }).headline,
+    "Thinking",
+  );
+});
+
+test("message.delta freezes Thinking without Generating filler", () => {
+  let lines = reduceAgentProgress([], event("agent.started"), 1);
+  lines = reduceAgentProgress(lines, event("message.delta", { delta: "Hi" }), 2);
+  assert.equal(lines.some((line) => line.id === "thinking" && line.status === "active"), false);
+  assert.equal(lines.some((line) => line.id === "writing"), false);
+  assert.equal(
+    presentAgentRun(lines, { live: true, streamingAnswer: true }).headline,
+    "Finishing up",
   );
 });
 
 test("visibleAgentProgress includes done rows", () => {
   const lines: AgentProgressLine[] = [
     { id: "a", label: "Inspected document", status: "done" },
-    { id: "b", label: "Thinking…", status: "active" },
+    { id: "b", label: "Thinking", status: "active" },
     { id: "c", label: "failed", status: "error" },
   ];
   assert.deepEqual(
@@ -183,87 +356,10 @@ test("visibleAgentProgress includes done rows", () => {
     ["a", "b", "c"],
   );
   assert.equal(progressMarker("done"), "✓");
-  assert.equal(progressMarker("active"), "●");
   assert.equal(latestProgressHeadline(lines)?.id, "b");
 });
 
-test("reduceAgentProgress preserves history on failed and cancelled", () => {
-  let lines = reduceAgentProgress([], event("agent.started"), 1);
-  lines = reduceAgentProgress(
-    lines,
-    event("tool.failed", {
-      toolCallId: "t1",
-      toolName: "document.mutate",
-      code: "UNKNOWN_TOOL",
-    }),
-    2,
-  );
-  assert.ok(lines.some((line) => line.label === "Tool not available"));
-
-  lines = reduceAgentProgress(lines, event("agent.failed"), 3);
-  assert.ok(lines.some((line) => line.id === "failed"));
-  assert.ok(lines.some((line) => line.label === "Tool not available"));
-
-  lines = reduceAgentProgress([], event("agent.started"), 4);
-  lines = reduceAgentProgress(
-    lines,
-    event("tool.completed", {
-      toolCallId: "t2",
-      toolName: "document.find",
-    }),
-    5,
-  );
-  lines = reduceAgentProgress(lines, event("agent.cancelled"), 6);
-  assert.ok(lines.some((line) => line.label === "Stopped"));
-  assert.ok(lines.some((line) => line.label === "Search complete"));
-});
-
-test("INVALID_TOOL_INPUT uses distinct progress label", () => {
-  let lines = reduceAgentProgress(
-    [],
-    event("tool.failed", {
-      toolCallId: "t1",
-      toolName: "document.insert_table_rows",
-      code: "INVALID_TOOL_INPUT",
-    }),
-    10,
-  );
-  assert.ok(
-    lines.some(
-      (line) =>
-        line.status === "error" && line.label === "Invalid tool input",
-    ),
-  );
-});
-
-test("unsupported inspect failure uses friendly label", () => {
-  let lines = reduceAgentProgress(
-    [],
-    event("tool.started", {
-      toolCallId: "t1",
-      toolName: "document.inspect",
-    }),
-    10,
-  );
-  lines = reduceAgentProgress(
-    lines,
-    event("tool.failed", {
-      toolCallId: "t1",
-      toolName: "document.inspect",
-      code: "UNSUPPORTED_OPERATION",
-    }),
-    50,
-  );
-  assert.ok(
-    lines.some(
-      (line) =>
-        line.status === "error" &&
-        line.label === "Inspect unsupported (use Search)",
-    ),
-  );
-});
-
-test("formatProgressElapsed, progressElapsedLabel, agentRunDurationMs, thoughtForLabel", () => {
+test("formatProgressElapsed helpers", () => {
   assert.equal(formatProgressElapsed(800), "0.8s");
   assert.equal(formatProgressElapsed(12_400), "12s");
   assert.equal(
@@ -281,26 +377,22 @@ test("formatProgressElapsed, progressElapsedLabel, agentRunDurationMs, thoughtFo
     12_500,
   );
   assert.equal(thoughtForLabel(12_000), "Done in 12s");
-  assert.equal(thoughtForLabel(12_000, "cancelled"), "Stopped after 12s");
-  assert.equal(thoughtForLabel(12_000, "completed", 15), "Done in 12s");
-  assert.equal(thoughtForLabel(12_000, "failed"), "Couldn't complete · 12s");
 });
 
 test("groupProgressLines collapses repeated inserts", () => {
   const lines: AgentProgressLine[] = [
     { id: "t1", label: "Inspected document", status: "done", startedAt: 1, endedAt: 2 },
     { id: "t2", label: "Inspected document", status: "done", startedAt: 3, endedAt: 4 },
-    { id: "t3", label: "Inserted paragraph", status: "done", startedAt: 5, endedAt: 6 },
-    { id: "t4", label: "Inserted paragraph", status: "done", startedAt: 7, endedAt: 8 },
-    { id: "t5", label: "Inserted paragraph", status: "done", startedAt: 9, endedAt: 10 },
-    { id: "writing", label: "Generating…", status: "active", startedAt: 11 },
+    { id: "t3", label: "Added content", status: "done", startedAt: 5, endedAt: 6 },
+    { id: "t4", label: "Added content", status: "done", startedAt: 7, endedAt: 8 },
+    { id: "thinking", label: "Thinking", status: "active", startedAt: 11 },
   ];
   const groups = groupProgressLines(lines);
   assert.deepEqual(
     groups.map((g) => ({ label: g.label, count: g.count })),
     [
       { label: "Inspected document", count: 2 },
-      { label: "Inserted paragraphs", count: 3 },
+      { label: "Added content", count: 2 },
     ],
   );
 });
@@ -314,7 +406,7 @@ test("technicalProgressLines hides Thought cadence", () => {
       status: "done",
       toolName: "document.set_paragraph_formatting",
     },
-    { id: "writing", label: "Generating…", status: "active" },
+    { id: "thinking", label: "Thinking", status: "active" },
   ];
   assert.deepEqual(
     technicalProgressLines(lines).map((line) => line.id),
@@ -322,150 +414,38 @@ test("technicalProgressLines hides Thought cadence", () => {
   );
 });
 
-test("semantic grouping collapses formatting family", () => {
-  const lines = reduceAll([
-    { type: "agent.started", at: 1 },
-    {
-      type: "tool.completed",
-      data: { toolCallId: "a", toolName: "workspace.create_blank_docx" },
-      at: 2,
-    },
-    {
-      type: "tool.completed",
-      data: { toolCallId: "b", toolName: "document.insert_paragraphs" },
-      at: 3,
-    },
-    {
-      type: "tool.completed",
-      data: { toolCallId: "c", toolName: "document.set_paragraph_style" },
-      at: 4,
-    },
-    {
-      type: "tool.completed",
-      data: { toolCallId: "d", toolName: "document.set_paragraph_formatting" },
-      at: 5,
-    },
-    {
-      type: "tool.completed",
-      data: { toolCallId: "e", toolName: "document.set_text_formatting" },
-      at: 6,
-    },
-    {
-      type: "tool.completed",
-      data: { toolCallId: "f", toolName: "document.set_paragraph_formatting" },
-      at: 7,
-    },
-  ]);
+test("live status never says Finishing up between tools", () => {
+  assert.equal(detailsAffordanceLabel(0), "View details");
+  assert.equal(detailsAffordanceLabel(1), "View 1 action");
 
-  const activities = summarizeAgentActivities(lines);
-  assert.deepEqual(
-    activities.map((a) => ({
-      family: a.family,
-      label: a.label,
-      status: a.status,
-      changeCount: a.changeCount,
-    })),
-    [
-      { family: "create", label: "Created document", status: "done", changeCount: 1 },
-      { family: "content", label: "Added content", status: "done", changeCount: 1 },
-      {
-        family: "structure",
-        label: "Structured sections",
-        status: "done",
-        changeCount: 1,
-      },
-      {
-        family: "formatting",
-        label: "Formatted document",
-        status: "done",
-        changeCount: 3,
-      },
-    ],
-  );
-  assert.equal(activityFamilyForTool("document.set_page_number"), "layout");
-});
-
-test("repeated formatting collapses in primary and details", () => {
-  const lines = reduceAll([
+  const betweenTools = reduceAll([
     {
       type: "tool.completed",
-      data: { toolCallId: "1", toolName: "document.set_paragraph_formatting" },
+      data: { toolCallId: "a", toolName: "workspace.create_blank_document" },
       at: 1,
     },
     {
       type: "tool.completed",
-      data: { toolCallId: "2", toolName: "document.set_paragraph_formatting" },
-      at: 2,
-    },
-    {
-      type: "tool.completed",
-      data: { toolCallId: "3", toolName: "document.set_text_formatting" },
-      at: 3,
-    },
-    {
-      type: "tool.completed",
-      data: { toolCallId: "4", toolName: "document.set_paragraph_formatting" },
-      at: 4,
-    },
-  ]);
-
-  const presentation = presentAgentRun(lines, {
-    durationMs: 20_000,
-    outcome: "completed",
-  });
-  assert.deepEqual(
-    presentation.activities.map((a) => a.label),
-    ["Formatted document"],
-  );
-  assert.equal(presentation.activities[0]?.changeCount, 4);
-  assert.equal(presentation.headline, "Done in 20s");
-  assert.ok(presentation.actionCount >= 4);
-  // Details still show technical labels, collapsed by consecutive same label.
-  assert.ok(
-    presentation.details.some(
-      (g) => g.label === "Formatted paragraph" || g.label === "Formatted paragraphs",
-    ),
-  );
-});
-
-test("running activity state uses semantic headline and milestones", () => {
-  const lines = reduceAll([
-    { type: "agent.started", at: 1 },
-    {
-      type: "tool.completed",
-      data: { toolCallId: "a", toolName: "workspace.create_blank_docx" },
-      at: 2,
-    },
-    {
-      type: "tool.completed",
       data: { toolCallId: "b", toolName: "document.insert_paragraphs" },
-      at: 3,
+      at: 2,
     },
-    {
-      type: "tool.started",
-      data: { toolCallId: "c", toolName: "document.set_paragraph_formatting" },
-      at: 4,
-    },
+    { type: "message.started", at: 3 },
   ]);
-
-  const presentation = presentAgentRun(lines, { live: true });
-  assert.equal(presentation.headline, "Formatting document…");
-  assert.deepEqual(
-    presentation.activities.map((a) => ({ label: a.label, status: a.status })),
-    [
-      { label: "Created document", status: "done" },
-      { label: "Added content", status: "done" },
-      { label: "Formatting document…", status: "active" },
-    ],
+  assert.equal(presentAgentRun(betweenTools, { live: true }).headline, "Thinking");
+  assert.notEqual(
+    presentAgentRun(betweenTools, { live: true }).headline,
+    "Finishing up",
   );
-  assert.match(progressSummaryLabel(lines, { live: true }), /Formatting document/);
   assert.equal(
-    progressSummaryLabel(lines, { live: true }).includes("completed"),
-    false,
+    presentAgentRun(betweenTools, {
+      live: true,
+      streamingAnswer: true,
+    }).headline,
+    "Finishing up",
   );
 });
 
-test("recovered failure hidden from primary summary", () => {
+test("recovered failure stays muted in details", () => {
   const lines = reduceAll([
     {
       type: "tool.failed",
@@ -482,23 +462,14 @@ test("recovered failure hidden from primary summary", () => {
       at: 2,
     },
   ]);
-
-  const activities = summarizeAgentActivities(lines);
-  assert.deepEqual(
-    activities.map((a) => ({ label: a.label, status: a.status })),
-    [{ label: "Structured sections", status: "done" }],
-  );
-  // Details keep the failure as a muted recovery entry, not a hard error.
   const details = presentAgentRun(lines).details;
   const recovered = details.find((g) => g.recovered);
   assert.ok(recovered);
   assert.match(recovered!.label, /^Recovered ·/);
-  assert.equal(recovered!.status, "done");
   assert.equal(details.some((g) => g.status === "error" && !g.recovered), false);
-  assert.ok(details.some((g) => g.status === "done" && !g.recovered));
 });
 
-test("unrecovered failure remains visible in primary summary", () => {
+test("unrecovered failure remains visible in activity rows", () => {
   const lines = reduceAll([
     {
       type: "tool.completed",
@@ -515,191 +486,38 @@ test("unrecovered failure remains visible in primary summary", () => {
       at: 2,
     },
   ]);
-
-  const activities = summarizeAgentActivities(lines);
-  assert.deepEqual(
-    activities.map((a) => ({ label: a.label, status: a.status })),
-    [
-      { label: "Added content", status: "done" },
-      { label: "Couldn't format one section", status: "error" },
-    ],
-  );
-  assert.equal(
-    activities.some((a) => a.label.includes("TARGET_AMBIGUOUS")),
-    false,
-  );
-  const details = presentAgentRun(lines).details;
-  assert.ok(details.some((g) => g.status === "error" && !g.recovered));
+  const rows = projectActivityRows(lines);
+  assert.ok(rows.some((r) => r.status === "error"));
+  assert.ok(rows.some((r) => r.label === "Added content"));
 });
 
-test("completed run collapses to Done headline", () => {
+test("unknown tool humanizes instead of raw snake_case", () => {
   const lines = reduceAll([
     {
-      type: "tool.completed",
-      data: { toolCallId: "a", toolName: "workspace.create_blank_docx" },
+      type: "tool.started",
+      data: { toolCallId: "x", toolName: "document.frobnicate_widget" },
       at: 1,
     },
-    {
-      type: "tool.completed",
-      data: { toolCallId: "b", toolName: "document.insert_paragraphs" },
-      at: 2,
-    },
-    { type: "agent.completed", at: 3 },
   ]);
-
-  const presentation = presentAgentRun(lines, {
-    durationMs: 68_000,
-    outcome: "completed",
-  });
-  assert.equal(presentation.headline, "Done in 1m 08s");
-  assert.equal(detailsAffordanceLabel(presentation.actionCount), `View ${presentation.actionCount} actions`);
-  // Activities still available for callers; panel only shows them while live.
-  assert.ok(presentation.activities.length >= 2);
-  assert.ok(presentation.details.length >= 1);
-  assert.equal(
-    presentation.details.some((g) => g.key === "Thought"),
-    false,
-  );
+  const row = projectActivityRows(lines).find((r) => r.id === "tool:x");
+  assert.ok(row);
+  assert.equal(row!.label.includes("_"), false);
+  assert.match(row!.label, /frobnicate/i);
 });
 
-test("live status derives from activity — no premature Finishing up", () => {
-  assert.equal(detailsAffordanceLabel(0), "View details");
-  assert.equal(detailsAffordanceLabel(1), "View 1 action");
-  assert.equal(detailsAffordanceLabel(16), "View 16 actions");
-
-  // After create + content, model wait (Generating…) must NOT say Finishing up.
-  const betweenTools = reduceAll([
-    {
-      type: "tool.completed",
-      data: { toolCallId: "a", toolName: "workspace.create_blank_docx" },
-      at: 1,
-    },
-    {
-      type: "tool.completed",
-      data: { toolCallId: "b", toolName: "document.insert_paragraphs" },
-      at: 2,
-    },
-    { type: "message.started", at: 3 },
-  ]);
-  assert.equal(
-    presentAgentRun(betweenTools, { live: true }).headline,
-    "Drafting content…",
-  );
-  assert.notEqual(
-    presentAgentRun(betweenTools, { live: true }).headline,
-    "Finishing up…",
-  );
-
-  // Early after create only.
-  const afterCreate = reduceAll([
-    {
-      type: "tool.completed",
-      data: { toolCallId: "a", toolName: "workspace.create_blank_docx" },
-      at: 1,
-    },
-    { type: "message.started", at: 2 },
-  ]);
-  assert.equal(
-    presentAgentRun(afterCreate, { live: true }).headline,
-    "Starting…",
-  );
-
-  // Finishing up only when the answer is actually streaming.
-  assert.equal(
-    presentAgentRun(betweenTools, {
-      live: true,
-      streamingAnswer: true,
-    }).headline,
-    "Finishing up…",
-  );
+test("activityFamilyForTool still classifies layout", () => {
+  assert.equal(activityFamilyForTool("document.set_page_number"), "layout");
 });
 
-test("inspect activities use checks not changes", () => {
+test("progressSummaryLabel live tracks active tool", () => {
   const lines = reduceAll([
     {
-      type: "tool.completed",
-      data: { toolCallId: "a", toolName: "document.inspect" },
-      at: 1,
-    },
-    {
-      type: "tool.completed",
-      data: { toolCallId: "b", toolName: "document.find" },
-      at: 2,
-    },
-    {
-      type: "tool.completed",
-      data: { toolCallId: "c", toolName: "document.inspect" },
-      at: 3,
+      type: "tool.started",
+      data: { toolCallId: "c", toolName: "document.set_paragraph_formatting" },
+      at: 4,
     },
   ]);
-  const activity = summarizeAgentActivities(lines).find(
-    (a) => a.family === "inspect",
-  );
-  assert.equal(activity?.label, "Reviewed document");
-  assert.equal(activity?.changeCount, 3);
-  assert.equal(activity?.countNoun, "checks");
-  assert.equal(
-    summarizeAgentActivities(
-      reduceAll([
-        {
-          type: "tool.completed",
-          data: {
-            toolCallId: "d",
-            toolName: "document.set_paragraph_formatting",
-          },
-          at: 1,
-        },
-        {
-          type: "tool.completed",
-          data: {
-            toolCallId: "e",
-            toolName: "document.set_text_formatting",
-          },
-          at: 2,
-        },
-      ]),
-    )[0]?.countNoun,
-    "changes",
-  );
-});
-
-test("recovered failures use recovered presentation in details", () => {
-  const lines = reduceAll([
-    {
-      type: "tool.failed",
-      data: {
-        toolCallId: "a",
-        toolName: "document.set_paragraph_style",
-        code: "INVALID_TOOL_INPUT",
-      },
-      at: 1,
-    },
-    {
-      type: "tool.failed",
-      data: {
-        toolCallId: "b",
-        toolName: "document.set_paragraph_style",
-        code: "TARGET_AMBIGUOUS",
-      },
-      at: 2,
-    },
-    {
-      type: "tool.completed",
-      data: { toolCallId: "c", toolName: "document.set_paragraph_style" },
-      at: 3,
-    },
-  ]);
-  const details = presentAgentRun(lines).details;
-  assert.ok(details.every((g) => g.status !== "error" || g.recovered));
-  assert.ok(details.some((g) => g.recovered && g.label.includes("Recovered")));
-  assert.ok(
-    details.some(
-      (g) =>
-        g.recovered &&
-        (g.label.includes("Invalid tool input") ||
-          g.label.includes("Paragraph target ambiguity")),
-    ),
-  );
+  assert.match(progressSummaryLabel(lines, { live: true }), /Formatting paragraph/);
 });
 
 test("shouldAcceptSubmit blocks empty and in-flight submits", () => {

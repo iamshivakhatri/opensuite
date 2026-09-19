@@ -159,6 +159,19 @@ function toLiveAgentEvent(
           versionNumber: event.versionNumber,
         },
       };
+    case "document.created":
+      return {
+        runId: event.runId,
+        type: event.type,
+        at: event.at,
+        data: {
+          documentId: event.documentId,
+          versionId: event.versionId,
+          versionNumber: event.versionNumber,
+          name: event.name,
+          kind: event.kind,
+        },
+      };
     default: {
       const _exhaustive: never = event;
       void _exhaustive;

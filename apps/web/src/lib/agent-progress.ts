@@ -24,7 +24,7 @@ export interface AgentTurnProgress {
   readonly outcome: "completed" | "cancelled" | "failed";
 }
 
-/** Semantic activity family for the primary (non-technical) run UX. */
+/** Semantic activity family — used for details recovery grouping. */
 export type ActivityFamily =
   | "create"
   | "content"
@@ -38,20 +38,38 @@ export type ActivityFamily =
   | "confirm"
   | "other";
 
+/** Presentation weight for progressive activity rows. */
+export type ActivityKind =
+  | "thinking"
+  | "read"
+  | "mutate"
+  | "lifecycle"
+  | "finish"
+  | "other";
+
+/**
+ * Progressive activity row projected from real SSE progress lines.
+ * Presentation only — not a second runtime.
+ */
 export interface AgentActivity {
-  readonly family: ActivityFamily;
+  readonly id: string;
+  readonly kind: ActivityKind;
   readonly label: string;
   readonly status: "active" | "done" | "error";
-  /** Successful underlying operations collapsed into this row. */
-  readonly changeCount: number;
-  /** How to phrase the count — reads are checks, mutations are changes. */
-  readonly countNoun: "changes" | "checks" | null;
+  /** Compact trustworthy meta under the label (e.g. "3 inspections"). */
+  readonly detail?: string;
+  readonly startedAt?: number;
+  readonly endedAt?: number;
+  /** True for model-wait rows — UI shows a local elapsed timer. */
+  readonly liveElapsed?: boolean;
+  /** Reads quieter; mutations slightly stronger. */
+  readonly weight: "quiet" | "normal" | "emphasis";
 }
 
 export interface AgentRunPresentation {
-  /** Compact status line: active verb or "Done in …". */
+  /** Compact status: live current step, or completed summary. */
   readonly headline: string;
-  /** Meaningful grouped milestones for the default view. */
+  /** Progressive activity rows (live expanded; completed usually collapsed). */
   readonly activities: readonly AgentActivity[];
   /** Tool/action count for the details affordance. */
   readonly actionCount: number;
@@ -61,163 +79,214 @@ export interface AgentRunPresentation {
 
 const TOOL_LABELS: Record<string, { active: string; done: string }> = {
   "document.inspect": {
-    active: "Inspecting document…",
+    active: "Inspecting document",
     done: "Inspected document",
   },
   "document.find": {
-    active: "Searching document…",
-    done: "Search complete",
+    active: "Searching document",
+    done: "Searched document",
   },
   "document.capabilities": {
-    active: "Checking capabilities…",
-    done: "Capabilities ready",
+    active: "Checking capabilities",
+    done: "Checked capabilities",
   },
   "document.replace_text": {
-    active: "Replacing text…",
+    active: "Replacing text",
     done: "Replaced text",
   },
   "document.set_table_cells_text": {
-    active: "Updating table cells…",
+    active: "Updating table cells",
     done: "Updated table cells",
   },
   "document.insert_table_rows": {
-    active: "Inserting table rows…",
-    done: "Inserted table rows",
+    active: "Adding table rows",
+    done: "Added table rows",
   },
   "document.insert_table_row": {
-    active: "Inserting table row…",
-    done: "Inserted table row",
+    active: "Adding table row",
+    done: "Added table row",
   },
   "document.insert_table_column": {
-    active: "Inserting table column…",
-    done: "Inserted table column",
+    active: "Adding table column",
+    done: "Added table column",
   },
   "document.create_table": {
-    active: "Creating table…",
+    active: "Creating table",
     done: "Created table",
   },
   "document.delete_table": {
-    active: "Deleting table…",
+    active: "Deleting table",
     done: "Deleted table",
   },
   "document.delete_table_row": {
-    active: "Deleting table row…",
+    active: "Deleting table row",
     done: "Deleted table row",
   },
   "document.delete_table_column": {
-    active: "Deleting table column…",
+    active: "Deleting table column",
     done: "Deleted table column",
   },
   "document.set_table_formatting": {
-    active: "Formatting table…",
+    active: "Formatting table",
     done: "Formatted table",
   },
   "document.set_table_column_widths": {
-    active: "Sizing table columns…",
+    active: "Sizing table columns",
     done: "Sized table columns",
   },
   "document.set_table_cell_shading": {
-    active: "Shading table cells…",
+    active: "Shading table cells",
     done: "Shaded table cells",
   },
   "document.insert_paragraph": {
-    active: "Inserting paragraph…",
-    done: "Inserted paragraph",
+    active: "Adding content",
+    done: "Added content",
   },
   "document.insert_paragraphs": {
-    active: "Inserting paragraphs…",
-    done: "Inserted paragraphs",
+    active: "Adding content",
+    done: "Added content",
   },
   "document.delete_paragraph": {
-    active: "Deleting paragraph…",
-    done: "Deleted paragraph",
+    active: "Removing content",
+    done: "Removed content",
   },
   "document.set_paragraph_style": {
-    active: "Setting paragraph style…",
+    active: "Setting paragraph style",
     done: "Set paragraph style",
   },
   "document.set_paragraph_formatting": {
-    active: "Formatting paragraph…",
+    active: "Formatting paragraph",
     done: "Formatted paragraph",
   },
   "document.set_text_formatting": {
-    active: "Formatting text…",
+    active: "Formatting text",
     done: "Formatted text",
   },
   "document.set_paragraphs_list": {
-    active: "Adding list…",
+    active: "Adding list",
     done: "Added list",
   },
   "document.set_hyperlink": {
-    active: "Adding link…",
+    active: "Adding link",
     done: "Added link",
   },
   "document.set_content_control_text": {
-    active: "Updating field…",
+    active: "Updating field",
     done: "Updated field",
   },
   "document.insert_picture": {
-    active: "Adding image…",
+    active: "Adding image",
     done: "Added image",
   },
   "document.delete_picture": {
-    active: "Removing image…",
+    active: "Removing image",
     done: "Removed image",
   },
   "document.set_picture_size": {
-    active: "Sizing image…",
+    active: "Sizing image",
     done: "Sized image",
   },
   "document.replace_picture": {
-    active: "Replacing image…",
+    active: "Replacing image",
     done: "Replaced image",
   },
   "document.insert_page_break": {
-    active: "Adding page break…",
+    active: "Adding page break",
     done: "Added page break",
   },
   "document.delete_page_break": {
-    active: "Removing page break…",
+    active: "Removing page break",
     done: "Removed page break",
   },
   "document.set_page_setup": {
-    active: "Updating page setup…",
+    active: "Updating page setup",
     done: "Updated page setup",
   },
   "document.set_header_footer_text": {
-    active: "Updating header/footer…",
+    active: "Updating header/footer",
     done: "Updated header/footer",
   },
   "document.set_page_number": {
-    active: "Adding page numbers…",
+    active: "Adding page numbers",
     done: "Added page numbers",
   },
   "workspace.create_blank_docx": {
-    active: "Creating document…",
+    active: "Creating document",
     done: "Created document",
   },
+  "workspace.create_blank_document": {
+    active: "Creating document",
+    done: "Created document",
+  },
+  "workspace.duplicate_current_document": {
+    active: "Duplicating document",
+    done: "Created copy",
+  },
+  finish: {
+    active: "Completing task",
+    done: "Completed task",
+  },
   "slides.update_text": {
-    active: "Updating slide text…",
+    active: "Updating slide text",
     done: "Updated slide text",
   },
   "workbook.set_cells": {
-    active: "Updating cells…",
+    active: "Updating cells",
     done: "Updated cells",
   },
 };
 
+const READ_TOOLS = new Set([
+  "document.inspect",
+  "document.find",
+  "document.capabilities",
+]);
+
+const LIFECYCLE_TOOLS = new Set([
+  "workspace.create_blank_docx",
+  "workspace.create_blank_document",
+  "workspace.duplicate_current_document",
+]);
+
+/** Presentation-only: humanize unknown tool names (no snake_case dump). */
+function humanizeToolName(toolName: string): string {
+  const leaf = toolName.includes(".")
+    ? (toolName.split(".").pop() ?? toolName)
+    : toolName;
+  const words = leaf.replace(/_/g, " ").trim();
+  if (!words) return "Working";
+  return words.charAt(0).toUpperCase() + words.slice(1);
+}
+
 function toolLabels(toolName: string): { active: string; done: string } {
-  return (
-    TOOL_LABELS[toolName] ?? {
-      active: "Working…",
-      done: "Completed step",
-    }
-  );
+  const mapped = TOOL_LABELS[toolName];
+  if (mapped) return mapped;
+  const base = humanizeToolName(toolName);
+  return {
+    active: base.endsWith("ing") ? base : `${base}`,
+    done: base,
+  };
+}
+
+export function activityKindForTool(toolName: string): ActivityKind {
+  if (toolName === "finish") return "finish";
+  if (READ_TOOLS.has(toolName)) return "read";
+  if (LIFECYCLE_TOOLS.has(toolName)) return "lifecycle";
+  if (toolName.startsWith("document.") || toolName.startsWith("workspace.")) {
+    return "mutate";
+  }
+  return "other";
+}
+
+function weightForKind(kind: ActivityKind): AgentActivity["weight"] {
+  if (kind === "read" || kind === "thinking" || kind === "finish") return "quiet";
+  if (kind === "mutate" || kind === "lifecycle") return "emphasis";
+  return "normal";
 }
 
 /**
- * Keep finished Thinking/Generating segments in the technical timeline so
- * details can still show cadence. Primary UX filters these out.
+ * Keep finished Thinking segments in the technical timeline so details can
+ * still show cadence. Primary UX filters these out.
  */
 function freezeThoughtSegment(
   lines: readonly AgentProgressLine[],
@@ -246,22 +315,27 @@ function freezeThoughtSegment(
   return out;
 }
 
-/** Model is working between tools — never re-introduce initial "Thinking…". */
-function withGenerating(
+/**
+ * Model is waiting between tools — truthful "Thinking", not answer streaming.
+ * Do not claim Thinking while a tool row is active (caller freezes first).
+ */
+function withModelWait(
   lines: readonly AgentProgressLine[],
   now: number,
 ): AgentProgressLine[] {
   const base = freezeThoughtSegment(lines, now).filter(
-    (line) => line.id !== "writing",
+    (line) => line.id !== "writing" && line.id !== "thinking",
   );
   const existing = lines.find(
-    (line) => line.id === "writing" && line.status === "active",
+    (line) =>
+      (line.id === "thinking" || line.id === "writing") &&
+      line.status === "active",
   );
   return [
     ...base,
     {
-      id: "writing",
-      label: "Generating…",
+      id: "thinking",
+      label: "Thinking",
       status: "active",
       startedAt: existing?.startedAt ?? now,
     },
@@ -418,49 +492,24 @@ export function reduceAgentProgress(
       return [
         {
           id: "thinking",
-          label: "Thinking…",
+          label: "Thinking",
           status: "active",
           startedAt: nowMs,
         },
       ];
     }
     case "message.started":
-      // Between tools / before tokens: show Generating, not Thinking.
+      // Between tools / before tokens: keep Thinking if already active.
       if (lines.some((line) => line.id === "thinking" && line.status === "active")) {
         return [...lines];
       }
-      return withGenerating(lines, nowMs);
+      return withModelWait(lines, nowMs);
     case "message.delta": {
-      // Seamless handoff: swap Thinking → Writing without clearing history.
+      // Final answer tokens — freeze model-wait; answer renders below.
       const hasDelta =
         typeof event.data.delta === "string" && event.data.delta.length > 0;
       if (!hasDelta) return [...lines];
-      const thinking = lines.find(
-        (line) => line.id === "thinking" && line.status === "active",
-      );
-      if (!thinking) {
-        if (lines.some((line) => line.id === "writing" && line.status === "active")) {
-          return [...lines];
-        }
-        return [
-          ...freezeActive(freezeThoughtSegment(lines, nowMs), nowMs),
-          {
-            id: "writing",
-            label: "Generating…",
-            status: "active",
-            startedAt: nowMs,
-          },
-        ];
-      }
-      return lines.map((line) =>
-        line.id === "thinking" && line.status === "active"
-          ? {
-              ...line,
-              id: "writing",
-              label: "Generating…",
-            }
-          : line,
-      );
+      return freezeActive(freezeThoughtSegment(lines, nowMs), nowMs);
     }
     case "message.completed":
       return freezeActive(freezeThoughtSegment(lines, nowMs), nowMs);
@@ -488,15 +537,25 @@ export function reduceAgentProgress(
       const labels = toolLabels(toolName);
       const id = `tool:${toolCallId}`;
       const previous = lines.find((line) => line.id === id);
+      // Preserve document.created name enrichment if it arrived mid-tool.
+      const doneLabel =
+        previous &&
+        previous.toolName &&
+        LIFECYCLE_TOOLS.has(previous.toolName) &&
+        previous.label.startsWith("Created ") &&
+        previous.label !== labels.done &&
+        previous.label !== labels.active
+          ? previous.label
+          : labels.done;
       const withoutActive = freezeThoughtSegment(lines, nowMs).filter(
         (line) => line.id !== id,
       );
-      return withGenerating(
+      return withModelWait(
         [
           ...withoutActive,
           {
             id,
-            label: labels.done,
+            label: doneLabel,
             status: "done",
             toolName,
             startedAt: previous?.startedAt ?? nowMs,
@@ -516,7 +575,7 @@ export function reduceAgentProgress(
       const withoutActive = freezeThoughtSegment(lines, nowMs).filter(
         (line) => line.id !== id,
       );
-      return withGenerating(
+      return withModelWait(
         [
           ...withoutActive,
           {
@@ -532,6 +591,39 @@ export function reduceAgentProgress(
         nowMs,
       );
     }
+    case "document.created": {
+      // Enrich the latest lifecycle tool row with the real document name.
+      const name =
+        typeof event.data.name === "string" && event.data.name.trim()
+          ? event.data.name.trim()
+          : undefined;
+      if (!name) return [...lines];
+      let updated = false;
+      const next: AgentProgressLine[] = [];
+      for (let i = lines.length - 1; i >= 0; i -= 1) {
+        const line = lines[i];
+        if (
+          !updated &&
+          line &&
+          line.toolName &&
+          LIFECYCLE_TOOLS.has(line.toolName) &&
+          (line.status === "done" || line.status === "active")
+        ) {
+          const isDuplicate =
+            line.toolName === "workspace.duplicate_current_document";
+          next.unshift({
+            ...line,
+            label: isDuplicate ? `Created ${name}` : `Created ${name}`,
+            status: line.status === "active" ? "done" : line.status,
+            endedAt: line.endedAt ?? nowMs,
+          });
+          updated = true;
+          continue;
+        }
+        if (line) next.unshift(line);
+      }
+      return updated ? next : [...lines];
+    }
     case "confirmation.required": {
       const toolCallId = String(event.data.toolCallId ?? "confirm");
       return [
@@ -540,7 +632,7 @@ export function reduceAgentProgress(
         ),
         {
           id: `confirm:${toolCallId}`,
-          label: "Waiting for confirmation…",
+          label: "Waiting for confirmation",
           status: "active",
           startedAt: nowMs,
         },
@@ -608,8 +700,7 @@ export interface ProgressGroup {
 function normalizeGroupLabel(label: string, count: number): string {
   if (count <= 1) return label;
   // Prefer plural forms for common tool completions.
-  if (label === "Inserted paragraph") return "Inserted paragraphs";
-  if (label === "Inserting paragraph…") return "Inserting paragraphs…";
+  if (label === "Added content") return "Added content";
   if (label === "Inspected document") return "Inspected document";
   if (label === "Updated table cells") return "Updated table cells";
   if (label === "Thought") return "Thoughts";
@@ -627,6 +718,7 @@ function isThoughtLine(line: AgentProgressLine): boolean {
     line.id.startsWith("thought:") ||
     line.label === "Thought" ||
     line.label === "Thoughts" ||
+    line.label === "Thinking" ||
     line.label === "Thinking…" ||
     line.label === "Generating…"
   );
@@ -636,7 +728,7 @@ function isTerminalLine(line: AgentProgressLine): boolean {
   return line.id === "failed" || line.id === "cancelled";
 }
 
-/** Technical details: skip Thought cadence + live Generating filler. */
+/** Technical details: skip Thought cadence + live model-wait filler. */
 export function technicalProgressLines(
   lines: readonly AgentProgressLine[],
 ): AgentProgressLine[] {
@@ -648,24 +740,24 @@ export function groupProgressLines(
 ): ProgressGroup[] {
   const groups: ProgressGroup[] = [];
   for (const line of lines) {
-    // Skip only the live Generating filler — finished "Thought" segments stay
-    // when callers pass the raw timeline; primary callers use technical lines.
-    if (line.id === "writing") continue;
+    if (line.id === "writing" || line.id === "thinking") continue;
 
     const baseLabel = line.label
       .replace(/…$/, "")
       .replace(/^Inserting /, "Inserted ")
       .replace(/^Inspecting /, "Inspected ")
+      .replace(/^Searching /, "Searched ")
       .replace(/^Updating /, "Updated ")
       .replace(/^Replacing /, "Replaced ")
-      .replace(/^Searching /, "Searched ")
       .replace(/^Creating /, "Created ")
+      .replace(/^Duplicating /, "Duplicated ")
+      .replace(/^Adding /, "Added ")
       .replace(/^Setting /, "Set ")
       .replace(/^Formatting /, "Formatted ")
-      .replace(/^Adding /, "Added ")
       .replace(/^Removing /, "Removed ")
       .replace(/^Sizing /, "Sized ")
       .replace(/^Shading /, "Shaded ")
+      .replace(/^Completing /, "Completed ")
       .trim();
 
     const last = groups[groups.length - 1];
@@ -703,6 +795,8 @@ export function groupProgressLines(
 export function activityFamilyForTool(toolName: string): ActivityFamily {
   switch (toolName) {
     case "workspace.create_blank_docx":
+    case "workspace.create_blank_document":
+    case "workspace.duplicate_current_document":
       return "create";
     case "document.insert_paragraph":
     case "document.insert_paragraphs":
@@ -762,296 +856,217 @@ export function activityFamilyForTool(toolName: string): ActivityFamily {
   }
 }
 
-function familyFromLabel(label: string): ActivityFamily | null {
-  const lower = label.toLowerCase();
-  if (lower.includes("blank document") || lower.includes("creating document") || lower.includes("created document")) {
-    return "create";
-  }
-  if (lower.includes("paragraph style") || lower.includes("structuring")) {
-    return "structure";
-  }
-  if (lower.includes("format") || lower.includes("formatted")) {
-    return "formatting";
-  }
-  if (lower.includes("table")) return "table";
-  if (lower.includes("list")) return "list";
-  if (lower.includes("image") || lower.includes("picture")) return "media";
-  if (
-    lower.includes("page number") ||
-    lower.includes("header") ||
-    lower.includes("footer") ||
-    lower.includes("page break") ||
-    lower.includes("page setup")
-  ) {
-    return "layout";
-  }
-  if (
-    lower.includes("inspect") ||
-    lower.includes("search") ||
-    lower.includes("capabilities") ||
-    lower.includes("review")
-  ) {
-    return "inspect";
-  }
-  if (
-    lower.includes("paragraph") ||
-    lower.includes("replacing") ||
-    lower.includes("replaced") ||
-    lower.includes("content") ||
-    lower.includes("link") ||
-    lower.includes("field") ||
-    lower.includes("slide") ||
-    lower.includes("cell")
-  ) {
-    return "content";
-  }
-  if (lower.includes("confirmation")) return "confirm";
-  return null;
-}
-
-function activityLabels(family: ActivityFamily): {
-  active: string;
-  done: string;
-  error: string;
-} {
-  switch (family) {
-    case "create":
-      return {
-        active: "Starting…",
-        done: "Created document",
-        error: "Couldn't create document",
-      };
-    case "content":
-      return {
-        active: "Drafting content…",
-        done: "Added content",
-        error: "Couldn't add content",
-      };
-    case "structure":
-      return {
-        active: "Structuring document…",
-        done: "Structured sections",
-        error: "Couldn't structure one section",
-      };
-    case "formatting":
-      return {
-        active: "Formatting document…",
-        done: "Formatted document",
-        error: "Couldn't format one section",
-      };
-    case "table":
-      return {
-        active: "Building document…",
-        done: "Added table",
-        error: "Couldn't update table",
-      };
-    case "list":
-      return {
-        active: "Building document…",
-        done: "Added list",
-        error: "Couldn't add list",
-      };
-    case "media":
-      return {
-        active: "Building document…",
-        done: "Added images",
-        error: "Couldn't add image",
-      };
-    case "layout":
-      return {
-        active: "Building document…",
-        done: "Updated page layout",
-        error: "Couldn't update page layout",
-      };
-    case "inspect":
-      return {
-        active: "Reviewing document…",
-        done: "Reviewed document",
-        error: "Couldn't review document",
-      };
-    case "confirm":
-      return {
-        active: "Waiting for confirmation…",
-        done: "Confirmed",
-        error: "Confirmation denied",
-      };
-    case "other":
-      return {
-        active: "Working on document…",
-        done: "Completed step",
-        error: "Couldn't finish a step",
-      };
-  }
-}
-
-/** Live headline for a semantic family (between tools, keep last stage). */
-export function liveStatusForFamily(family: ActivityFamily): string {
-  return activityLabels(family).active;
-}
-
-function countNounForFamily(
-  family: ActivityFamily,
-): AgentActivity["countNoun"] {
-  if (family === "inspect") return "checks";
-  if (family === "create" || family === "confirm") return null;
-  return "changes";
-}
-
 function lineFamily(line: AgentProgressLine): ActivityFamily | null {
   if (line.id.startsWith("confirm:")) return "confirm";
   if (line.toolName) return activityFamilyForTool(line.toolName);
-  return familyFromLabel(line.label);
+  return null;
 }
 
-type FamilyBucket = {
-  family: ActivityFamily;
-  successCount: number;
-  active: boolean;
-  /** True when the latest outcome for this family is an unrecovered error. */
-  unrecoveredError: boolean;
-};
+function readGroupDetail(toolName: string, count: number): string {
+  if (toolName === "document.inspect") {
+    return count === 1 ? "1 inspection" : `${count} inspections`;
+  }
+  if (toolName === "document.find") {
+    return count === 1 ? "1 search" : `${count} searches`;
+  }
+  return count === 1 ? "1 check" : `${count} checks`;
+}
+
+function lineToActivity(line: AgentProgressLine): AgentActivity {
+  if (line.id === "thinking" || line.id === "writing") {
+    return {
+      id: line.id,
+      kind: "thinking",
+      label: "Thinking",
+      status: line.status === "active" ? "active" : "done",
+      startedAt: line.startedAt,
+      endedAt: line.endedAt,
+      liveElapsed: line.status === "active",
+      weight: "quiet",
+    };
+  }
+  if (line.id.startsWith("confirm:")) {
+    return {
+      id: line.id,
+      kind: "other",
+      label: line.label,
+      status: line.status === "pending" ? "active" : line.status,
+      startedAt: line.startedAt,
+      endedAt: line.endedAt,
+      weight: "normal",
+    };
+  }
+  if (isTerminalLine(line)) {
+    return {
+      id: line.id,
+      kind: "other",
+      label: line.label,
+      status: line.status === "error" ? "error" : "done",
+      startedAt: line.startedAt,
+      endedAt: line.endedAt,
+      weight: "normal",
+    };
+  }
+  const toolName = line.toolName ?? "other";
+  const kind = activityKindForTool(toolName);
+  return {
+    id: line.id,
+    kind,
+    label: line.label,
+    status: line.status === "pending" ? "active" : line.status,
+    startedAt: line.startedAt,
+    endedAt: line.endedAt,
+    weight: weightForKind(kind),
+  };
+}
 
 /**
- * Collapse technical tool lines into semantic activity rows.
- * Recovered failures (error then later success in the same family) stay hidden.
+ * Project technical progress lines into progressive activity rows.
+ * Groups consecutive completed reads; keeps mutations individually visible.
+ * Completed Thinking rows are omitted (not chat spam).
  */
-export function summarizeAgentActivities(
+export function projectActivityRows(
   lines: readonly AgentProgressLine[],
+  options?: { readonly streamingAnswer?: boolean },
 ): AgentActivity[] {
-  const order: ActivityFamily[] = [];
-  const buckets = new Map<ActivityFamily, FamilyBucket>();
+  const rows: AgentActivity[] = [];
+  let pendingReads: AgentProgressLine[] = [];
 
-  const ensure = (family: ActivityFamily): FamilyBucket => {
-    let bucket = buckets.get(family);
-    if (!bucket) {
-      bucket = {
-        family,
-        successCount: 0,
-        active: false,
-        unrecoveredError: false,
-      };
-      buckets.set(family, bucket);
-      order.push(family);
+  const flushReads = () => {
+    if (pendingReads.length === 0) return;
+    const first = pendingReads[0]!;
+    const toolName = first.toolName ?? "document.inspect";
+    const labels = toolLabels(toolName);
+    if (pendingReads.length === 1) {
+      rows.push(lineToActivity(first));
+    } else {
+      rows.push({
+        id: `read-group:${first.id}`,
+        kind: "read",
+        label: labels.done,
+        status: "done",
+        detail: readGroupDetail(toolName, pendingReads.length),
+        startedAt: first.startedAt,
+        endedAt: pendingReads[pendingReads.length - 1]?.endedAt,
+        weight: "quiet",
+      });
     }
-    return bucket;
+    pendingReads = [];
   };
 
   for (const line of lines) {
-    if (isThoughtLine(line) || isTerminalLine(line)) continue;
-
-    if (line.id.startsWith("confirm:")) {
-      const bucket = ensure("confirm");
-      bucket.active = line.status === "active";
-      if (line.status === "done") {
-        bucket.successCount += 1;
-        bucket.unrecoveredError = false;
-      }
+    if (isThoughtLine(line) && line.id.startsWith("thought:")) {
+      continue;
+    }
+    if (line.id === "writing") {
+      continue;
+    }
+    if (line.id === "thinking") {
+      flushReads();
+      if (line.status !== "active") continue;
+      if (options?.streamingAnswer) continue;
+      rows.push(lineToActivity(line));
       continue;
     }
 
-    const family =
-      (line.toolName ? activityFamilyForTool(line.toolName) : null) ??
-      familyFromLabel(line.label) ??
-      "other";
-    const bucket = ensure(family);
+    const isRead =
+      line.toolName !== undefined &&
+      READ_TOOLS.has(line.toolName) &&
+      line.status === "done";
 
-    if (line.status === "active") {
-      bucket.active = true;
+    if (isRead) {
+      const sameTool =
+        pendingReads.length === 0 ||
+        pendingReads[0]?.toolName === line.toolName;
+      if (!sameTool) flushReads();
+      pendingReads.push(line);
       continue;
     }
 
-    bucket.active = false;
-    if (line.status === "done") {
-      bucket.successCount += 1;
-      bucket.unrecoveredError = false;
-      continue;
-    }
-    if (line.status === "error") {
-      // Recovered only if a later success clears this flag.
-      bucket.unrecoveredError = true;
-    }
-  }
+    flushReads();
 
-  const activities: AgentActivity[] = [];
-  for (const family of order) {
-    const bucket = buckets.get(family);
-    if (!bucket) continue;
-
-    // Skip families that only had recovered errors and no successes/active.
+    // Active read: keep visible; do not merge into completed group yet.
     if (
-      !bucket.active &&
-      bucket.successCount === 0 &&
-      !bucket.unrecoveredError
+      line.toolName &&
+      READ_TOOLS.has(line.toolName) &&
+      line.status === "active"
     ) {
+      rows.push(lineToActivity(line));
       continue;
     }
 
-    const labels = activityLabels(family);
-    let status: AgentActivity["status"];
-    let label: string;
-    if (bucket.active) {
-      status = "active";
-      label = labels.active;
-    } else if (bucket.unrecoveredError && bucket.successCount === 0) {
-      status = "error";
-      label = labels.error;
-    } else if (bucket.unrecoveredError && bucket.successCount > 0) {
-      // Partial: some succeeded, last attempt still failed — surface gently.
-      status = "error";
-      label = labels.error;
-    } else {
-      status = "done";
-      label = labels.done;
-    }
-
-    activities.push({
-      family,
-      label,
-      status,
-      changeCount: bucket.successCount,
-      countNoun: countNounForFamily(family),
-    });
+    if (line.status === "pending") continue;
+    rows.push(lineToActivity(line));
   }
-  return activities;
+  flushReads();
+  return rows;
+}
+
+/** @deprecated Prefer projectActivityRows — kept for callers/tests during transition. */
+export function summarizeAgentActivities(
+  lines: readonly AgentProgressLine[],
+): AgentActivity[] {
+  return projectActivityRows(lines);
 }
 
 /**
- * Live status from semantic activity — never treat inter-tool model waits
- * as "Finishing up…" (that only applies once the answer is streaming).
+ * Live headline = newest active activity label (Thinking / tool).
+ * Never say Finishing up unless the answer is actually streaming.
  */
 export function liveHeadlineFromActivities(
   activities: readonly AgentActivity[],
   lines: readonly AgentProgressLine[],
   options?: { readonly streamingAnswer?: boolean },
 ): string {
+  if (options?.streamingAnswer) return "Finishing up";
+
   const active = [...activities].reverse().find((a) => a.status === "active");
-  if (active) return liveStatusForFamily(active.family);
-
-  // Final answer tokens are flowing — only then say Finishing up.
-  if (options?.streamingAnswer) return "Finishing up…";
-
-  // Between tools / model wait: keep the last meaningful stage visible.
-  const lastMeaningful = [...activities]
-    .reverse()
-    .find((a) => a.family !== "confirm" && a.status !== "error");
-  if (lastMeaningful) return liveStatusForFamily(lastMeaningful.family);
+  if (active) {
+    if (active.kind === "thinking") return "Thinking";
+    return active.label;
+  }
 
   const thinking = lines.some(
     (line) => line.id === "thinking" && line.status === "active",
   );
-  if (thinking) return "Starting…";
+  if (thinking && !options?.streamingAnswer) return "Thinking";
 
-  const writing = lines.some(
-    (line) => line.id === "writing" && line.status === "active",
-  );
-  if (writing) return "Working on document…";
+  return "Working";
+}
 
-  return "Working on document…";
+function completionSummaryLabel(lines: readonly AgentProgressLine[]): string {
+  const technical = technicalProgressLines(visibleAgentProgress(lines));
+  let createdName: string | null = null;
+  let hasLifecycle = false;
+  let hasMutation = false;
+  let hasRead = false;
+
+  for (const line of technical) {
+    if (!line.toolName) continue;
+    if (LIFECYCLE_TOOLS.has(line.toolName) && line.status === "done") {
+      hasLifecycle = true;
+      if (line.label.startsWith("Created ")) {
+        createdName = line.label.slice("Created ".length);
+      }
+    } else if (READ_TOOLS.has(line.toolName)) {
+      hasRead = true;
+    } else if (line.toolName !== "finish") {
+      hasMutation = true;
+    }
+  }
+
+  if (createdName) return `Created ${createdName}`;
+  if (hasLifecycle && !hasMutation) return "Created document";
+  if (hasMutation) return "Updated document";
+  if (hasRead) return "Reviewed document";
+  return "Done";
 }
 
 function completedHeadline(
+  lines: readonly AgentProgressLine[],
   outcome: AgentTurnProgress["outcome"],
   durationMs: number | null | undefined,
+  actionCount: number,
 ): string {
   const elapsed =
     durationMs != null ? formatProgressElapsed(durationMs) : null;
@@ -1061,7 +1076,13 @@ function completedHeadline(
   if (outcome === "failed") {
     return elapsed ? `Couldn't complete · ${elapsed}` : "Couldn't complete";
   }
-  return elapsed ? `Done in ${elapsed}` : "Done";
+  const summary = completionSummaryLabel(lines);
+  const actions =
+    actionCount > 0
+      ? ` · ${actionCount} ${actionCount === 1 ? "action" : "actions"}`
+      : "";
+  const time = elapsed ? ` · ${elapsed}` : "";
+  return `${summary}${actions}${time}`;
 }
 
 function recoveryDetailLabel(label: string): string {
@@ -1113,16 +1134,18 @@ export function buildTechnicalDetails(
       .replace(/…$/, "")
       .replace(/^Inserting /, "Inserted ")
       .replace(/^Inspecting /, "Inspected ")
+      .replace(/^Searching /, "Searched ")
       .replace(/^Updating /, "Updated ")
       .replace(/^Replacing /, "Replaced ")
-      .replace(/^Searching /, "Searched ")
       .replace(/^Creating /, "Created ")
+      .replace(/^Duplicating /, "Duplicated ")
+      .replace(/^Adding /, "Added ")
       .replace(/^Setting /, "Set ")
       .replace(/^Formatting /, "Formatted ")
-      .replace(/^Adding /, "Added ")
       .replace(/^Removing /, "Removed ")
       .replace(/^Sizing /, "Sized ")
       .replace(/^Shading /, "Shaded ")
+      .replace(/^Completing /, "Completed ")
       .trim();
 
     const displayLabel = recovered
@@ -1178,7 +1201,9 @@ export function presentAgentRun(
     readonly streamingAnswer?: boolean;
   },
 ): AgentRunPresentation {
-  const activities = summarizeAgentActivities(lines);
+  const activities = projectActivityRows(lines, {
+    streamingAnswer: options?.streamingAnswer,
+  });
   const details = buildTechnicalDetails(lines);
   const technical = technicalProgressLines(visibleAgentProgress(lines));
   const actionCount = technical.filter(
@@ -1193,7 +1218,12 @@ export function presentAgentRun(
     ? liveHeadlineFromActivities(activities, lines, {
         streamingAnswer: options.streamingAnswer,
       })
-    : completedHeadline(options?.outcome ?? "completed", options?.durationMs);
+    : completedHeadline(
+        lines,
+        options?.outcome ?? "completed",
+        options?.durationMs,
+        actionCount,
+      );
 
   return {
     headline,

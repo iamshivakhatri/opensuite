@@ -9,7 +9,7 @@ export const DATABASE_UNAVAILABLE_CODE = "DATABASE_UNAVAILABLE" as const;
 export const databaseUnavailableBody = {
   error: {
     statusCode: 503 as const,
-    message: "Database temporarily unavailable",
+    message: "No connection with the database",
     code: DATABASE_UNAVAILABLE_CODE,
   },
 };

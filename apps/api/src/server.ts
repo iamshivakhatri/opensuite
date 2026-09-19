@@ -14,7 +14,7 @@ import { createS3ObjectStorage } from "./storage/index.js";
 
 async function main(): Promise<void> {
   const config = loadConfig();
-  console.info("[agent] runtime=v2");
+  console.info("[agent] runtime=v3");
   const dbClient = createDbClient(
     { databaseUrl: config.databaseUrl },
     {
@@ -25,10 +25,16 @@ async function main(): Promise<void> {
     },
   );
   // Live runs are in-process only; a prior crash/force-kill leaves durable leases
-  // that would falsely block new runs until expiry.
-  const cleared = await createAgentExecutionLeaseService(dbClient.db).clearAll();
-  if (cleared > 0) {
-    console.info(`[agent] cleared ${cleared} orphaned execution lease(s) on boot`);
+  // that would falsely block new runs until expiry. Do not crash boot if Postgres
+  // is briefly unreachable — /health will report degraded and routes return 503.
+  try {
+    const cleared = await createAgentExecutionLeaseService(dbClient.db).clearAll();
+    if (cleared > 0) {
+      console.info(`[agent] cleared ${cleared} orphaned execution lease(s) on boot`);
+    }
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    console.warn(`[agent] skipped lease clear on boot (database unreachable): ${message}`);
   }
   const emailSender = createResendEmailSender({
     apiKey: config.resendApiKey,

@@ -105,6 +105,14 @@ async function parseError(response: Response): Promise<ApiError> {
     if (typeof error?.activeThreadId === "string") {
       details.activeThreadId = error.activeThreadId;
     }
+    if (error?.code === "DATABASE_UNAVAILABLE") {
+      return new ApiError(
+        error.statusCode ?? response.status,
+        "DATABASE_UNAVAILABLE",
+        "No connection with the database",
+        Object.keys(details).length > 0 ? details : undefined,
+      );
+    }
     return new ApiError(
       error?.statusCode ?? response.status,
       error?.code ?? "REQUEST_FAILED",
@@ -121,11 +129,18 @@ async function parseError(response: Response): Promise<ApiError> {
 }
 
 async function apiFetch(path: string, init?: RequestInit): Promise<Response> {
-  const response = await fetch(`${requireApiBaseUrl()}${path}`, {
-    ...init,
-    credentials: "include",
-  });
-  return response;
+  try {
+    return await fetch(`${requireApiBaseUrl()}${path}`, {
+      ...init,
+      credentials: "include",
+    });
+  } catch {
+    throw new ApiError(
+      503,
+      "API_UNREACHABLE",
+      "Can't reach the API. Try again in a moment.",
+    );
+  }
 }
 
 /**

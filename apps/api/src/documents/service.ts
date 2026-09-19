@@ -323,136 +323,171 @@ export function createDocumentService(
     }
   }
 
+  /**
+   * Create a new document identity and store caller-provided bytes as Version 1.
+   * Shared by upload, blank create, and agent duplicate — source is explicit.
+   */
+  async function createOfficeDocumentFromBytes(input: {
+    workspaceId: string;
+    ownerUserId: string;
+    filename: string;
+    bytes: Buffer;
+    source: DocumentVersionSource;
+    /** When set, skip filename→format inference (blank DOCX path). */
+    format?: OfficeFormat;
+  }): Promise<UploadedDocumentDto> {
+    const filename = sanitizeUploadFilename(input.filename);
+    if (!filename) {
+      throw new DocumentUploadError(
+        400,
+        "INVALID_FILENAME",
+        "Invalid upload filename",
+      );
+    }
+
+    const format =
+      input.format ?? officeFormatFromFilename(filename);
+    if (!format) {
+      throw new DocumentUploadError(
+        400,
+        "UNSUPPORTED_FORMAT",
+        "Only .docx, .pptx, and .xlsx uploads are supported",
+      );
+    }
+
+    assertUploadBytes(input.bytes);
+
+    const documentId = createId();
+    const versionId = createId();
+    const storageKey = buildDocumentVersionStorageKey({
+      workspaceId: input.workspaceId,
+      documentId,
+      versionId,
+      format,
+    });
+    const sha256 = sha256Hex(input.bytes);
+
+    await storage.putObject({
+      key: storageKey,
+      body: input.bytes,
+      contentType: contentTypeForFormat(format),
+    });
+
+    try {
+      const created = await db.transaction(async (tx) => {
+        await options.storageAccounting?.reserve(
+          tx,
+          input.ownerUserId,
+          input.bytes.byteLength,
+        );
+        const [doc] = await tx
+          .insert(schema.document)
+          .values({
+            id: documentId,
+            workspaceId: input.workspaceId,
+            name: filename,
+            format,
+          })
+          .returning({
+            id: schema.document.id,
+            workspaceId: schema.document.workspaceId,
+            name: schema.document.name,
+            format: schema.document.format,
+            createdAt: schema.document.createdAt,
+            updatedAt: schema.document.updatedAt,
+          });
+
+        if (!doc) {
+          throw new Error("Failed to create document");
+        }
+
+        const [version] = await tx
+          .insert(schema.documentVersion)
+          .values({
+            id: versionId,
+            documentId,
+            versionNumber: 1,
+            parentVersionId: null,
+            storageKey,
+            sizeBytes: input.bytes.byteLength,
+            sha256,
+            source: input.source,
+            createdByUserId: input.ownerUserId,
+          })
+          .returning({
+            id: schema.documentVersion.id,
+            documentId: schema.documentVersion.documentId,
+            versionNumber: schema.documentVersion.versionNumber,
+            parentVersionId: schema.documentVersion.parentVersionId,
+            sizeBytes: schema.documentVersion.sizeBytes,
+            sha256: schema.documentVersion.sha256,
+            source: schema.documentVersion.source,
+            createdByUserId: schema.documentVersion.createdByUserId,
+            createdAt: schema.documentVersion.createdAt,
+          });
+
+        if (
+          !version ||
+          version.source !== input.source ||
+          version.createdByUserId == null
+        ) {
+          throw new Error("Failed to create document version");
+        }
+
+        await tx
+          .update(schema.workspace)
+          .set({ updatedAt: new Date() })
+          .where(eq(schema.workspace.id, input.workspaceId));
+
+        return {
+          doc,
+          version: {
+            ...version,
+            createdByUserId: version.createdByUserId,
+          },
+        };
+      });
+
+      return {
+        document: {
+          id: created.doc.id,
+          workspaceId: created.doc.workspaceId,
+          name: created.doc.name,
+          format: created.doc.format,
+          createdAt: created.doc.createdAt.toISOString(),
+          updatedAt: created.doc.updatedAt.toISOString(),
+        },
+        version: toVersionDto(created.version),
+      };
+    } catch (error) {
+      await cleanupStorageKey(storageKey);
+      if (error instanceof StorageQuotaError) {
+        throw new DocumentUploadError(
+          409,
+          "STORAGE_QUOTA_EXCEEDED",
+          error.message,
+        );
+      }
+      throw error;
+    }
+  }
+
   return {
+    createOfficeDocumentFromBytes,
+
     async uploadOfficeDocument(input: {
       workspaceId: string;
       ownerUserId: string;
       filename: string;
       bytes: Buffer;
     }): Promise<UploadedDocumentDto> {
-      const filename = sanitizeUploadFilename(input.filename);
-      if (!filename) {
-        throw new DocumentUploadError(
-          400,
-          "INVALID_FILENAME",
-          "Invalid upload filename",
-        );
-      }
-
-      const format = officeFormatFromFilename(filename);
-      if (!format) {
-        throw new DocumentUploadError(
-          400,
-          "UNSUPPORTED_FORMAT",
-          "Only .docx, .pptx, and .xlsx uploads are supported",
-        );
-      }
-
-      assertUploadBytes(input.bytes);
-
-      const documentId = createId();
-      const versionId = createId();
-      const storageKey = buildDocumentVersionStorageKey({
+      return createOfficeDocumentFromBytes({
         workspaceId: input.workspaceId,
-        documentId,
-        versionId,
-        format,
+        ownerUserId: input.ownerUserId,
+        filename: input.filename,
+        bytes: input.bytes,
+        source: "upload",
       });
-      const sha256 = sha256Hex(input.bytes);
-
-      await storage.putObject({
-        key: storageKey,
-        body: input.bytes,
-        contentType: contentTypeForFormat(format),
-      });
-
-      try {
-        const created = await db.transaction(async (tx) => {
-          await options.storageAccounting?.reserve(tx, input.ownerUserId, input.bytes.byteLength);
-          const [doc] = await tx
-            .insert(schema.document)
-            .values({
-              id: documentId,
-              workspaceId: input.workspaceId,
-              name: filename,
-              format,
-            })
-            .returning({
-              id: schema.document.id,
-              workspaceId: schema.document.workspaceId,
-              name: schema.document.name,
-              format: schema.document.format,
-              createdAt: schema.document.createdAt,
-              updatedAt: schema.document.updatedAt,
-            });
-
-          if (!doc) {
-            throw new Error("Failed to create document");
-          }
-
-          const [version] = await tx
-            .insert(schema.documentVersion)
-            .values({
-              id: versionId,
-              documentId,
-              versionNumber: 1,
-              parentVersionId: null,
-              storageKey,
-              sizeBytes: input.bytes.byteLength,
-              sha256,
-              source: "upload",
-              createdByUserId: input.ownerUserId,
-            })
-            .returning({
-              id: schema.documentVersion.id,
-              documentId: schema.documentVersion.documentId,
-              versionNumber: schema.documentVersion.versionNumber,
-              parentVersionId: schema.documentVersion.parentVersionId,
-              sizeBytes: schema.documentVersion.sizeBytes,
-              sha256: schema.documentVersion.sha256,
-              source: schema.documentVersion.source,
-              createdByUserId: schema.documentVersion.createdByUserId,
-              createdAt: schema.documentVersion.createdAt,
-            });
-
-          if (
-            !version ||
-            version.source !== "upload" ||
-            version.createdByUserId == null
-          ) {
-            throw new Error("Failed to create document version");
-          }
-
-          await tx
-            .update(schema.workspace)
-            .set({ updatedAt: new Date() })
-            .where(eq(schema.workspace.id, input.workspaceId));
-
-          return {
-            doc,
-            version: {
-              ...version,
-              createdByUserId: version.createdByUserId,
-            },
-          };
-        });
-
-        return {
-          document: {
-            id: created.doc.id,
-            workspaceId: created.doc.workspaceId,
-            name: created.doc.name,
-            format: created.doc.format,
-            createdAt: created.doc.createdAt.toISOString(),
-            updatedAt: created.doc.updatedAt.toISOString(),
-          },
-          version: toVersionDto(created.version),
-        };
-      } catch (error) {
-        await cleanupStorageKey(storageKey);
-        if (error instanceof StorageQuotaError) throw new DocumentUploadError(409, "STORAGE_QUOTA_EXCEEDED", error.message);
-        throw error;
-      }
     },
 
     /**
@@ -464,6 +499,8 @@ export function createDocumentService(
       ownerUserId: string;
       /** Display name without requiring .docx; default Untitled Document.docx */
       name?: string;
+      /** Provenance for Version 1. Default "user" (UI blank create). */
+      source?: DocumentVersionSource;
     }): Promise<UploadedDocumentDto> {
       if (!options.createBlankDocxBytes) {
         throw new DocumentUploadError(
@@ -473,7 +510,8 @@ export function createDocumentService(
         );
       }
 
-      const rawName = (input.name ?? "Untitled Document").trim() || "Untitled Document";
+      const rawName =
+        (input.name ?? "Untitled Document").trim() || "Untitled Document";
       const filename = sanitizeUploadFilename(
         rawName.toLowerCase().endsWith(".docx") ? rawName : `${rawName}.docx`,
       );
@@ -486,112 +524,14 @@ export function createDocumentService(
       }
 
       const blankBytes = await options.createBlankDocxBytes();
-      const bytes = Buffer.from(blankBytes);
-      assertUploadBytes(bytes);
-
-      const documentId = createId();
-      const versionId = createId();
-      const storageKey = buildDocumentVersionStorageKey({
+      return createOfficeDocumentFromBytes({
         workspaceId: input.workspaceId,
-        documentId,
-        versionId,
+        ownerUserId: input.ownerUserId,
+        filename,
+        bytes: Buffer.from(blankBytes),
+        source: input.source ?? "user",
         format: "docx",
       });
-      const sha256 = sha256Hex(bytes);
-
-      await storage.putObject({
-        key: storageKey,
-        body: bytes,
-        contentType: contentTypeForFormat("docx"),
-      });
-
-      try {
-        const created = await db.transaction(async (tx) => {
-          await options.storageAccounting?.reserve(tx, input.ownerUserId, bytes.byteLength);
-          const [doc] = await tx
-            .insert(schema.document)
-            .values({
-              id: documentId,
-              workspaceId: input.workspaceId,
-              name: filename,
-              format: "docx",
-            })
-            .returning({
-              id: schema.document.id,
-              workspaceId: schema.document.workspaceId,
-              name: schema.document.name,
-              format: schema.document.format,
-              createdAt: schema.document.createdAt,
-              updatedAt: schema.document.updatedAt,
-            });
-
-          if (!doc) {
-            throw new Error("Failed to create document");
-          }
-
-          const [version] = await tx
-            .insert(schema.documentVersion)
-            .values({
-              id: versionId,
-              documentId,
-              versionNumber: 1,
-              parentVersionId: null,
-              storageKey,
-              sizeBytes: bytes.byteLength,
-              sha256,
-              source: "user",
-              createdByUserId: input.ownerUserId,
-            })
-            .returning({
-              id: schema.documentVersion.id,
-              documentId: schema.documentVersion.documentId,
-              versionNumber: schema.documentVersion.versionNumber,
-              parentVersionId: schema.documentVersion.parentVersionId,
-              sizeBytes: schema.documentVersion.sizeBytes,
-              sha256: schema.documentVersion.sha256,
-              source: schema.documentVersion.source,
-              createdByUserId: schema.documentVersion.createdByUserId,
-              createdAt: schema.documentVersion.createdAt,
-            });
-
-          if (
-            !version ||
-            version.source !== "user" ||
-            version.createdByUserId == null
-          ) {
-            throw new Error("Failed to create document version");
-          }
-
-          await tx
-            .update(schema.workspace)
-            .set({ updatedAt: new Date() })
-            .where(eq(schema.workspace.id, input.workspaceId));
-
-          return {
-            doc,
-            version: {
-              ...version,
-              createdByUserId: version.createdByUserId,
-            },
-          };
-        });
-
-        return {
-          document: {
-            id: created.doc.id,
-            workspaceId: created.doc.workspaceId,
-            name: created.doc.name,
-            format: created.doc.format,
-            createdAt: created.doc.createdAt.toISOString(),
-            updatedAt: created.doc.updatedAt.toISOString(),
-          },
-          version: toVersionDto(created.version),
-        };
-      } catch (error) {
-        await cleanupStorageKey(storageKey);
-        if (error instanceof StorageQuotaError) throw new DocumentUploadError(409, "STORAGE_QUOTA_EXCEEDED", error.message);
-        throw error;
-      }
     },
 
     /**

@@ -3,7 +3,7 @@ import { test } from "node:test";
 
 import { buildAgentOperatingInstruction } from "./operating-instruction.js";
 
-test("operating instruction lists only exposed document tools", () => {
+test("operating instruction embeds general policy and only exposed tools", () => {
   const system = buildAgentOperatingInstruction([
     "document.find",
     "document.inspect",
@@ -11,16 +11,21 @@ test("operating instruction lists only exposed document tools", () => {
     "finish",
   ]);
 
-  assert.match(system, /Available document operations:/);
+  assert.match(system, /You are OpenSuite's document agent/);
+  assert.match(system, /AVAILABLE CAPABILITIES/);
+  assert.match(system, /OPERATING PRINCIPLES/);
   assert.match(system, /- document\.find/);
   assert.match(system, /- document\.inspect/);
   assert.match(system, /- document\.replace_text/);
-  assert.match(system, /Use finish when the requested work is complete/);
+  assert.match(system, /- finish/);
+  assert.match(system, /Use the finish operation when the requested work is complete/);
   assert.equal(system.includes("document.capabilities"), false);
   assert.equal(system.includes("insert_picture"), false);
   assert.equal(system.includes("replace_picture"), false);
-  // finish is not a document.* op — listed in policy text, not the ops block as document.finish
-  assert.equal(system.includes("- finish"), false);
+  // No request-specific or find→mutate workflow prescriptions.
+  assert.equal(system.includes("change X to Y"), false);
+  assert.equal(/Always call/i.test(system), false);
+  assert.equal(system.includes("Prefer document.find"), false);
 });
 
 test("hidden picture ops are not advertised when absent from the toolset", () => {
@@ -36,8 +41,7 @@ test("hidden picture ops are not advertised when absent from the toolset", () =>
   assert.equal(system.includes("- document.inspect"), false);
 });
 
-test("empty document toolset states that no document ops are available", () => {
-  const system = buildAgentOperatingInstruction(["finish"]);
-  assert.match(system, /No document operations are available in this run/);
-  assert.equal(system.includes("Available document operations:"), false);
+test("empty toolset lists none under AVAILABLE CAPABILITIES", () => {
+  const system = buildAgentOperatingInstruction([]);
+  assert.match(system, /AVAILABLE CAPABILITIES\n- \(none\)/);
 });

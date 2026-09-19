@@ -130,7 +130,7 @@ test("protected routes map Postgres outages to DATABASE_UNAVAILABLE", async () =
   assert.deepEqual(response.json(), {
     error: {
       statusCode: 503,
-      message: "Database temporarily unavailable",
+      message: "No connection with the database",
       code: "DATABASE_UNAVAILABLE",
     },
   });

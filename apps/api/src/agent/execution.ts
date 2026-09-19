@@ -1,8 +1,10 @@
 import {
   createFinishTool,
+  getRunMetricsFromError,
   isSuccessfulStop,
   runAgent,
   type AgentEvent as CoreAgentEvent,
+  type AgentRunMetrics,
   type AgentToolSet,
   type ModelMessage,
   type StopReason,
@@ -15,7 +17,16 @@ import type { CredentialSource } from "../ai-preferences/types.js";
 import type { ProviderCredentialProvider } from "../credentials/types.js";
 import type { DocumentService } from "../documents/service.js";
 import type { ManagedTrialService } from "../managed-trial/service.js";
+import {
+  productionModelPricingRegistry,
+} from "../model-usage/pricing.js";
 import type { ModelUsageService } from "../model-usage/service.js";
+import {
+  composeAgentRunReport,
+  logAgentRunReport,
+  type DocumentTransition,
+  type DocumentVersionAdvance,
+} from "./agent-run-report.js";
 import { createPrimaryDocxTools } from "./docx-tools.js";
 import { buildAgentOperatingInstruction } from "./operating-instruction.js";
 import {
@@ -44,6 +55,16 @@ export type AgentEvent =
       readonly documentId: string;
       readonly versionId: string;
       readonly versionNumber: number;
+    }
+  | {
+      readonly type: "document.created";
+      readonly runId: string;
+      readonly at: string;
+      readonly documentId: string;
+      readonly versionId: string;
+      readonly versionNumber: number;
+      readonly name: string;
+      readonly kind: "created" | "duplicated";
     }
   | { readonly type: "agent.completed"; readonly runId: string; readonly at: string }
   | { readonly type: "agent.cancelled"; readonly runId: string; readonly at: string }
@@ -109,7 +130,11 @@ export interface AgentExecutionServiceDeps {
   readonly persistence: AgentPersistenceService;
   readonly documents: Pick<
     DocumentService,
-    "getOwnedDocument" | "readExactVersionBytes" | "appendDocumentVersion"
+    | "getOwnedDocument"
+    | "readExactVersionBytes"
+    | "appendDocumentVersion"
+    | "createBlankDocxDocument"
+    | "createOfficeDocumentFromBytes"
   >;
   readonly resolveModel: (userId: string) => Promise<ResolvedV3ExecutionModel>;
   readonly docxBinding?: DocxEngineBinding;
@@ -269,13 +294,20 @@ async function runExecution(input: {
       await input.deps.managedTrial?.beforeManagedCall(input.ownerUserId);
     }
 
+    const versionAdvances: DocumentVersionAdvance[] = [];
+    const initialDocumentId = input.primaryDocumentId;
     const boundTools = await createPrimaryDocxTools({
       binding: input.deps.docxBinding,
       documents: input.deps.documents,
       ownerUserId: input.ownerUserId,
+      workspaceId: input.thread.workspaceId,
       documentId: input.primaryDocumentId,
       versionId: input.run.baseDocumentVersionId,
       onVersionAdvanced: async (advanced) => {
+        versionAdvances.push({
+          fromVersionId: advanced.fromVersionId,
+          toVersionId: advanced.versionId,
+        });
         await input.liveEvents?.emit({
           type: "document.version.advanced",
           runId: input.run.id,
@@ -283,6 +315,18 @@ async function runExecution(input: {
           documentId: advanced.documentId,
           versionId: advanced.versionId,
           versionNumber: advanced.versionNumber,
+        });
+      },
+      onDocumentCreated: async (created) => {
+        await input.liveEvents?.emit({
+          type: "document.created",
+          runId: input.run.id,
+          at: new Date().toISOString(),
+          documentId: created.documentId,
+          versionId: created.versionId,
+          versionNumber: created.versionNumber,
+          name: created.name,
+          kind: created.kind,
         });
       },
     });
@@ -297,14 +341,49 @@ async function runExecution(input: {
 
     // The one API → agent-core-v3 execution call.
     const executeAgent = input.deps.runAgent ?? runAgent;
-    const result = await executeAgent({
-      model: input.model.model,
-      system: buildAgentOperatingInstruction(Object.keys(tools)),
-      messages,
-      tools,
-      signal: input.signal,
-      runId: runShort,
-      onEvent: (event) => relayEvent(event, input.liveEvents, input.run.id, messageId),
+    let result;
+    try {
+      result = await executeAgent({
+        model: input.model.model,
+        system: buildAgentOperatingInstruction(Object.keys(tools)),
+        messages,
+        tools,
+        signal: input.signal,
+        runId: runShort,
+        onEvent: (event) => relayEvent(event, input.liveEvents, input.run.id, messageId),
+      });
+    } catch (error) {
+      emitRunReport({
+        runId: input.run.id,
+        instruction: input.instruction,
+        model: input.model,
+        metrics: getRunMetricsFromError(error),
+        cancelled: input.signal?.aborted === true,
+        thrown: true,
+        initialDocumentId,
+        initialVersionId: input.run.baseDocumentVersionId,
+        finalDocumentId: boundTools?.getActiveDocumentId() ?? initialDocumentId,
+        finalVersionId: boundTools?.getActiveVersionId() ?? input.run.baseDocumentVersionId,
+        versionAdvances,
+        documentTransitions: boundTools?.getTransitions() ?? [],
+      });
+      throw error;
+    }
+
+    emitRunReport({
+      runId: input.run.id,
+      instruction: input.instruction,
+      model: input.model,
+      metrics: result.metrics,
+      stopReason: result.stopReason,
+      cancelled: false,
+      thrown: false,
+      initialDocumentId,
+      initialVersionId: input.run.baseDocumentVersionId,
+      finalDocumentId: boundTools?.getActiveDocumentId() ?? initialDocumentId,
+      finalVersionId: boundTools?.getActiveVersionId() ?? input.run.baseDocumentVersionId,
+      versionAdvances,
+      documentTransitions: boundTools?.getTransitions() ?? [],
     });
 
     if (!isSuccessfulStop(result.stopReason)) {
@@ -365,6 +444,62 @@ function failureCodeForStopReason(stopReason: StopReason): string {
   if (stopReason === "max_turns") return "AGENT_MAX_TURNS";
   if (stopReason === "deadline") return "AGENT_DEADLINE";
   return "AGENT_EXECUTION_FAILED";
+}
+
+function emitRunReport(input: {
+  readonly runId: string;
+  readonly instruction: string;
+  readonly model: ResolvedV3ExecutionModel;
+  readonly metrics: AgentRunMetrics | undefined;
+  readonly stopReason?: StopReason;
+  readonly cancelled: boolean;
+  readonly thrown: boolean;
+  readonly initialDocumentId?: string | null;
+  readonly finalDocumentId?: string | null;
+  readonly initialVersionId: string | null;
+  readonly finalVersionId?: string | null;
+  readonly versionAdvances: readonly DocumentVersionAdvance[];
+  readonly documentTransitions?: readonly DocumentTransition[];
+}): void {
+  if (!input.metrics) return;
+  try {
+    const attribution = input.model.usageAttribution;
+    const pricing =
+      attribution !== undefined
+        ? productionModelPricingRegistry.lookup(
+            attribution.provider,
+            attribution.model,
+          )
+        : null;
+    const report = composeAgentRunReport({
+      runId: input.runId,
+      instruction: input.instruction,
+      ...(attribution !== undefined
+        ? { provider: attribution.provider, model: attribution.model }
+        : {}),
+      metrics: input.metrics,
+      ...(input.stopReason !== undefined
+        ? { stopReason: input.stopReason }
+        : {}),
+      cancelled: input.cancelled,
+      thrown: input.thrown,
+      initialDocumentId: input.initialDocumentId,
+      finalDocumentId: input.finalDocumentId,
+      initialVersionId: input.initialVersionId,
+      finalVersionId: input.finalVersionId,
+      versionAdvances: input.versionAdvances,
+      documentTransitions: input.documentTransitions ?? [],
+      pricing,
+      ...(attribution !== undefined
+        ? { pricingProvider: attribution.provider }
+        : {}),
+    });
+    logAgentRunReport(report);
+  } catch (error) {
+    console.error(
+      `[agent] run=${input.runId.slice(0, 8)} run_report_failed reason=${summarizeError(error)}`,
+    );
+  }
 }
 
 async function relayEvent(

@@ -6,8 +6,9 @@ import {
 } from "@/lib/service-status";
 
 /**
- * Top strip when the API or Postgres is unreachable. Clears automatically once
- * `/health` reports database ok again.
+ * Calm top strip when the API or Postgres is unreachable. Clears once `/health`
+ * reports database ok again. Intentionally not danger-styled — outages should
+ * feel recoverable, not catastrophic.
  */
 export function ServiceStatusBanner() {
   const status = useServiceStatus();
@@ -18,13 +19,13 @@ export function ServiceStatusBanner() {
 
   const message =
     status.kind === "api_unreachable"
-      ? "OpenSuite can’t reach the API. We’ll reconnect automatically when it’s back."
-      : "Database is temporarily unavailable. OpenSuite will reconnect automatically when Postgres is reachable again.";
+      ? "Can't reach the API — retrying automatically."
+      : "No connection with the database — changes won't save until it's back.";
 
   return (
     <div
       role="status"
-      className="os-type-secondary border-b border-danger/20 bg-danger-soft px-4 py-2 text-center text-danger"
+      className="os-type-secondary border-b border-line bg-sunken px-4 py-2 text-center text-ink-soft"
     >
       {message}
     </div>

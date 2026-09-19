@@ -174,7 +174,7 @@ type MutDef = {
 const MUTATION_DEFS: Record<string, MutDef> = {
   replace_text: {
     description:
-      "Replace exact text. Supply expectedCurrentText from inspect/find. occurrence is zero-based.",
+      "Replace one exact text span. Requires target text, zero-based occurrence when ambiguous, expectedCurrentText (must match current content), and replacement.",
     inputSchema: op(
       {
         target: textTarget,
@@ -185,23 +185,26 @@ const MUTATION_DEFS: Record<string, MutDef> = {
     ),
   },
   insert_paragraph: {
-    description: "Insert one paragraph (placement: start/end/before/after).",
+    description:
+      "Insert one paragraph at a placement (start/end/before/after). before/after require a body_blocks handle.",
     inputSchema: op({ text: { type: "string" }, placement }, [
       "text",
       "placement",
     ]),
   },
   insert_paragraphs: {
-    description: "Insert multiple paragraphs at a placement.",
+    description:
+      "Insert multiple paragraphs at a placement (start/end/before/after). before/after require a body_blocks handle.",
     inputSchema: op({ texts: strings, placement }, ["texts", "placement"]),
   },
   delete_paragraph: {
-    description: "Delete a paragraph by text target (occurrence zero-based).",
+    description:
+      "Delete a paragraph identified by exact text target (occurrence zero-based when ambiguous).",
     inputSchema: op({ target: textTarget }, ["target"]),
   },
   set_paragraph_style: {
     description:
-      "Set or clear paragraph style. style is the display name (e.g. 'Heading 1'), not styleId. Omit style to clear. Target via exact text + zero-based occurrence (use inspect paragraphs.targetOccurrence).",
+      "Set or clear a paragraph style by display name (e.g. 'Heading 1'), not styleId. Target via exact text + zero-based occurrence. Omit style to clear.",
     inputSchema: op(
       {
         target: textTarget,
@@ -214,7 +217,8 @@ const MUTATION_DEFS: Record<string, MutDef> = {
     ),
   },
   set_paragraph_formatting: {
-    description: "Set paragraph alignment/spacing/indent on a text target.",
+    description:
+      "Set paragraph-level alignment, spacing, or indent on a text target (occurrence zero-based when ambiguous).",
     inputSchema: op(
       {
         target: textTarget,
@@ -232,7 +236,7 @@ const MUTATION_DEFS: Record<string, MutDef> = {
   },
   set_text_formatting: {
     description:
-      "Set run formatting (bold/italic/size/color/…) on a text target. occurrence is zero-based.",
+      "Set run-level formatting (bold/italic/size/color/underline/highlight/strikethrough/verticalAlignment) on an exact text target. Occurrence is zero-based when ambiguous.",
     inputSchema: op(
       {
         target: textTarget,
@@ -260,7 +264,7 @@ const MUTATION_DEFS: Record<string, MutDef> = {
   },
   set_table_cells_text: {
     description:
-      "Atomically update table cells. Prefer cell handles from inspect(tables). Each update needs target + expectedCurrentText + replacement.",
+      "Atomically update one or more table cells. Table and cells are selected by handle and/or labels; each update requires expectedCurrentText and replacement.",
     inputSchema: op(
       {
         table: tableTarget,
@@ -425,12 +429,13 @@ const MUTATION_DEFS: Record<string, MutDef> = {
     ),
   },
   delete_picture: {
-    description: "Delete a picture by handle from inspect(body_blocks).",
+    description:
+      "Delete a picture identified by an opaque body_blocks handle.",
     inputSchema: op({ handle: { type: "string" } }, ["handle"]),
   },
   set_picture_size: {
     description:
-      "Resize a picture. Supply exactly one of widthEmu or heightEmu.",
+      "Resize a picture by opaque handle. Supply exactly one of widthEmu or heightEmu.",
     inputSchema: op(
       {
         handle: { type: "string" },
@@ -441,15 +446,17 @@ const MUTATION_DEFS: Record<string, MutDef> = {
     ),
   },
   insert_page_break: {
-    description: "Insert a page break at a paragraph placement.",
+    description:
+      "Insert a page break at a paragraph placement (start/end/before/after).",
     inputSchema: op({ placement }, ["placement"]),
   },
   delete_page_break: {
-    description: "Delete a page break by body_blocks handle.",
+    description: "Delete a page break identified by an opaque body_blocks handle.",
     inputSchema: op({ handle: { type: "string" } }, ["handle"]),
   },
   set_page_setup: {
-    description: "Update page margins/size/orientation when section props exist.",
+    description:
+      "Update section page margins, paper size (letter/a4), or orientation when section properties exist.",
     inputSchema: op({
       topMarginTwips: { type: "number" },
       rightMarginTwips: { type: "number" },
@@ -529,7 +536,7 @@ export function createDocumentTools(document: BoundDocumentHost): AgentToolSet {
     tools["document.inspect"] = defineTool({
       kind: "read",
       description:
-        "Inspect the bound DOCX (overview, headings, paragraphs, tables, body_blocks, or context).",
+        "Return structural or contextual document state for a chosen focus (overview, headings, paragraphs, tables, body_blocks, or context around a text match). Occurrence values are zero-based.",
       inputSchema: inspectInput,
       execute: async (input) =>
         document.inspect({ focus: toInspectFocus(input) }),
@@ -539,7 +546,8 @@ export function createDocumentTools(document: BoundDocumentHost): AgentToolSet {
   if (caps.has(READ_CAPS.find)) {
     tools["document.find"] = defineTool({
       kind: "read",
-      description: "Find exact text occurrences in the bound DOCX.",
+      description:
+        "Return exact-text match locations with zero-based occurrence indexes for targeting subsequent operations.",
       inputSchema: findInput,
       execute: async ({ text }) => document.find({ text }),
     });
