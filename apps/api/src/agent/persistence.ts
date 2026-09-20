@@ -1036,6 +1036,8 @@ export function createAgentPersistenceService(db: Db) {
           ),
         )
         .orderBy(
+          desc(schema.agentThreadContextCheckpoint.throughMessageCreatedAt),
+          desc(schema.agentThreadContextCheckpoint.throughMessageId),
           desc(schema.agentThreadContextCheckpoint.createdAt),
           desc(schema.agentThreadContextCheckpoint.id),
         )

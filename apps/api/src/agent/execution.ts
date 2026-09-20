@@ -3,6 +3,7 @@ import {
   getRunMetricsFromError,
   isSuccessfulStop,
   runAgent,
+  runModel,
   type AgentEvent as CoreAgentEvent,
   type AgentRunMetrics,
   type AgentToolSet,
@@ -36,6 +37,7 @@ import {
   SlimDocumentStructureCache,
 } from "./document-retrieval.js";
 import { projectHistoricalMessages } from "./context-projection.js";
+import { compactThreadContext, logContextCompaction } from "./context-compaction.js";
 import { buildAgentOperatingInstruction } from "./operating-instruction.js";
 import {
   type AgentMessage,
@@ -152,6 +154,8 @@ export interface AgentExecutionServiceDeps {
   readonly lease?: AgentExecutionLeaseService;
   /** Test seam — production uses agent-core-v3 `runAgent`. */
   readonly runAgent?: typeof runAgent;
+  /** Test seam — production uses agent-core-v3 `runModel` for compaction. */
+  readonly runModel?: typeof runModel;
 }
 
 /** Product shell: resolve and persist here; execute once in agent-core-v3. */
@@ -478,6 +482,18 @@ async function runExecution(input: {
       content: result.text,
     });
     await input.liveEvents?.emit({ type: "agent.completed", runId: input.run.id, at: new Date().toISOString() });
+    void compactThreadContext({
+      persistence: input.deps.persistence,
+      ownerUserId: input.ownerUserId,
+      threadId: input.thread.id,
+      model: input.model.model,
+      usageAttribution: input.model.usageAttribution,
+      modelUsage: input.deps.modelUsage,
+      managedTrial: input.deps.managedTrial,
+      runModel: input.deps.runModel,
+    })
+      .then(logContextCompaction)
+      .catch(() => console.warn("[context-compaction] maintenance failed"));
     return { thread: input.thread, userMessage: input.userMessage, ...finalized };
   } catch (error) {
     // Convert every run failure into terminal product state and settle normally.

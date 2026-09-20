@@ -1,13 +1,14 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import type { RunAgentResult, V3Model } from "@opensuite/agent-core-v3";
+import type { RunAgentResult, RunModelResult, V3Model } from "@opensuite/agent-core-v3";
 
 import {
   createAgentExecutionService,
   type AgentEvent,
   type AgentExecutionServiceDeps,
 } from "./execution.js";
+import { compactThreadContext } from "./context-compaction.js";
 import type {
   AgentMessage,
   AgentPersistenceService,
@@ -36,6 +37,7 @@ function stubThread(ownerUserId: string): AgentThread {
 function memoryPersistence(ownerUserId: string): AgentPersistenceService & {
   messages: AgentMessage[];
   checkpoint: AgentThreadContextCheckpoint | null;
+  checkpoints: AgentThreadContextCheckpoint[];
   runs: Map<string, AgentRun>;
   failOnStatus?: AgentRun["status"];
 } {
@@ -48,6 +50,7 @@ function memoryPersistence(ownerUserId: string): AgentPersistenceService & {
   const api = {
     messages,
     checkpoint: null as AgentThreadContextCheckpoint | null,
+    checkpoints: [] as AgentThreadContextCheckpoint[],
     runs,
     failOnStatus: undefined as AgentRun["status"] | undefined,
     async withTransaction<T>(fn: (tx: unknown) => Promise<T>): Promise<T> {
@@ -85,6 +88,29 @@ function memoryPersistence(ownerUserId: string): AgentPersistenceService & {
         (message) => message.id === input.checkpoint.throughMessageId,
       );
       return boundary < 0 ? [] : messages.slice(boundary + 1);
+    },
+    async createThreadContextCheckpoint(input: {
+      threadId: string;
+      throughMessageId: string;
+      content: string;
+      sourceMessageCount: number;
+    }) {
+      const boundary = messages.find((message) => message.id === input.throughMessageId);
+      assert.ok(boundary);
+      const checkpoint: AgentThreadContextCheckpoint = {
+        id: `checkpoint-${api.checkpoints.length + 1}`,
+        threadId: input.threadId,
+        throughMessageId: boundary.id,
+        throughMessageCreatedAt: boundary.createdAt,
+        contentVersion: 1,
+        content: input.content,
+        sourceMessageCount: input.sourceMessageCount,
+        estimatedCharacters: input.content.length,
+        createdAt: now(),
+      };
+      api.checkpoint = checkpoint;
+      api.checkpoints.push(checkpoint);
+      return checkpoint;
     },
     async createRun(input: {
       threadId: string;
@@ -146,6 +172,7 @@ function memoryPersistence(ownerUserId: string): AgentPersistenceService & {
   return api as unknown as AgentPersistenceService & {
     messages: AgentMessage[];
     checkpoint: AgentThreadContextCheckpoint | null;
+    checkpoints: AgentThreadContextCheckpoint[];
     runs: Map<string, AgentRun>;
     failOnStatus?: AgentRun["status"];
   };
@@ -179,6 +206,7 @@ function softResult(
 function baseDeps(
   persistence: AgentPersistenceService,
   runAgentImpl: NonNullable<AgentExecutionServiceDeps["runAgent"]>,
+  runModelImpl?: NonNullable<AgentExecutionServiceDeps["runModel"]>,
 ): AgentExecutionServiceDeps {
   return {
     persistence,
@@ -201,7 +229,27 @@ function baseDeps(
       model: { provider: "test", modelId: "test" } as unknown as V3Model,
     }),
     runAgent: runAgentImpl,
+    ...(runModelImpl ? { runModel: runModelImpl } : {}),
   };
+}
+
+function checkpointResult(text: string): RunModelResult {
+  return {
+    text,
+    finishReason: "stop",
+    inputTokens: 0,
+    cachedInputTokens: 0,
+    outputTokens: 0,
+    turns: 1,
+    toolCalls: 0,
+  };
+}
+
+const validCheckpoint = `STANDING CONTEXT:\n- goal\nDECISIONS:\n- none\nCOMPLETED WORK:\n- none\nREFERENCES:\n- none\nOPEN ITEMS:\n- none`;
+
+async function waitForCompaction(): Promise<void> {
+  await new Promise((resolve) => setImmediate(resolve));
+  await new Promise((resolve) => setImmediate(resolve));
 }
 
 async function collectUnhandledRejections(
@@ -362,6 +410,183 @@ test("execution replaces checkpointed history with one checkpoint message", asyn
   assert.equal(modelMessages.filter((message) => message.content === "current request stays complete").length, 1);
   assert.equal(persistence.messages.length, 112);
   assert.equal(persistence.messages.some((message) => message.content === "history-0"), true);
+});
+
+test("successful long thread compacts only the old tail and keeps full history", async () => {
+  const persistence = memoryPersistence("user-1");
+  const history = Array.from({ length: 60 }, (_, index) => ({
+    id: `history-${String(index).padStart(3, "0")}`,
+    threadId: "thread-1",
+    role: index % 2 === 0 ? "user" as const : "assistant" as const,
+    content: `history-${index}`,
+    createdAt: now(),
+  }));
+  persistence.messages.push(...history);
+  const inputs: string[] = [];
+  const execution = createAgentExecutionService(
+    baseDeps(
+      persistence,
+      async () => softResult("completed", "done"),
+      async (input) => {
+        inputs.push(String(input.messages[0]?.content));
+        return checkpointResult(validCheckpoint);
+      },
+    ),
+  );
+
+  const result = await (
+    await execution.start({ userId: "user-1", threadId: "thread-1", instruction: "current" })
+  ).result;
+  await waitForCompaction();
+
+  assert.equal(result.run.status, "completed");
+  assert.equal(inputs.length, 1);
+  assert.match(inputs[0]!, /history-0/);
+  assert.equal(inputs[0]!.includes("history-42"), false);
+  assert.equal(persistence.checkpoints.length, 1);
+  assert.equal(persistence.checkpoint?.throughMessageId, "history-041");
+  assert.equal(persistence.checkpoint?.sourceMessageCount, 42);
+  assert.equal(persistence.messages.length, 62);
+  assert.ok(persistence.messages.some((message) => message.id === "history-000"));
+});
+
+test("later compaction uses the previous checkpoint and only new messages", async () => {
+  const persistence = memoryPersistence("user-1");
+  const initial = Array.from({ length: 60 }, (_, index) => ({
+    id: `old-${String(index).padStart(3, "0")}`,
+    threadId: "thread-1",
+    role: "user" as const,
+    content: `old-${index}`,
+    createdAt: now(),
+  }));
+  persistence.messages.push(...initial);
+  const inputs: string[] = [];
+  const execution = createAgentExecutionService(
+    baseDeps(
+      persistence,
+      async () => softResult("completed", "done"),
+      async (input) => {
+        inputs.push(String(input.messages[0]?.content));
+        return checkpointResult(validCheckpoint);
+      },
+    ),
+  );
+  await (await execution.start({ userId: "user-1", threadId: "thread-1", instruction: "first" })).result;
+  await waitForCompaction();
+  persistence.messages.push(...Array.from({ length: 60 }, (_, index) => ({
+    id: `new-${String(index).padStart(3, "0")}`,
+    threadId: "thread-1",
+    role: "assistant" as const,
+    content: `new-${index}`,
+    createdAt: now(),
+  })));
+
+  await (await execution.start({ userId: "user-1", threadId: "thread-1", instruction: "second" })).result;
+  await waitForCompaction();
+
+  assert.equal(inputs.length, 2);
+  assert.match(inputs[1]!, /PREVIOUS CHECKPOINT:[\s\S]*STANDING CONTEXT/);
+  assert.equal(inputs[1]!.includes("old-0"), false);
+  assert.match(inputs[1]!, /new-0/);
+  assert.equal(persistence.checkpoints.length, 2);
+  assert.equal(persistence.checkpoints[0]?.content, validCheckpoint);
+
+  await (await execution.start({ userId: "user-1", threadId: "thread-1", instruction: "short tail" })).result;
+  await waitForCompaction();
+  assert.equal(inputs.length, 2);
+});
+
+test("character threshold compacts while retaining the latest twenty messages", async () => {
+  const persistence = memoryPersistence("user-1");
+  persistence.messages.push(...Array.from({ length: 21 }, (_, index) => ({
+    id: `large-${String(index).padStart(3, "0")}`,
+    threadId: "thread-1",
+    role: "user" as const,
+    content: "x".repeat(2_400),
+    createdAt: now(),
+  })));
+  let calls = 0;
+  const execution = createAgentExecutionService(
+    baseDeps(persistence, async () => softResult("completed", "done"), async () => {
+      calls += 1;
+      return checkpointResult(validCheckpoint);
+    }),
+  );
+  await (await execution.start({ userId: "user-1", threadId: "thread-1", instruction: "large" })).result;
+  await waitForCompaction();
+
+  assert.equal(calls, 1);
+  assert.equal(persistence.checkpoint?.sourceMessageCount, 3);
+  assert.equal(persistence.messages.length, 23);
+});
+
+test("a delayed older compaction result cannot replace a newer checkpoint", async () => {
+  const persistence = memoryPersistence("user-1");
+  persistence.messages.push(...Array.from({ length: 60 }, (_, index) => ({
+    id: `race-${String(index).padStart(3, "0")}`,
+    threadId: "thread-1",
+    role: "user" as const,
+    content: `race-${index}`,
+    createdAt: now(),
+  })));
+  const result = await compactThreadContext({
+    persistence,
+    ownerUserId: "user-1",
+    threadId: "thread-1",
+    model: { provider: "test", modelId: "test" } as unknown as V3Model,
+    runModel: async () => {
+      await persistence.createThreadContextCheckpoint({
+        threadId: "thread-1",
+        ownerUserId: "user-1",
+        throughMessageId: "race-050",
+        content: validCheckpoint,
+        sourceMessageCount: 51,
+      });
+      return checkpointResult(validCheckpoint);
+    },
+  });
+
+  assert.equal(result.checkpointCreated, false);
+  assert.equal(result.failureCode, "STALE_BOUNDARY");
+  assert.equal(persistence.checkpoints.length, 1);
+  assert.equal(persistence.checkpoint?.throughMessageId, "race-050");
+});
+
+test("short, failed, and malformed runs do not create a checkpoint", async () => {
+  const persistence = memoryPersistence("user-1");
+  let calls = 0;
+  const shortExecution = createAgentExecutionService(
+    baseDeps(persistence, async () => softResult("completed", "done"), async () => {
+      calls += 1;
+      return checkpointResult(validCheckpoint);
+    }),
+  );
+  await (await shortExecution.start({ userId: "user-1", threadId: "thread-1", instruction: "short" })).result;
+  await waitForCompaction();
+  assert.equal(calls, 0);
+
+  persistence.messages.push(...Array.from({ length: 60 }, (_, index) => ({
+    id: `long-${String(index).padStart(3, "0")}`,
+    threadId: "thread-1",
+    role: "user" as const,
+    content: `long-${index}`,
+    createdAt: now(),
+  })));
+  const malformedExecution = createAgentExecutionService(
+    baseDeps(persistence, async () => softResult("completed", "done"), async () => checkpointResult("not a checkpoint")),
+  );
+  await (await malformedExecution.start({ userId: "user-1", threadId: "thread-1", instruction: "long" })).result;
+  await waitForCompaction();
+  assert.equal(persistence.checkpoint, null);
+
+  const failedExecution = createAgentExecutionService(
+    baseDeps(persistence, async () => softResult("max_turns"), async () => {
+      throw new Error("must not run");
+    }),
+  );
+  await (await failedExecution.start({ userId: "user-1", threadId: "thread-1", instruction: "fail" })).result;
+  await waitForCompaction();
+  assert.equal(persistence.checkpoint, null);
 });
 
 test("max_turns soft stop becomes failed + AGENT_MAX_TURNS, not completed", async () => {
