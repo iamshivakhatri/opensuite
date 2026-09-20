@@ -26,6 +26,8 @@ export interface RetrievedDocumentContext {
   readonly reason: "single_table" | "first_heading" | "heading_match" | "paragraph_match" | "table_header_match";
 }
 
+export interface TableRowDetailRequest { readonly tableHandle: string; readonly rowOffset: number; readonly rowLimit: number; }
+
 export class SlimDocumentStructureCache {
   private readonly entries = new Map<string, Promise<SlimDocumentStructure>>();
 
@@ -115,6 +117,26 @@ export function formatRetrievedDocumentContext(context: RetrievedDocumentContext
     else lines.push(`- ${block.kind === "page_break" ? "Page break" : "Picture"}`);
   }
   return lines.join("\n");
+}
+
+export function selectTableRowDetail(instruction: string, context: RetrievedDocumentContext): TableRowDetailRequest | undefined {
+  if (context.blocks.length !== 1 || context.blocks[0]?.kind !== "table") return undefined;
+  const table = context.blocks[0];
+  const words = meaningfulWords(instruction);
+  const continues = /\b(?:add|continue|extend)\b/i.test(instruction);
+  const headerWords = meaningfulWords(table.headerTexts.join(" "));
+  const headerMatch = [...words].some((word) => headerWords.has(word) || (word.endsWith("s") && headerWords.has(word.slice(0, -1))));
+  const rowMatch = words.has("row") || words.has("rows");
+  if (!continues || table.columnCount > 8 || (!headerMatch && !rowMatch)) return undefined;
+  const dataRows = Math.max(0, table.rowCount - 1);
+  const rowLimit = Math.min(3, dataRows);
+  return rowLimit > 0 ? { tableHandle: table.tableHandle, rowOffset: Math.max(1, table.rowCount - rowLimit), rowLimit } : undefined;
+}
+
+export function formatTableRowDetail(detail: { readonly tableHandle: string; readonly rowCount: number; readonly columnCount: number; readonly headerTexts: readonly string[]; readonly rows: readonly { readonly index: number; readonly cells: readonly string[] }[] }): string {
+  const lines = ["Relevant recent rows:", `- Table ${detail.tableHandle}: ${detail.rowCount} rows × ${detail.columnCount} columns; headers: ${detail.headerTexts.join(" | ")}`];
+  for (const row of detail.rows) lines.push(`- [${row.index}] ${row.cells.map((cell) => cell.length <= 160 ? cell : `${cell.slice(0, 159)}…`).join(" | ")}`);
+  return lines.join("\n").slice(0, 2000);
 }
 
 function context(blocks: readonly SlimDocumentBlock[], reason: RetrievedDocumentContext["reason"]): RetrievedDocumentContext {

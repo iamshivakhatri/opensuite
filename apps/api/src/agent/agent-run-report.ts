@@ -57,6 +57,7 @@ export interface AgentRunReportRetrieval {
   readonly cache: "hit" | "miss";
   readonly blockCount: number;
   readonly reason?: string;
+  readonly detail?: { readonly kind: "table_rows"; readonly itemCount: number };
 }
 
 export interface AgentRunReport {

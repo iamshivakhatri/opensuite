@@ -292,6 +292,7 @@ export type DocxInspectFocus =
       readonly offset?: number;
       readonly limit?: number;
     }
+  | { readonly kind: "table_rows"; readonly tableHandle: string; readonly rowOffset?: number; readonly rowLimit?: number }
   | {
       readonly kind: "body_blocks";
       readonly offset?: number;
@@ -375,6 +376,7 @@ export interface DocxInspectTableItem {
   readonly columns: readonly DocxInspectTableColumn[];
   readonly rows: readonly DocxInspectTableRow[];
 }
+export interface DocxInspectTableRowWindow { readonly tableHandle: string; readonly rowCount: number; readonly columnCount: number; readonly headerTexts: readonly string[]; readonly rowOffset: number; readonly rows: readonly { readonly index: number; readonly cells: readonly string[] }[]; }
 
 /** Ordered direct body block from engine inspect focus body_blocks. */
 export interface DocxInspectBodyBlockItem {
@@ -419,6 +421,7 @@ export interface DocxInspectResult {
     readonly page: DocxInspectionPageMeta;
     readonly items: readonly DocxInspectTableItem[];
   };
+  readonly tableRows?: DocxInspectTableRowWindow;
   readonly bodyBlocks?: {
     readonly page: DocxInspectionPageMeta;
     readonly items: readonly DocxInspectBodyBlockItem[];
@@ -685,6 +688,8 @@ function toNativeInspectFocus(focus: DocxInspectFocus): Record<string, unknown> 
         ...(focus.offset !== undefined ? { offset: focus.offset } : {}),
         ...(focus.limit !== undefined ? { limit: focus.limit } : {}),
       };
+    case "table_rows":
+      return { kind: "table_rows", tableHandle: focus.tableHandle, ...(focus.rowOffset !== undefined ? { offset: focus.rowOffset } : {}), ...(focus.rowLimit !== undefined ? { limit: focus.rowLimit } : {}) };
     case "context":
       return {
         kind: "context",

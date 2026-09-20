@@ -5,7 +5,9 @@ import type { DocxEngineBinding } from "@opensuite/engine-client";
 
 import {
   formatRetrievedDocumentContext,
+  formatTableRowDetail,
   retrieveRelevantDocumentContext,
+  selectTableRowDetail,
   SlimDocumentStructureCache,
   type SlimDocumentStructure,
 } from "./document-retrieval.js";
@@ -67,6 +69,20 @@ test("retrieval returns only high-confidence small structure", () => {
 
   assert.equal(retrieveRelevantDocumentContext("Make this look better.", structure), undefined);
   assert.equal(retrieveRelevantDocumentContext("Change Key HighStone to Key Milestones.", structure), undefined);
+});
+
+test("table detail is limited to recent rows for clear table continuations", () => {
+  const context = retrieveRelevantDocumentContext("Add a few milestones to the table.", structure);
+  assert.ok(context);
+  assert.deepEqual(selectTableRowDetail("Add a few milestones to the table.", context!), { tableHandle: "t0", rowOffset: 11, rowLimit: 3 });
+  assert.equal(selectTableRowDetail("How many rows are in the milestone table?", context!), undefined);
+  assert.equal(selectTableRowDetail("Make the table better.", context!), undefined);
+  assert.equal(selectTableRowDetail("Add more to the table.", context!), undefined);
+
+  const detail = formatTableRowDetail({ tableHandle: "t0", rowCount: 14, columnCount: 3, headerTexts: ["Milestone"], rows: [{ index: 11, cells: ["x".repeat(161)] }] });
+  assert.match(detail, /Relevant recent rows/);
+  assert.ok(detail.length <= 2000);
+  assert.match(detail, /…/);
 });
 
 test("retrieval bounds long text and never injects a whole document", () => {

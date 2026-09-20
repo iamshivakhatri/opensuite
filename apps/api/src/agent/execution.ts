@@ -30,7 +30,9 @@ import {
 import { createPrimaryDocxTools } from "./docx-tools.js";
 import {
   formatRetrievedDocumentContext,
+  formatTableRowDetail,
   retrieveRelevantDocumentContext,
+  selectTableRowDetail,
   SlimDocumentStructureCache,
 } from "./document-retrieval.js";
 import { buildAgentOperatingInstruction } from "./operating-instruction.js";
@@ -476,7 +478,7 @@ async function loadRetrievedContext(input: {
   readonly instruction: string;
 }): Promise<{
   readonly message?: string;
-  readonly observation: { readonly cache: "hit" | "miss"; readonly blockCount: number; readonly reason?: string };
+  readonly observation: { readonly cache: "hit" | "miss"; readonly blockCount: number; readonly reason?: string; readonly detail?: { readonly kind: "table_rows"; readonly itemCount: number } };
 } | undefined> {
   if (!input.binding || !input.documentId || !input.versionId || input.format !== "docx") return undefined;
   try {
@@ -491,12 +493,17 @@ async function loadRetrievedContext(input: {
       binding: input.binding,
     });
     const context = retrieveRelevantDocumentContext(input.instruction, loaded.structure);
+    const detailRequest = context && selectTableRowDetail(input.instruction, context);
+    const tableRows = detailRequest
+      ? await input.binding.inspectDocx(new Uint8Array(bytes), { focus: { kind: "table_rows", tableHandle: detailRequest.tableHandle, rowOffset: detailRequest.rowOffset, rowLimit: detailRequest.rowLimit } })
+      : undefined;
+    const detail = tableRows?.ok ? tableRows.tableRows : undefined;
     const observation = context
-      ? { cache: loaded.cache, blockCount: context.blocks.length, reason: context.reason }
+      ? { cache: loaded.cache, blockCount: context.blocks.length, reason: context.reason, ...(detail ? { detail: { kind: "table_rows" as const, itemCount: detail.rows.length } } : {}) }
       : { cache: loaded.cache, blockCount: 0 };
     console.info(`[agent-v3] structure_cache=${loaded.cache} retrieved_blocks=${observation.blockCount}`);
     return context
-      ? { message: formatRetrievedDocumentContext(context), observation }
+      ? { message: [formatRetrievedDocumentContext(context), ...(detail ? [formatTableRowDetail(detail)] : [])].join("\n"), observation }
       : { observation };
   } catch (error) {
     console.warn(`[agent-v3] structure_retrieval_skipped reason=${summarizeError(error)}`);
@@ -533,7 +540,7 @@ function emitRunReport(input: {
   readonly finalVersionId?: string | null;
   readonly versionAdvances: readonly DocumentVersionAdvance[];
   readonly documentTransitions?: readonly DocumentTransition[];
-  readonly retrieval?: { readonly cache: "hit" | "miss"; readonly blockCount: number; readonly reason?: string };
+  readonly retrieval?: { readonly cache: "hit" | "miss"; readonly blockCount: number; readonly reason?: string; readonly detail?: { readonly kind: "table_rows"; readonly itemCount: number } };
 }): void {
   if (!input.metrics) return;
   try {
