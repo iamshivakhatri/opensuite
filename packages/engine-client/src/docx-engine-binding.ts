@@ -381,7 +381,12 @@ export interface DocxInspectBodyBlockItem {
   readonly handle: string;
   readonly kind: string;
   readonly text?: string | null;
+  readonly styleName?: string | null;
+  readonly headingLevel?: number | null;
   readonly tableHandle?: string | null;
+  readonly rowCount?: number | null;
+  readonly columnCount?: number | null;
+  readonly headerTexts?: readonly string[] | null;
   readonly picture?: {
     readonly handle: string;
     readonly format: string;
