@@ -13,6 +13,7 @@ import type {
   AgentPersistenceService,
   AgentRun,
   AgentThread,
+  AgentThreadContextCheckpoint,
 } from "./persistence.js";
 import { createAgentRunManager } from "./run-manager.js";
 import { MAX_HISTORY_MESSAGES } from "./context-projection.js";
@@ -34,6 +35,7 @@ function stubThread(ownerUserId: string): AgentThread {
 
 function memoryPersistence(ownerUserId: string): AgentPersistenceService & {
   messages: AgentMessage[];
+  checkpoint: AgentThreadContextCheckpoint | null;
   runs: Map<string, AgentRun>;
   failOnStatus?: AgentRun["status"];
 } {
@@ -45,6 +47,7 @@ function memoryPersistence(ownerUserId: string): AgentPersistenceService & {
 
   const api = {
     messages,
+    checkpoint: null as AgentThreadContextCheckpoint | null,
     runs,
     failOnStatus: undefined as AgentRun["status"] | undefined,
     async withTransaction<T>(fn: (tx: unknown) => Promise<T>): Promise<T> {
@@ -71,6 +74,17 @@ function memoryPersistence(ownerUserId: string): AgentPersistenceService & {
     },
     async listMessagesForThread() {
       return [...messages];
+    },
+    async getLatestThreadContextCheckpoint() {
+      return api.checkpoint;
+    },
+    async listMessagesAfterThreadContextCheckpoint(input: {
+      checkpoint: AgentThreadContextCheckpoint;
+    }) {
+      const boundary = messages.findIndex(
+        (message) => message.id === input.checkpoint.throughMessageId,
+      );
+      return boundary < 0 ? [] : messages.slice(boundary + 1);
     },
     async createRun(input: {
       threadId: string;
@@ -131,6 +145,7 @@ function memoryPersistence(ownerUserId: string): AgentPersistenceService & {
 
   return api as unknown as AgentPersistenceService & {
     messages: AgentMessage[];
+    checkpoint: AgentThreadContextCheckpoint | null;
     runs: Map<string, AgentRun>;
     failOnStatus?: AgentRun["status"];
   };
@@ -299,6 +314,54 @@ test("execution sends a bounded historical tail while retaining full persistence
   assert.equal(persistence.messages.some((message) => message.content === "history-0"), true);
   assert.match(sawSystem, /You are OpenSuite's document agent/);
   assert.equal(sawFinish, true);
+});
+
+test("execution replaces checkpointed history with one checkpoint message", async () => {
+  const persistence = memoryPersistence("user-1");
+  const history = Array.from({ length: 110 }, (_, index) => ({
+    id: `history-${String(index).padStart(3, "0")}`,
+    threadId: "thread-1",
+    role: index % 2 === 0 ? "user" as const : "assistant" as const,
+    content: `history-${index}`,
+    createdAt: now(),
+  }));
+  persistence.messages.push(...history);
+  persistence.checkpoint = {
+    id: "checkpoint-1",
+    threadId: "thread-1",
+    throughMessageId: history[59]!.id,
+    throughMessageCreatedAt: history[59]!.createdAt,
+    contentVersion: 1,
+    content: "User wants a concise launch plan.",
+    sourceMessageCount: 60,
+    estimatedCharacters: 34,
+    createdAt: now(),
+  };
+  let modelMessages: readonly { readonly content: unknown }[] = [];
+  const execution = createAgentExecutionService(
+    baseDeps(persistence, async (input) => {
+      modelMessages = input.messages as typeof modelMessages;
+      return softResult("completed", "done");
+    }),
+  );
+
+  await (
+    await execution.start({
+      userId: "user-1",
+      threadId: "thread-1",
+      instruction: "current request stays complete",
+    })
+  ).result;
+
+  assert.equal(modelMessages.length, 42);
+  assert.match(String(modelMessages[0]?.content), /Historical conversation checkpoint through history-059/);
+  assert.match(String(modelMessages[0]?.content), /concise launch plan/);
+  assert.equal(modelMessages.some((message) => message.content === "history-0"), false);
+  assert.equal(modelMessages.some((message) => message.content === "history-60"), false);
+  assert.equal(modelMessages.some((message) => message.content === "history-70"), true);
+  assert.equal(modelMessages.filter((message) => message.content === "current request stays complete").length, 1);
+  assert.equal(persistence.messages.length, 112);
+  assert.equal(persistence.messages.some((message) => message.content === "history-0"), true);
 });
 
 test("max_turns soft stop becomes failed + AGENT_MAX_TURNS, not completed", async () => {

@@ -128,6 +128,52 @@ export const agentMessage = pgTable(
 );
 
 /**
+ * Immutable derived conversation context. Original agent_message rows remain
+ * the source of truth; a checkpoint only replaces their model representation.
+ */
+export const agentThreadContextCheckpoint = pgTable(
+  "agent_thread_context_checkpoint",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    threadId: uuid("thread_id")
+      .notNull()
+      .references(() => agentThread.id, { onDelete: "restrict" }),
+    throughMessageId: uuid("through_message_id")
+      .notNull()
+      .references(() => agentMessage.id, { onDelete: "restrict" }),
+    /** The created_at half of the message ordering cursor. */
+    throughMessageCreatedAt: timestamp("through_message_created_at").notNull(),
+    contentVersion: integer("content_version").notNull(),
+    content: text("content").notNull(),
+    sourceMessageCount: integer("source_message_count").notNull(),
+    estimatedCharacters: integer("estimated_characters").notNull(),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+  },
+  (table) => [
+    index("agent_thread_context_checkpoint_thread_id_created_at_idx").on(
+      table.threadId,
+      table.createdAt,
+    ),
+    check(
+      "agent_thread_context_checkpoint_content_version_positive",
+      sql`${table.contentVersion} > 0`,
+    ),
+    check(
+      "agent_thread_context_checkpoint_source_message_count_non_negative",
+      sql`${table.sourceMessageCount} >= 0`,
+    ),
+    check(
+      "agent_thread_context_checkpoint_estimated_characters_non_negative",
+      sql`${table.estimatedCharacters} >= 0`,
+    ),
+    check(
+      "agent_thread_context_checkpoint_content_max_length",
+      sql`char_length(${table.content}) <= 16000`,
+    ),
+  ],
+);
+
+/**
  * One durable attempt to execute an agent request (independent of HTTP).
  * `base_document_version_id` is provenance only: the exact document_version
  * the run resolved at start (null for workspace-only / non-document runs).
@@ -221,6 +267,7 @@ export const agentThreadRelations = relations(agentThread, ({ one, many }) => ({
     references: [user.id],
   }),
   messages: many(agentMessage),
+  contextCheckpoints: many(agentThreadContextCheckpoint),
   runs: many(agentRun),
 }));
 
@@ -230,6 +277,20 @@ export const agentMessageRelations = relations(agentMessage, ({ one }) => ({
     references: [agentThread.id],
   }),
 }));
+
+export const agentThreadContextCheckpointRelations = relations(
+  agentThreadContextCheckpoint,
+  ({ one }) => ({
+    thread: one(agentThread, {
+      fields: [agentThreadContextCheckpoint.threadId],
+      references: [agentThread.id],
+    }),
+    throughMessage: one(agentMessage, {
+      fields: [agentThreadContextCheckpoint.throughMessageId],
+      references: [agentMessage.id],
+    }),
+  }),
+);
 
 export const agentRunRelations = relations(agentRun, ({ one, many }) => ({
   thread: one(agentThread, {

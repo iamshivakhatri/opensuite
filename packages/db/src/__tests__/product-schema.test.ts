@@ -4,6 +4,7 @@ import { getTableName } from "drizzle-orm";
 
 import {
   agentMessage,
+  agentThreadContextCheckpoint,
   agentExecutionLease,
   agentMessageRoleEnum,
   agentRun,
@@ -85,9 +86,10 @@ test("format and source enums match the decided product vocabulary", () => {
   ]);
 });
 
-test("agent schema exports thread, message, run, step, and execution lease tables", () => {
+test("agent schema exports thread, message, checkpoint, run, step, and execution lease tables", () => {
   assert.equal(getTableName(agentThread), "agent_thread");
   assert.equal(getTableName(agentMessage), "agent_message");
+  assert.equal(getTableName(agentThreadContextCheckpoint), "agent_thread_context_checkpoint");
   assert.equal(getTableName(agentRun), "agent_run");
   assert.equal(getTableName(agentStep), "agent_step");
   assert.equal(getTableName(agentExecutionLease), "agent_execution_lease");
@@ -131,4 +133,11 @@ test("agent_thread soft-archives; messages/runs/steps are immutable history", ()
 
 test("agent_run may record base document version provenance", () => {
   assert.ok("baseDocumentVersionId" in agentRun);
+});
+
+test("thread context checkpoints keep a complete message ordering boundary", () => {
+  assert.ok("throughMessageId" in agentThreadContextCheckpoint);
+  assert.ok("throughMessageCreatedAt" in agentThreadContextCheckpoint);
+  assert.ok("contentVersion" in agentThreadContextCheckpoint);
+  assert.ok("estimatedCharacters" in agentThreadContextCheckpoint);
 });

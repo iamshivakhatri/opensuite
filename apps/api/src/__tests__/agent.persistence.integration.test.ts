@@ -9,6 +9,7 @@ import { createDbClient, schema } from "@opensuite/db";
 import {
   AgentPersistenceError,
   createAgentPersistenceService,
+  MAX_CHECKPOINT_CHARACTERS,
 } from "../agent/persistence.js";
 
 const runDbIntegrationTests = process.env.RUN_DB_INTEGRATION_TESTS === "true";
@@ -186,6 +187,100 @@ test(
         (error: unknown) =>
           error instanceof AgentPersistenceError &&
           error.code === "THREAD_NOT_FOUND",
+      );
+
+      // --- CONTEXT CHECKPOINTS ---
+      const checkpoint = await agents.createThreadContextCheckpoint({
+        threadId: documentThread.id,
+        ownerUserId: aliceId,
+        throughMessageId: assistantMessage.id,
+        content: "The user wants a revised introduction.",
+        sourceMessageCount: 2,
+      });
+      const secondCheckpoint = await agents.createThreadContextCheckpoint({
+        threadId: documentThread.id,
+        ownerUserId: aliceId,
+        throughMessageId: assistantMessage.id,
+        content: "The introduction was revised.",
+        sourceMessageCount: 2,
+      });
+      assert.notEqual(checkpoint.id, secondCheckpoint.id);
+      assert.equal(checkpoint.throughMessageId, assistantMessage.id);
+      assert.equal(checkpoint.estimatedCharacters, checkpoint.content.length);
+      const latestCheckpoint = await agents.getLatestThreadContextCheckpoint({
+        threadId: documentThread.id,
+        ownerUserId: aliceId,
+      });
+      assert.ok(latestCheckpoint);
+      assert.equal(
+        latestCheckpoint!.id,
+        (await agents.getLatestThreadContextCheckpoint({
+          threadId: documentThread.id,
+          ownerUserId: aliceId,
+        }))!.id,
+      );
+
+      const afterCheckpoint = await agents.appendMessage({
+        threadId: documentThread.id,
+        ownerUserId: aliceId,
+        role: "user",
+        content: "Also revise the conclusion.",
+      });
+      assert.deepEqual(
+        (await agents.listMessagesAfterThreadContextCheckpoint({
+          threadId: documentThread.id,
+          ownerUserId: aliceId,
+          checkpoint,
+        })).map((message) => message.id),
+        [afterCheckpoint.id],
+      );
+
+      const otherThreadMessage = await agents.appendMessage({
+        threadId: workspaceThread.id,
+        ownerUserId: aliceId,
+        role: "user",
+        content: "Other thread",
+      });
+      await assert.rejects(
+        () =>
+          agents.createThreadContextCheckpoint({
+            threadId: documentThread.id,
+            ownerUserId: aliceId,
+            throughMessageId: otherThreadMessage.id,
+            content: "Wrong boundary",
+            sourceMessageCount: 1,
+          }),
+        (error: unknown) =>
+          error instanceof AgentPersistenceError &&
+          error.code === "CHECKPOINT_MESSAGE_THREAD_MISMATCH",
+      );
+      await assert.rejects(
+        () =>
+          agents.createThreadContextCheckpoint({
+            threadId: documentThread.id,
+            ownerUserId: aliceId,
+            throughMessageId: assistantMessage.id,
+            content: "x".repeat(MAX_CHECKPOINT_CHARACTERS + 1),
+            sourceMessageCount: 2,
+          }),
+        (error: unknown) =>
+          error instanceof AgentPersistenceError &&
+          error.code === "CHECKPOINT_CONTENT_TOO_LARGE",
+      );
+      const unsupportedCheckpoint = await agents.createThreadContextCheckpoint({
+        threadId: documentThread.id,
+        ownerUserId: aliceId,
+        throughMessageId: assistantMessage.id,
+        content: "Future checkpoint format",
+        sourceMessageCount: 2,
+        contentVersion: 2,
+      });
+      assert.notEqual(
+        (await agents.getLatestThreadContextCheckpoint({
+          threadId: documentThread.id,
+          ownerUserId: aliceId,
+        }))!.id,
+        unsupportedCheckpoint.id,
       );
 
       // --- RUNS ---

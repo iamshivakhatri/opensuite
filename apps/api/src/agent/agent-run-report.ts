@@ -61,7 +61,10 @@ export interface AgentRunReportRetrieval {
 }
 
 export interface AgentRunReportContext {
+  readonly checkpointUsed: boolean;
+  readonly checkpointThroughMessageId?: string;
   readonly historicalMessagesLoaded: number;
+  readonly historicalMessagesAfterCheckpoint: number;
   readonly historicalMessagesProjected: number;
   readonly historicalCharactersLoaded: number;
   readonly historicalCharactersProjected: number;

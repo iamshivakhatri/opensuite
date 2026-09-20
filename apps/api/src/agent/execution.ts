@@ -42,6 +42,7 @@ import {
   type AgentPersistenceService,
   type AgentRun,
   type AgentThread,
+  type AgentThreadContextCheckpoint,
 } from "./persistence.js";
 import {
   AGENT_EXECUTION_LEASE_RENEW_MS,
@@ -278,17 +279,38 @@ async function runExecution(input: {
   readonly signal?: AbortSignal;
   readonly liveEvents?: AgentEventSink;
 }): Promise<AgentExecutionResult> {
-  const priorMessages = await input.deps.persistence.listMessagesForThread({
+  const checkpoint = await input.deps.persistence.getLatestThreadContextCheckpoint({
     threadId: input.thread.id,
     ownerUserId: input.ownerUserId,
   });
+  const priorMessages = checkpoint
+    ? await input.deps.persistence.listMessagesAfterThreadContextCheckpoint({
+        threadId: input.thread.id,
+        ownerUserId: input.ownerUserId,
+        checkpoint,
+      })
+    : await input.deps.persistence.listMessagesForThread({
+        threadId: input.thread.id,
+        ownerUserId: input.ownerUserId,
+      });
   const historical = projectHistoricalMessages(
     priorMessages
       .filter((message) => message.id !== input.userMessage.id)
       .map((message) => ({ role: message.role, content: message.content })),
   );
   const { messages: projectedHistoricalMessages, ...historicalContext } = historical;
+  const context = {
+    ...historicalContext,
+    checkpointUsed: checkpoint !== null,
+    ...(checkpoint
+      ? { checkpointThroughMessageId: checkpoint.throughMessageId }
+      : {}),
+    historicalMessagesAfterCheckpoint: priorMessages.filter(
+      (message) => message.id !== input.userMessage.id,
+    ).length,
+  };
   const messages: ModelMessage[] = [
+    ...(checkpoint ? [checkpointMessage(checkpoint)] : []),
     ...projectedHistoricalMessages,
     { role: "user", content: input.instruction },
   ];
@@ -397,7 +419,7 @@ async function runExecution(input: {
         versionAdvances,
         documentTransitions: boundTools?.getTransitions() ?? [],
         retrieval: retrieval?.observation,
-        context: historicalContext,
+        context,
       });
       throw error;
     }
@@ -417,7 +439,7 @@ async function runExecution(input: {
       versionAdvances,
       documentTransitions: boundTools?.getTransitions() ?? [],
       retrieval: retrieval?.observation,
-      context: historicalContext,
+      context,
     });
 
     if (!isSuccessfulStop(result.stopReason)) {
@@ -527,6 +549,14 @@ export function firstTurnContextProjection(context: string): (messages: readonly
   };
 }
 
+/** AI SDK has no application-context role; label this API-owned user message. */
+function checkpointMessage(checkpoint: AgentThreadContextCheckpoint): ModelMessage {
+  return {
+    role: "user",
+    content: `Historical conversation checkpoint through ${checkpoint.throughMessageId}:\n${checkpoint.content}`,
+  };
+}
+
 function failureCodeForStopReason(stopReason: StopReason): string {
   if (stopReason === "max_turns") return "AGENT_MAX_TURNS";
   if (stopReason === "deadline") return "AGENT_DEADLINE";
@@ -549,7 +579,10 @@ function emitRunReport(input: {
   readonly documentTransitions?: readonly DocumentTransition[];
   readonly retrieval?: { readonly cache: "hit" | "miss"; readonly blockCount: number; readonly reason?: string; readonly detail?: { readonly kind: "table_rows"; readonly itemCount: number } };
   readonly context: {
+    readonly checkpointUsed: boolean;
+    readonly checkpointThroughMessageId?: string;
     readonly historicalMessagesLoaded: number;
+    readonly historicalMessagesAfterCheckpoint: number;
     readonly historicalMessagesProjected: number;
     readonly historicalCharactersLoaded: number;
     readonly historicalCharactersProjected: number;

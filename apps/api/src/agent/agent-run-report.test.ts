@@ -140,7 +140,9 @@ test("composeAgentRunReport includes history diagnostics without message content
     instruction: "test",
     metrics: baseMetrics(),
     context: {
+      checkpointUsed: false,
       historicalMessagesLoaded: 100,
+      historicalMessagesAfterCheckpoint: 100,
       historicalMessagesProjected: 40,
       historicalCharactersLoaded: 50_000,
       historicalCharactersProjected: 32_000,
@@ -148,7 +150,9 @@ test("composeAgentRunReport includes history diagnostics without message content
     },
   });
   assert.deepEqual(report.context, {
+    checkpointUsed: false,
     historicalMessagesLoaded: 100,
+    historicalMessagesAfterCheckpoint: 100,
     historicalMessagesProjected: 40,
     historicalCharactersLoaded: 50_000,
     historicalCharactersProjected: 32_000,

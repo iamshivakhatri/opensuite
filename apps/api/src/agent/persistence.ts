@@ -32,6 +32,9 @@ export type AgentStepStatus =
   | "failed"
   | "cancelled";
 
+export const THREAD_CONTEXT_CHECKPOINT_CONTENT_VERSION = 1;
+export const MAX_CHECKPOINT_CHARACTERS = 16_000;
+
 export interface AgentThread {
   readonly id: string;
   readonly workspaceId: string;
@@ -65,6 +68,18 @@ export interface AgentRun {
   readonly errorMessage: string | null;
 }
 
+export interface AgentThreadContextCheckpoint {
+  readonly id: string;
+  readonly threadId: string;
+  readonly throughMessageId: string;
+  readonly throughMessageCreatedAt: string;
+  readonly contentVersion: number;
+  readonly content: string;
+  readonly sourceMessageCount: number;
+  readonly estimatedCharacters: number;
+  readonly createdAt: string;
+}
+
 export interface AgentStep {
   readonly id: string;
   readonly runId: string;
@@ -88,6 +103,9 @@ export type AgentPersistenceErrorCode =
   | "MESSAGE_NOT_FOUND"
   | "RUN_NOT_FOUND"
   | "STEP_NOT_FOUND"
+  | "CHECKPOINT_MESSAGE_NOT_FOUND"
+  | "CHECKPOINT_MESSAGE_THREAD_MISMATCH"
+  | "CHECKPOINT_CONTENT_TOO_LARGE"
   | "INVALID_RUN_STATUS_TRANSITION"
   | "INVALID_STEP_STATUS_TRANSITION"
   | "STEP_SEQUENCE_CONFLICT";
@@ -215,6 +233,30 @@ function toRun(row: {
   };
 }
 
+function toThreadContextCheckpoint(row: {
+  id: string;
+  threadId: string;
+  throughMessageId: string;
+  throughMessageCreatedAt: Date;
+  contentVersion: number;
+  content: string;
+  sourceMessageCount: number;
+  estimatedCharacters: number;
+  createdAt: Date;
+}): AgentThreadContextCheckpoint {
+  return {
+    id: row.id,
+    threadId: row.threadId,
+    throughMessageId: row.throughMessageId,
+    throughMessageCreatedAt: row.throughMessageCreatedAt.toISOString(),
+    contentVersion: row.contentVersion,
+    content: row.content,
+    sourceMessageCount: row.sourceMessageCount,
+    estimatedCharacters: row.estimatedCharacters,
+    createdAt: row.createdAt.toISOString(),
+  };
+}
+
 function toStep(row: {
   id: string;
   runId: string;
@@ -276,6 +318,18 @@ const runSelect = {
   completedAt: schema.agentRun.completedAt,
   errorCode: schema.agentRun.errorCode,
   errorMessage: schema.agentRun.errorMessage,
+} as const;
+
+const checkpointSelect = {
+  id: schema.agentThreadContextCheckpoint.id,
+  threadId: schema.agentThreadContextCheckpoint.threadId,
+  throughMessageId: schema.agentThreadContextCheckpoint.throughMessageId,
+  throughMessageCreatedAt: schema.agentThreadContextCheckpoint.throughMessageCreatedAt,
+  contentVersion: schema.agentThreadContextCheckpoint.contentVersion,
+  content: schema.agentThreadContextCheckpoint.content,
+  sourceMessageCount: schema.agentThreadContextCheckpoint.sourceMessageCount,
+  estimatedCharacters: schema.agentThreadContextCheckpoint.estimatedCharacters,
+  createdAt: schema.agentThreadContextCheckpoint.createdAt,
 } as const;
 
 const stepSelect = {
@@ -890,6 +944,137 @@ export function createAgentPersistenceService(db: Db) {
         );
 
       return rows.map(toMessage);
+    },
+
+    async createThreadContextCheckpoint(
+      input: {
+        threadId: string;
+        ownerUserId: string;
+        throughMessageId: string;
+        content: string;
+        sourceMessageCount: number;
+        contentVersion?: number;
+      },
+      tx?: AgentPersistenceExecutor,
+    ): Promise<AgentThreadContextCheckpoint> {
+      const client = executor(tx);
+      await requireOwnedThread(client, input.threadId, input.ownerUserId);
+      if (input.content.length > MAX_CHECKPOINT_CHARACTERS) {
+        throw new AgentPersistenceError(
+          "CHECKPOINT_CONTENT_TOO_LARGE",
+          `Checkpoint content must be at most ${MAX_CHECKPOINT_CHARACTERS} characters`,
+        );
+      }
+
+      const [message] = await client
+        .select({
+          threadId: schema.agentMessage.threadId,
+          createdAt: schema.agentMessage.createdAt,
+        })
+        .from(schema.agentMessage)
+        .where(eq(schema.agentMessage.id, input.throughMessageId))
+        .limit(1);
+
+      if (!message) {
+        throw new AgentPersistenceError(
+          "CHECKPOINT_MESSAGE_NOT_FOUND",
+          "Checkpoint boundary message not found",
+        );
+      }
+      if (message.threadId !== input.threadId) {
+        throw new AgentPersistenceError(
+          "CHECKPOINT_MESSAGE_THREAD_MISMATCH",
+          "Checkpoint boundary message is not on this thread",
+        );
+      }
+
+      const [row] = await client
+        .insert(schema.agentThreadContextCheckpoint)
+        .values({
+          threadId: input.threadId,
+          throughMessageId: input.throughMessageId,
+          throughMessageCreatedAt: message.createdAt,
+          contentVersion:
+            input.contentVersion ?? THREAD_CONTEXT_CHECKPOINT_CONTENT_VERSION,
+          content: input.content,
+          sourceMessageCount: input.sourceMessageCount,
+          estimatedCharacters: input.content.length,
+        })
+        .returning(checkpointSelect);
+
+      if (!row) throw new Error("Failed to create thread context checkpoint");
+      return toThreadContextCheckpoint(row);
+    },
+
+    async getLatestThreadContextCheckpoint(
+      input: { threadId: string; ownerUserId: string },
+      tx?: AgentPersistenceExecutor,
+    ): Promise<AgentThreadContextCheckpoint | null> {
+      const client = executor(tx);
+      await requireOwnedThread(client, input.threadId, input.ownerUserId);
+      const [row] = await client
+        .select(checkpointSelect)
+        .from(schema.agentThreadContextCheckpoint)
+        .innerJoin(
+          schema.agentMessage,
+          eq(
+            schema.agentThreadContextCheckpoint.throughMessageId,
+            schema.agentMessage.id,
+          ),
+        )
+        .where(
+          and(
+            eq(schema.agentThreadContextCheckpoint.threadId, input.threadId),
+            eq(
+              schema.agentThreadContextCheckpoint.contentVersion,
+              THREAD_CONTEXT_CHECKPOINT_CONTENT_VERSION,
+            ),
+            eq(
+              schema.agentThreadContextCheckpoint.threadId,
+              schema.agentMessage.threadId,
+            ),
+          ),
+        )
+        .orderBy(
+          desc(schema.agentThreadContextCheckpoint.createdAt),
+          desc(schema.agentThreadContextCheckpoint.id),
+        )
+        .limit(1);
+      return row ? toThreadContextCheckpoint(row) : null;
+    },
+
+    async listMessagesAfterThreadContextCheckpoint(
+      input: {
+        threadId: string;
+        ownerUserId: string;
+        checkpoint: AgentThreadContextCheckpoint;
+      },
+      tx?: AgentPersistenceExecutor,
+    ): Promise<AgentMessage[]> {
+      if (input.checkpoint.threadId !== input.threadId) {
+        throw new AgentPersistenceError(
+          "CHECKPOINT_MESSAGE_THREAD_MISMATCH",
+          "Checkpoint does not belong to this thread",
+        );
+      }
+      const client = executor(tx);
+      await requireOwnedThread(client, input.threadId, input.ownerUserId);
+      // C2 deliberately reuses the existing full-history query. C5 can move
+      // this exact cursor predicate into SQL without changing callers.
+      const rows = await client
+        .select(messageSelect)
+        .from(schema.agentMessage)
+        .where(eq(schema.agentMessage.threadId, input.threadId))
+        .orderBy(asc(schema.agentMessage.createdAt), asc(schema.agentMessage.id));
+      const messages = rows.map(toMessage);
+      const boundary = new Date(input.checkpoint.throughMessageCreatedAt).getTime();
+      return messages.filter((message) => {
+        const createdAt = new Date(message.createdAt).getTime();
+        return (
+          createdAt > boundary ||
+          (createdAt === boundary && message.id > input.checkpoint.throughMessageId)
+        );
+      });
     },
 
     /**
