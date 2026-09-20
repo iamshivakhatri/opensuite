@@ -22,6 +22,7 @@ const catalog = createOpenRouterManagedModelCatalog({
           {
             id: "openai/gpt-4.1",
             name: "GPT-4.1",
+            context_length: 128000,
             supported_parameters: ["tools"],
             architecture: { output_modalities: ["text"] },
             pricing: { prompt: "0.000002", completion: "0.000008" },
@@ -129,6 +130,7 @@ test("managed OpenRouter preference uses server OPENROUTER_MODEL, not the saved 
     model: "openai/gpt-4.1",
     credentialSource: "managed",
     apiKey: "managed-openrouter-key",
+    contextLength: 128000,
   });
 });
 

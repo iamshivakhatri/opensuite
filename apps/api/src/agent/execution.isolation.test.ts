@@ -17,7 +17,7 @@ import type {
   AgentThreadContextCheckpoint,
 } from "./persistence.js";
 import { createAgentRunManager } from "./run-manager.js";
-import { MAX_HISTORY_MESSAGES } from "./context-projection.js";
+import { estimateTokens, MAX_HISTORY_MESSAGES, safeInputTokenBudget } from "./context-projection.js";
 
 const now = () => new Date().toISOString();
 
@@ -207,6 +207,7 @@ function baseDeps(
   persistence: AgentPersistenceService,
   runAgentImpl: NonNullable<AgentExecutionServiceDeps["runAgent"]>,
   runModelImpl?: NonNullable<AgentExecutionServiceDeps["runModel"]>,
+  contextLength?: number,
 ): AgentExecutionServiceDeps {
   return {
     persistence,
@@ -227,6 +228,7 @@ function baseDeps(
     },
     resolveModel: async () => ({
       model: { provider: "test", modelId: "test" } as unknown as V3Model,
+      ...(contextLength !== undefined ? { contextLength } : {}),
     }),
     runAgent: runAgentImpl,
     ...(runModelImpl ? { runModel: runModelImpl } : {}),
@@ -412,6 +414,30 @@ test("execution replaces checkpointed history with one checkpoint message", asyn
   assert.equal(persistence.messages.some((message) => message.content === "history-0"), true);
 });
 
+test("known context budgets history before the complete current request", async () => {
+  const persistence = memoryPersistence("user-1");
+  persistence.messages.push(...Array.from({ length: 10 }, (_, index) => ({
+    id: `budget-${index}`,
+    threadId: "thread-1",
+    role: "user" as const,
+    content: `old-${index}-${"x".repeat(600)}`,
+    createdAt: now(),
+  })));
+  let modelMessages: readonly { readonly content: unknown }[] = [];
+  const current = "current request stays complete ".repeat(100);
+  const execution = createAgentExecutionService(
+    baseDeps(persistence, async (input) => {
+      modelMessages = input.messages as typeof modelMessages;
+      return softResult("completed", "done");
+    }, undefined, 1_000),
+  );
+
+  await (await execution.start({ userId: "user-1", threadId: "thread-1", instruction: current })).result;
+
+  assert.equal(modelMessages.at(-1)?.content, current);
+  assert.equal(modelMessages.some((message) => String(message.content).includes("old-0-")), false);
+});
+
 test("successful long thread compacts only the old tail and keeps full history", async () => {
   const persistence = memoryPersistence("user-1");
   const history = Array.from({ length: 60 }, (_, index) => ({
@@ -550,6 +576,35 @@ test("a delayed older compaction result cannot replace a newer checkpoint", asyn
   assert.equal(result.failureCode, "STALE_BOUNDARY");
   assert.equal(persistence.checkpoints.length, 1);
   assert.equal(persistence.checkpoint?.throughMessageId, "race-050");
+});
+
+test("compaction bounds a huge prefix and advances only through that prefix", async () => {
+  const persistence = memoryPersistence("user-1");
+  persistence.messages.push(...Array.from({ length: 60 }, (_, index) => ({
+    id: `huge-${String(index).padStart(3, "0")}`,
+    threadId: "thread-1",
+    role: "user" as const,
+    content: `huge-${index}-${"x".repeat(10_000)}`,
+    createdAt: now(),
+  })));
+  let compactionInput = "";
+  const result = await compactThreadContext({
+    persistence,
+    ownerUserId: "user-1",
+    threadId: "thread-1",
+    model: { provider: "test", modelId: "test" } as unknown as V3Model,
+    contextLength: 1_000,
+    runModel: async (input) => {
+      compactionInput = String(input.messages[0]?.content);
+      return checkpointResult(validCheckpoint);
+    },
+  });
+
+  assert.equal(result.checkpointCreated, true);
+  assert.equal(persistence.checkpoint?.throughMessageId, "huge-000");
+  assert.equal(compactionInput.includes("huge-1-"), false);
+  assert.ok(estimateTokens(compactionInput) < safeInputTokenBudget(1_000));
+  assert.equal(persistence.messages.length, 60);
 });
 
 test("short, failed, and malformed runs do not create a checkpoint", async () => {

@@ -5,7 +5,9 @@ import {
   MAX_HISTORY_CHARACTERS,
   MAX_HISTORY_MESSAGES,
   MAX_SINGLE_HISTORY_MESSAGE_CHARACTERS,
+  estimateTokens,
   projectHistoricalMessages,
+  safeInputTokenBudget,
   type HistoricalMessage,
 } from "./context-projection.js";
 
@@ -61,4 +63,29 @@ test("drops a leading assistant whose user request was omitted", () => {
 
 test("returns an empty projection for empty history", () => {
   assert.deepEqual(projectHistoricalMessages([]).messages, []);
+});
+
+test("uses one conservative deterministic token estimate", () => {
+  assert.equal(estimateTokens(""), 0);
+  assert.equal(estimateTokens("abc"), 1);
+  assert.equal(estimateTokens("abcdef"), 2);
+  assert.equal(estimateTokens("abcdef"), estimateTokens("abcdef"));
+  assert.ok(estimateTokens("a".repeat(300)) > estimateTokens("a".repeat(30)));
+  assert.equal(safeInputTokenBudget(10_000), 6_000);
+});
+
+test("unknown context keeps C1 behavior while a token budget keeps the recent suffix", () => {
+  const history = [
+    message("user", "old".repeat(100)),
+    message("assistant", "middle".repeat(100)),
+    message("user", "recent".repeat(100)),
+  ];
+  assert.deepEqual(
+    projectHistoricalMessages(history).messages,
+    projectHistoricalMessages(history, {}).messages,
+  );
+  const projected = projectHistoricalMessages(history, { maxTokens: estimateTokens(history[2]!.content) });
+  assert.deepEqual(projected.messages, [history[2]]);
+  assert.equal(projected.historyTrimmedByTokenBudget, true);
+  assert.ok(projected.estimatedHistoricalTokens <= estimateTokens(history[2]!.content));
 });

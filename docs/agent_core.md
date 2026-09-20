@@ -1,23 +1,12 @@
-# Agent Core V2
+# Agent Core V3
 
-`packages/agent-core-v2` is the only agent runtime.
-
-Phase 2B loop:
+`packages/agent-core-v3` is the active generic model/tool runtime. The API owns model resolution, persisted conversation context, document bindings, lifecycle, and product events.
 
 ```text
-API binds primary DOCX version bytes + persist callback
-  → createDocumentTools(boundDocument)  # reads + capability-gated mutations
-    → agent-core-v2 runAgent (Phase-1 tool loop + turn/tool logs)
-    → document.* tools (MODEL_MUTATION_CAPABILITIES ∩ engine caps ∩ host.mutate)
-    → engine-client bindDocxDocument → DocxEngineBinding → Rust
-    → on write success: appendDocumentVersion → host advances bytes/version
+API resolves model + context + document tools
+  → agent-core-v3 runAgent
+    → generic model/tool loop
+    → API persists result and document versions
 ```
 
-Mutation tools: closed schemas (no `additionalProperties`), zero-based occurrence matching find/inspect. Binary picture insert/replace are not model-exposed.
-
-The core has no database, HTTP, authentication, storage, or UI.
-Document tools call a server-bound host; they never select document IDs.
-
-Exports: `createOpenRouterModel`, `runAgent`, `runModel`, `createDocumentTools`, `isDocumentWriteTool`.
-Events: `started`, `text_delta`, `tool_*`, `completed`, `cancelled`.
-Backend logs: `turn_start` / `turn_done` / `tool_start` / `tool_done` / `run_done`.
+The core has no database, HTTP, auth, storage, document semantics, checkpoints, retrieval, or compaction policy. `runModel` is its one-call primitive; `projectMessages` lets the API add first-turn request-local document context without teaching the core product rules.

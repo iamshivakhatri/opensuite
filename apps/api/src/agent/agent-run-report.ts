@@ -68,7 +68,12 @@ export interface AgentRunReportContext {
   readonly historicalMessagesProjected: number;
   readonly historicalCharactersLoaded: number;
   readonly historicalCharactersProjected: number;
+  readonly estimatedHistoricalTokens: number;
   readonly historyWasTrimmed: boolean;
+  readonly modelContextLength?: number;
+  readonly estimatedInputTokens: number;
+  readonly approximateTokenBudgetApplied: boolean;
+  readonly historyTrimmedByTokenBudget: boolean;
 }
 
 export interface AgentRunReport {

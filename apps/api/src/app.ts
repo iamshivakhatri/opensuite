@@ -275,6 +275,9 @@ export async function buildApp(
             model: resolved.model,
             credentialSource: resolved.credentialSource,
           },
+          ...(resolved.contextLength !== undefined
+            ? { contextLength: resolved.contextLength }
+            : {}),
         };
       },
       modelUsage,

@@ -146,7 +146,11 @@ test("composeAgentRunReport includes history diagnostics without message content
       historicalMessagesProjected: 40,
       historicalCharactersLoaded: 50_000,
       historicalCharactersProjected: 32_000,
+      estimatedHistoricalTokens: 10_667,
       historyWasTrimmed: true,
+      estimatedInputTokens: 12_000,
+      approximateTokenBudgetApplied: false,
+      historyTrimmedByTokenBudget: false,
     },
   });
   assert.deepEqual(report.context, {
@@ -156,7 +160,11 @@ test("composeAgentRunReport includes history diagnostics without message content
     historicalMessagesProjected: 40,
     historicalCharactersLoaded: 50_000,
     historicalCharactersProjected: 32_000,
+    estimatedHistoricalTokens: 10_667,
     historyWasTrimmed: true,
+    estimatedInputTokens: 12_000,
+    approximateTokenBudgetApplied: false,
+    historyTrimmedByTokenBudget: false,
   });
 });
 

@@ -36,7 +36,12 @@ import {
   selectTableRowDetail,
   SlimDocumentStructureCache,
 } from "./document-retrieval.js";
-import { projectHistoricalMessages } from "./context-projection.js";
+import {
+  estimateTokens,
+  projectHistoricalMessages,
+  safeInputTokenBudget,
+  truncateToTokenBudget,
+} from "./context-projection.js";
 import { compactThreadContext, logContextCompaction } from "./context-compaction.js";
 import { buildAgentOperatingInstruction } from "./operating-instruction.js";
 import {
@@ -94,6 +99,7 @@ export interface AgentModelUsageAttribution {
 export interface ResolvedV3ExecutionModel {
   readonly model: V3Model;
   readonly usageAttribution?: AgentModelUsageAttribution;
+  readonly contextLength?: number;
 }
 
 /** @deprecated Use ResolvedV3ExecutionModel — alias during V3 cutover. */
@@ -297,27 +303,6 @@ async function runExecution(input: {
         threadId: input.thread.id,
         ownerUserId: input.ownerUserId,
       });
-  const historical = projectHistoricalMessages(
-    priorMessages
-      .filter((message) => message.id !== input.userMessage.id)
-      .map((message) => ({ role: message.role, content: message.content })),
-  );
-  const { messages: projectedHistoricalMessages, ...historicalContext } = historical;
-  const context = {
-    ...historicalContext,
-    checkpointUsed: checkpoint !== null,
-    ...(checkpoint
-      ? { checkpointThroughMessageId: checkpoint.throughMessageId }
-      : {}),
-    historicalMessagesAfterCheckpoint: priorMessages.filter(
-      (message) => message.id !== input.userMessage.id,
-    ).length,
-  };
-  const messages: ModelMessage[] = [
-    ...(checkpoint ? [checkpointMessage(checkpoint)] : []),
-    ...projectedHistoricalMessages,
-    { role: "user", content: input.instruction },
-  ];
   const messageId = `v3-${input.run.id}`;
   const retrieval = await loadRetrievedContext({
     cache: input.structureCache,
@@ -391,6 +376,54 @@ async function runExecution(input: {
       ...(boundTools?.tools ?? {}),
       [finish.name]: finish.tool,
     };
+    const system = buildAgentOperatingInstruction(Object.keys(tools));
+    const historicalMessages = priorMessages
+      .filter((message) => message.id !== input.userMessage.id)
+      .map((message) => ({ role: message.role, content: message.content }));
+    const fixedTokens =
+      estimateTokens(system) +
+      estimateTokens(toolContext(tools)) +
+      estimateTokens(input.instruction) +
+      estimateTokens(retrieval?.message ?? "");
+    const inputBudget =
+      input.model.contextLength !== undefined
+        ? safeInputTokenBudget(input.model.contextLength)
+        : undefined;
+    const checkpointContent = checkpoint
+      ? checkpointMessageContent(checkpoint)
+      : "";
+    const checkpointBudget = inputBudget === undefined
+      ? undefined
+      : Math.max(0, inputBudget - fixedTokens);
+    const projectedCheckpoint = checkpoint
+      ? truncateToTokenBudget(checkpointContent, checkpointBudget ?? estimateTokens(checkpointContent))
+      : "";
+    const historicalBudget = inputBudget === undefined
+      ? undefined
+      : Math.max(0, inputBudget - fixedTokens - estimateTokens(projectedCheckpoint));
+    const historical = projectHistoricalMessages(historicalMessages, {
+      ...(historicalBudget !== undefined ? { maxTokens: historicalBudget } : {}),
+    });
+    const { messages: projectedHistoricalMessages, ...historicalContext } = historical;
+    const context = {
+      ...historicalContext,
+      checkpointUsed: checkpoint !== null,
+      ...(checkpoint
+        ? { checkpointThroughMessageId: checkpoint.throughMessageId }
+        : {}),
+      historicalMessagesAfterCheckpoint: historicalMessages.length,
+      ...(input.model.contextLength !== undefined
+        ? { modelContextLength: input.model.contextLength }
+        : {}),
+      estimatedInputTokens:
+        fixedTokens + estimateTokens(projectedCheckpoint) + historical.estimatedHistoricalTokens,
+      approximateTokenBudgetApplied: inputBudget !== undefined,
+    };
+    const messages: ModelMessage[] = [
+      ...(projectedCheckpoint ? [{ role: "user" as const, content: projectedCheckpoint }] : []),
+      ...projectedHistoricalMessages,
+      { role: "user", content: input.instruction },
+    ];
 
     // The one API → agent-core-v3 execution call.
     const executeAgent = input.deps.runAgent ?? runAgent;
@@ -398,7 +431,7 @@ async function runExecution(input: {
     try {
       result = await executeAgent({
         model: input.model.model,
-        system: buildAgentOperatingInstruction(Object.keys(tools)),
+        system,
         messages,
         ...(retrieval?.message
           ? { projectMessages: firstTurnContextProjection(retrieval.message) }
@@ -487,6 +520,7 @@ async function runExecution(input: {
       ownerUserId: input.ownerUserId,
       threadId: input.thread.id,
       model: input.model.model,
+      contextLength: input.model.contextLength,
       usageAttribution: input.model.usageAttribution,
       modelUsage: input.deps.modelUsage,
       managedTrial: input.deps.managedTrial,
@@ -510,6 +544,12 @@ async function runExecution(input: {
       liveEvents: input.liveEvents,
     });
   }
+}
+
+function toolContext(tools: AgentToolSet): string {
+  return Object.entries(tools)
+    .map(([name, tool]) => `${name}\n${tool.description}\n${JSON.stringify(tool.inputSchema)}`)
+    .join("\n");
 }
 
 async function loadRetrievedContext(input: {
@@ -566,11 +606,8 @@ export function firstTurnContextProjection(context: string): (messages: readonly
 }
 
 /** AI SDK has no application-context role; label this API-owned user message. */
-function checkpointMessage(checkpoint: AgentThreadContextCheckpoint): ModelMessage {
-  return {
-    role: "user",
-    content: `Historical conversation checkpoint through ${checkpoint.throughMessageId}:\n${checkpoint.content}`,
-  };
+function checkpointMessageContent(checkpoint: AgentThreadContextCheckpoint): string {
+  return `Historical conversation checkpoint through ${checkpoint.throughMessageId}:\n${checkpoint.content}`;
 }
 
 function failureCodeForStopReason(stopReason: StopReason): string {
@@ -602,7 +639,12 @@ function emitRunReport(input: {
     readonly historicalMessagesProjected: number;
     readonly historicalCharactersLoaded: number;
     readonly historicalCharactersProjected: number;
+    readonly estimatedHistoricalTokens: number;
     readonly historyWasTrimmed: boolean;
+    readonly modelContextLength?: number;
+    readonly estimatedInputTokens: number;
+    readonly approximateTokenBudgetApplied: boolean;
+    readonly historyTrimmedByTokenBudget: boolean;
   };
 }): void {
   if (!input.metrics) return;

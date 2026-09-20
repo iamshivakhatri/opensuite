@@ -3,6 +3,13 @@ import { runModel, type V3Model } from "@opensuite/agent-core-v3";
 import type { ManagedTrialService } from "../managed-trial/service.js";
 import type { ModelUsageService } from "../model-usage/service.js";
 import type { AgentModelUsageAttribution } from "./execution.js";
+import {
+  estimateTokens,
+  MAX_HISTORY_CHARACTERS,
+  projectCompactionPrefix,
+  safeInputTokenBudget,
+  truncateToTokenBudget,
+} from "./context-projection.js";
 import type {
   AgentMessage,
   AgentPersistenceService,
@@ -44,6 +51,7 @@ export async function compactThreadContext(input: {
   readonly ownerUserId: string;
   readonly threadId: string;
   readonly model: V3Model;
+  readonly contextLength?: number;
   readonly usageAttribution?: AgentModelUsageAttribution;
   readonly modelUsage?: ModelUsageService;
   readonly managedTrial?: ManagedTrialService;
@@ -84,7 +92,22 @@ export async function compactThreadContext(input: {
     return finish({ ...base, triggered: false, checkpointCreated: false });
   }
 
-  const compactedMessages = tail.slice(0, -COMPACTION_RETAIN_MESSAGES);
+  const eligibleMessages = tail.slice(0, -COMPACTION_RETAIN_MESSAGES);
+  const totalBudget = input.contextLength !== undefined
+    ? safeInputTokenBudget(input.contextLength)
+    : estimateTokens("x".repeat(MAX_HISTORY_CHARACTERS));
+  const fixedInput = estimateTokens(COMPACTION_SYSTEM_PROMPT) + estimateTokens(compactionInput(null, []));
+  const checkpointContent = checkpoint ? truncateToTokenBudget(
+    checkpoint.content,
+    Math.max(0, totalBudget - fixedInput),
+  ) : "";
+  const projectedPrefix = projectCompactionPrefix(
+    eligibleMessages.map((message) => ({ role: message.role, content: message.content })),
+    Math.max(0, totalBudget - fixedInput - estimateTokens(checkpointContent)),
+  );
+  const compactedMessages = eligibleMessages.slice(0, projectedPrefix.length).map(
+    (message, index) => ({ ...message, content: projectedPrefix[index]!.content }),
+  );
   const boundary = compactedMessages.at(-1);
   if (!boundary) return finish({ ...base, triggered: false, checkpointCreated: false });
 
@@ -96,7 +119,7 @@ export async function compactThreadContext(input: {
     usage = await (input.runModel ?? runModel)({
       model: input.model,
       system: COMPACTION_SYSTEM_PROMPT,
-      messages: [{ role: "user", content: compactionInput(checkpoint, compactedMessages) }],
+      messages: [{ role: "user", content: compactionInput(checkpoint ? { ...checkpoint, content: checkpointContent } : null, compactedMessages) }],
       signal: controller.signal,
       infraRetry: { maxRetries: 0 },
     });

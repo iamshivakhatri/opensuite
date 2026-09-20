@@ -26,6 +26,8 @@ export interface ResolvedAiModel {
   readonly model: string;
   readonly credentialSource: CredentialSource;
   readonly apiKey: string;
+  /** Known only for managed OpenRouter catalog entries. */
+  readonly contextLength?: number;
 }
 
 function managedKey(
@@ -65,9 +67,11 @@ export function createAiModelResolver(input: {
     const apiKey = managedKey(input.managed, "openrouter");
     const model = input.managed.openrouterModel;
     if (!apiKey || !model) return null;
+    let contextLength: number | undefined;
     if (input.catalog) {
       try {
-        await input.catalog.requireManagedModel(model);
+        const managedModel = await input.catalog.requireManagedModel(model);
+        contextLength = managedModel.contextLength ?? undefined;
       } catch (error) {
         if (
           error instanceof OpenRouterCatalogError &&
@@ -95,6 +99,7 @@ export function createAiModelResolver(input: {
       model,
       credentialSource: "managed",
       apiKey,
+      ...(contextLength !== undefined ? { contextLength } : {}),
     };
   }
 
