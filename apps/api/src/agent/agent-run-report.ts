@@ -53,6 +53,12 @@ export interface AgentRunReportTool {
   readonly failureCode?: string;
 }
 
+export interface AgentRunReportRetrieval {
+  readonly cache: "hit" | "miss";
+  readonly blockCount: number;
+  readonly reason?: string;
+}
+
 export interface AgentRunReport {
   readonly runId: string;
   readonly instruction: string;
@@ -77,6 +83,7 @@ export interface AgentRunReport {
   readonly failures: readonly AgentRunReportFailure[];
   readonly fuseEvents: readonly FuseEventMetric[];
   readonly document?: AgentRunReportDocument;
+  readonly retrieval?: AgentRunReportRetrieval;
 }
 
 export interface ComposeAgentRunReportInput {
@@ -96,6 +103,7 @@ export interface ComposeAgentRunReportInput {
   readonly finalVersionId?: string | null;
   readonly versionAdvances?: readonly DocumentVersionAdvance[];
   readonly documentTransitions?: readonly DocumentTransition[];
+  readonly retrieval?: AgentRunReportRetrieval;
   readonly pricing?: ModelPricingEntry | null;
   readonly pricingProvider?: ProviderCredentialProvider;
 }
@@ -258,6 +266,7 @@ export function composeAgentRunReport(
           },
         }
       : {}),
+    ...(input.retrieval !== undefined ? { retrieval: input.retrieval } : {}),
   };
 }
 
@@ -438,6 +447,7 @@ export function logAgentRunReport(report: AgentRunReport): void {
       failures: report.failures,
       fuseEvents: report.fuseEvents,
       document: report.document,
+      retrieval: report.retrieval,
       tools: report.tools,
     })}`,
   );

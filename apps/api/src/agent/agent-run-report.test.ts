@@ -120,6 +120,20 @@ test("composeAgentRunReport merges runtime metrics + document facts", () => {
   assert.ok(typeof report.estimatedCostUsd === "number");
 });
 
+test("composeAgentRunReport includes retrieval observation without model context", () => {
+  const report = composeAgentRunReport({
+    runId: "run-retrieval",
+    instruction: "add milestones to the table",
+    metrics: baseMetrics(),
+    retrieval: { cache: "hit", blockCount: 1, reason: "single_table" },
+  });
+  assert.deepEqual(report.retrieval, {
+    cache: "hit",
+    blockCount: 1,
+    reason: "single_table",
+  });
+});
+
 test("composeAgentRunReport: max_turns with version advance is partial", () => {
   const report = composeAgentRunReport({
     runId: "run-2",

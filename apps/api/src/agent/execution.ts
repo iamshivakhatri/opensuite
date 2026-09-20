@@ -28,6 +28,11 @@ import {
   type DocumentVersionAdvance,
 } from "./agent-run-report.js";
 import { createPrimaryDocxTools } from "./docx-tools.js";
+import {
+  formatRetrievedDocumentContext,
+  retrieveRelevantDocumentContext,
+  SlimDocumentStructureCache,
+} from "./document-retrieval.js";
 import { buildAgentOperatingInstruction } from "./operating-instruction.js";
 import {
   type AgentMessage,
@@ -147,6 +152,7 @@ export interface AgentExecutionServiceDeps {
 
 /** Product shell: resolve and persist here; execute once in agent-core-v3. */
 export function createAgentExecutionService(deps: AgentExecutionServiceDeps) {
+  const structureCache = new SlimDocumentStructureCache();
   async function start(input: AgentExecutionInput): Promise<AgentExecutionHandle> {
     const thread = await deps.persistence.getOwnedThread({
       threadId: input.threadId,
@@ -196,6 +202,8 @@ export function createAgentExecutionService(deps: AgentExecutionServiceDeps) {
         userMessage: started.userMessage,
         run: started.run,
         primaryDocumentId: primaryDocument?.documentId ?? null,
+        primaryDocumentFormat: primaryDocument?.format ?? null,
+        structureCache,
         ownerUserId: input.userId,
         instruction: input.instruction,
         signal: input.signal,
@@ -238,7 +246,7 @@ async function resolvePrimaryDocument(
   thread: AgentThread,
   userId: string,
   documentIds: readonly string[] | undefined,
-): Promise<{ documentId: string; versionId: string } | null> {
+): Promise<{ documentId: string; versionId: string; format: string } | null> {
   const documentId = documentIds?.[0] ?? thread.documentId;
   if (!documentId) return null;
   try {
@@ -246,7 +254,7 @@ async function resolvePrimaryDocument(
     if (document.workspaceId !== thread.workspaceId) {
       throw new AgentExecutionError("DOCUMENT_NOT_FOUND", "Document is not in this workspace");
     }
-    return { documentId, versionId: document.latestVersion.id };
+    return { documentId, versionId: document.latestVersion.id, format: document.format };
   } catch (error) {
     if (error instanceof AgentExecutionError) throw error;
     throw new AgentExecutionError("DOCUMENT_NOT_FOUND", "Document not found for agent run");
@@ -260,6 +268,8 @@ async function runExecution(input: {
   readonly userMessage: AgentMessage;
   readonly run: AgentRun;
   readonly primaryDocumentId: string | null;
+  readonly primaryDocumentFormat: string | null;
+  readonly structureCache: SlimDocumentStructureCache;
   readonly ownerUserId: string;
   readonly instruction: string;
   readonly signal?: AbortSignal;
@@ -276,6 +286,16 @@ async function runExecution(input: {
     { role: "user", content: input.instruction },
   ];
   const messageId = `v3-${input.run.id}`;
+  const retrieval = await loadRetrievedContext({
+    cache: input.structureCache,
+    binding: input.deps.docxBinding,
+    documents: input.deps.documents,
+    ownerUserId: input.ownerUserId,
+    documentId: input.primaryDocumentId,
+    versionId: input.run.baseDocumentVersionId,
+    format: input.primaryDocumentFormat,
+    instruction: input.instruction,
+  });
 
   try {
     await input.deps.persistence.updateRunStatus({
@@ -347,6 +367,9 @@ async function runExecution(input: {
         model: input.model.model,
         system: buildAgentOperatingInstruction(Object.keys(tools)),
         messages,
+        ...(retrieval?.message
+          ? { projectMessages: firstTurnContextProjection(retrieval.message) }
+          : {}),
         tools,
         signal: input.signal,
         runId: runShort,
@@ -366,6 +389,7 @@ async function runExecution(input: {
         finalVersionId: boundTools?.getActiveVersionId() ?? input.run.baseDocumentVersionId,
         versionAdvances,
         documentTransitions: boundTools?.getTransitions() ?? [],
+        retrieval: retrieval?.observation,
       });
       throw error;
     }
@@ -384,6 +408,7 @@ async function runExecution(input: {
       finalVersionId: boundTools?.getActiveVersionId() ?? input.run.baseDocumentVersionId,
       versionAdvances,
       documentTransitions: boundTools?.getTransitions() ?? [],
+      retrieval: retrieval?.observation,
     });
 
     if (!isSuccessfulStop(result.stopReason)) {
@@ -440,6 +465,54 @@ async function runExecution(input: {
   }
 }
 
+async function loadRetrievedContext(input: {
+  readonly cache: SlimDocumentStructureCache;
+  readonly binding: DocxEngineBinding | undefined;
+  readonly documents: AgentExecutionServiceDeps["documents"];
+  readonly ownerUserId: string;
+  readonly documentId: string | null;
+  readonly versionId: string | null;
+  readonly format: string | null;
+  readonly instruction: string;
+}): Promise<{
+  readonly message?: string;
+  readonly observation: { readonly cache: "hit" | "miss"; readonly blockCount: number; readonly reason?: string };
+} | undefined> {
+  if (!input.binding || !input.documentId || !input.versionId || input.format !== "docx") return undefined;
+  try {
+    const bytes = await input.documents.readExactVersionBytes({
+      documentId: input.documentId,
+      versionId: input.versionId,
+      ownerUserId: input.ownerUserId,
+    });
+    const loaded = await input.cache.get({
+      versionId: input.versionId,
+      bytes: new Uint8Array(bytes),
+      binding: input.binding,
+    });
+    const context = retrieveRelevantDocumentContext(input.instruction, loaded.structure);
+    const observation = context
+      ? { cache: loaded.cache, blockCount: context.blocks.length, reason: context.reason }
+      : { cache: loaded.cache, blockCount: 0 };
+    console.info(`[agent-v3] structure_cache=${loaded.cache} retrieved_blocks=${observation.blockCount}`);
+    return context
+      ? { message: formatRetrievedDocumentContext(context), observation }
+      : { observation };
+  } catch (error) {
+    console.warn(`[agent-v3] structure_retrieval_skipped reason=${summarizeError(error)}`);
+    return undefined;
+  }
+}
+
+export function firstTurnContextProjection(context: string): (messages: readonly ModelMessage[]) => readonly ModelMessage[] {
+  let firstTurn = true;
+  return (messages) => {
+    if (!firstTurn) return messages;
+    firstTurn = false;
+    return [...messages, { role: "user", content: context }];
+  };
+}
+
 function failureCodeForStopReason(stopReason: StopReason): string {
   if (stopReason === "max_turns") return "AGENT_MAX_TURNS";
   if (stopReason === "deadline") return "AGENT_DEADLINE";
@@ -460,6 +533,7 @@ function emitRunReport(input: {
   readonly finalVersionId?: string | null;
   readonly versionAdvances: readonly DocumentVersionAdvance[];
   readonly documentTransitions?: readonly DocumentTransition[];
+  readonly retrieval?: { readonly cache: "hit" | "miss"; readonly blockCount: number; readonly reason?: string };
 }): void {
   if (!input.metrics) return;
   try {
@@ -489,6 +563,7 @@ function emitRunReport(input: {
       finalVersionId: input.finalVersionId,
       versionAdvances: input.versionAdvances,
       documentTransitions: input.documentTransitions ?? [],
+      ...(input.retrieval !== undefined ? { retrieval: input.retrieval } : {}),
       pricing,
       ...(attribution !== undefined
         ? { pricingProvider: attribution.provider }

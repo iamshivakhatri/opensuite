@@ -13,6 +13,7 @@ _Read this before starting any work. Keep it a concise current-state handoff, no
 
 ## Just Completed
 
+* **Phase 6A** — API-only, version-keyed slim structure cache plus conservative first-turn retrieval; no V3/engine prompt or protocol changes.
 * **Phase 5A** — `body_blocks` now carries paragraph style/heading and slim table structure from Rust; no app-side OOXML parsing.
 * **DB outage UX** — API boot no longer crashes on lease-clear when Postgres is down; soft banner + keep shell when session exists; 503 copy = "No connection with the database".
 * **Phase 3.5** — progressive Agent activity rows (fixtures `/dev/agent-panel-ux`).
@@ -30,6 +31,8 @@ _Read this before starting any work. Keep it a concise current-state handoff, no
 | Check | Status |
 |---|---|
 | agent-core-v3 unit (21) | Pass (prior) |
+| Phase 6A API retrieval + lifecycle/report tests (22) | Pass |
+| engine-client tests (13) | Pass |
 | web agent-progress + related unit | Pass |
 | web typecheck | Pass |
 | Fixture screenshots A–G (`/.tmp/phase35-screenshots`) | Inspected |
@@ -44,4 +47,4 @@ _Read this before starting any work. Keep it a concise current-state handoff, no
 
 ## Recommended Next Step
 
-Live-dogfood activity UX on real prompts (milestones + duplicate/rename); confirm Thinking appears within ~1s and completion collapses.
+Dogfood Phase 6A against a real DOCX: table additions, first-heading answer, exact replace, and broad formatting.
