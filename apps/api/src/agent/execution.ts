@@ -35,6 +35,7 @@ import {
   selectTableRowDetail,
   SlimDocumentStructureCache,
 } from "./document-retrieval.js";
+import { projectHistoricalMessages } from "./context-projection.js";
 import { buildAgentOperatingInstruction } from "./operating-instruction.js";
 import {
   type AgentMessage,
@@ -281,10 +282,14 @@ async function runExecution(input: {
     threadId: input.thread.id,
     ownerUserId: input.ownerUserId,
   });
-  const messages: ModelMessage[] = [
-    ...priorMessages
+  const historical = projectHistoricalMessages(
+    priorMessages
       .filter((message) => message.id !== input.userMessage.id)
       .map((message) => ({ role: message.role, content: message.content })),
+  );
+  const { messages: projectedHistoricalMessages, ...historicalContext } = historical;
+  const messages: ModelMessage[] = [
+    ...projectedHistoricalMessages,
     { role: "user", content: input.instruction },
   ];
   const messageId = `v3-${input.run.id}`;
@@ -392,6 +397,7 @@ async function runExecution(input: {
         versionAdvances,
         documentTransitions: boundTools?.getTransitions() ?? [],
         retrieval: retrieval?.observation,
+        context: historicalContext,
       });
       throw error;
     }
@@ -411,6 +417,7 @@ async function runExecution(input: {
       versionAdvances,
       documentTransitions: boundTools?.getTransitions() ?? [],
       retrieval: retrieval?.observation,
+      context: historicalContext,
     });
 
     if (!isSuccessfulStop(result.stopReason)) {
@@ -541,6 +548,13 @@ function emitRunReport(input: {
   readonly versionAdvances: readonly DocumentVersionAdvance[];
   readonly documentTransitions?: readonly DocumentTransition[];
   readonly retrieval?: { readonly cache: "hit" | "miss"; readonly blockCount: number; readonly reason?: string; readonly detail?: { readonly kind: "table_rows"; readonly itemCount: number } };
+  readonly context: {
+    readonly historicalMessagesLoaded: number;
+    readonly historicalMessagesProjected: number;
+    readonly historicalCharactersLoaded: number;
+    readonly historicalCharactersProjected: number;
+    readonly historyWasTrimmed: boolean;
+  };
 }): void {
   if (!input.metrics) return;
   try {
@@ -571,6 +585,7 @@ function emitRunReport(input: {
       versionAdvances: input.versionAdvances,
       documentTransitions: input.documentTransitions ?? [],
       ...(input.retrieval !== undefined ? { retrieval: input.retrieval } : {}),
+      context: input.context,
       pricing,
       ...(attribution !== undefined
         ? { pricingProvider: attribution.provider }

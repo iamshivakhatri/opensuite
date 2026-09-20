@@ -15,6 +15,7 @@ import type {
   AgentThread,
 } from "./persistence.js";
 import { createAgentRunManager } from "./run-manager.js";
+import { MAX_HISTORY_MESSAGES } from "./context-projection.js";
 
 const now = () => new Date().toISOString();
 
@@ -32,6 +33,7 @@ function stubThread(ownerUserId: string): AgentThread {
 }
 
 function memoryPersistence(ownerUserId: string): AgentPersistenceService & {
+  messages: AgentMessage[];
   runs: Map<string, AgentRun>;
   failOnStatus?: AgentRun["status"];
 } {
@@ -42,6 +44,7 @@ function memoryPersistence(ownerUserId: string): AgentPersistenceService & {
   let runSeq = 0;
 
   const api = {
+    messages,
     runs,
     failOnStatus: undefined as AgentRun["status"] | undefined,
     async withTransaction<T>(fn: (tx: unknown) => Promise<T>): Promise<T> {
@@ -127,6 +130,7 @@ function memoryPersistence(ownerUserId: string): AgentPersistenceService & {
   };
 
   return api as unknown as AgentPersistenceService & {
+    messages: AgentMessage[];
     runs: Map<string, AgentRun>;
     failOnStatus?: AgentRun["status"];
   };
@@ -254,6 +258,47 @@ test("successful V3 completed (no tools) settles completed", async () => {
     })
   ).result;
   assert.equal(result.run.status, "completed");
+});
+
+test("execution sends a bounded historical tail while retaining full persistence", async () => {
+  const persistence = memoryPersistence("user-1");
+  const history = Array.from({ length: MAX_HISTORY_MESSAGES + 4 }, (_, index) => ({
+    id: `history-${index}`,
+    threadId: "thread-1",
+    role: index % 2 === 0 ? "user" as const : "assistant" as const,
+    content: `history-${index}`,
+    createdAt: now(),
+  }));
+  persistence.messages.push(...history);
+  let modelMessages: readonly { readonly role: string; readonly content: unknown }[] = [];
+  let sawSystem = "";
+  let sawFinish = false;
+  const execution = createAgentExecutionService(
+    baseDeps(persistence, async (input) => {
+      modelMessages = input.messages as typeof modelMessages;
+      sawSystem = input.system ?? "";
+      sawFinish = "finish" in (input.tools ?? {});
+      return softResult("completed", "done");
+    }),
+  );
+
+  await (
+    await execution.start({
+      userId: "user-1",
+      threadId: "thread-1",
+      instruction: "current request stays complete",
+    })
+  ).result;
+
+  const historical = modelMessages.slice(0, -1);
+  assert.equal(historical.length, MAX_HISTORY_MESSAGES);
+  assert.equal(modelMessages.filter((message) => message.content === "current request stays complete").length, 1);
+  assert.equal(modelMessages.some((message) => message.content === "history-0"), false);
+  assert.equal(modelMessages.some((message) => message.content === `history-${history.length - 1}`), true);
+  assert.equal(persistence.messages.length, history.length + 2);
+  assert.equal(persistence.messages.some((message) => message.content === "history-0"), true);
+  assert.match(sawSystem, /You are OpenSuite's document agent/);
+  assert.equal(sawFinish, true);
 });
 
 test("max_turns soft stop becomes failed + AGENT_MAX_TURNS, not completed", async () => {

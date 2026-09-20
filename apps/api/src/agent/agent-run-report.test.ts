@@ -134,6 +134,28 @@ test("composeAgentRunReport includes retrieval observation without model context
   });
 });
 
+test("composeAgentRunReport includes history diagnostics without message content", () => {
+  const report = composeAgentRunReport({
+    runId: "run-1",
+    instruction: "test",
+    metrics: baseMetrics(),
+    context: {
+      historicalMessagesLoaded: 100,
+      historicalMessagesProjected: 40,
+      historicalCharactersLoaded: 50_000,
+      historicalCharactersProjected: 32_000,
+      historyWasTrimmed: true,
+    },
+  });
+  assert.deepEqual(report.context, {
+    historicalMessagesLoaded: 100,
+    historicalMessagesProjected: 40,
+    historicalCharactersLoaded: 50_000,
+    historicalCharactersProjected: 32_000,
+    historyWasTrimmed: true,
+  });
+});
+
 test("composeAgentRunReport: max_turns with version advance is partial", () => {
   const report = composeAgentRunReport({
     runId: "run-2",

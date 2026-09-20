@@ -60,6 +60,14 @@ export interface AgentRunReportRetrieval {
   readonly detail?: { readonly kind: "table_rows"; readonly itemCount: number };
 }
 
+export interface AgentRunReportContext {
+  readonly historicalMessagesLoaded: number;
+  readonly historicalMessagesProjected: number;
+  readonly historicalCharactersLoaded: number;
+  readonly historicalCharactersProjected: number;
+  readonly historyWasTrimmed: boolean;
+}
+
 export interface AgentRunReport {
   readonly runId: string;
   readonly instruction: string;
@@ -85,6 +93,7 @@ export interface AgentRunReport {
   readonly fuseEvents: readonly FuseEventMetric[];
   readonly document?: AgentRunReportDocument;
   readonly retrieval?: AgentRunReportRetrieval;
+  readonly context?: AgentRunReportContext;
 }
 
 export interface ComposeAgentRunReportInput {
@@ -105,6 +114,7 @@ export interface ComposeAgentRunReportInput {
   readonly versionAdvances?: readonly DocumentVersionAdvance[];
   readonly documentTransitions?: readonly DocumentTransition[];
   readonly retrieval?: AgentRunReportRetrieval;
+  readonly context?: AgentRunReportContext;
   readonly pricing?: ModelPricingEntry | null;
   readonly pricingProvider?: ProviderCredentialProvider;
 }
@@ -268,6 +278,7 @@ export function composeAgentRunReport(
         }
       : {}),
     ...(input.retrieval !== undefined ? { retrieval: input.retrieval } : {}),
+    ...(input.context !== undefined ? { context: input.context } : {}),
   };
 }
 
@@ -449,6 +460,7 @@ export function logAgentRunReport(report: AgentRunReport): void {
       fuseEvents: report.fuseEvents,
       document: report.document,
       retrieval: report.retrieval,
+      context: report.context,
       tools: report.tools,
     })}`,
   );
