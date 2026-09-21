@@ -215,6 +215,7 @@ export function DocumentAgentPanel({
   const [runNotice, setRunNotice] = React.useState<string | null>(null);
   /** Whether a retry affordance should be shown for the last user message. */
   const [canRetryRun, setCanRetryRun] = React.useState(false);
+  const [continueRunId, setContinueRunId] = React.useState<string | null>(null);
   /** Latest "document updated to vN" acknowledgement for the active document. */
   const [versionNotice, setVersionNotice] = React.useState<{
     documentId: string;
@@ -427,25 +428,30 @@ export function DocumentAgentPanel({
     const ms = fromServer ?? fromClient;
 
     if (run.status === "failed") {
+      const canContinue = run.errorCode === "AGENT_MAX_TURNS";
       setRunError(
-        run.errorCode === "AGENT_MAX_TURNS"
+        canContinue
           ? run.errorMessage || "Stopped before completing the task."
           : "The agent run failed. You can try again.",
       );
       setRunNotice(null);
-      setCanRetryRun(true);
+      setCanRetryRun(!canContinue);
+      setContinueRunId(canContinue ? run.id : null);
     } else if (run.status === "cancelled") {
       setRunError(null);
       setRunNotice(null);
       setCanRetryRun(false);
+      setContinueRunId(null);
     } else if (run.status === "completed") {
       setRunError(null);
       setRunNotice(null);
       setCanRetryRun(false);
+      setContinueRunId(null);
     } else {
       setRunError(null);
       setRunNotice(null);
       setCanRetryRun(false);
+      setContinueRunId(null);
     }
 
     if (!isActiveAgentRunStatus(run.status)) {
@@ -547,6 +553,7 @@ export function DocumentAgentPanel({
       setRunNotice(null);
       if (!options?.preserveDraft) {
         setCanRetryRun(false);
+        setContinueRunId(null);
         setLiveTranscript([]);
         setTerminalRunTranscript(null);
         setLiveWorking(true);
@@ -963,7 +970,7 @@ export function DocumentAgentPanel({
   async function submitInstruction(
     instruction: string,
     documentIds: string[],
-    options?: { restoreDraftOnError?: boolean },
+    options?: { restoreDraftOnError?: boolean; continueFromRunId?: string },
   ) {
     if (
       !shouldAcceptSubmit({
@@ -980,6 +987,7 @@ export function DocumentAgentPanel({
     setRunError(null);
     setRunNotice(null);
     setCanRetryRun(false);
+    setContinueRunId(null);
     setVersionNotice(null);
     setMentionOpen(false);
 
@@ -1004,7 +1012,12 @@ export function DocumentAgentPanel({
         setThreads((prev) => [thread, ...prev.filter((t) => t.id !== thread.id)]);
       }
 
-      const run = await startAgentRun(id, instruction, { documentIds });
+      const run = await startAgentRun(id, instruction, {
+        documentIds,
+        ...(options?.continueFromRunId
+          ? { continueFromRunId: options.continueFromRunId }
+          : {}),
+      });
       await refreshMessages(id);
       attachRun(run, id);
     } catch (error) {
@@ -1023,9 +1036,14 @@ export function DocumentAgentPanel({
         await handleSelectThread(busyThreadId);
         return;
       }
-      setRunError(
-        userFacingError(error, "Could not start the agent run. Try again."),
-      );
+      if (options?.continueFromRunId && activeRun) {
+        applyTerminalRunStatus(activeRun);
+        setRunNotice(userFacingError(error, "Could not continue the agent run. Try again."));
+      } else {
+        setRunError(
+          userFacingError(error, "Could not start the agent run. Try again."),
+        );
+      }
     } finally {
       setSubmitting(false);
       submitLockRef.current = false;
@@ -1062,6 +1080,13 @@ export function DocumentAgentPanel({
       .find((message) => message.role === "user");
     if (!lastUserMessage) return;
     await submitInstruction(lastUserMessage.content, resolveDocumentIdsForRun());
+  }
+
+  async function handleContinue() {
+    if (!continueRunId || busy) return;
+    await submitInstruction("Continue", resolveDocumentIdsForRun(), {
+      continueFromRunId: continueRunId,
+    });
   }
 
   async function handleCancel() {
@@ -1568,7 +1593,18 @@ export function DocumentAgentPanel({
               {runError ? (
                 <div className="flex items-start gap-2 border-l-2 border-danger bg-danger-soft/50 px-2.5 py-2 text-[length:var(--text-panel)] text-danger">
                   <p className="min-w-0 flex-1 leading-snug">{runError}</p>
-                  {canRetryRun ? (
+                  {continueRunId ? (
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      onClick={() => void handleContinue()}
+                      disabled={busy}
+                      className="h-6 shrink-0 border-danger/30 px-2 text-[length:var(--text-xs)] text-danger hover:bg-danger-soft"
+                    >
+                      {submitting ? "Starting…" : "Continue"}
+                    </Button>
+                  ) : canRetryRun ? (
                     <Button
                       type="button"
                       variant="outline"

@@ -77,6 +77,7 @@ const CreateRunBody = z.object({
     .array(z.uuid("documentIds must be UUIDs"))
     .max(20, "At most 20 tagged documents")
     .optional(),
+  continueFromRunId: z.uuid("continueFromRunId must be a UUID").optional(),
 });
 
 const SSE_HEARTBEAT_MS = 15_000;
@@ -328,6 +329,9 @@ export function registerAgentRoutes(
         userId: user.id,
         threadId: params.data.threadId,
         instruction: body.data.instruction,
+        ...(body.data.continueFromRunId !== undefined
+          ? { continueFromRunId: body.data.continueFromRunId }
+          : {}),
         ...(body.data.documentIds !== undefined
           ? { documentIds: body.data.documentIds }
           : {}),
@@ -758,6 +762,15 @@ function mapExecutionError(
                 activeThreadId: live.threadId,
               }
             : {}),
+        },
+      });
+    }
+    if (error.code === "INVALID_CONTINUATION") {
+      return reply.status(409).send({
+        error: {
+          statusCode: 409,
+          message: error.message,
+          code: error.code,
         },
       });
     }

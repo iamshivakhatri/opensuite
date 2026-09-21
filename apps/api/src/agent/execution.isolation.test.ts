@@ -86,6 +86,9 @@ function memoryPersistence(ownerUserId: string): AgentPersistenceService & {
     async getLatestThreadContextCheckpoint() {
       return api.checkpoint;
     },
+    async getMessageForThread(input: { messageId: string; threadId: string }) {
+      return messages.find((message) => message.id === input.messageId && message.threadId === input.threadId) ?? null;
+    },
     async listRecentMessagesForContext(input: {
       checkpoint?: AgentThreadContextCheckpoint | null;
       excludeMessageId?: string;
@@ -813,6 +816,88 @@ test("max_turns reports preserved changes only after a version advance", () => {
     "Stopped before completing the task. Changes made so far were preserved.",
   );
   assert.equal(boundedStopMessage("max_turns", false), "Stopped before completing the task.");
+});
+
+test("continuation creates a fresh 20-turn run from the original task", async () => {
+  const persistence = memoryPersistence("user-1");
+  const original = await persistence.appendMessage({
+    threadId: "thread-1",
+    ownerUserId: "user-1",
+    role: "user",
+    content: "Rewrite the Risks section.",
+  });
+  const partial = await persistence.createRun({
+    threadId: "thread-1",
+    ownerUserId: "user-1",
+    createdByUserId: "user-1",
+    triggeringMessageId: original.id,
+    status: "queued",
+  });
+  await persistence.updateRunStatus({
+    runId: partial.id,
+    ownerUserId: "user-1",
+    status: "failed",
+    errorCode: "AGENT_MAX_TURNS",
+  });
+
+  let observedMaxTurns: number | undefined;
+  let observedModelText = "";
+  const execution = createAgentExecutionService(
+    baseDeps(persistence, async (input) => {
+      observedMaxTurns = input.maxTurns;
+      observedModelText = input.messages.map((message) => String(message.content)).join("\n");
+      return softResult("completed", "Done.");
+    }),
+  );
+  const result = await (
+    await execution.start({
+      userId: "user-1",
+      threadId: "thread-1",
+      instruction: "Continue",
+      continueFromRunId: partial.id,
+    })
+  ).result;
+
+  assert.notEqual(result.run.id, partial.id);
+  assert.equal(result.run.triggeringMessageId, original.id);
+  assert.equal(result.userMessage.content, "Continue");
+  assert.equal(persistence.runs.get(partial.id)?.status, "failed");
+  assert.equal(observedMaxTurns, 20);
+  assert.match(observedModelText, /Original task:\nRewrite the Risks section/);
+  assert.match(observedModelText, /CURRENT bound document state/);
+  assert.equal(observedModelText.includes("STALE_TOOL_OUTPUT"), false);
+});
+
+test("continuation rejects a run that did not stop at the turn limit", async () => {
+  const persistence = memoryPersistence("user-1");
+  const original = await persistence.appendMessage({
+    threadId: "thread-1",
+    ownerUserId: "user-1",
+    role: "user",
+    content: "Edit the document.",
+  });
+  const completed = await persistence.createRun({
+    threadId: "thread-1",
+    ownerUserId: "user-1",
+    createdByUserId: "user-1",
+    triggeringMessageId: original.id,
+    status: "queued",
+  });
+  await persistence.updateRunStatus({
+    runId: completed.id,
+    ownerUserId: "user-1",
+    status: "completed",
+  });
+  const execution = createAgentExecutionService(baseDeps(persistence, async () => softResult("completed", "Done.")));
+  await assert.rejects(
+    () => execution.start({
+      userId: "user-1",
+      threadId: "thread-1",
+      instruction: "Continue",
+      continueFromRunId: completed.id,
+    }),
+    /cannot be continued/,
+  );
 });
 
 test("deadline soft stop becomes failed + AGENT_DEADLINE, not completed", async () => {

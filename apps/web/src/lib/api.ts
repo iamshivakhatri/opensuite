@@ -744,7 +744,7 @@ export async function getAgentMessages(
 export async function startAgentRun(
   threadId: string,
   instruction: string,
-  options?: { documentIds?: readonly string[] },
+  options?: { documentIds?: readonly string[]; continueFromRunId?: string },
 ): Promise<AgentRun> {
   const response = await apiFetch(`/api/agent/threads/${threadId}/runs`, {
     method: "POST",
@@ -753,6 +753,9 @@ export async function startAgentRun(
       instruction,
       ...(options?.documentIds && options.documentIds.length > 0
         ? { documentIds: [...options.documentIds] }
+        : {}),
+      ...(options?.continueFromRunId
+        ? { continueFromRunId: options.continueFromRunId }
         : {}),
     }),
   });

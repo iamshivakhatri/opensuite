@@ -999,6 +999,23 @@ export function createAgentPersistenceService(db: Db) {
       return toMessage(row);
     },
 
+    async getMessageForThread(
+      input: { messageId: string; threadId: string; ownerUserId: string },
+      tx?: AgentPersistenceExecutor,
+    ): Promise<AgentMessage | null> {
+      const client = executor(tx);
+      await requireOwnedThread(client, input.threadId, input.ownerUserId);
+      const [row] = await client
+        .select(messageSelect)
+        .from(schema.agentMessage)
+        .where(and(
+          eq(schema.agentMessage.id, input.messageId),
+          eq(schema.agentMessage.threadId, input.threadId),
+        ))
+        .limit(1);
+      return row ? toMessage(row) : null;
+    },
+
     async listMessagesForThread(
       input: { threadId: string; ownerUserId: string },
       tx?: AgentPersistenceExecutor,

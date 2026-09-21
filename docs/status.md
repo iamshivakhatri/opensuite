@@ -19,6 +19,7 @@ _Read this before starting any work. Keep it a concise current-state handoff, no
 * **Live transcript ordering** — SSE narration now appends within ordered live segments beside tool activities; the existing completed-step renderer is shared, then durable steps replace live entries at terminalization.
 * **Live waiting + final response** — local-only `Working…` marks initial and post-tool model waits; the final model turn streams normal assistant text before an empty terminal `finish` call, keeping one model turn and one durable final message.
 * **Max-turn terminalization** — `max_turns` remains a failed run status but is settled as an expected bounded stop, with a deterministic incomplete/preserved-changes message and run-owned durable transcript shown without a final assistant message.
+* **Continue after max turns** — only `AGENT_MAX_TURNS` runs expose Continue; it starts a fresh API-owned 20-turn run from the original task and current document state, preserving the partial transcript.
 * **Persistent completed-run transcript v1** — durable, presentation-safe narration/tool steps in `agent_step`; final answer remains the linked `agent_message`; completed latest run rehydrates after reopen.
 * **Phase 6B** — bounded Rust `table_rows` inspection and request-local last-three-row context for high-confidence table continuation.
 * **Context Lifecycle C1** — API-only deterministic recent-tail projection bounds persisted history sent to V3; full DB/UI history remains unchanged.
@@ -47,7 +48,7 @@ _Read this before starting any work. Keep it a concise current-state handoff, no
 | Check | Status |
 |---|---|
 | agent-core-v3 unit (21) | Pass |
-| API unit (182; 17 skipped) | Pass |
+| API unit (184; 17 skipped) | Pass |
 | Context lifecycle C1–C7 targeted API checks | Pass |
 | Phase 6A API retrieval + lifecycle/report tests (22) | Pass |
 | engine-client tests (13) | Pass (npm `@opensuitehq/engine@0.1.1` + darwin-arm64) |

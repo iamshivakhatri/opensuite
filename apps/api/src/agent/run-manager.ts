@@ -224,6 +224,7 @@ export function createAgentRunManager(deps: AgentRunManagerDeps) {
     threadId: string;
     instruction: string;
     documentIds?: readonly string[];
+    continueFromRunId?: string;
   }): Promise<StartedLiveRun> {
     const abort = new AbortController();
     const hub = createEventHub();
@@ -238,6 +239,9 @@ export function createAgentRunManager(deps: AgentRunManagerDeps) {
       userId: input.userId,
       threadId: input.threadId,
       instruction: input.instruction,
+      ...(input.continueFromRunId !== undefined
+        ? { continueFromRunId: input.continueFromRunId }
+        : {}),
       ...(input.documentIds !== undefined
         ? { documentIds: input.documentIds }
         : {}),

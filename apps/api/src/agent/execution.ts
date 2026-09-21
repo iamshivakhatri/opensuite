@@ -65,6 +65,8 @@ import {
   type AgentExecutionLeaseService,
 } from "./execution-lease.js";
 
+const MAX_MODEL_TURNS = 20;
+
 type TranscriptEntry = {
   readonly kind: AgentStepKind;
   readonly status: AgentStepStatus;
@@ -182,6 +184,7 @@ export type AgentExecutionErrorCode =
   | "DOCUMENT_NOT_FOUND"
   | "AI_CONFIGURATION_INVALID"
   | "AGENT_EXECUTION_BUSY"
+  | "INVALID_CONTINUATION"
   | "AGENT_EXECUTION_FAILED"
   | "AGENT_PERSISTENCE_FAILED";
 
@@ -197,6 +200,7 @@ export interface AgentExecutionInput {
   readonly threadId: string;
   readonly instruction: string;
   readonly documentIds?: readonly string[];
+  readonly continueFromRunId?: string;
   readonly signal?: AbortSignal;
   readonly liveEvents?: AgentEventSink;
 }
@@ -248,6 +252,10 @@ export function createAgentExecutionService(deps: AgentExecutionServiceDeps) {
       throw new AgentExecutionError("THREAD_NOT_FOUND", "Agent thread not found");
     }
 
+    const continuation = input.continueFromRunId
+      ? await resolveContinuation(deps.persistence, input, thread)
+      : null;
+
     const lease = await deps.lease?.acquire(input.userId);
     if (deps.lease && !lease) {
       throw new AgentExecutionError("AGENT_EXECUTION_BUSY", "Another agent execution is already active.");
@@ -271,7 +279,7 @@ export function createAgentExecutionService(deps: AgentExecutionServiceDeps) {
             threadId: thread.id,
             ownerUserId: input.userId,
             createdByUserId: input.userId,
-            triggeringMessageId: userMessage.id,
+            triggeringMessageId: continuation?.triggeringMessageId ?? userMessage.id,
             baseDocumentVersionId: primaryDocument?.versionId ?? null,
             status: "queued",
           },
@@ -292,6 +300,7 @@ export function createAgentExecutionService(deps: AgentExecutionServiceDeps) {
         structureCache,
         ownerUserId: input.userId,
         instruction: input.instruction,
+        ...(continuation ? { continuationContext: continuation.context } : {}),
         signal: input.signal,
         liveEvents: input.liveEvents,
       });
@@ -327,6 +336,38 @@ async function resolveModel(
   }
 }
 
+async function resolveContinuation(
+  persistence: AgentPersistenceService,
+  input: AgentExecutionInput,
+  thread: AgentThread,
+): Promise<{ readonly triggeringMessageId: string; readonly context: string }> {
+  const prior = await persistence.getRun({
+    runId: input.continueFromRunId!,
+    ownerUserId: input.userId,
+  });
+  if (
+    !prior ||
+    prior.threadId !== thread.id ||
+    prior.status !== "failed" ||
+    prior.errorCode !== "AGENT_MAX_TURNS" ||
+    !prior.triggeringMessageId
+  ) {
+    throw new AgentExecutionError("INVALID_CONTINUATION", "This run cannot be continued.");
+  }
+  const original = await persistence.getMessageForThread({
+    messageId: prior.triggeringMessageId,
+    threadId: thread.id,
+    ownerUserId: input.userId,
+  });
+  if (!original || original.role !== "user") {
+    throw new AgentExecutionError("INVALID_CONTINUATION", "This run cannot be continued.");
+  }
+  return {
+    triggeringMessageId: original.id,
+    context: `Application continuation context:\nThis run continues a previous run that reached its model-turn limit.\n\nOriginal task:\n${original.content}\n\nVerified changes from the previous run were preserved. Continue from the CURRENT bound document state. Do not assume old handles or locations are valid. Do not repeat completed work unnecessarily. Inspect current state only as needed and complete the remaining task.`,
+  };
+}
+
 async function resolvePrimaryDocument(
   documents: Pick<DocumentService, "getOwnedDocument">,
   thread: AgentThread,
@@ -358,6 +399,7 @@ async function runExecution(input: {
   readonly structureCache: SlimDocumentStructureCache;
   readonly ownerUserId: string;
   readonly instruction: string;
+  readonly continuationContext?: string;
   readonly signal?: AbortSignal;
   readonly liveEvents?: AgentEventSink;
 }): Promise<AgentExecutionResult> {
@@ -455,6 +497,7 @@ async function runExecution(input: {
       estimateTokens(system) +
       estimateTokens(toolContext(tools)) +
       estimateTokens(input.instruction) +
+      estimateTokens(input.continuationContext ?? "") +
       estimateTokens(retrieval?.message ?? "");
     const inputBudget =
       input.model.contextLength !== undefined
@@ -494,6 +537,9 @@ async function runExecution(input: {
     const messages: ModelMessage[] = [
       ...(projectedCheckpoint ? [{ role: "user" as const, content: projectedCheckpoint }] : []),
       ...projectedHistoricalMessages,
+      ...(input.continuationContext
+        ? [{ role: "user" as const, content: input.continuationContext }]
+        : []),
       { role: "user", content: input.instruction },
     ];
 
@@ -516,6 +562,7 @@ async function runExecution(input: {
         tools,
         signal: input.signal,
         runId: runShort,
+        maxTurns: MAX_MODEL_TURNS,
         onEvent: (event) => relayEvent(event, input.liveEvents, input.run.id, messageId, transcript),
       });
     } catch (error) {
