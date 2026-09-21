@@ -4,6 +4,7 @@ import { z } from "zod";
 import {
   toAgentMessageDto,
   toAgentRunDto,
+  toAgentStepDto,
   toAgentThreadDto,
 } from "../agent/dto.js";
 import { AgentExecutionError } from "../agent/execution.js";
@@ -273,8 +274,14 @@ export function registerAgentRoutes(
         threadId: params.data.threadId,
         ownerUserId: user.id,
       });
+      const runs = await persistence.listRunsForResultMessages({
+        threadId: params.data.threadId,
+        ownerUserId: user.id,
+        messageIds: page.messages.map((message) => message.id),
+      });
       return reply.send({
         messages: page.messages.map(toAgentMessageDto),
+        runs: runs.map(toAgentRunDto),
         page: {
           hasMore: page.hasMore,
           ...(page.hasMore && page.oldestCursor
@@ -368,10 +375,11 @@ export function registerAgentRoutes(
         });
       }
 
-      return reply.send({
-        run: toAgentRunDto(run),
-        steps: [],
+      const steps = await persistence.listStepsForRun({
+        runId: run.id,
+        ownerUserId: user.id,
       });
+      return reply.send({ run: toAgentRunDto(run), steps: steps.map(toAgentStepDto) });
     } catch (error) {
       return mapPersistenceError(reply, error);
     }
@@ -435,10 +443,11 @@ export function registerAgentRoutes(
         });
       }
 
-      return reply.send({
-        run: toAgentRunDto(current),
-        steps: [],
+      const steps = await persistence.listStepsForRun({
+        runId: current.id,
+        ownerUserId: user.id,
       });
+      return reply.send({ run: toAgentRunDto(current), steps: steps.map(toAgentStepDto) });
     } catch (error) {
       return mapPersistenceError(reply, error);
     }

@@ -616,6 +616,19 @@ export interface AgentRun {
   readonly threadId: string;
   readonly status: AgentRunStatus;
   readonly baseDocumentVersionId?: string | null;
+  readonly resultMessageId: string | null;
+  readonly createdAt: string;
+  readonly startedAt: string | null;
+  readonly completedAt: string | null;
+}
+
+export interface AgentStep {
+  readonly id: string;
+  readonly sequence: number;
+  readonly kind: "narration" | "plan" | "inspect" | "tool" | "confirmation" | "validation" | "final";
+  readonly status: "pending" | "running" | "completed" | "failed" | "cancelled";
+  readonly name: string;
+  readonly summary: string | null;
   readonly createdAt: string;
   readonly startedAt: string | null;
   readonly completedAt: string | null;
@@ -682,6 +695,7 @@ export interface AgentMessagesCursor {
 
 export interface AgentMessagesPage {
   readonly messages: AgentMessage[];
+  readonly runs: AgentRun[];
   readonly latestRun: AgentRun | null;
   readonly hasMore: boolean;
   readonly oldestCursor: AgentMessagesCursor | null;
@@ -710,11 +724,13 @@ export async function getAgentMessages(
   }
   const body = (await response.json()) as {
     messages: AgentMessage[];
+    runs?: AgentRun[];
     page?: { hasMore: boolean; oldestCursor?: AgentMessagesCursor | null };
     latestRun?: AgentRun | null;
   };
   return {
     messages: body.messages,
+    runs: body.runs ?? [],
     latestRun: body.latestRun ?? null,
     hasMore: body.page?.hasMore ?? false,
     oldestCursor: body.page?.oldestCursor ?? null,
@@ -745,12 +761,13 @@ export async function startAgentRun(
 
 export async function getAgentRun(runId: string): Promise<{
   run: AgentRun;
+  steps: AgentStep[];
 }> {
   const response = await apiFetch(`/api/agent/runs/${runId}`);
   if (!response.ok) {
     throw await parseError(response);
   }
-  return (await response.json()) as { run: AgentRun };
+  return (await response.json()) as { run: AgentRun; steps: AgentStep[] };
 }
 
 /**
@@ -786,6 +803,7 @@ export async function waitForAgentRunTerminal(
 
 export async function cancelAgentRun(runId: string): Promise<{
   run: AgentRun;
+  steps: AgentStep[];
 }> {
   const response = await apiFetch(`/api/agent/runs/${runId}/cancel`, {
     method: "POST",
@@ -793,7 +811,7 @@ export async function cancelAgentRun(runId: string): Promise<{
   if (!response.ok) {
     throw await parseError(response);
   }
-  return (await response.json()) as { run: AgentRun };
+  return (await response.json()) as { run: AgentRun; steps: AgentStep[] };
 }
 
 export interface SubscribeAgentRunEventsOptions {

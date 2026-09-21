@@ -155,6 +155,7 @@ export function AgentRunProgress({
   expanded,
   onToggle,
   live = false,
+  showDetails = true,
 }: {
   presentation: AgentRunPresentation;
   status: AgentProgressLine["status"];
@@ -162,9 +163,10 @@ export function AgentRunProgress({
   expanded: boolean;
   onToggle: () => void;
   live?: boolean;
+  showDetails?: boolean;
 }) {
   const isActive = status === "active" || live;
-  const hasDetails = presentation.actionCount > 0;
+  const hasDetails = showDetails && presentation.actionCount > 0;
   const detailsLabel = expanded
     ? "Hide details"
     : detailsAffordanceLabel(presentation.actionCount);
@@ -173,7 +175,7 @@ export function AgentRunProgress({
     <div className="min-w-0">
       {/* Live with rows: activity group is the primary surface (no duplicate headline).
           Completed / streaming-finish: compact headline. */}
-      {!(isActive && presentation.activities.length > 0) ? (
+      {presentation.activities.length === 0 ? (
         <div
           className={cn(
             "flex max-w-full items-center gap-1.5 text-[length:var(--text-xs)] leading-[1.4]",
@@ -209,9 +211,9 @@ export function AgentRunProgress({
         </div>
       ) : null}
 
-      {/* Live: progressive activity rows. Completed: collapsed unless View actions. */}
-      {isActive ? (
-        <AgentActivityGroup activities={presentation.activities} live />
+      {/* Tool facts remain visible after completion; only the elapsed timer is live. */}
+      {presentation.activities.length > 0 ? (
+        <AgentActivityGroup activities={presentation.activities} live={isActive} />
       ) : null}
 
       {hasDetails ? (

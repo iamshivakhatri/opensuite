@@ -43,6 +43,7 @@ export const agentRunStatusEnum = pgEnum("agent_run_status", [
  * Application-level step kinds (not Rust ops, not provider tool names).
  */
 export const agentStepKindEnum = pgEnum("agent_step_kind", [
+  "narration",
   "plan",
   "inspect",
   "tool",
@@ -197,6 +198,9 @@ export const agentRun = pgTable(
       () => documentVersion.id,
       { onDelete: "restrict" },
     ),
+    resultMessageId: uuid("result_message_id").references(() => agentMessage.id, {
+      onDelete: "restrict",
+    }),
     status: agentRunStatusEnum("status").notNull().default("queued"),
     createdAt: timestamp("created_at").defaultNow().notNull(),
     startedAt: timestamp("started_at"),
@@ -309,6 +313,10 @@ export const agentRunRelations = relations(agentRun, ({ one, many }) => ({
   baseDocumentVersion: one(documentVersion, {
     fields: [agentRun.baseDocumentVersionId],
     references: [documentVersion.id],
+  }),
+  resultMessage: one(agentMessage, {
+    fields: [agentRun.resultMessageId],
+    references: [agentMessage.id],
   }),
   steps: many(agentStep),
 }));

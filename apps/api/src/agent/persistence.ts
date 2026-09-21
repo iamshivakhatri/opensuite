@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, gt, isNotNull, isNull, lt, ne, or, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gt, inArray, isNotNull, isNull, lt, ne, or, sql } from "drizzle-orm";
 
 import type { Db } from "@opensuite/db";
 import { schema } from "@opensuite/db";
@@ -18,6 +18,7 @@ export type AgentRunStatus =
   | "cancelled";
 
 export type AgentStepKind =
+  | "narration"
   | "plan"
   | "inspect"
   | "tool"
@@ -60,6 +61,7 @@ export interface AgentRun {
   readonly triggeringMessageId: string | null;
   readonly createdByUserId: string | null;
   readonly baseDocumentVersionId: string | null;
+  readonly resultMessageId: string | null;
   readonly status: AgentRunStatus;
   readonly createdAt: string;
   readonly startedAt: string | null;
@@ -211,6 +213,7 @@ function toRun(row: {
   triggeringMessageId: string | null;
   createdByUserId: string | null;
   baseDocumentVersionId: string | null;
+  resultMessageId: string | null;
   status: AgentRunStatus;
   createdAt: Date;
   startedAt: Date | null;
@@ -224,6 +227,7 @@ function toRun(row: {
     triggeringMessageId: row.triggeringMessageId,
     createdByUserId: row.createdByUserId,
     baseDocumentVersionId: row.baseDocumentVersionId,
+    resultMessageId: row.resultMessageId,
     status: row.status,
     createdAt: row.createdAt.toISOString(),
     startedAt: toIso(row.startedAt),
@@ -312,6 +316,7 @@ const runSelect = {
   triggeringMessageId: schema.agentRun.triggeringMessageId,
   createdByUserId: schema.agentRun.createdByUserId,
   baseDocumentVersionId: schema.agentRun.baseDocumentVersionId,
+  resultMessageId: schema.agentRun.resultMessageId,
   status: schema.agentRun.status,
   createdAt: schema.agentRun.createdAt,
   startedAt: schema.agentRun.startedAt,
@@ -472,6 +477,7 @@ export function createAgentPersistenceService(db: Db) {
       status: AgentRunStatus;
       errorCode?: string | null;
       errorMessage?: string | null;
+      resultMessageId?: string | null;
     },
     tx?: AgentPersistenceExecutor,
   ): Promise<AgentRun> {
@@ -500,7 +506,12 @@ export function createAgentPersistenceService(db: Db) {
       completedAt?: Date;
       errorCode?: string | null;
       errorMessage?: string | null;
+      resultMessageId?: string | null;
     } = { status: input.status };
+
+    if (input.resultMessageId !== undefined) {
+      patch.resultMessageId = input.resultMessageId;
+    }
 
     if (existing.startedAt === null && input.status !== "queued") {
       patch.startedAt = now;
@@ -590,6 +601,50 @@ export function createAgentPersistenceService(db: Db) {
           "STEP_SEQUENCE_CONFLICT",
           "Agent step sequence already exists for this run",
         );
+      }
+      throw error;
+    }
+  }
+
+  async function appendSteps(
+    input: {
+      runId: string;
+      ownerUserId: string;
+      steps: readonly {
+        sequence: number;
+        kind: AgentStepKind;
+        name: string;
+        status: AgentStepStatus;
+        summary?: string | null;
+      }[];
+    },
+    tx?: AgentPersistenceExecutor,
+  ): Promise<AgentStep[]> {
+    if (input.steps.length === 0) return [];
+    const client = executor(tx);
+    const run = await getRun({ runId: input.runId, ownerUserId: input.ownerUserId }, client);
+    if (!run) throw new AgentPersistenceError("RUN_NOT_FOUND", "Agent run not found");
+    const now = new Date();
+    try {
+      const rows = await client
+        .insert(schema.agentStep)
+        .values(input.steps.map((step) => ({
+          runId: input.runId,
+          sequence: step.sequence,
+          kind: step.kind,
+          name: step.name,
+          status: step.status,
+          summary: step.summary ?? null,
+          input: null,
+          output: null,
+          startedAt: now,
+          completedAt: TERMINAL_STEP_STATUSES.has(step.status) ? now : null,
+        })))
+        .returning(stepSelect);
+      return rows.map(toStep);
+    } catch (error) {
+      if (isUniqueViolation(error)) {
+        throw new AgentPersistenceError("STEP_SEQUENCE_CONFLICT", "Agent step sequence already exists for this run");
       }
       throw error;
     }
@@ -701,6 +756,23 @@ export function createAgentPersistenceService(db: Db) {
       .orderBy(asc(schema.agentStep.sequence), asc(schema.agentStep.id));
 
     return rows.map(toStep);
+  }
+
+  async function listRunsForResultMessages(
+    input: { threadId: string; ownerUserId: string; messageIds: readonly string[] },
+    tx?: AgentPersistenceExecutor,
+  ): Promise<AgentRun[]> {
+    if (input.messageIds.length === 0) return [];
+    const client = executor(tx);
+    await requireOwnedThread(client, input.threadId, input.ownerUserId);
+    const rows = await client
+      .select(runSelect)
+      .from(schema.agentRun)
+      .where(and(
+        eq(schema.agentRun.threadId, input.threadId),
+        inArray(schema.agentRun.resultMessageId, [...input.messageIds]),
+      ));
+    return rows.map(toRun);
   }
 
   return {
@@ -1309,8 +1381,10 @@ export function createAgentPersistenceService(db: Db) {
     getRun,
     updateRunStatus,
     appendStep,
+    appendSteps,
     updateStepStatus,
     listStepsForRun,
+    listRunsForResultMessages,
   };
 }
 

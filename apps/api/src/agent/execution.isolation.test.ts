@@ -41,11 +41,13 @@ function memoryPersistence(ownerUserId: string): AgentPersistenceService & {
   contextRowsLoaded: number[];
   compactionSourceRowsLoaded: number[];
   runs: Map<string, AgentRun>;
+  steps: { runId: string; sequence: number; kind: string; status: string; name: string; summary?: string | null }[];
   failOnStatus?: AgentRun["status"];
 } {
   const thread = stubThread(ownerUserId);
   const messages: AgentMessage[] = [];
   const runs = new Map<string, AgentRun>();
+  const steps: { runId: string; sequence: number; kind: string; status: string; name: string; summary?: string | null }[] = [];
   let messageSeq = 0;
   let runSeq = 0;
 
@@ -56,6 +58,7 @@ function memoryPersistence(ownerUserId: string): AgentPersistenceService & {
     contextRowsLoaded: [] as number[],
     compactionSourceRowsLoaded: [] as number[],
     runs,
+    steps,
     failOnStatus: undefined as AgentRun["status"] | undefined,
     async withTransaction<T>(fn: (tx: unknown) => Promise<T>): Promise<T> {
       return fn({});
@@ -178,6 +181,7 @@ function memoryPersistence(ownerUserId: string): AgentPersistenceService & {
         triggeringMessageId: input.triggeringMessageId,
         createdByUserId: input.createdByUserId,
         baseDocumentVersionId: input.baseDocumentVersionId,
+        resultMessageId: null,
         status: input.status,
         createdAt: now(),
         startedAt: null,
@@ -194,6 +198,7 @@ function memoryPersistence(ownerUserId: string): AgentPersistenceService & {
       status: AgentRun["status"];
       errorCode?: string;
       errorMessage?: string;
+      resultMessageId?: string | null;
     }) {
       if (api.failOnStatus && input.status === api.failOnStatus) {
         throw new Error("persistence finalize boom");
@@ -212,12 +217,17 @@ function memoryPersistence(ownerUserId: string): AgentPersistenceService & {
             : existing.completedAt,
         errorCode: input.errorCode ?? existing.errorCode,
         errorMessage: input.errorMessage ?? existing.errorMessage,
+        resultMessageId: input.resultMessageId ?? existing.resultMessageId,
       };
       runs.set(input.runId, updated);
       return updated;
     },
     async getRun(input: { runId: string; ownerUserId: string }) {
       return runs.get(input.runId) ?? null;
+    },
+    async appendSteps(input: { runId: string; steps: { runId?: string; sequence: number; kind: string; status: string; name: string; summary?: string | null }[] }) {
+      steps.push(...input.steps.map((step) => ({ ...step, runId: input.runId })));
+      return [];
     },
   };
 
@@ -228,6 +238,7 @@ function memoryPersistence(ownerUserId: string): AgentPersistenceService & {
     contextRowsLoaded: number[];
     compactionSourceRowsLoaded: number[];
     runs: Map<string, AgentRun>;
+    steps: { runId: string; sequence: number; kind: string; status: string; name: string; summary?: string | null }[];
     failOnStatus?: AgentRun["status"];
   };
 }
@@ -356,6 +367,7 @@ test("successful V3 finish_tool settles completed + agent.completed", async () =
 
   assert.equal(result.run.status, "completed");
   assert.equal(result.assistantMessage?.content, "All done");
+  assert.equal(result.run.resultMessageId, result.assistantMessage?.id);
   assert.ok(events.some((e) => e.type === "agent.completed"));
   assert.equal(events.some((e) => e.type === "agent.failed"), false);
   assert.ok(sawSystem);
@@ -381,6 +393,29 @@ test("successful V3 completed (no tools) settles completed", async () => {
     })
   ).result;
   assert.equal(result.run.status, "completed");
+});
+
+test("completed runs persist narration at tool boundaries without duplicating the final answer", async () => {
+  const persistence = memoryPersistence("user-1");
+  const execution = createAgentExecutionService(
+    baseDeps(persistence, async (input) => {
+      await input.onEvent?.({ type: "text_delta", delta: "I'll inspect the document." });
+      await input.onEvent?.({ type: "tool_started", toolCallId: "inspect-1", toolName: "document.inspect" });
+      await input.onEvent?.({ type: "tool_completed", toolCallId: "inspect-1", toolName: "document.inspect" });
+      await input.onEvent?.({ type: "text_delta", delta: "Done." });
+      return softResult("finish_tool", "Done.");
+    }),
+  );
+
+  await (await execution.start({ userId: "user-1", threadId: "thread-1", instruction: "inspect" })).result;
+
+  assert.deepEqual(
+    persistence.steps.map((step) => [step.sequence, step.kind, step.status, step.name, step.summary]),
+    [
+      [0, "narration", "completed", "Assistant narration", "I'll inspect the document."],
+      [1, "inspect", "completed", "document.inspect", "Completed"],
+    ],
+  );
 });
 
 test("execution sends a bounded historical tail while retaining full persistence", async () => {
@@ -922,6 +957,7 @@ test("run-manager ownership: rejecting background result does not produce unhand
         triggeringMessageId: "msg-1",
         createdByUserId: "user-1",
         baseDocumentVersionId: null,
+        resultMessageId: null,
         status: "running",
         createdAt: now(),
         startedAt: now(),
@@ -1091,8 +1127,9 @@ test("duplicate cancel is idempotent and does not corrupt a failed run", async (
     id: "cancel-run-1",
     threadId: "thread-1",
     triggeringMessageId: "msg-1",
-    createdByUserId: "user-1",
-    baseDocumentVersionId: null,
+        createdByUserId: "user-1",
+        baseDocumentVersionId: null,
+        resultMessageId: null,
     status: "running",
     createdAt: now(),
     startedAt: now(),

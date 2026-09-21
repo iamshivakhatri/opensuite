@@ -34,6 +34,7 @@ import {
   type AgentMessage,
   type AgentMessagesCursor,
   type AgentRun,
+  type AgentStep,
   type AgentThread,
   type ListedDocument,
 } from "@/lib/api";
@@ -61,6 +62,39 @@ type TaggedDocument = {
   readonly name: string;
   readonly format: string;
 };
+
+function stepProgressLine(step: AgentStep): AgentProgressLine | null {
+  if (step.kind === "narration" || step.status === "cancelled") return null;
+  return {
+    id: `step:${step.id}`,
+    label: step.summary ?? step.name,
+    status: step.status === "failed" ? "error" : "done",
+    toolName: step.name,
+  };
+}
+
+function CompletedRunTranscript({ steps }: { steps: readonly AgentStep[] }) {
+  return (
+    <div className="flex flex-col gap-2">
+      {steps.map((step) => {
+        if (step.kind === "narration") {
+          return step.summary ? <AgentMarkdown key={step.id} text={step.summary} /> : null;
+        }
+        const line = stepProgressLine(step);
+        return line ? (
+          <AgentRunProgress
+            key={step.id}
+            presentation={presentAgentRun([line])}
+            status={line.status}
+            expanded={false}
+            onToggle={() => undefined}
+            showDetails={false}
+          />
+        ) : null;
+      })}
+    </div>
+  );
+}
 
 function threadLabel(thread: AgentThread): string {
   if (thread.title?.trim()) return thread.title.trim();
@@ -107,6 +141,9 @@ export function DocumentAgentPanel({
   const historyAnchorRef = React.useRef<HTMLButtonElement>(null);
   const historyMenuRef = React.useRef<HTMLDivElement>(null);
   const [messages, setMessages] = React.useState<AgentMessage[]>([]);
+  const [runStepsByMessageId, setRunStepsByMessageId] = React.useState<
+    Readonly<Record<string, readonly AgentStep[]>>
+  >({});
   /** C6 pagination: whether older history exists beyond the currently loaded pages. */
   const [hasMoreMessages, setHasMoreMessages] = React.useState(false);
   const [oldestMessagesCursor, setOldestMessagesCursor] =
@@ -263,6 +300,12 @@ export function DocumentAgentPanel({
     return () => window.clearInterval(id);
   }, [busy, progress]);
 
+  const saveRunTranscript = React.useCallback((snapshot: { run: AgentRun; steps: AgentStep[] }) => {
+    const messageId = snapshot.run.resultMessageId;
+    if (!messageId) return;
+    setRunStepsByMessageId((previous) => ({ ...previous, [messageId]: snapshot.steps }));
+  }, []);
+
   /** Fetches the latest message page and merges it into the transcript by id. */
   const refreshMessages = React.useCallback(async (id: string) => {
     const result = await getAgentMessages(id);
@@ -273,8 +316,11 @@ export function DocumentAgentPanel({
     setMessages((prev) => mergeMessagePage(prev, result.messages));
     setHasMoreMessages(result.hasMore);
     setOldestMessagesCursor(result.oldestCursor);
+    void Promise.all(result.runs.map((run) => getAgentRun(run.id))).then((snapshots) => {
+      if (activeThreadRequestRef.current === id) snapshots.forEach(saveRunTranscript);
+    }).catch(() => undefined);
     return result;
-  }, []);
+  }, [saveRunTranscript]);
 
   /** Loads the page preceding the oldest loaded message, preserving scroll position. */
   const loadOlderMessages = React.useCallback(async () => {
@@ -296,6 +342,9 @@ export function DocumentAgentPanel({
       setMessages((prev) => prependOlderMessages(prev, result.messages));
       setHasMoreMessages(result.hasMore);
       setOldestMessagesCursor(result.oldestCursor);
+      void Promise.all(result.runs.map((run) => getAgentRun(run.id))).then((snapshots) => {
+        if (activeThreadRequestRef.current === id) snapshots.forEach(saveRunTranscript);
+      }).catch(() => undefined);
       requestAnimationFrame(() => {
         const el = scrollRef.current;
         if (!el) return;
@@ -313,7 +362,7 @@ export function DocumentAgentPanel({
         setLoadingOlderMessages(false);
       }
     }
-  }, [threadId, oldestMessagesCursor, loadingOlderMessages]);
+  }, [threadId, oldestMessagesCursor, loadingOlderMessages, saveRunTranscript]);
 
   const applyTerminalRunStatus = React.useCallback((run: AgentRun) => {
     const fromServer = agentRunDurationMs(run.startedAt, run.completedAt);
@@ -376,6 +425,7 @@ export function DocumentAgentPanel({
         return null;
       }
       setActiveRun(snapshot.run);
+      saveRunTranscript(snapshot);
       const refreshed = await refreshMessages(thread);
       // Keep liveDraft until durable assistant text is present (avoids a blank flash).
       const hasAssistant = refreshed.messages.some(
@@ -387,7 +437,7 @@ export function DocumentAgentPanel({
       applyTerminalRunStatus(snapshot.run);
       return snapshot.run;
     },
-    [applyTerminalRunStatus, refreshMessages],
+    [applyTerminalRunStatus, refreshMessages, saveRunTranscript],
   );
 
   /** Clear busy UI when SSE dies and the run is no longer live (abandoned). */
@@ -656,6 +706,7 @@ export function DocumentAgentPanel({
     runIdRef.current = null;
     runStartedAtRef.current = null;
     setLiveDraft(null);
+    setRunStepsByMessageId({});
     setHistoryOpen(false);
     reconnectAttemptsRef.current = 0;
 
@@ -690,6 +741,8 @@ export function DocumentAgentPanel({
       if (latestRun && isActiveAgentRunStatus(latestRun.status)) {
         attachRunRef.current(latestRun, latest.id);
       } else if (latestRun && !isActiveAgentRunStatus(latestRun.status)) {
+        const snapshot = await getAgentRun(latestRun.id);
+        saveRunTranscript(snapshot);
         const ms = agentRunDurationMs(latestRun.startedAt, latestRun.completedAt);
         if (ms !== null) {
           setRunTotalMs(ms);
@@ -720,7 +773,7 @@ export function DocumentAgentPanel({
         message: userFacingError(error, "Could not load the agent conversation."),
       });
     }
-  }, [refreshMessages, stopSse, workspaceId]);
+  }, [refreshMessages, saveRunTranscript, stopSse, workspaceId]);
 
   React.useEffect(() => {
     void load();
@@ -1025,6 +1078,7 @@ export function DocumentAgentPanel({
     setCanRetryRun(false);
     setVersionNotice(null);
     setLiveDraft(null);
+    setRunStepsByMessageId({});
     setDraft("");
     runIdRef.current = null;
     reconnectAttemptsRef.current = 0;
@@ -1042,6 +1096,8 @@ export function DocumentAgentPanel({
       if (latestRun && isActiveAgentRunStatus(latestRun.status)) {
         attachRun(latestRun, nextId);
       } else if (latestRun && !isActiveAgentRunStatus(latestRun.status)) {
+        const snapshot = await getAgentRun(latestRun.id);
+        saveRunTranscript(snapshot);
         const ms = agentRunDurationMs(latestRun.startedAt, latestRun.completedAt);
         if (ms !== null) {
           setRunTotalMs(ms);
@@ -1366,6 +1422,7 @@ export function DocumentAgentPanel({
             <div className="flex flex-col gap-4">
               {messages.map((message, index) => {
                 const isLast = index === messages.length - 1;
+                const transcriptSteps = runStepsByMessageId[message.id];
                 if (message.role === "user") {
                   return (
                     <div
@@ -1378,7 +1435,9 @@ export function DocumentAgentPanel({
                 }
                 return (
                   <div key={message.id} className="flex flex-col gap-1.5">
-                    {isLast && showRunProgressOnLastAssistant && lastTurn ? (
+                    {transcriptSteps ? (
+                      <CompletedRunTranscript steps={transcriptSteps} />
+                    ) : isLast && showRunProgressOnLastAssistant && lastTurn ? (
                       <AgentRunProgress
                         presentation={presentAgentRun(lastTurn.lines, {
                           durationMs: lastTurn.durationMs,

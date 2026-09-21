@@ -44,6 +44,7 @@ packages/db/migrations/*.sql
 !packages/db/migrations/0003_unusual_ironclad.sql
 !packages/db/migrations/0004_cooing_nemesis.sql
 !packages/db/migrations/0005_lowly_gamma_corps.sql
+!packages/db/migrations/0015_persistent_run_transcript.sql
 !packages/db/migrations/0006_sloppy_starbolt.sql
 !packages/db/migrations/0007_curved_karma.sql
 !packages/db/migrations/0008_gigantic_leader.sql

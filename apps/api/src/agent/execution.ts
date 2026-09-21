@@ -54,6 +54,8 @@ import {
   type AgentMessage,
   type AgentPersistenceService,
   type AgentRun,
+  type AgentStepKind,
+  type AgentStepStatus,
   type AgentThread,
   type AgentThreadContextCheckpoint,
 } from "./persistence.js";
@@ -62,6 +64,70 @@ import {
   type AgentExecutionLease,
   type AgentExecutionLeaseService,
 } from "./execution-lease.js";
+
+type TranscriptEntry = {
+  readonly kind: AgentStepKind;
+  readonly status: AgentStepStatus;
+  readonly name: string;
+  readonly summary: string;
+};
+
+function createTranscriptCollector() {
+  const entries: TranscriptEntry[] = [];
+  let narration = "";
+  const flushNarration = () => {
+    const summary = narration.trim();
+    narration = "";
+    if (summary) entries.push({ kind: "narration", status: "completed", name: "Assistant narration", summary });
+  };
+  return {
+    text(delta: string) {
+      narration += delta;
+    },
+    toolStarted() {
+      flushNarration();
+    },
+    toolFinished(toolName: string, status: AgentStepStatus, skipped = false) {
+      entries.push({
+        kind: toolName === "document.inspect" ? "inspect" : "tool",
+        status,
+        name: toolName,
+        summary: skipped ? "Skipped" : status === "completed" ? "Completed" : "Failed",
+      });
+    },
+    finish(finalText?: string) {
+      const remaining = narration.trim();
+      narration = "";
+      if (
+        remaining &&
+        remaining.replace(/\s+/g, " ") !== (finalText ?? "").trim().replace(/\s+/g, " ")
+      ) {
+        entries.push({ kind: "narration", status: "completed", name: "Assistant narration", summary: remaining });
+      }
+    },
+    entries() {
+      return entries;
+    },
+  };
+}
+
+async function persistTranscript(
+  persistence: AgentPersistenceService,
+  ownerUserId: string,
+  runId: string,
+  entries: readonly TranscriptEntry[],
+): Promise<void> {
+  if (entries.length === 0) return;
+  try {
+    await persistence.appendSteps({
+      runId,
+      ownerUserId,
+      steps: entries.map((entry, sequence) => ({ ...entry, sequence })),
+    });
+  } catch (error) {
+    console.error(`[agent] run=${runId.slice(0, 8)} transcript_persist_failed reason=${summarizeError(error)}`);
+  }
+}
 
 export type AgentEvent =
   | { readonly type: "agent.started"; readonly runId: string; readonly at: string }
@@ -295,6 +361,7 @@ async function runExecution(input: {
   readonly signal?: AbortSignal;
   readonly liveEvents?: AgentEventSink;
 }): Promise<AgentExecutionResult> {
+  const transcript = createTranscriptCollector();
   try {
     const checkpoint = await input.deps.persistence.getLatestThreadContextCheckpoint({
       threadId: input.thread.id,
@@ -449,7 +516,7 @@ async function runExecution(input: {
         tools,
         signal: input.signal,
         runId: runShort,
-        onEvent: (event) => relayEvent(event, input.liveEvents, input.run.id, messageId),
+        onEvent: (event) => relayEvent(event, input.liveEvents, input.run.id, messageId, transcript),
       });
     } catch (error) {
       emitRunReport({
@@ -502,6 +569,7 @@ async function runExecution(input: {
     });
 
     if (!isSuccessfulStop(result.stopReason)) {
+      transcript.finish();
       return settleTerminalRunFailure({
         error: new Error(`Agent stopped: ${result.stopReason}`),
         cancelled: input.signal?.aborted === true,
@@ -513,6 +581,7 @@ async function runExecution(input: {
         liveEvents: input.liveEvents,
         failureCode: failureCodeForStopReason(result.stopReason),
         failureMessage: `Agent stopped with ${result.stopReason}`,
+        transcript: transcript.entries(),
       });
     }
 
@@ -536,6 +605,8 @@ async function runExecution(input: {
       runId: input.run.id,
       content: result.text,
     });
+    transcript.finish(result.text);
+    await persistTranscript(input.deps.persistence, input.ownerUserId, input.run.id, transcript.entries());
     await input.liveEvents?.emit({ type: "agent.completed", runId: input.run.id, at: new Date().toISOString() });
     void compactThreadContext({
       persistence: input.deps.persistence,
@@ -555,6 +626,7 @@ async function runExecution(input: {
     // Convert every run failure into terminal product state and settle normally.
     // Includes pre-model setup (checkpoint/history load). Re-throwing here used
     // to reject the background promise and leave the run non-terminal forever.
+    transcript.finish();
     return settleTerminalRunFailure({
       error,
       cancelled: input.signal?.aborted === true,
@@ -564,6 +636,7 @@ async function runExecution(input: {
       userMessage: input.userMessage,
       run: input.run,
       liveEvents: input.liveEvents,
+      transcript: transcript.entries(),
     });
   }
 }
@@ -745,7 +818,13 @@ async function relayEvent(
   sink: AgentEventSink | undefined,
   runId: string,
   messageId: string,
+  transcript: ReturnType<typeof createTranscriptCollector>,
 ): Promise<void> {
+  if (event.type === "text_delta") transcript.text(event.delta);
+  if (event.type === "tool_started") transcript.toolStarted();
+  if (event.type === "tool_completed") transcript.toolFinished(event.toolName, "completed");
+  if (event.type === "tool_failed") transcript.toolFinished(event.toolName, "failed");
+  if (event.type === "tool_skipped") transcript.toolFinished(event.toolName, "cancelled", true);
   if (!sink) return;
   const at = new Date().toISOString();
   if (event.type === "started") return sink.emit({ type: "agent.started", runId, at });
@@ -805,7 +884,12 @@ async function finalizeCompletedRun(input: {
       ? await input.persistence.appendMessage({ threadId: input.threadId, ownerUserId: input.ownerUserId, role: "assistant", content }, tx)
       : null;
     const run = await input.persistence.updateRunStatus(
-      { runId: input.runId, ownerUserId: input.ownerUserId, status: "completed" },
+      {
+        runId: input.runId,
+        ownerUserId: input.ownerUserId,
+        status: "completed",
+        resultMessageId: assistantMessage?.id ?? null,
+      },
       tx,
     );
     return { run, assistantMessage };
@@ -823,6 +907,7 @@ async function settleTerminalRunFailure(input: {
   readonly liveEvents?: AgentEventSink;
   readonly failureCode?: string;
   readonly failureMessage?: string;
+  readonly transcript?: readonly TranscriptEntry[];
 }): Promise<AgentExecutionResult> {
   const runShort = input.run.id.slice(0, 8);
   const failureCode = input.failureCode ?? "AGENT_EXECUTION_FAILED";
@@ -863,6 +948,13 @@ async function settleTerminalRunFailure(input: {
         `[agent] run=${runShort} terminal_finalize_failed reason=${summarizeError(finalizeError)}`,
       );
     }
+
+    await persistTranscript(
+      input.persistence,
+      input.ownerUserId,
+      input.run.id,
+      input.transcript ?? [],
+    );
 
     try {
       await input.liveEvents?.emit(

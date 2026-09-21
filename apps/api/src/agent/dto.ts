@@ -27,6 +27,7 @@ export interface AgentRunDto {
   readonly threadId: string;
   readonly status: AgentRun["status"];
   readonly baseDocumentVersionId: string | null;
+  readonly resultMessageId: string | null;
   readonly createdAt: string;
   readonly startedAt: string | null;
   readonly completedAt: string | null;
@@ -71,6 +72,7 @@ export function toAgentRunDto(run: AgentRun): AgentRunDto {
     threadId: run.threadId,
     status: run.status,
     baseDocumentVersionId: run.baseDocumentVersionId,
+    resultMessageId: run.resultMessageId,
     createdAt: run.createdAt,
     startedAt: run.startedAt,
     completedAt: run.completedAt,

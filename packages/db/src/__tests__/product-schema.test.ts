@@ -108,6 +108,7 @@ test("agent enums match the decided persistence vocabulary", () => {
     "cancelled",
   ]);
   assert.deepEqual(agentStepKindEnum.enumValues, [
+    "narration",
     "plan",
     "inspect",
     "tool",
@@ -134,6 +135,7 @@ test("agent_thread soft-archives; messages/runs/steps are immutable history", ()
 
 test("agent_run may record base document version provenance", () => {
   assert.ok("baseDocumentVersionId" in agentRun);
+  assert.ok("resultMessageId" in agentRun);
 });
 
 test("thread context checkpoints keep a complete message ordering boundary", () => {
