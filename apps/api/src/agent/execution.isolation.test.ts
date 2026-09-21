@@ -304,8 +304,12 @@ function checkpointResult(text: string): RunModelResult {
 const validCheckpoint = `STANDING CONTEXT:\n- goal\nDECISIONS:\n- none\nCOMPLETED WORK:\n- none\nREFERENCES:\n- none\nOPEN ITEMS:\n- none`;
 
 async function waitForCompaction(): Promise<void> {
-  await new Promise((resolve) => setImmediate(resolve));
-  await new Promise((resolve) => setImmediate(resolve));
+  // Compaction is fire-and-forget after settle; drain a few turns so
+  // checkpoint writes land before the next assertion/start.
+  for (let i = 0; i < 6; i += 1) {
+    await new Promise((resolve) => setImmediate(resolve));
+  }
+  await new Promise((resolve) => setTimeout(resolve, 0));
 }
 
 async function collectUnhandledRejections(
@@ -957,4 +961,224 @@ test("run-manager ownership: rejecting background result does not produce unhand
   });
 
   assert.equal(unhandled.length, 0);
+});
+
+test("pre-model checkpoint/history throw terminalizes the run (not orphaned queued)", async () => {
+  const persistence = memoryPersistence("user-1");
+  persistence.getLatestThreadContextCheckpoint = async () => {
+    const err = new Error(
+      'Failed query: select "agent_thread_context_checkpoint"...\nparams: x',
+    );
+    (err as Error & { cause: Error }).cause = Object.assign(
+      new Error('relation "agent_thread_context_checkpoint" does not exist'),
+      { code: "42P01" },
+    );
+    throw err;
+  };
+
+  const events: AgentEvent[] = [];
+  const execution = createAgentExecutionService(
+    baseDeps(persistence, async () => {
+      throw new Error("model should not run");
+    }),
+  );
+
+  const handle = await execution.start({
+    userId: "user-1",
+    threadId: "thread-1",
+    instruction: "rewrite intro",
+    liveEvents: {
+      emit(event) {
+        events.push(event);
+      },
+    },
+  });
+
+  const result = await handle.result;
+  assert.equal(result.run.status, "failed");
+  assert.equal(result.run.errorCode, "AGENT_EXECUTION_FAILED");
+  assert.equal(events.some((e) => e.type === "agent.failed"), true);
+  assert.equal(events.some((e) => e.type === "agent.completed"), false);
+});
+
+test("run-manager safety net terminalizes when background result rejects", async () => {
+  const persistence = memoryPersistence("user-1");
+  let rejectResult!: (error: Error) => void;
+  const resultPromise = new Promise<never>((_, reject) => {
+    rejectResult = reject;
+  });
+
+  // Seed a durable queued run so the safety net can update it.
+  const seeded = await persistence.createRun({
+    threadId: "thread-1",
+    ownerUserId: "user-1",
+    createdByUserId: "user-1",
+    triggeringMessageId: "msg-seed",
+    baseDocumentVersionId: null,
+    status: "queued",
+  });
+
+  const execution = {
+    async start() {
+      return {
+        thread: stubThread("user-1"),
+        userMessage: {
+          id: "msg-1",
+          threadId: "thread-1",
+          role: "user" as const,
+          content: "go",
+          createdAt: now(),
+        },
+        run: seeded,
+        result: resultPromise,
+      };
+    },
+  };
+
+  const events: Array<{ type: string }> = [];
+  const runManager = createAgentRunManager({
+    execution: execution as never,
+    persistence,
+    liveGraceMs: 5,
+  });
+
+  const started = await runManager.startRun({
+    userId: "user-1",
+    threadId: "thread-1",
+    instruction: "go",
+  });
+  const sub = runManager.subscribeEvents({
+    runId: started.run.id,
+    ownerUserId: "user-1",
+    onEvent: (event) => {
+      events.push({ type: event.type });
+    },
+  });
+  assert.equal(sub.status, "ok");
+
+  rejectResult(new Error("escaped before settle"));
+  await runManager.waitForIdle();
+  // Allow the async safety-net catch to finish.
+  await new Promise((resolve) => setTimeout(resolve, 20));
+
+  const durable = await persistence.getRun({
+    runId: seeded.id,
+    ownerUserId: "user-1",
+  });
+  assert.equal(durable?.status, "failed");
+  assert.equal(events.some((e) => e.type === "agent.failed"), true);
+  if (sub.status === "ok") sub.unsubscribe();
+});
+
+test("duplicate cancel is idempotent and does not corrupt a failed run", async () => {
+  const persistence = memoryPersistence("user-1");
+  let resolveRun!: (value: {
+    thread: AgentThread;
+    userMessage: AgentMessage;
+    run: AgentRun;
+    assistantMessage: null;
+  }) => void;
+  const resultPromise = new Promise<{
+    thread: AgentThread;
+    userMessage: AgentMessage;
+    run: AgentRun;
+    assistantMessage: null;
+  }>((resolve) => {
+    resolveRun = resolve;
+  });
+
+  const run: AgentRun = {
+    id: "cancel-run-1",
+    threadId: "thread-1",
+    triggeringMessageId: "msg-1",
+    createdByUserId: "user-1",
+    baseDocumentVersionId: null,
+    status: "running",
+    createdAt: now(),
+    startedAt: now(),
+    completedAt: null,
+    errorCode: null,
+    errorMessage: null,
+  };
+  persistence.runs.set(run.id, run);
+
+  const execution = {
+    async start() {
+      return {
+        thread: stubThread("user-1"),
+        userMessage: {
+          id: "msg-1",
+          threadId: "thread-1",
+          role: "user" as const,
+          content: "go",
+          createdAt: now(),
+        },
+        run,
+        result: resultPromise,
+      };
+    },
+  };
+
+  const runManager = createAgentRunManager({
+    execution: execution as never,
+    persistence,
+    liveGraceMs: 5,
+  });
+
+  await runManager.startRun({
+    userId: "user-1",
+    threadId: "thread-1",
+    instruction: "go",
+  });
+
+  assert.equal(runManager.cancel({ runId: run.id, ownerUserId: "user-1" }), true);
+  assert.equal(runManager.cancel({ runId: run.id, ownerUserId: "user-1" }), true);
+
+  // Simulate settle as cancelled (what runExecution does on abort).
+  await persistence.updateRunStatus({
+    runId: run.id,
+    ownerUserId: "user-1",
+    status: "cancelled",
+  });
+  resolveRun({
+    thread: stubThread("user-1"),
+    userMessage: {
+      id: "msg-1",
+      threadId: "thread-1",
+      role: "user",
+      content: "go",
+      createdAt: now(),
+    },
+    run: (await persistence.getRun({ runId: run.id, ownerUserId: "user-1" }))!,
+    assistantMessage: null,
+  });
+  await runManager.waitForIdle();
+
+  const durable = await persistence.getRun({
+    runId: run.id,
+    ownerUserId: "user-1",
+  });
+  assert.equal(durable?.status, "cancelled");
+
+  // During liveGraceMs the hub is still tracked; cancel remains a harmless
+  // idempotent true (abort already done). After grace, the entry is gone.
+  assert.equal(runManager.cancel({ runId: run.id, ownerUserId: "user-1" }), true);
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  assert.equal(runManager.cancel({ runId: run.id, ownerUserId: "user-1" }), false);
+
+  // Cancel after failed must not corrupt durable terminal state.
+  await persistence.updateRunStatus({
+    runId: run.id,
+    ownerUserId: "user-1",
+    status: "failed",
+    errorCode: "AGENT_EXECUTION_FAILED",
+    errorMessage: "Agent execution failed",
+  });
+  assert.equal(runManager.cancel({ runId: run.id, ownerUserId: "user-1" }), false);
+  const failed = await persistence.getRun({
+    runId: run.id,
+    ownerUserId: "user-1",
+  });
+  assert.equal(failed?.status, "failed");
+  assert.equal(failed?.errorCode, "AGENT_EXECUTION_FAILED");
 });

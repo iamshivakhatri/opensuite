@@ -638,9 +638,18 @@ export function reduceAgentProgress(
         },
       ];
     }
-    case "agent.completed":
+    case "agent.completed": {
+      // Idempotent: duplicate/late terminal events must not re-freeze or
+      // append duplicate terminal rows.
+      if (lines.some((line) => isTerminalLine(line))) {
+        return [...lines];
+      }
       return freezeActive(freezeThoughtSegment(lines, nowMs), nowMs);
-    case "agent.failed":
+    }
+    case "agent.failed": {
+      if (lines.some((line) => line.id === "failed" || line.id === "cancelled")) {
+        return [...lines];
+      }
       return [
         ...freezeActive(freezeThoughtSegment(lines, nowMs), nowMs),
         {
@@ -651,7 +660,11 @@ export function reduceAgentProgress(
           endedAt: nowMs,
         },
       ];
-    case "agent.cancelled":
+    }
+    case "agent.cancelled": {
+      if (lines.some((line) => line.id === "cancelled" || line.id === "failed")) {
+        return [...lines];
+      }
       return [
         ...freezeActive(freezeThoughtSegment(lines, nowMs), nowMs),
         {
@@ -662,6 +675,7 @@ export function reduceAgentProgress(
           endedAt: nowMs,
         },
       ];
+    }
     default:
       return [...lines];
   }

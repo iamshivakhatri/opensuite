@@ -258,6 +258,8 @@ export function createAgentRunManager(deps: AgentRunManagerDeps) {
     // Important: Promise.finally returns a *new* promise that re-rejects when
     // the source rejects. Leaving that derived promise unobserved terminates
     // Node (unhandledRejection → throw). Chain .catch on the finally result.
+    // Final safety net: any escaped rejection must terminalize the durable run
+    // and emit agent.failed so the UI cannot stay in Thinking forever.
     void handle.result
       .finally(() => {
         const timer = setTimeout(() => {
@@ -270,11 +272,14 @@ export function createAgentRunManager(deps: AgentRunManagerDeps) {
         timer.unref?.();
       })
       .catch((error) => {
-        console.error(
-          `[agent] run=${handle.run.id.slice(0, 8)} background_unhandled reason=${
-            error instanceof Error ? `${error.name}: ${error.message}`.slice(0, 240) : String(error).slice(0, 240)
-          }`,
-        );
+        void terminalizeEscapedBackgroundFailure({
+          persistence: deps.persistence,
+          runId: handle.run.id,
+          ownerUserId: input.userId,
+          hub: entry.hub,
+          aborted: entry.abort.signal.aborted,
+          error,
+        });
       });
 
     return {
@@ -369,6 +374,76 @@ export function createAgentRunManager(deps: AgentRunManagerDeps) {
     /** Test helper */
     _activeCount: () => active.size,
   };
+}
+
+const TERMINAL_STATUSES = new Set(["completed", "failed", "cancelled"]);
+
+/**
+ * Final safety net when the background execution promise rejects without
+ * settling through normal runExecution catch paths. Marks the durable run
+ * failed (or cancelled if already aborted) and emits a terminal SSE event.
+ * Idempotent if the run is already terminal.
+ */
+async function terminalizeEscapedBackgroundFailure(input: {
+  readonly persistence: AgentPersistenceService;
+  readonly runId: string;
+  readonly ownerUserId: string;
+  readonly hub: EventHub;
+  readonly aborted: boolean;
+  readonly error: unknown;
+}): Promise<void> {
+  const runShort = input.runId.slice(0, 8);
+  const reason =
+    input.error instanceof Error
+      ? `${input.error.name}: ${input.error.message}`.slice(0, 240)
+      : String(input.error).slice(0, 240);
+  console.error(`[agent] run=${runShort} background_unhandled reason=${reason}`);
+
+  try {
+    const current = await input.persistence.getRun({
+      runId: input.runId,
+      ownerUserId: input.ownerUserId,
+    });
+    if (!current || TERMINAL_STATUSES.has(current.status)) {
+      return;
+    }
+
+    const status = input.aborted ? "cancelled" : "failed";
+    await input.persistence.updateRunStatus({
+      runId: input.runId,
+      ownerUserId: input.ownerUserId,
+      status,
+      ...(status === "failed"
+        ? {
+            errorCode: "AGENT_EXECUTION_FAILED",
+            errorMessage: "Agent execution failed",
+          }
+        : {}),
+    });
+
+    input.hub.publishFromAgent(
+      status === "cancelled"
+        ? {
+            type: "agent.cancelled",
+            runId: input.runId,
+            at: new Date().toISOString(),
+          }
+        : {
+            type: "agent.failed",
+            runId: input.runId,
+            at: new Date().toISOString(),
+            code: "AGENT_EXECUTION_FAILED",
+          },
+    );
+  } catch (finalizeError) {
+    const detail =
+      finalizeError instanceof Error
+        ? `${finalizeError.name}: ${finalizeError.message}`.slice(0, 240)
+        : String(finalizeError).slice(0, 240);
+    console.error(
+      `[agent] run=${runShort} background_terminalize_failed reason=${detail}`,
+    );
+  }
 }
 
 export type AgentRunManager = ReturnType<typeof createAgentRunManager>;

@@ -409,6 +409,8 @@ export function registerAgentRoutes(
         });
       }
 
+      // Idempotent: already-terminal runs return current state without
+      // re-aborting or waiting on a live hub that may already be gone.
       if (!TERMINAL_RUN_STATUSES.has(run.status)) {
         const cancelled = runManager.cancel({
           runId: run.id,

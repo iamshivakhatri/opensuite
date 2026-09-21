@@ -295,30 +295,30 @@ async function runExecution(input: {
   readonly signal?: AbortSignal;
   readonly liveEvents?: AgentEventSink;
 }): Promise<AgentExecutionResult> {
-  const checkpoint = await input.deps.persistence.getLatestThreadContextCheckpoint({
-    threadId: input.thread.id,
-    ownerUserId: input.ownerUserId,
-  });
-  const priorMessages = await input.deps.persistence.listRecentMessagesForContext({
-    threadId: input.thread.id,
-    ownerUserId: input.ownerUserId,
-    checkpoint,
-    excludeMessageId: input.userMessage.id,
-    limit: MAX_HISTORY_MESSAGES,
-  });
-  const messageId = `v3-${input.run.id}`;
-  const retrieval = await loadRetrievedContext({
-    cache: input.structureCache,
-    binding: input.deps.docxBinding,
-    documents: input.deps.documents,
-    ownerUserId: input.ownerUserId,
-    documentId: input.primaryDocumentId,
-    versionId: input.run.baseDocumentVersionId,
-    format: input.primaryDocumentFormat,
-    instruction: input.instruction,
-  });
-
   try {
+    const checkpoint = await input.deps.persistence.getLatestThreadContextCheckpoint({
+      threadId: input.thread.id,
+      ownerUserId: input.ownerUserId,
+    });
+    const priorMessages = await input.deps.persistence.listRecentMessagesForContext({
+      threadId: input.thread.id,
+      ownerUserId: input.ownerUserId,
+      checkpoint,
+      excludeMessageId: input.userMessage.id,
+      limit: MAX_HISTORY_MESSAGES,
+    });
+    const messageId = `v3-${input.run.id}`;
+    const retrieval = await loadRetrievedContext({
+      cache: input.structureCache,
+      binding: input.deps.docxBinding,
+      documents: input.deps.documents,
+      ownerUserId: input.ownerUserId,
+      documentId: input.primaryDocumentId,
+      versionId: input.run.baseDocumentVersionId,
+      format: input.primaryDocumentFormat,
+      instruction: input.instruction,
+    });
+
     await input.deps.persistence.updateRunStatus({
       runId: input.run.id,
       ownerUserId: input.ownerUserId,
@@ -553,8 +553,8 @@ async function runExecution(input: {
     return { thread: input.thread, userMessage: input.userMessage, ...finalized };
   } catch (error) {
     // Convert every run failure into terminal product state and settle normally.
-    // Re-throwing here used to reject the background promise; combined with an
-    // unobserved Promise.finally in run-manager, Node treated that as fatal.
+    // Includes pre-model setup (checkpoint/history load). Re-throwing here used
+    // to reject the background promise and leave the run non-terminal forever.
     return settleTerminalRunFailure({
       error,
       cancelled: input.signal?.aborted === true,
@@ -828,36 +828,58 @@ async function settleTerminalRunFailure(input: {
   const failureCode = input.failureCode ?? "AGENT_EXECUTION_FAILED";
   const failureMessage = input.failureMessage ?? "Agent execution failed";
 
+  // Idempotent: if already terminal (e.g. outer safety net after settle),
+  // do not attempt another status transition or duplicate terminal SSE.
+  let alreadyTerminal = false;
   try {
-    await updateRunAfterError(
-      input.persistence,
-      input.ownerUserId,
-      input.run.id,
-      input.cancelled,
-      failureCode,
-      failureMessage,
-    );
-  } catch (finalizeError) {
-    console.error(
-      `[agent] run=${runShort} terminal_finalize_failed reason=${summarizeError(finalizeError)}`,
-    );
+    const current = await input.persistence.getRun({
+      runId: input.run.id,
+      ownerUserId: input.ownerUserId,
+    });
+    if (
+      current &&
+      (current.status === "completed" ||
+        current.status === "failed" ||
+        current.status === "cancelled")
+    ) {
+      alreadyTerminal = true;
+    }
+  } catch {
+    // fall through and attempt settle
   }
 
-  try {
-    await input.liveEvents?.emit(
-      input.cancelled
-        ? { type: "agent.cancelled", runId: input.run.id, at: new Date().toISOString() }
-        : {
-            type: "agent.failed",
-            runId: input.run.id,
-            at: new Date().toISOString(),
-            code: failureCode,
-          },
-    );
-  } catch (emitError) {
-    console.error(
-      `[agent] run=${runShort} terminal_emit_failed reason=${summarizeError(emitError)}`,
-    );
+  if (!alreadyTerminal) {
+    try {
+      await updateRunAfterError(
+        input.persistence,
+        input.ownerUserId,
+        input.run.id,
+        input.cancelled,
+        failureCode,
+        failureMessage,
+      );
+    } catch (finalizeError) {
+      console.error(
+        `[agent] run=${runShort} terminal_finalize_failed reason=${summarizeError(finalizeError)}`,
+      );
+    }
+
+    try {
+      await input.liveEvents?.emit(
+        input.cancelled
+          ? { type: "agent.cancelled", runId: input.run.id, at: new Date().toISOString() }
+          : {
+              type: "agent.failed",
+              runId: input.run.id,
+              at: new Date().toISOString(),
+              code: failureCode,
+            },
+      );
+    } catch (emitError) {
+      console.error(
+        `[agent] run=${runShort} terminal_emit_failed reason=${summarizeError(emitError)}`,
+      );
+    }
   }
 
   if (!input.cancelled) {
@@ -880,10 +902,68 @@ async function settleTerminalRunFailure(input: {
 }
 
 function summarizeError(error: unknown): string {
-  if (error instanceof Error) {
-    return `${error.name}: ${error.message}`.slice(0, 240);
+  const parts: string[] = [];
+  let current: unknown = error;
+  let depth = 0;
+  while (current !== undefined && current !== null && depth < 4) {
+    depth += 1;
+    if (current instanceof Error) {
+      const name = current.name || "Error";
+      // Prefer the underlying DB/driver message over Drizzle's "Failed query: …"
+      // wrapper (which dumps SQL). Never include the full query text.
+      const message = sanitizeErrorMessage(current.message);
+      const code =
+        "code" in current &&
+        (typeof (current as { code?: unknown }).code === "string" ||
+          typeof (current as { code?: unknown }).code === "number")
+          ? String((current as { code: string | number }).code)
+          : undefined;
+      parts.push(
+        code ? `${name}: ${message} (code=${code})` : `${name}: ${message}`,
+      );
+      current = current.cause;
+      continue;
+    }
+    if (typeof current === "object") {
+      const record = current as Record<string, unknown>;
+      const code =
+        typeof record.code === "string" || typeof record.code === "number"
+          ? String(record.code)
+          : undefined;
+      const detail =
+        typeof record.detail === "string"
+          ? sanitizeErrorMessage(record.detail)
+          : typeof record.message === "string"
+            ? sanitizeErrorMessage(record.message)
+            : undefined;
+      if (code || detail) {
+        parts.push([code ? `code=${code}` : null, detail].filter(Boolean).join(" "));
+      }
+      current = "cause" in record ? record.cause : undefined;
+      continue;
+    }
+    parts.push(sanitizeErrorMessage(String(current)));
+    break;
   }
-  return String(error).slice(0, 240);
+  const summary = parts.join(" | ");
+  return summary.slice(0, 400) || "unknown error";
+}
+
+/** Strip SQL bodies / connection strings from loggable error text. */
+function sanitizeErrorMessage(message: string): string {
+  let text = message;
+  // Drizzle wraps: "Failed query: select …\nparams: …"
+  if (/^Failed query:/i.test(text)) {
+    const relation =
+      text.match(/\b(?:relation|table)\s+"?([a-zA-Z0-9_.]+)"?/i)?.[1] ??
+      text.match(/\bfrom\s+"([a-zA-Z0-9_]+)"/i)?.[1];
+    text = relation
+      ? `Failed query involving ${relation}`
+      : "Failed database query";
+  }
+  text = text.replace(/postgresql:\/\/[^\s]+/gi, "postgresql://***");
+  text = text.replace(/\nparams:[\s\S]*$/i, "");
+  return text.slice(0, 200);
 }
 
 async function updateRunAfterError(

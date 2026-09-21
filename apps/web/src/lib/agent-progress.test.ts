@@ -538,3 +538,42 @@ test("shouldAcceptSubmit blocks empty and in-flight submits", () => {
     true,
   );
 });
+
+test("duplicate agent.cancelled events yield one Cancelled activity with unique ids", () => {
+  let lines = reduceAgentProgress([], event("agent.started"), 1);
+  lines = reduceAgentProgress(lines, event("agent.cancelled"), 2);
+  lines = reduceAgentProgress(lines, event("agent.cancelled"), 3);
+  lines = reduceAgentProgress(lines, event("agent.cancelled"), 4);
+
+  const cancelled = lines.filter((line) => line.id === "cancelled");
+  assert.equal(cancelled.length, 1);
+
+  const presentation = presentAgentRun(lines, {
+    durationMs: 1200,
+    outcome: "cancelled",
+  });
+  const ids = presentation.activities.map((a) => a.id);
+  assert.equal(new Set(ids).size, ids.length);
+  assert.equal(
+    presentation.activities.filter((a) => a.id === "cancelled").length,
+    1,
+  );
+});
+
+test("duplicate agent.failed events yield one failed activity", () => {
+  let lines = reduceAgentProgress([], event("agent.started"), 1);
+  lines = reduceAgentProgress(lines, event("agent.failed"), 2);
+  lines = reduceAgentProgress(lines, event("agent.failed"), 3);
+  assert.equal(lines.filter((line) => line.id === "failed").length, 1);
+
+  const ids = projectActivityRows(lines).map((a) => a.id);
+  assert.equal(new Set(ids).size, ids.length);
+});
+
+test("late agent.completed after cancelled does not add another terminal row", () => {
+  let lines = reduceAgentProgress([], event("agent.started"), 1);
+  lines = reduceAgentProgress(lines, event("agent.cancelled"), 2);
+  const after = reduceAgentProgress(lines, event("agent.completed"), 3);
+  assert.equal(after.filter((line) => line.id === "cancelled").length, 1);
+  assert.equal(after.filter((line) => line.id === "failed").length, 0);
+});

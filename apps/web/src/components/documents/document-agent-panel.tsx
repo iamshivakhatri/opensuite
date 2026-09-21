@@ -149,6 +149,8 @@ export function DocumentAgentPanel({
   const sseAbortRef = React.useRef<(() => void) | null>(null);
   const runIdRef = React.useRef<string | null>(null);
   const submitLockRef = React.useRef(false);
+  /** Prevents double cancel POSTs from click races before `cancelling` re-renders. */
+  const cancelLockRef = React.useRef(false);
   /** Bumps on every subscribe so stale onDisconnect/onError cannot finalize the wrong run. */
   const sseGenerationRef = React.useRef(0);
   const reconnectAttemptsRef = React.useRef(0);
@@ -392,10 +394,14 @@ export function DocumentAgentPanel({
   const abandonLiveRun = React.useCallback(
     async (runId: string, thread: string, message: string) => {
       stopSse();
-      try {
-        await cancelAgentRun(runId);
-      } catch {
-        // Best-effort — run may already be gone or not cancellable.
+      // Skip if the user already cancelled (avoids a second cancel POST when
+      // stopSse races with stream disconnect handlers).
+      if (!cancelLockRef.current) {
+        try {
+          await cancelAgentRun(runId);
+        } catch {
+          // Best-effort — run may already be gone or not cancellable.
+        }
       }
       if (runIdRef.current !== runId) {
         return;
@@ -962,10 +968,11 @@ export function DocumentAgentPanel({
 
   async function handleCancel() {
     const runId = runIdRef.current ?? activeRun?.id;
-    if (!runId || cancelling) {
+    if (!runId || cancelling || cancelLockRef.current) {
       return;
     }
 
+    cancelLockRef.current = true;
     setCancelling(true);
     try {
       stopSse();
@@ -974,6 +981,8 @@ export function DocumentAgentPanel({
       if (threadId) {
         await refreshMessages(threadId);
       }
+      // Only synthesize cancelled if the reducer does not already have one
+      // (SSE may have delivered the terminal event before stopSse completed).
       const nextProgress = reduceAgentProgress(progressRef.current, {
         id: 0,
         runId,
@@ -998,6 +1007,7 @@ export function DocumentAgentPanel({
       }
     } finally {
       setCancelling(false);
+      cancelLockRef.current = false;
     }
   }
 
