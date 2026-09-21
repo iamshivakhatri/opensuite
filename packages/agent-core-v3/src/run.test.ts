@@ -54,6 +54,13 @@ function toolCallChunks(
   ];
 }
 
+function textThenFinishChunks(text: string, finishName: string) {
+  return [
+    ...textChunks(text, "tool-calls").slice(0, -1),
+    ...toolCallChunks([{ id: "f", name: finishName, input: {} }]).slice(1),
+  ];
+}
+
 const emptyObjectSchema = jsonSchema<Record<string, never>>({
   type: "object",
   properties: {},
@@ -311,15 +318,14 @@ test("failure fuse stops identical failing calls across turns", async () => {
 
 test("terminal (finish) tool ends the run without another model turn", async () => {
   let invocations = 0;
+  const deltas: string[] = [];
   const finish = createFinishTool();
   const model = new MockLanguageModelV4({
     doStream: async () => {
       invocations += 1;
       return {
         stream: simulateReadableStream({
-          chunks: toolCallChunks([
-            { id: "f", name: finish.name, input: { summary: "all set" } },
-          ]),
+          chunks: textThenFinishChunks("all set", finish.name),
         }),
       };
     },
@@ -329,11 +335,15 @@ test("terminal (finish) tool ends the run without another model turn", async () 
     model,
     messages: [{ role: "user", content: "go" }],
     tools: { [finish.name]: finish.tool },
+    onTextDelta: (delta) => {
+      deltas.push(delta);
+    },
   });
 
   assert.equal(invocations, 1);
   assert.equal(result.stopReason, "finish_tool");
   assert.equal(result.text, "all set");
+  assert.deepEqual(deltas, ["all set"]);
 });
 
 test("maxTurns returns a max_turns stop reason (no throw)", async () => {

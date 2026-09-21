@@ -440,7 +440,7 @@ async function runExecution(input: {
     });
 
     const finish = createFinishTool({
-      description: "Call when the requested work is complete. Ends the run.",
+      description: "After your concise final response to the user, call this to end the run.",
     });
     const tools: AgentToolSet = {
       ...(boundTools?.tools ?? {}),

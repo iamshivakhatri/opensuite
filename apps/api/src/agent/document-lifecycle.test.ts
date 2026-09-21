@@ -339,10 +339,10 @@ test("finish-as-read before mutations: duplicate then mutate still targets copy"
 
   // Read phase first (finish)
   const summary = await finish.tool.execute(
-    { summary: "will finish after mutations" },
+    {},
     { toolCallId: "f1", messages: [], context: undefined as never },
   );
-  assert.equal(summary, "will finish after mutations");
+  assert.equal(summary, "");
   assert.equal(tools.getActiveDocumentId(), "doc-1");
 
   // Mutation phase: duplicate then replace

@@ -13,8 +13,10 @@ _Read this before starting any work. Keep it a concise current-state handoff, no
 
 ## Just Completed
 
-* **Engine npm cutover** — `@opensuite/engine-client` depends on `@opensuitehq/engine@0.1.1` from npm (not sibling `link:` / vendor stub). Docker uses bookworm/glibc; Alpine/musl unsupported.
+* **Prod API URL join** — web strips trailing `/` on `NEXT_PUBLIC_API_URL`; API `GET /` returns plain `OpenSuite API` for browser up-checks. Hosted web must point at API host (not Vercel apex/www).
+* **Engine npm cutover** — `@opensuite/engine-client` depends on `@opensuitehq/engine@0.1.1` from npm (not sibling `link:` / vendor stub). Docker `node:22-bookworm-slim` (glibc) validated: installs `engine-linux-arm64-gnu@0.1.1`, raw + engine-client smoke, API soft-boots without sibling/vendor. Alpine/musl unsupported.
 * **Live transcript ordering** — SSE narration now appends within ordered live segments beside tool activities; the existing completed-step renderer is shared, then durable steps replace live entries at terminalization.
+* **Live waiting + final response** — local-only `Working…` marks initial and post-tool model waits; the final model turn streams normal assistant text before an empty terminal `finish` call, keeping one model turn and one durable final message.
 * **Persistent completed-run transcript v1** — durable, presentation-safe narration/tool steps in `agent_step`; final answer remains the linked `agent_message`; completed latest run rehydrates after reopen.
 * **Phase 6B** — bounded Rust `table_rows` inspection and request-local last-three-row context for high-confidence table continuation.
 * **Context Lifecycle C1** — API-only deterministic recent-tail projection bounds persisted history sent to V3; full DB/UI history remains unchanged.
@@ -42,11 +44,11 @@ _Read this before starting any work. Keep it a concise current-state handoff, no
 
 | Check | Status |
 |---|---|
-| agent-core-v3 unit (21) | Pass (prior) |
+| agent-core-v3 unit (21) | Pass |
 | Context lifecycle C1–C7 targeted API checks | Pass |
 | Phase 6A API retrieval + lifecycle/report tests (22) | Pass |
 | engine-client tests (13) | Pass (npm `@opensuitehq/engine@0.1.1` + darwin-arm64) |
-| web agent-progress + related unit | Pass |
+| web agent-progress unit (26) | Pass |
 | web typecheck | Pass |
 | Fixture screenshots A–G (`/.tmp/phase35-screenshots`) | Inspected |
 | Manual live OpenRouter A–D / dogfood | pending (user) |

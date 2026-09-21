@@ -1,5 +1,7 @@
 import { createAuthClient } from "better-auth/react";
 
+import { resolveApiBaseUrl } from "./api-base-url";
+
 /**
  * apps/web (Next.js/Vercel) and apps/api (Fastify) are separate origins even
  * in local development (different ports on localhost). This client talks to
@@ -8,11 +10,11 @@ import { createAuthClient } from "better-auth/react";
  * API's CORS + `trustedOrigins` config (see apps/api/src/app.ts) is what
  * allows the session cookie to flow across origins.
  */
-const apiBaseUrl = process.env.NEXT_PUBLIC_API_URL;
+const apiBaseUrl = resolveApiBaseUrl();
 
 if (!apiBaseUrl) {
   throw new Error(
-    "NEXT_PUBLIC_API_URL is not set. Copy apps/web/.env.example to apps/web/.env.local and set it to the apps/api base URL.",
+    "NEXT_PUBLIC_API_URL is not set. Copy apps/web/.env.example to apps/web/.env.local and set it to the apps/api base URL (no trailing slash).",
   );
 }
 

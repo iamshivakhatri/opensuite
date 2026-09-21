@@ -138,6 +138,12 @@ export async function buildApp(
     },
   });
 
+  // Plain-text liveness for humans opening the API origin in a browser.
+  // No secrets / no DB — use GET /health for structured status.
+  app.get("/", async (_request, reply) =>
+    reply.type("text/plain; charset=utf-8").send("OpenSuite API\n"),
+  );
+
   app.setErrorHandler(async (error: FastifyError, request, reply) => {
     const statusCode = error.statusCode ?? 500;
     request.log.error({ err: error }, "request error");

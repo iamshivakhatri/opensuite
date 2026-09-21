@@ -16,6 +16,7 @@ import {
   projectActivityRows,
   reduceAgentProgress,
   reduceLiveTranscript,
+  reduceLiveWorking,
   technicalProgressLines,
   thoughtForLabel,
   visibleAgentProgress,
@@ -85,6 +86,22 @@ test("live transcript keeps narration and tool activity interleaved", () => {
     ],
   );
   assert.equal(new Set(transcript.map((entry) => entry.id)).size, transcript.length);
+});
+
+test("Working stays local to an active run and clears on visible or terminal events", () => {
+  let working = reduceLiveWorking(false, event("agent.started"));
+  assert.equal(working, true);
+
+  working = reduceLiveWorking(working, event("tool.completed"));
+  assert.equal(working, true);
+  working = reduceLiveWorking(working, event("message.delta", { delta: "Next step" }));
+  assert.equal(working, false);
+
+  working = reduceLiveWorking(true, event("tool.started"));
+  assert.equal(working, false);
+  assert.equal(reduceLiveWorking(true, event("agent.completed")), false);
+  assert.equal(reduceLiveWorking(true, event("agent.failed")), false);
+  assert.equal(reduceLiveWorking(true, event("agent.cancelled")), false);
 });
 
 test("1. active run shows Thinking when model-active", () => {

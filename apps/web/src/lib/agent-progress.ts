@@ -82,6 +82,30 @@ export type LiveTranscriptEntry =
   | { readonly kind: "narration"; readonly id: string; readonly content: string }
   | { readonly kind: "activity"; readonly id: string; readonly line: AgentProgressLine };
 
+/** Local-only cursor state; it is deliberately not part of the transcript. */
+export function reduceLiveWorking(
+  working: boolean,
+  event: AgentLiveEvent,
+): boolean {
+  switch (event.type) {
+    case "agent.started":
+    case "tool.completed":
+      return true;
+    case "message.delta":
+    case "message.completed":
+    case "tool.started":
+    case "tool.failed":
+    case "document.created":
+    case "document.version.advanced":
+    case "agent.completed":
+    case "agent.failed":
+    case "agent.cancelled":
+      return false;
+    default:
+      return working;
+  }
+}
+
 /**
  * Keep narration beside the tool rows that bound it. Deltas append to one
  * entry; activity rows retain their existing ids as they move active → done.

@@ -1,4 +1,6 @@
-const apiBaseUrl = process.env.NEXT_PUBLIC_API_URL;
+import { resolveApiBaseUrl } from "./api-base-url";
+
+const apiBaseUrl = resolveApiBaseUrl();
 
 export type DatabaseReachability = "ok" | "unavailable";
 

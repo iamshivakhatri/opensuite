@@ -4,32 +4,28 @@ import { defineTool, type AgentTool } from "./types.js";
 
 /**
  * A generic terminal ("finish") tool. Calling it ends the run without spending
- * another model turn on a bare confirmation; the `summary` becomes the run's
- * final text. Hosts may define their own terminal tool instead — this is only a
- * convenience for the common case.
+ * another model turn on a bare confirmation. The final assistant text is
+ * streamed normally in the same turn; this tool only marks that turn complete.
+ * Hosts may define their own terminal tool instead — this is only a convenience
+ * for the common case.
  */
 export function createFinishTool(options?: {
   readonly name?: string;
   readonly description?: string;
 }): { readonly name: string; readonly tool: AgentTool } {
   const name = options?.name ?? "finish";
-  const tool = defineTool<{ summary?: string }, string>({
+  const tool = defineTool<Record<string, never>, string>({
     kind: "read",
     terminal: true,
     description:
       options?.description ??
-      "Call when the task is complete. Provide a short summary for the user. Ends the run.",
-    inputSchema: jsonSchema<{ summary?: string }>({
+      "After your concise final response to the user, call this to end the run.",
+    inputSchema: jsonSchema<Record<string, never>>({
       type: "object",
-      properties: {
-        summary: {
-          type: "string",
-          description: "Short natural-language summary of what was done.",
-        },
-      },
+      properties: {},
       additionalProperties: false,
     }),
-    execute: ({ summary }) => summary ?? "",
+    execute: () => "",
   });
   return { name, tool };
 }

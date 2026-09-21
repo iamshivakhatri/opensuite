@@ -20,8 +20,10 @@ export class StorageApiError extends Error {
   }
 }
 
+import { resolveApiBaseUrl } from "./api-base-url";
+
 function requireApiBaseUrl(): string {
-  const apiBaseUrl = process.env.NEXT_PUBLIC_API_URL;
+  const apiBaseUrl = resolveApiBaseUrl();
   if (!apiBaseUrl) {
     throw new StorageApiError(
       500,

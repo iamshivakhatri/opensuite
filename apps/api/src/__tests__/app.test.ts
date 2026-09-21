@@ -21,6 +21,9 @@ function testConfig() {
     WEB_ORIGIN: "http://localhost:3001",
     RESEND_API_KEY: "re_test_key",
     EMAIL_FROM: "OpenSuite <noreply@example.com>",
+    AGENT_MODEL_PROVIDER: "openrouter",
+    OPENROUTER_API_KEY: "sk-or-test",
+    OPENROUTER_MODEL: "openai/gpt-4.1",
     ...testS3Env,
   });
 }
@@ -74,6 +77,18 @@ test("GET /health returns 200 with a status payload", async () => {
   assert.equal(body.status, "ok");
   assert.equal(body.database, "ok");
   assert.equal(typeof body.uptimeSeconds, "number");
+
+  await app.close();
+});
+
+test("GET / returns plain OpenSuite API text", async () => {
+  const app = await testApp();
+
+  const response = await app.inject({ method: "GET", url: "/" });
+
+  assert.equal(response.statusCode, 200);
+  assert.match(response.headers["content-type"] ?? "", /text\/plain/);
+  assert.equal(response.body, "OpenSuite API\n");
 
   await app.close();
 });

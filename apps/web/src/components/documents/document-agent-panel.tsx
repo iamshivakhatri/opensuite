@@ -12,6 +12,7 @@ import {
   presentAgentRun,
   reduceAgentProgress,
   reduceLiveTranscript,
+  reduceLiveWorking,
   visibleAgentProgress,
   type AgentProgressLine,
   type AgentTurnProgress,
@@ -250,6 +251,7 @@ export function DocumentAgentPanel({
   const [liveTranscript, setLiveTranscript] = React.useState<
     readonly LiveTranscriptEntry[]
   >([]);
+  const [liveWorking, setLiveWorking] = React.useState(false);
 
   const busy =
     submitting ||
@@ -479,6 +481,7 @@ export function DocumentAgentPanel({
       if (hasAssistant || !isActiveAgentRunStatus(snapshot.run.status)) {
         setLiveTranscript([]);
       }
+      setLiveWorking(false);
       applyTerminalRunStatus(snapshot.run);
       return snapshot.run;
     },
@@ -510,6 +513,7 @@ export function DocumentAgentPanel({
       runStartedAtRef.current = null;
       setProgress([]);
       setLiveTranscript([]);
+      setLiveWorking(false);
       setTimelineOpen(false);
       await refreshMessages(thread).catch(() => undefined);
     },
@@ -533,6 +537,7 @@ export function DocumentAgentPanel({
       if (!options?.preserveDraft) {
         setCanRetryRun(false);
         setLiveTranscript([]);
+        setLiveWorking(true);
         reconnectAttemptsRef.current = 0;
         const startedAt = Date.now();
         runStartedAtRef.current = startedAt;
@@ -565,6 +570,7 @@ export function DocumentAgentPanel({
           progressRef.current = nextProgress;
           setProgress(nextProgress);
           setLiveTranscript((entries) => reduceLiveTranscript(entries, event, nextProgress));
+          setLiveWorking((working) => reduceLiveWorking(working, event));
 
           if (event.type === "document.version.advanced") {
             const advancedDocumentId = String(event.data.documentId ?? "");
@@ -1070,6 +1076,7 @@ export function DocumentAgentPanel({
       progressRef.current = nextProgress;
       setProgress(nextProgress);
       setLiveTranscript([]);
+      setLiveWorking(false);
       applyTerminalRunStatus(snapshot.run);
     } catch (error) {
       if (error instanceof ApiError && error.statusCode === 404) {
@@ -1102,6 +1109,7 @@ export function DocumentAgentPanel({
     setCanRetryRun(false);
     setVersionNotice(null);
     setLiveTranscript([]);
+    setLiveWorking(false);
     setRunStepsByMessageId({});
     setDraft("");
     runIdRef.current = null;
@@ -1192,6 +1200,7 @@ export function DocumentAgentPanel({
       setCanRetryRun(false);
       setVersionNotice(null);
       setLiveTranscript([]);
+      setLiveWorking(false);
       setDraft("");
       setTagged([]);
       runIdRef.current = null;
@@ -1489,6 +1498,12 @@ export function DocumentAgentPanel({
                       live
                     />
                   )}
+                  {liveWorking ? (
+                    <p role="status" className="flex items-center gap-1.5 text-[length:var(--text-xs)] text-ink-faint">
+                      <span aria-hidden className="h-1.5 w-1.5 rounded-full bg-ink-faint/70" />
+                      Working…
+                    </p>
+                  ) : null}
                 </div>
               ) : null}
 
