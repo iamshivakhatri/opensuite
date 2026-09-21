@@ -23,7 +23,8 @@
     "lint": "echo \"(no lint configured yet)\"",
     "test": "tsc -p tsconfig.json && node --test \"dist/**/*.test.js\"",
     "db:generate": "drizzle-kit generate",
-    "db:migrate": "drizzle-kit migrate",
+    "db:migrate": "node ./scripts/migrate.mjs",
+    "db:migrate:kit": "drizzle-kit migrate",
     "db:check": "tsx scripts/check-connection.ts"
   },
   "dependencies": {

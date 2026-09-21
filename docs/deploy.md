@@ -28,7 +28,7 @@ Browser check (after API is routed): open `https://api.opensuite.tech/` → plai
 2. Proxy Dokploy domain → container port **3000** (DNS for `api.opensuite.tech` must hit this service, not Vercel)
 3. Engine comes from npm via `packages/engine-client` → `@opensuitehq/engine@0.1.1` (no sibling repo, no vendor stub)
 
-Entrypoint: migrate then start.
+Entrypoint: migrate (programmatic, prints pg errors) then start. Rebuild after committing migration SQL — `0013`/`0014` must be in the image.
 
 ## Not Edge
 
