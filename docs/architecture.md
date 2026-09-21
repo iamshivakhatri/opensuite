@@ -76,7 +76,7 @@ packages/
 docs/             # This documentation
 ```
 
-`opensuite-engine` is not part of this repository; `packages/engine-client` is the sole integration point with it (see [`engine_integration.md`](./engine_integration.md)). See [`status.md`](./status.md) for what has actually been implemented.
+`opensuite-engine` is not part of this repository. The npm package `@opensuitehq/engine` is loaded only by `packages/engine-client` (see [`engine_integration.md`](./engine_integration.md)). See [`status.md`](./status.md) for what has actually been implemented.
 
 ## Tooling
 

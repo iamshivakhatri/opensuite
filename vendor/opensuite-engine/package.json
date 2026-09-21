@@ -1,8 +1,0 @@
-{
-  "name": "@opensuite/engine",
-  "version": "0.1.0",
-  "private": true,
-  "description": "In-repo stub used by Docker until @opensuite/engine is published to npm. Soft-boot API runs without DOCX.",
-  "main": "index.js",
-  "types": "index.d.ts"
-}

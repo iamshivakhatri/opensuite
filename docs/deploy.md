@@ -16,14 +16,15 @@
 ## Backend — Atlas (Dokploy)
 
 * Compose: `docker-compose.atlas.yml` (API only; your Postgres + MinIO)
-* Soft-boot: API starts even without a native DOCX engine (auth etc. work; DOCX disabled)
+* Image: `node:22-bookworm-slim` (glibc). Native `@opensuitehq/engine@0.1.1` — **not** Alpine/musl.
+* Soft-boot: API starts even if the native binding fails to load (auth etc. work; DOCX disabled)
 
 1. Import compose; paste `.env`; set production `BETTER_AUTH_URL` / `WEB_ORIGIN` / `ALLOW_SIGNUP=false` / `AUTH_CROSS_ORIGIN=true`
 2. Proxy Dokploy domain → container port **3000**
-3. Engine:
-   - Default build uses in-repo stub (`USE_PUBLISHED_ENGINE=false`) — no DOCX
-   - Publish `@opensuite/engine` from `opensuite-engine` (see `crates/opensuite-node/PUBLISH.md`), then rebuild with `USE_PUBLISHED_ENGINE=true`
-
-Local dev keeps sibling engine via root `pnpm.overrides` → `link:../opensuite-engine/crates/opensuite-node`.
+3. Engine comes from npm via `packages/engine-client` → `@opensuitehq/engine@0.1.1` (no sibling repo, no vendor stub)
 
 Entrypoint: migrate then start.
+
+## Not Edge
+
+`@opensuitehq/engine` is Node N-API only — used by `apps/api` through `@opensuite/engine-client`. Do not bundle into Vercel Edge, browsers, or the web app.

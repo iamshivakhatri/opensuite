@@ -15,10 +15,12 @@ import {
   progressSummaryLabel,
   projectActivityRows,
   reduceAgentProgress,
+  reduceLiveTranscript,
   technicalProgressLines,
   thoughtForLabel,
   visibleAgentProgress,
   type AgentProgressLine,
+  type LiveTranscriptEntry,
 } from "./agent-progress.ts";
 import { shouldAcceptSubmit } from "./agent-submit.ts";
 import type { AgentLiveEvent } from "./api.ts";
@@ -50,6 +52,40 @@ function reduceAll(
   }
   return lines;
 }
+
+test("live transcript keeps narration and tool activity interleaved", () => {
+  let lines: AgentProgressLine[] = [];
+  let transcript: LiveTranscriptEntry[] = [];
+  const apply = (type: string, data: Record<string, unknown> = {}) => {
+    const next = event(type, data);
+    lines = reduceAgentProgress(lines, next, 1);
+    transcript = reduceLiveTranscript(transcript, next, lines);
+  };
+
+  apply("message.delta", { messageId: "m1", delta: "I'll inspect " });
+  apply("message.delta", { messageId: "m1", delta: "the document." });
+  apply("tool.started", { toolCallId: "i1", toolName: "document.inspect" });
+  apply("tool.started", { toolCallId: "i1", toolName: "document.inspect" });
+  apply("tool.completed", { toolCallId: "i1", toolName: "document.inspect" });
+  apply("message.delta", { messageId: "m1", delta: "I found the Risks section." });
+  apply("tool.started", { toolCallId: "r1", toolName: "document.replace_text" });
+  apply("tool.failed", { toolCallId: "r1", toolName: "document.replace_text" });
+
+  assert.deepEqual(
+    transcript.map((entry) =>
+      entry.kind === "narration"
+        ? [entry.kind, entry.content]
+        : [entry.kind, entry.line.id, entry.line.status],
+    ),
+    [
+      ["narration", "I'll inspect the document."],
+      ["activity", "tool:i1", "done"],
+      ["narration", "I found the Risks section."],
+      ["activity", "tool:r1", "error"],
+    ],
+  );
+  assert.equal(new Set(transcript.map((entry) => entry.id)).size, transcript.length);
+});
 
 test("1. active run shows Thinking when model-active", () => {
   const t0 = 1_000;

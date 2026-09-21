@@ -3,8 +3,7 @@
 # Dokploy: select this compose file; inject env from your .env (or Dokploy UI).
 #
 # Container listens on 3000; point Dokploy's domain/proxy at that port.
-# Engine: stub by default (soft-boot, no DOCX). After npm publish of
-# @opensuite/engine, set USE_PUBLISHED_ENGINE=true.
+# Engine: @opensuitehq/engine@0.1.1 from npm (bookworm/glibc image).
 #
 # First user: ALLOW_SIGNUP=true (+ web NEXT_PUBLIC_ALLOW_SIGNUP=true), then lock.
 
@@ -13,8 +12,6 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-      args:
-        USE_PUBLISHED_ENGINE: ${USE_PUBLISHED_ENGINE:-false}
     restart: unless-stopped
     expose:
       - "3000"

@@ -214,6 +214,9 @@ importers:
       '@opensuite/contracts':
         specifier: workspace:*
         version: link:../contracts
+      '@opensuitehq/engine':
+        specifier: 0.1.1
+        version: 0.1.1
     devDependencies:
       '@types/node':
         specifier: ^22.10.2
@@ -221,10 +224,6 @@ importers:
       typescript:
         specifier: ^5.7.2
         version: 5.9.3
-    optionalDependencies:
-      '@opensuite/engine':
-        specifier: link:../../../opensuite-engine/crates/opensuite-node
-        version: link:../../../opensuite-engine/crates/opensuite-node
 
 packages:
 
@@ -1358,6 +1357,42 @@ packages:
     peerDependencies:
       ai: ^7.0.0
       zod: ^3.25.76 || ^4.1.8
+
+  '@opensuitehq/engine-darwin-arm64@0.1.1':
+    resolution: {integrity: sha512-pU+spvfhyv0oiRoGUZMpARuq8D9Gaqf7UqcmiRlpQEj/KAkGed3RCaAxIuaK7Da+HNGGkcAeR7X9oQ7zFtmCqA==}
+    engines: {node: '>=20'}
+    cpu: [arm64]
+    os: [darwin]
+
+  '@opensuitehq/engine-darwin-x64@0.1.1':
+    resolution: {integrity: sha512-Oqgh+0SV0oIUGSGxsiYGouE68ISp0uuHar7oiYhHB+ud3ZTxhasi4BzHKpTaiQNXi77KZjeOOMQQ0GATjKHSag==}
+    engines: {node: '>=20'}
+    cpu: [x64]
+    os: [darwin]
+
+  '@opensuitehq/engine-linux-arm64-gnu@0.1.1':
+    resolution: {integrity: sha512-UlL7aMojtwjczF5bGMZTuguF6WO64KytiwJeO16df57t8LQVlLm06WIXayIpHec/Xb68wTsFYh2Cq5xts5R1+g==}
+    engines: {node: '>=20'}
+    cpu: [arm64]
+    os: [linux]
+    libc: [glibc]
+
+  '@opensuitehq/engine-linux-x64-gnu@0.1.1':
+    resolution: {integrity: sha512-VAwnI9VuV8La5BDuPWU7NIBOcGfZjqEfZEjhW6zayNPggtd+mGc4F6EdyhDHk18bzQP22qoDYZ9JnELpeNU49A==}
+    engines: {node: '>=20'}
+    cpu: [x64]
+    os: [linux]
+    libc: [glibc]
+
+  '@opensuitehq/engine-win32-x64-msvc@0.1.1':
+    resolution: {integrity: sha512-mLzKtQ+zemca5S9UPTVB+q2PwUcJE8rYB1x5IhdALkFCATqIFPpv3X2ExjLcgmalQk6agogRENwipHLdjqXqZA==}
+    engines: {node: '>=20'}
+    cpu: [x64]
+    os: [win32]
+
+  '@opensuitehq/engine@0.1.1':
+    resolution: {integrity: sha512-Yg9yzVNeF7FfyfsoH7kY9doWsOYpmKuCgyB1nSTaDazKJQ7yiazZfcJxPTu+/u1UP1CM5RjjyZ0OIqw01CSF+Q==}
+    engines: {node: '>=20'}
 
   '@opentelemetry/semantic-conventions@1.43.0':
     resolution: {integrity: sha512-eSYWTm620tTk45EKSedaUL8MFYI8hW164hIXsgIHyxu3VobUB3fFCu5t0hQby6OoWRPsG1KkKUG2M5UadiLiVg==}
@@ -3670,6 +3705,29 @@ snapshots:
     dependencies:
       ai: 7.0.99(zod@4.5.4)
       zod: 4.5.4
+
+  '@opensuitehq/engine-darwin-arm64@0.1.1':
+    optional: true
+
+  '@opensuitehq/engine-darwin-x64@0.1.1':
+    optional: true
+
+  '@opensuitehq/engine-linux-arm64-gnu@0.1.1':
+    optional: true
+
+  '@opensuitehq/engine-linux-x64-gnu@0.1.1':
+    optional: true
+
+  '@opensuitehq/engine-win32-x64-msvc@0.1.1':
+    optional: true
+
+  '@opensuitehq/engine@0.1.1':
+    optionalDependencies:
+      '@opensuitehq/engine-darwin-arm64': 0.1.1
+      '@opensuitehq/engine-darwin-x64': 0.1.1
+      '@opensuitehq/engine-linux-arm64-gnu': 0.1.1
+      '@opensuitehq/engine-linux-x64-gnu': 0.1.1
+      '@opensuitehq/engine-win32-x64-msvc': 0.1.1
 
   '@opentelemetry/semantic-conventions@1.43.0': {}
 

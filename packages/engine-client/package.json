@@ -14,10 +14,8 @@
     "test": "tsc -p tsconfig.json && node --test \"dist/**/*.test.js\""
   },
   "dependencies": {
-    "@opensuite/contracts": "workspace:*"
-  },
-  "optionalDependencies": {
-    "@opensuite/engine": "link:../../../opensuite-engine/crates/opensuite-node"
+    "@opensuite/contracts": "workspace:*",
+    "@opensuitehq/engine": "0.1.1"
   },
   "devDependencies": {
     "@types/node": "^22.10.2",

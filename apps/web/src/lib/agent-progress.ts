@@ -77,6 +77,59 @@ export interface AgentRunPresentation {
   readonly details: readonly ProgressGroup[];
 }
 
+/** Ordered, user-visible SSE content for the active run. */
+export type LiveTranscriptEntry =
+  | { readonly kind: "narration"; readonly id: string; readonly content: string }
+  | { readonly kind: "activity"; readonly id: string; readonly line: AgentProgressLine };
+
+/**
+ * Keep narration beside the tool rows that bound it. Deltas append to one
+ * entry; activity rows retain their existing ids as they move active → done.
+ */
+export function reduceLiveTranscript(
+  entries: readonly LiveTranscriptEntry[],
+  event: AgentLiveEvent,
+  lines: readonly AgentProgressLine[],
+): LiveTranscriptEntry[] {
+  if (event.type === "message.delta") {
+    const messageId = String(event.data.messageId ?? "message");
+    const delta = typeof event.data.delta === "string" ? event.data.delta : "";
+    if (!delta) return [...entries];
+    const last = entries.at(-1);
+    if (last?.kind === "narration") {
+      return [...entries.slice(0, -1), { ...last, content: last.content + delta }];
+    }
+    return [
+      ...entries,
+      {
+        kind: "narration",
+        id: `narration:${messageId}:${entries.filter((entry) => entry.kind === "narration").length}`,
+        content: delta,
+      },
+    ];
+  }
+
+  const toolCallId =
+    event.type === "tool.started" ||
+    event.type === "tool.completed" ||
+    event.type === "tool.failed"
+      ? String(event.data.toolCallId ?? "tool")
+      : null;
+  const toolLine = toolCallId
+    ? lines.find((line) => line.id === `tool:${toolCallId}`)
+    : undefined;
+  let next = toolLine && event.type === "tool.started" && !entries.some((entry) => entry.id === toolLine.id)
+    ? [...entries, { kind: "activity" as const, id: toolLine.id, line: toolLine }]
+    : [...entries];
+
+  // document.created enriches an existing lifecycle row without adding a row.
+  return next.map((entry) =>
+    entry.kind === "activity"
+      ? { ...entry, line: lines.find((line) => line.id === entry.id) ?? entry.line }
+      : entry,
+  );
+}
+
 const TOOL_LABELS: Record<string, { active: string; done: string }> = {
   "document.inspect": {
     active: "Inspecting document",

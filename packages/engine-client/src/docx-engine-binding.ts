@@ -704,8 +704,8 @@ function toNativeInspectFocus(focus: DocxInspectFocus): Record<string, unknown> 
 }
 
 /**
- * Loads the local `@opensuite/engine` N-API package and adapts it to
- * DocxEngineBinding. Call only from engine-client — never from agent-core.
+ * Loads `@opensuitehq/engine` (npm N-API) and adapts it to DocxEngineBinding.
+ * Call only from engine-client — never from agent-core.
  */
 export async function createNapiDocxEngineBinding(): Promise<DocxEngineBinding> {
   const { createRequire } = await import("node:module");
@@ -713,23 +713,23 @@ export async function createNapiDocxEngineBinding(): Promise<DocxEngineBinding> 
 
   let native: NativeEngineModule;
   try {
-    native = require("@opensuite/engine") as NativeEngineModule;
+    native = require("@opensuitehq/engine") as NativeEngineModule;
   } catch (error) {
     const message =
       error instanceof Error ? error.message : String(error);
     throw new Error(
-      `Failed to load @opensuite/engine Node binding. Install/publish @opensuite/engine (npm) or build opensuite-engine/crates/opensuite-node and use the local pnpm override. Underlying error: ${message}`,
+      `Failed to load @opensuitehq/engine Node binding. Ensure @opensuitehq/engine@0.1.1 is installed for this platform (darwin-arm64, darwin-x64, linux-x64-gnu, linux-arm64-gnu, win32-x64-msvc; glibc only — no musl/Alpine). Underlying error: ${message}`,
     );
   }
 
   if (typeof native.createBlankDocx !== "function") {
     throw new Error(
-      "@opensuite/engine is missing createBlankDocx — rebuild opensuite-engine/crates/opensuite-node for Milestone 5A APIs",
+      "@opensuitehq/engine is missing createBlankDocx — pin/install @opensuitehq/engine@0.1.1",
     );
   }
   if (typeof native.executeDocxInsertParagraph !== "function") {
     throw new Error(
-      "@opensuite/engine is missing executeDocxInsertParagraph — rebuild opensuite-engine/crates/opensuite-node for Milestone 5A APIs",
+      "@opensuitehq/engine is missing executeDocxInsertParagraph — pin/install @opensuitehq/engine@0.1.1",
     );
   }
   for (const name of [
@@ -761,7 +761,7 @@ export async function createNapiDocxEngineBinding(): Promise<DocxEngineBinding> 
   ] as const) {
     if (typeof native[name] !== "function") {
       throw new Error(
-        `@opensuite/engine is missing ${name} — rebuild opensuite-engine/crates/opensuite-node for Milestone 5C-B/6A/6C APIs`,
+        `@opensuitehq/engine is missing ${name} — pin/install @opensuitehq/engine@0.1.1`,
       );
     }
   }
@@ -1115,7 +1115,7 @@ export async function createNapiDocxEngineBinding(): Promise<DocxEngineBinding> 
     async executeDocxExtended(input, name, operation) {
       const method = native[name];
       if (typeof method !== "function") {
-        throw new Error(`@opensuite/engine is missing ${name}`);
+        throw new Error(`@opensuitehq/engine is missing ${name}`);
       }
       const response = await (method as (
         bytes: Buffer,

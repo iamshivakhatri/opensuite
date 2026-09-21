@@ -1,6 +1,6 @@
 # OpenSuite Engine Integration
 
-`opensuite-engine` is a separate Rust project. 
+`opensuite-engine` is a separate Rust project, published to npm as `@opensuitehq/engine`.
 
 OpenSuite communicates with it only through `packages/engine-client`.
 
@@ -14,7 +14,7 @@ Application code must never manipulate Office internals as a shortcut around the
 Phase 2B read/write tools
   → createDocumentTools(bindDocxDocument({ bytes, versionId, binding, persist }))
   → DocxEngineBinding getDocxCapabilities / inspectDocx / findDocxText / executeDocx*
-  → Node N-API (@opensuite/engine)
+  → Node N-API (@opensuitehq/engine)
   → Rust opensuite-engine
   → persist → appendDocumentVersion → host advances bytes/version
 ```
@@ -98,31 +98,13 @@ exact immutable version N
 * Real DOCX never falls back to mock inspect semantics.
 * Application owns version history; engine never writes DB/storage.
 
-### Local Node binding setup
-
-Sibling checkout expected:
-
-```text
-opensuite-project/
-  opensuite/
-  opensuite-engine/
-```
+### Node binding setup
 
 ```bash
-# in opensuite-engine
-cd crates/opensuite-node
-npm install
-npm run build   # produces opensuite_node.<platform>-<arch>.node
-
-# in opensuite
-pnpm install    # optionalDependency link: → sibling crates/opensuite-node
+pnpm install   # pulls @opensuitehq/engine@0.1.1 + platform package from npm
 ```
 
-`packages/engine-client` declares `@opensuite/engine` as an **optionalDependency** via
-`link:../../../opensuite-engine/crates/opensuite-node` (symlink to the live package —
-not `file:`, which copies into the pnpm store and goes stale after `npm run build`).
-Do not commit native binaries into this repo. Smoke test writes
-`/private/tmp/opensuite-app-engine-adapter-output.docx` for manual inspection only.
+`packages/engine-client` declares `@opensuitehq/engine` as a **dependency** (exact `0.1.1`) — not optional — so installs fail if the package cannot be resolved. Platform binaries ship as optionalDependencies of that package. Supported: darwin-arm64/x64, linux-x64-gnu, linux-arm64-gnu, win32-x64-msvc (glibc only; no Alpine/musl). No sibling `opensuite-engine` checkout required. Smoke test may write `/private/tmp/opensuite-app-engine-adapter-output.docx` for manual inspection only.
 
 ## Conceptual Interface
 

@@ -7,32 +7,36 @@ import { test } from "node:test";
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = join(here, "../../../..");
 
-test("agent-core-v2 does not depend on @opensuite/engine N-API package", () => {
-  const pkg = JSON.parse(
-    readFileSync(join(repoRoot, "packages/agent-core-v2/package.json"), "utf8"),
-  ) as {
-    dependencies?: Record<string, string>;
-    optionalDependencies?: Record<string, string>;
-    peerDependencies?: Record<string, string>;
-  };
+test("agent-core packages do not depend on @opensuitehq/engine N-API package", () => {
+  for (const pkgName of ["agent-core-v2", "agent-core-v3"] as const) {
+    const pkg = JSON.parse(
+      readFileSync(join(repoRoot, `packages/${pkgName}/package.json`), "utf8"),
+    ) as {
+      dependencies?: Record<string, string>;
+      optionalDependencies?: Record<string, string>;
+      peerDependencies?: Record<string, string>;
+    };
 
-  for (const bag of [
-    pkg.dependencies,
-    pkg.optionalDependencies,
-    pkg.peerDependencies,
-  ]) {
-    assert.equal(bag?.["@opensuite/engine"], undefined);
+    for (const bag of [
+      pkg.dependencies,
+      pkg.optionalDependencies,
+      pkg.peerDependencies,
+    ]) {
+      assert.equal(bag?.["@opensuitehq/engine"], undefined);
+      assert.equal(bag?.["@opensuite/engine"], undefined);
+    }
   }
 });
 
-test("engine-client is the only package that optionally depends on the binding", () => {
+test("engine-client is the only package that depends on the native binding", () => {
   const pkg = JSON.parse(
     readFileSync(join(repoRoot, "packages/engine-client/package.json"), "utf8"),
   ) as {
+    dependencies?: Record<string, string>;
     optionalDependencies?: Record<string, string>;
   };
-  const spec = pkg.optionalDependencies?.["@opensuite/engine"];
-  assert.ok(spec);
-  // link: (not file:) so pnpm symlinks the sibling package — rebuilds are live.
-  assert.match(spec, /^link:/);
+  assert.equal(pkg.dependencies?.["@opensuitehq/engine"], "0.1.1");
+  assert.equal(pkg.optionalDependencies?.["@opensuitehq/engine"], undefined);
+  assert.equal(pkg.optionalDependencies?.["@opensuite/engine"], undefined);
+  assert.equal(pkg.dependencies?.["@opensuite/engine"], undefined);
 });

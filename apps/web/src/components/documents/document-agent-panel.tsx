@@ -11,9 +11,11 @@ import {
   latestProgressHeadline,
   presentAgentRun,
   reduceAgentProgress,
+  reduceLiveTranscript,
   visibleAgentProgress,
   type AgentProgressLine,
   type AgentTurnProgress,
+  type LiveTranscriptEntry,
 } from "@/lib/agent-progress";
 import { AgentRunProgress } from "@/components/documents/agent-run-progress";
 import { AgentMarkdown } from "@/lib/agent-markdown";
@@ -73,26 +75,70 @@ function stepProgressLine(step: AgentStep): AgentProgressLine | null {
   };
 }
 
+type TranscriptEntry =
+  | { readonly kind: "narration"; readonly id: string; readonly content: string }
+  | { readonly kind: "activity"; readonly id: string; readonly line: AgentProgressLine };
+
+function durableTranscript(steps: readonly AgentStep[]): TranscriptEntry[] {
+  return steps.reduce<TranscriptEntry[]>((entries, step) => {
+    if (step.kind === "narration") {
+      if (step.summary) entries.push({ kind: "narration", id: step.id, content: step.summary });
+      return entries;
+    }
+    const line = stepProgressLine(step);
+    if (line) entries.push({ kind: "activity", id: step.id, line });
+    return entries;
+  }, []);
+}
+
+function RunTranscript({
+  entries,
+  streaming = false,
+}: {
+  entries: readonly TranscriptEntry[];
+  streaming?: boolean;
+}) {
+  const parts: React.ReactNode[] = [];
+  let activities: AgentProgressLine[] = [];
+  const flushActivities = () => {
+    if (activities.length === 0) return;
+    const lines = activities;
+    activities = [];
+    parts.push(
+      <AgentRunProgress
+        key={`activities:${lines.map((line) => line.id).join(":")}`}
+        presentation={presentAgentRun(lines, { live: streaming })}
+        status={lines.some((line) => line.status === "active") ? "active" : "done"}
+        expanded={false}
+        onToggle={() => undefined}
+        showDetails={false}
+        live={streaming}
+      />,
+    );
+  };
+  entries.forEach((entry, index) => {
+    if (entry.kind === "activity") {
+      activities.push(entry.line);
+      return;
+    }
+    flushActivities();
+    const isCurrent = streaming && index === entries.length - 1;
+    parts.push(
+      <div key={entry.id} className={isCurrent ? "relative" : undefined}>
+        <AgentMarkdown text={entry.content} streaming={isCurrent} />
+        {isCurrent ? (
+          <span aria-hidden className="ml-0.5 inline-block h-[0.85em] w-[2px] translate-y-[2px] animate-pulse bg-accent align-baseline" />
+        ) : null}
+      </div>,
+    );
+  });
+  flushActivities();
+  return <div className="flex flex-col gap-2">{parts}</div>;
+}
+
 function CompletedRunTranscript({ steps }: { steps: readonly AgentStep[] }) {
   return (
-    <div className="flex flex-col gap-2">
-      {steps.map((step) => {
-        if (step.kind === "narration") {
-          return step.summary ? <AgentMarkdown key={step.id} text={step.summary} /> : null;
-        }
-        const line = stepProgressLine(step);
-        return line ? (
-          <AgentRunProgress
-            key={step.id}
-            presentation={presentAgentRun([line])}
-            status={line.status}
-            expanded={false}
-            onToggle={() => undefined}
-            showDetails={false}
-          />
-        ) : null;
-      })}
-    </div>
+    <RunTranscript entries={durableTranscript(steps)} />
   );
 }
 
@@ -201,10 +247,9 @@ export function DocumentAgentPanel({
   const [lastTurn, setLastTurn] = React.useState<AgentTurnProgress | null>(null);
   const [timelineOpen, setTimelineOpen] = React.useState(false);
   const progressRef = React.useRef<AgentProgressLine[]>([]);
-  const [liveDraft, setLiveDraft] = React.useState<{
-    messageId: string;
-    content: string;
-  } | null>(null);
+  const [liveTranscript, setLiveTranscript] = React.useState<
+    readonly LiveTranscriptEntry[]
+  >([]);
 
   const busy =
     submitting ||
@@ -427,12 +472,12 @@ export function DocumentAgentPanel({
       setActiveRun(snapshot.run);
       saveRunTranscript(snapshot);
       const refreshed = await refreshMessages(thread);
-      // Keep liveDraft until durable assistant text is present (avoids a blank flash).
+      // Keep the live entries until durable steps and the final answer are present.
       const hasAssistant = refreshed.messages.some(
         (message) => message.role === "assistant" && message.content.length > 0,
       );
       if (hasAssistant || !isActiveAgentRunStatus(snapshot.run.status)) {
-        setLiveDraft(null);
+        setLiveTranscript([]);
       }
       applyTerminalRunStatus(snapshot.run);
       return snapshot.run;
@@ -464,7 +509,7 @@ export function DocumentAgentPanel({
       reconnectAttemptsRef.current = 0;
       runStartedAtRef.current = null;
       setProgress([]);
-      setLiveDraft(null);
+      setLiveTranscript([]);
       setTimelineOpen(false);
       await refreshMessages(thread).catch(() => undefined);
     },
@@ -487,7 +532,7 @@ export function DocumentAgentPanel({
       setRunNotice(null);
       if (!options?.preserveDraft) {
         setCanRetryRun(false);
-        setLiveDraft(null);
+        setLiveTranscript([]);
         reconnectAttemptsRef.current = 0;
         const startedAt = Date.now();
         runStartedAtRef.current = startedAt;
@@ -516,33 +561,12 @@ export function DocumentAgentPanel({
       const sub = subscribeAgentRunEvents(run.id, {
         onEvent: (event) => {
           if (!isCurrent()) return;
-          setProgress((prev) => reduceAgentProgress(prev, event));
+          const nextProgress = reduceAgentProgress(progressRef.current, event);
+          progressRef.current = nextProgress;
+          setProgress(nextProgress);
+          setLiveTranscript((entries) => reduceLiveTranscript(entries, event, nextProgress));
 
-          if (event.type === "message.started") {
-            const messageId = String(event.data.messageId ?? "");
-            if (messageId) {
-              setLiveDraft({ messageId, content: "" });
-            }
-          } else if (event.type === "message.delta") {
-            const messageId = String(event.data.messageId ?? "");
-            const delta = String(event.data.delta ?? "");
-            if (messageId && delta) {
-              // Keep the Thought/Generating block visible (Cursor-style).
-              // Do not auto-collapse the timeline when tokens start.
-              setLiveDraft((prev) => {
-                if (prev && prev.messageId === messageId) {
-                  return { messageId, content: prev.content + delta };
-                }
-                return { messageId, content: delta };
-              });
-            }
-          } else if (event.type === "message.completed") {
-            const messageId = String(event.data.messageId ?? "");
-            const content = String(event.data.content ?? "");
-            if (messageId) {
-              setLiveDraft({ messageId, content });
-            }
-          } else if (event.type === "document.version.advanced") {
+          if (event.type === "document.version.advanced") {
             const advancedDocumentId = String(event.data.documentId ?? "");
             if (advancedDocumentId) {
               scheduleDocumentVersionRefresh(advancedDocumentId);
@@ -705,7 +729,7 @@ export function DocumentAgentPanel({
     setVersionNotice(null);
     runIdRef.current = null;
     runStartedAtRef.current = null;
-    setLiveDraft(null);
+    setLiveTranscript([]);
     setRunStepsByMessageId({});
     setHistoryOpen(false);
     reconnectAttemptsRef.current = 0;
@@ -830,7 +854,7 @@ export function DocumentAgentPanel({
   }, [
     messages.length,
     progress.length,
-    liveDraft?.content.length,
+    liveTranscript.length,
     runError,
     runNotice,
     versionNotice,
@@ -1045,7 +1069,7 @@ export function DocumentAgentPanel({
       });
       progressRef.current = nextProgress;
       setProgress(nextProgress);
-      setLiveDraft(null);
+      setLiveTranscript([]);
       applyTerminalRunStatus(snapshot.run);
     } catch (error) {
       if (error instanceof ApiError && error.statusCode === 404) {
@@ -1077,7 +1101,7 @@ export function DocumentAgentPanel({
     setRunNotice(null);
     setCanRetryRun(false);
     setVersionNotice(null);
-    setLiveDraft(null);
+    setLiveTranscript([]);
     setRunStepsByMessageId({});
     setDraft("");
     runIdRef.current = null;
@@ -1167,7 +1191,7 @@ export function DocumentAgentPanel({
       setRunTotalMs(null);
       setCanRetryRun(false);
       setVersionNotice(null);
-      setLiveDraft(null);
+      setLiveTranscript([]);
       setDraft("");
       setTagged([]);
       runIdRef.current = null;
@@ -1226,14 +1250,9 @@ export function DocumentAgentPanel({
         : "Workspace agent";
   const activeThread = threads.find((thread) => thread.id === threadId);
   const lastMessage = messages[messages.length - 1];
-  const showLiveDraft = Boolean(
-    liveDraft &&
-      liveDraft.content.length > 0 &&
-      lastMessage?.role !== "assistant",
-  );
   const visibleProgress = visibleAgentProgress(progress);
   const liveHeadline = latestProgressHeadline(visibleProgress);
-  const isLiveTurn = showLiveDraft || liveHeadline !== null || busy;
+  const isLiveTurn = liveTranscript.length > 0 || liveHeadline !== null || busy;
   const wallClockMs =
     runStartedAtRef.current !== null
       ? Math.max(0, nowTick - runStartedAtRef.current)
@@ -1455,35 +1474,21 @@ export function DocumentAgentPanel({
                 );
               })}
 
-              {/* Live turn: compact progress above streaming answer. */}
+              {/* Live narration and tool rows keep their observed order. */}
               {isLiveTurn ? (
                 <div className="flex flex-col gap-2">
-                  <AgentRunProgress
-                    presentation={presentAgentRun(visibleProgress, {
-                      live: true,
-                      streamingAnswer: Boolean(
-                        liveDraft && liveDraft.content.length > 0,
-                      ),
-                    })}
-                    status="active"
-                    totalElapsed={
-                      wallClockMs !== null
-                        ? formatProgressElapsed(wallClockMs)
-                        : null
-                    }
-                    expanded={timelineOpen}
-                    onToggle={() => setTimelineOpen((open) => !open)}
-                    live
-                  />
-                  {showLiveDraft && liveDraft ? (
-                    <div className="relative">
-                      <AgentMarkdown text={liveDraft.content} streaming />
-                      <span
-                        aria-hidden
-                        className="ml-0.5 inline-block h-[0.85em] w-[2px] translate-y-[2px] animate-pulse bg-accent align-baseline"
-                      />
-                    </div>
-                  ) : null}
+                  {liveTranscript.length > 0 ? (
+                    <RunTranscript entries={liveTranscript} streaming />
+                  ) : (
+                    <AgentRunProgress
+                      presentation={presentAgentRun(visibleProgress, { live: true })}
+                      status="active"
+                      totalElapsed={wallClockMs !== null ? formatProgressElapsed(wallClockMs) : null}
+                      expanded={timelineOpen}
+                      onToggle={() => setTimelineOpen((open) => !open)}
+                      live
+                    />
+                  )}
                 </div>
               ) : null}
 

@@ -204,7 +204,7 @@ export async function buildApp(
       docxBinding = await createNapiDocxEngineBinding();
     } catch (error) {
       // Soft-boot: API stays up for auth/workspaces/etc. DOCX mutate/blank
-      // stay unavailable until @opensuite/engine (native) is installed.
+      // stay unavailable until @opensuitehq/engine loads for this platform.
       app.log.error(
         { err: error },
         "DOCX engine binding unavailable; blank document creation is unavailable",
