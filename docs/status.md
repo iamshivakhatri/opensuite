@@ -18,6 +18,7 @@ _Read this before starting any work. Keep it a concise current-state handoff, no
 * **Context Lifecycle C2** — immutable checkpoint persistence plus checkpoint + C1-tail model composition.
 * **Context Lifecycle C3** — best-effort post-success incremental checkpoint compaction; latest checkpoint + recent tail remains model-facing.
 * **Context Lifecycle C4** — conservative known-model token budgeting for first-turn history and C3 compaction input; unknown models retain C1 fallback bounds.
+* **Context Lifecycle C5** — bounded SQL history reads: execution loads at most 40 recent rows, while compaction uses scalar tail stats and a bounded oldest source batch.
 * **Phase 6A** — API-only, version-keyed slim structure cache plus conservative first-turn retrieval; no V3/engine prompt or protocol changes.
 * **Phase 5A** — `body_blocks` now carries paragraph style/heading and slim table structure from Rust; no app-side OOXML parsing.
 * **DB outage UX** — API boot no longer crashes on lease-clear when Postgres is down; soft banner + keep shell when session exists; 503 copy = "No connection with the database".
@@ -36,7 +37,7 @@ _Read this before starting any work. Keep it a concise current-state handoff, no
 | Check | Status |
 |---|---|
 | agent-core-v3 unit (21) | Pass (prior) |
-| Context lifecycle C1–C4 targeted API + DB schema checks | Pass |
+| Context lifecycle C1–C5 targeted API + DB schema checks | Pass |
 | Phase 6A API retrieval + lifecycle/report tests (22) | Pass |
 | engine-client tests (13) | Pass |
 | web agent-progress + related unit | Pass |

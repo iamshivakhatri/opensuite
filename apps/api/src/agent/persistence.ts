@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, isNotNull, isNull, or } from "drizzle-orm";
+import { and, asc, desc, eq, gt, isNotNull, isNull, ne, or, sql } from "drizzle-orm";
 
 import type { Db } from "@opensuite/db";
 import { schema } from "@opensuite/db";
@@ -1045,15 +1045,17 @@ export function createAgentPersistenceService(db: Db) {
       return row ? toThreadContextCheckpoint(row) : null;
     },
 
-    async listMessagesAfterThreadContextCheckpoint(
+    async listRecentMessagesForContext(
       input: {
         threadId: string;
         ownerUserId: string;
-        checkpoint: AgentThreadContextCheckpoint;
+        checkpoint?: AgentThreadContextCheckpoint | null;
+        excludeMessageId?: string;
+        limit: number;
       },
       tx?: AgentPersistenceExecutor,
     ): Promise<AgentMessage[]> {
-      if (input.checkpoint.threadId !== input.threadId) {
+      if (input.checkpoint && input.checkpoint.threadId !== input.threadId) {
         throw new AgentPersistenceError(
           "CHECKPOINT_MESSAGE_THREAD_MISMATCH",
           "Checkpoint does not belong to this thread",
@@ -1061,22 +1063,110 @@ export function createAgentPersistenceService(db: Db) {
       }
       const client = executor(tx);
       await requireOwnedThread(client, input.threadId, input.ownerUserId);
-      // C2 deliberately reuses the existing full-history query. C5 can move
-      // this exact cursor predicate into SQL without changing callers.
+      const boundary = input.checkpoint
+        ? new Date(input.checkpoint.throughMessageCreatedAt)
+        : null;
       const rows = await client
         .select(messageSelect)
         .from(schema.agentMessage)
-        .where(eq(schema.agentMessage.threadId, input.threadId))
-        .orderBy(asc(schema.agentMessage.createdAt), asc(schema.agentMessage.id));
-      const messages = rows.map(toMessage);
-      const boundary = new Date(input.checkpoint.throughMessageCreatedAt).getTime();
-      return messages.filter((message) => {
-        const createdAt = new Date(message.createdAt).getTime();
-        return (
-          createdAt > boundary ||
-          (createdAt === boundary && message.id > input.checkpoint.throughMessageId)
+        .where(and(
+          eq(schema.agentMessage.threadId, input.threadId),
+          ...(input.excludeMessageId
+            ? [ne(schema.agentMessage.id, input.excludeMessageId)]
+            : []),
+          ...(input.checkpoint && boundary
+            ? [or(
+                gt(schema.agentMessage.createdAt, boundary),
+                and(
+                  eq(schema.agentMessage.createdAt, boundary),
+                  gt(schema.agentMessage.id, input.checkpoint.throughMessageId),
+                ),
+              )]
+            : []),
+        ))
+        .orderBy(desc(schema.agentMessage.createdAt), desc(schema.agentMessage.id))
+        .limit(input.limit);
+      return rows.reverse().map(toMessage);
+    },
+
+    async getThreadContextTailStats(
+      input: {
+        threadId: string;
+        ownerUserId: string;
+        checkpoint?: AgentThreadContextCheckpoint | null;
+      },
+      tx?: AgentPersistenceExecutor,
+    ): Promise<{ messageCount: number; characterCount: number }> {
+      if (input.checkpoint && input.checkpoint.threadId !== input.threadId) {
+        throw new AgentPersistenceError(
+          "CHECKPOINT_MESSAGE_THREAD_MISMATCH",
+          "Checkpoint does not belong to this thread",
         );
-      });
+      }
+      const client = executor(tx);
+      await requireOwnedThread(client, input.threadId, input.ownerUserId);
+      const boundary = input.checkpoint
+        ? new Date(input.checkpoint.throughMessageCreatedAt)
+        : null;
+      const [row] = await client
+        .select({
+          messageCount: sql<number>`count(*)::int`,
+          characterCount: sql<number>`coalesce(sum(char_length(${schema.agentMessage.content})), 0)::int`,
+        })
+        .from(schema.agentMessage)
+        .where(and(
+          eq(schema.agentMessage.threadId, input.threadId),
+          ...(input.checkpoint && boundary
+            ? [or(
+                gt(schema.agentMessage.createdAt, boundary),
+                and(
+                  eq(schema.agentMessage.createdAt, boundary),
+                  gt(schema.agentMessage.id, input.checkpoint.throughMessageId),
+                ),
+              )]
+            : []),
+        ));
+      return { messageCount: row?.messageCount ?? 0, characterCount: row?.characterCount ?? 0 };
+    },
+
+    async listOldestMessagesForContextCompaction(
+      input: {
+        threadId: string;
+        ownerUserId: string;
+        checkpoint?: AgentThreadContextCheckpoint | null;
+        limit: number;
+      },
+      tx?: AgentPersistenceExecutor,
+    ): Promise<AgentMessage[]> {
+      if (input.checkpoint && input.checkpoint.threadId !== input.threadId) {
+        throw new AgentPersistenceError(
+          "CHECKPOINT_MESSAGE_THREAD_MISMATCH",
+          "Checkpoint does not belong to this thread",
+        );
+      }
+      const client = executor(tx);
+      await requireOwnedThread(client, input.threadId, input.ownerUserId);
+      const boundary = input.checkpoint
+        ? new Date(input.checkpoint.throughMessageCreatedAt)
+        : null;
+      const rows = await client
+        .select(messageSelect)
+        .from(schema.agentMessage)
+        .where(and(
+          eq(schema.agentMessage.threadId, input.threadId),
+          ...(input.checkpoint && boundary
+            ? [or(
+                gt(schema.agentMessage.createdAt, boundary),
+                and(
+                  eq(schema.agentMessage.createdAt, boundary),
+                  gt(schema.agentMessage.id, input.checkpoint.throughMessageId),
+                ),
+              )]
+            : []),
+        ))
+        .orderBy(asc(schema.agentMessage.createdAt), asc(schema.agentMessage.id))
+        .limit(input.limit);
+      return rows.map(toMessage);
     },
 
     /**

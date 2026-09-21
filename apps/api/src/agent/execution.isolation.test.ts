@@ -38,6 +38,8 @@ function memoryPersistence(ownerUserId: string): AgentPersistenceService & {
   messages: AgentMessage[];
   checkpoint: AgentThreadContextCheckpoint | null;
   checkpoints: AgentThreadContextCheckpoint[];
+  contextRowsLoaded: number[];
+  compactionSourceRowsLoaded: number[];
   runs: Map<string, AgentRun>;
   failOnStatus?: AgentRun["status"];
 } {
@@ -51,6 +53,8 @@ function memoryPersistence(ownerUserId: string): AgentPersistenceService & {
     messages,
     checkpoint: null as AgentThreadContextCheckpoint | null,
     checkpoints: [] as AgentThreadContextCheckpoint[],
+    contextRowsLoaded: [] as number[],
+    compactionSourceRowsLoaded: [] as number[],
     runs,
     failOnStatus: undefined as AgentRun["status"] | undefined,
     async withTransaction<T>(fn: (tx: unknown) => Promise<T>): Promise<T> {
@@ -75,19 +79,67 @@ function memoryPersistence(ownerUserId: string): AgentPersistenceService & {
       messages.push(message);
       return message;
     },
-    async listMessagesForThread() {
-      return [...messages];
-    },
     async getLatestThreadContextCheckpoint() {
       return api.checkpoint;
     },
-    async listMessagesAfterThreadContextCheckpoint(input: {
-      checkpoint: AgentThreadContextCheckpoint;
+    async listRecentMessagesForContext(input: {
+      checkpoint?: AgentThreadContextCheckpoint | null;
+      excludeMessageId?: string;
+      limit: number;
     }) {
-      const boundary = messages.findIndex(
-        (message) => message.id === input.checkpoint.throughMessageId,
-      );
-      return boundary < 0 ? [] : messages.slice(boundary + 1);
+      const tail = input.checkpoint
+        ? messages.filter((message) =>
+            message.createdAt > input.checkpoint!.throughMessageCreatedAt ||
+            (message.createdAt === input.checkpoint!.throughMessageCreatedAt &&
+              message.id > input.checkpoint!.throughMessageId),
+          )
+        : messages;
+      const result = [...tail]
+        .filter((message) => message.id !== input.excludeMessageId)
+        .sort((left, right) =>
+          left.createdAt === right.createdAt
+            ? left.id.localeCompare(right.id)
+            : left.createdAt.localeCompare(right.createdAt),
+        )
+        .slice(-input.limit);
+      api.contextRowsLoaded.push(result.length);
+      return result;
+    },
+    async getThreadContextTailStats(input: {
+      checkpoint?: AgentThreadContextCheckpoint | null;
+    }) {
+      const tail = input.checkpoint
+        ? messages.filter((message) =>
+            message.createdAt > input.checkpoint!.throughMessageCreatedAt ||
+            (message.createdAt === input.checkpoint!.throughMessageCreatedAt &&
+              message.id > input.checkpoint!.throughMessageId),
+          )
+        : messages;
+      return {
+        messageCount: tail.length,
+        characterCount: tail.reduce((total, message) => total + message.content.length, 0),
+      };
+    },
+    async listOldestMessagesForContextCompaction(input: {
+      checkpoint?: AgentThreadContextCheckpoint | null;
+      limit: number;
+    }) {
+      const tail = input.checkpoint
+        ? messages.filter((message) =>
+            message.createdAt > input.checkpoint!.throughMessageCreatedAt ||
+            (message.createdAt === input.checkpoint!.throughMessageCreatedAt &&
+              message.id > input.checkpoint!.throughMessageId),
+          )
+        : messages;
+      const result = [...tail]
+        .sort((left, right) =>
+          left.createdAt === right.createdAt
+            ? left.id.localeCompare(right.id)
+            : left.createdAt.localeCompare(right.createdAt),
+        )
+        .slice(0, input.limit);
+      api.compactionSourceRowsLoaded.push(result.length);
+      return result;
     },
     async createThreadContextCheckpoint(input: {
       threadId: string;
@@ -173,6 +225,8 @@ function memoryPersistence(ownerUserId: string): AgentPersistenceService & {
     messages: AgentMessage[];
     checkpoint: AgentThreadContextCheckpoint | null;
     checkpoints: AgentThreadContextCheckpoint[];
+    contextRowsLoaded: number[];
+    compactionSourceRowsLoaded: number[];
     runs: Map<string, AgentRun>;
     failOnStatus?: AgentRun["status"];
   };
@@ -364,6 +418,29 @@ test("execution sends a bounded historical tail while retaining full persistence
   assert.equal(persistence.messages.some((message) => message.content === "history-0"), true);
   assert.match(sawSystem, /You are OpenSuite's document agent/);
   assert.equal(sawFinish, true);
+});
+
+test("execution loads at most forty history rows from a large thread", async () => {
+  const persistence = memoryPersistence("user-1");
+  persistence.messages.push(...Array.from({ length: 10_000 }, (_, index) => ({
+    id: `history-${String(index).padStart(5, "0")}`,
+    threadId: "thread-1",
+    role: "user" as const,
+    content: `history-${index}`,
+    createdAt: now(),
+  })));
+  const execution = createAgentExecutionService(
+    baseDeps(persistence, async () => softResult("completed", "done")),
+  );
+
+  await (await execution.start({
+    userId: "user-1",
+    threadId: "thread-1",
+    instruction: "current request",
+  })).result;
+
+  assert.deepEqual(persistence.contextRowsLoaded, [MAX_HISTORY_MESSAGES]);
+  assert.equal(persistence.messages.length, 10_002);
 });
 
 test("execution replaces checkpointed history with one checkpoint message", async () => {
@@ -603,6 +680,7 @@ test("compaction bounds a huge prefix and advances only through that prefix", as
   assert.equal(result.checkpointCreated, true);
   assert.equal(persistence.checkpoint?.throughMessageId, "huge-000");
   assert.equal(compactionInput.includes("huge-1-"), false);
+  assert.deepEqual(persistence.compactionSourceRowsLoaded, [40]);
   assert.ok(estimateTokens(compactionInput) < safeInputTokenBudget(1_000));
   assert.equal(persistence.messages.length, 60);
 });

@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { getTableName } from "drizzle-orm";
+import { getTableConfig } from "drizzle-orm/pg-core";
 
 import {
   agentMessage,
@@ -140,4 +141,12 @@ test("thread context checkpoints keep a complete message ordering boundary", () 
   assert.ok("throughMessageCreatedAt" in agentThreadContextCheckpoint);
   assert.ok("contentVersion" in agentThreadContextCheckpoint);
   assert.ok("estimatedCharacters" in agentThreadContextCheckpoint);
+});
+
+test("agent messages have a complete thread ordering index", () => {
+  assert.ok(
+    getTableConfig(agentMessage).indexes.some(
+      (index) => index.config.name === "agent_message_thread_id_created_at_id_idx",
+    ),
+  );
 });

@@ -227,10 +227,11 @@ test(
         content: "Also revise the conclusion.",
       });
       assert.deepEqual(
-        (await agents.listMessagesAfterThreadContextCheckpoint({
+        (await agents.listRecentMessagesForContext({
           threadId: documentThread.id,
           ownerUserId: aliceId,
           checkpoint,
+          limit: 40,
         })).map((message) => message.id),
         [afterCheckpoint.id],
       );

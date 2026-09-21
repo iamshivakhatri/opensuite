@@ -66,25 +66,20 @@ export async function compactThreadContext(input: {
     threadId: input.threadId,
     ownerUserId: input.ownerUserId,
   });
-  const tail = checkpoint
-    ? await input.persistence.listMessagesAfterThreadContextCheckpoint({
-        threadId: input.threadId,
-        ownerUserId: input.ownerUserId,
-        checkpoint,
-      })
-    : await input.persistence.listMessagesForThread({
-        threadId: input.threadId,
-        ownerUserId: input.ownerUserId,
-      });
-  const sourceMessageCount = tail.length;
-  const retainedMessageCount = Math.min(tail.length, COMPACTION_RETAIN_MESSAGES);
+  const tail = await input.persistence.getThreadContextTailStats({
+    threadId: input.threadId,
+    ownerUserId: input.ownerUserId,
+    checkpoint,
+  });
+  const sourceMessageCount = tail.messageCount;
+  const retainedMessageCount = Math.min(sourceMessageCount, COMPACTION_RETAIN_MESSAGES);
   const base = {
     considered: true,
     sourceMessageCount,
     retainedMessageCount,
     previousCheckpointUsed: checkpoint !== null,
   } as const;
-  const sourceCharacters = tail.reduce((total, message) => total + message.content.length, 0);
+  const sourceCharacters = tail.characterCount;
   if (
     sourceMessageCount < COMPACTION_TRIGGER_MESSAGES &&
     sourceCharacters < COMPACTION_TRIGGER_CHARACTERS
@@ -92,7 +87,15 @@ export async function compactThreadContext(input: {
     return finish({ ...base, triggered: false, checkpointCreated: false });
   }
 
-  const eligibleMessages = tail.slice(0, -COMPACTION_RETAIN_MESSAGES);
+  const eligibleMessages = await input.persistence.listOldestMessagesForContextCompaction({
+    threadId: input.threadId,
+    ownerUserId: input.ownerUserId,
+    checkpoint,
+    limit: Math.min(
+      COMPACTION_TRIGGER_MESSAGES,
+      Math.max(0, sourceMessageCount - COMPACTION_RETAIN_MESSAGES),
+    ),
+  });
   const totalBudget = input.contextLength !== undefined
     ? safeInputTokenBudget(input.contextLength)
     : estimateTokens("x".repeat(MAX_HISTORY_CHARACTERS));

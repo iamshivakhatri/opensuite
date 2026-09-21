@@ -120,9 +120,10 @@ export const agentMessage = pgTable(
     createdAt: timestamp("created_at").defaultNow().notNull(),
   },
   (table) => [
-    index("agent_message_thread_id_created_at_idx").on(
+    index("agent_message_thread_id_created_at_id_idx").on(
       table.threadId,
       table.createdAt,
+      table.id,
     ),
   ],
 );

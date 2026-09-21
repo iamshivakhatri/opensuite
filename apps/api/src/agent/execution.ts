@@ -38,6 +38,7 @@ import {
 } from "./document-retrieval.js";
 import {
   estimateTokens,
+  MAX_HISTORY_MESSAGES,
   projectHistoricalMessages,
   safeInputTokenBudget,
   truncateToTokenBudget,
@@ -293,16 +294,13 @@ async function runExecution(input: {
     threadId: input.thread.id,
     ownerUserId: input.ownerUserId,
   });
-  const priorMessages = checkpoint
-    ? await input.deps.persistence.listMessagesAfterThreadContextCheckpoint({
-        threadId: input.thread.id,
-        ownerUserId: input.ownerUserId,
-        checkpoint,
-      })
-    : await input.deps.persistence.listMessagesForThread({
-        threadId: input.thread.id,
-        ownerUserId: input.ownerUserId,
-      });
+  const priorMessages = await input.deps.persistence.listRecentMessagesForContext({
+    threadId: input.thread.id,
+    ownerUserId: input.ownerUserId,
+    checkpoint,
+    excludeMessageId: input.userMessage.id,
+    limit: MAX_HISTORY_MESSAGES,
+  });
   const messageId = `v3-${input.run.id}`;
   const retrieval = await loadRetrievedContext({
     cache: input.structureCache,
@@ -377,9 +375,10 @@ async function runExecution(input: {
       [finish.name]: finish.tool,
     };
     const system = buildAgentOperatingInstruction(Object.keys(tools));
-    const historicalMessages = priorMessages
-      .filter((message) => message.id !== input.userMessage.id)
-      .map((message) => ({ role: message.role, content: message.content }));
+    const historicalMessages = priorMessages.map((message) => ({
+      role: message.role,
+      content: message.content,
+    }));
     const fixedTokens =
       estimateTokens(system) +
       estimateTokens(toolContext(tools)) +
@@ -408,6 +407,7 @@ async function runExecution(input: {
     const context = {
       ...historicalContext,
       checkpointUsed: checkpoint !== null,
+      historyQueryMode: checkpoint ? "post_checkpoint" as const : "recent" as const,
       ...(checkpoint
         ? { checkpointThroughMessageId: checkpoint.throughMessageId }
         : {}),
@@ -634,6 +634,7 @@ function emitRunReport(input: {
   readonly context: {
     readonly checkpointUsed: boolean;
     readonly checkpointThroughMessageId?: string;
+    readonly historyQueryMode: "recent" | "post_checkpoint";
     readonly historicalMessagesLoaded: number;
     readonly historicalMessagesAfterCheckpoint: number;
     readonly historicalMessagesProjected: number;
