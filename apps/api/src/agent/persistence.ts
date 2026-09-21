@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, gt, isNotNull, isNull, ne, or, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gt, isNotNull, isNull, lt, ne, or, sql } from "drizzle-orm";
 
 import type { Db } from "@opensuite/db";
 import { schema } from "@opensuite/db";
@@ -944,6 +944,62 @@ export function createAgentPersistenceService(db: Db) {
         );
 
       return rows.map(toMessage);
+    },
+
+    /**
+     * Cursor-paginated message page for GET /messages (C6). Scopes by
+     * threadId, orders on the (thread_id, created_at, id) index, and never
+     * materializes full thread history. When `before` is omitted, returns
+     * the newest page; otherwise returns the page strictly preceding the
+     * supplied (createdAt, id) cursor. Chronological order is restored
+     * before returning.
+     */
+    async listMessagesPageForThread(
+      input: {
+        threadId: string;
+        ownerUserId: string;
+        limit: number;
+        before?: { createdAt: string; id: string } | null;
+      },
+      tx?: AgentPersistenceExecutor,
+    ): Promise<{
+      messages: AgentMessage[];
+      hasMore: boolean;
+      oldestCursor: { createdAt: string; id: string } | null;
+    }> {
+      const client = executor(tx);
+      await requireOwnedThread(client, input.threadId, input.ownerUserId);
+      const boundary = input.before ? new Date(input.before.createdAt) : null;
+      const rows = await client
+        .select(messageSelect)
+        .from(schema.agentMessage)
+        .where(and(
+          eq(schema.agentMessage.threadId, input.threadId),
+          ...(input.before && boundary
+            ? [or(
+                lt(schema.agentMessage.createdAt, boundary),
+                and(
+                  eq(schema.agentMessage.createdAt, boundary),
+                  lt(schema.agentMessage.id, input.before.id),
+                ),
+              )]
+            : []),
+        ))
+        .orderBy(desc(schema.agentMessage.createdAt), desc(schema.agentMessage.id))
+        .limit(input.limit + 1);
+
+      const hasMore = rows.length > input.limit;
+      const pageRowsNewestFirst = hasMore ? rows.slice(0, input.limit) : rows;
+      const oldestRow = pageRowsNewestFirst[pageRowsNewestFirst.length - 1] ?? null;
+      const messages = pageRowsNewestFirst.slice().reverse().map(toMessage);
+
+      return {
+        messages,
+        hasMore,
+        oldestCursor: oldestRow
+          ? { createdAt: oldestRow.createdAt.toISOString(), id: oldestRow.id }
+          : null,
+      };
     },
 
     async createThreadContextCheckpoint(

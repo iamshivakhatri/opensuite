@@ -31,6 +31,32 @@ const RunIdParams = z.object({
   runId: z.uuid("runId must be a UUID"),
 });
 
+/** GET /messages default/max page size (C6) — one route-level knob, not configurable app-wide. */
+const DEFAULT_MESSAGES_PAGE_SIZE = 50;
+const MAX_MESSAGES_PAGE_SIZE = 100;
+
+const ListMessagesQuery = z
+  .object({
+    limit: z.coerce
+      .number()
+      .int()
+      .min(1, "limit must be at least 1")
+      .max(MAX_MESSAGES_PAGE_SIZE, `limit must be at most ${MAX_MESSAGES_PAGE_SIZE}`)
+      .optional(),
+    beforeCreatedAt: z
+      .string()
+      .refine((value) => !Number.isNaN(Date.parse(value)), {
+        message: "beforeCreatedAt must be a valid ISO timestamp",
+      })
+      .optional(),
+    beforeId: z.uuid("beforeId must be a UUID").optional(),
+  })
+  .refine(
+    (value) =>
+      (value.beforeCreatedAt === undefined) === (value.beforeId === undefined),
+    { message: "beforeCreatedAt and beforeId must be supplied together" },
+  );
+
 const CreateThreadBody = z.object({
   title: z
     .string()
@@ -219,17 +245,42 @@ export function registerAgentRoutes(
       });
     }
 
+    const query = ListMessagesQuery.safeParse(request.query ?? {});
+    if (!query.success) {
+      return reply.status(400).send({
+        error: {
+          statusCode: 400,
+          message: query.error.issues[0]?.message ?? "Invalid query parameters",
+          code: "INVALID_MESSAGES_QUERY",
+        },
+      });
+    }
+
+    const limit = query.data.limit ?? DEFAULT_MESSAGES_PAGE_SIZE;
+    const before =
+      query.data.beforeCreatedAt !== undefined && query.data.beforeId !== undefined
+        ? { createdAt: query.data.beforeCreatedAt, id: query.data.beforeId }
+        : null;
+
     try {
-      const messages = await persistence.listMessagesForThread({
+      const page = await persistence.listMessagesPageForThread({
         threadId: params.data.threadId,
         ownerUserId: user.id,
+        limit,
+        before,
       });
       const latestRun = await persistence.getLatestRunForThread({
         threadId: params.data.threadId,
         ownerUserId: user.id,
       });
       return reply.send({
-        messages: messages.map(toAgentMessageDto),
+        messages: page.messages.map(toAgentMessageDto),
+        page: {
+          hasMore: page.hasMore,
+          ...(page.hasMore && page.oldestCursor
+            ? { oldestCursor: page.oldestCursor }
+            : {}),
+        },
         latestRun: latestRun ? toAgentRunDto(latestRun) : null,
       });
     } catch (error) {

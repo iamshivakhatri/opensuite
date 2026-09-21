@@ -675,23 +675,49 @@ export async function createWorkspaceAgentThread(
   return body.thread;
 }
 
-export async function getAgentMessages(threadId: string): Promise<{
-  messages: AgentMessage[];
-  latestRun: AgentRun | null;
-}> {
+export interface AgentMessagesCursor {
+  readonly createdAt: string;
+  readonly id: string;
+}
+
+export interface AgentMessagesPage {
+  readonly messages: AgentMessage[];
+  readonly latestRun: AgentRun | null;
+  readonly hasMore: boolean;
+  readonly oldestCursor: AgentMessagesCursor | null;
+}
+
+/**
+ * Fetches one cursor-paginated page of thread messages (C6). Omit `before`
+ * for the latest page; pass the previous page's `oldestCursor` to load the
+ * page preceding it. Never fetches the full thread history.
+ */
+export async function getAgentMessages(
+  threadId: string,
+  options?: { readonly before?: AgentMessagesCursor },
+): Promise<AgentMessagesPage> {
+  const search = new URLSearchParams();
+  if (options?.before) {
+    search.set("beforeCreatedAt", options.before.createdAt);
+    search.set("beforeId", options.before.id);
+  }
+  const query = search.toString();
   const response = await apiFetch(
-    `/api/agent/threads/${threadId}/messages`,
+    `/api/agent/threads/${threadId}/messages${query ? `?${query}` : ""}`,
   );
   if (!response.ok) {
     throw await parseError(response);
   }
   const body = (await response.json()) as {
     messages: AgentMessage[];
+    page?: { hasMore: boolean; oldestCursor?: AgentMessagesCursor | null };
     latestRun?: AgentRun | null;
   };
   return {
     messages: body.messages,
     latestRun: body.latestRun ?? null,
+    hasMore: body.page?.hasMore ?? false,
+    oldestCursor: body.page?.oldestCursor ?? null,
   };
 }
 

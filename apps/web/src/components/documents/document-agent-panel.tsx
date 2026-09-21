@@ -17,6 +17,7 @@ import {
 } from "@/lib/agent-progress";
 import { AgentRunProgress } from "@/components/documents/agent-run-progress";
 import { AgentMarkdown } from "@/lib/agent-markdown";
+import { mergeMessagePage, prependOlderMessages } from "@/lib/agent-messages";
 import { shouldAcceptSubmit } from "@/lib/agent-submit";
 import {
   ApiError,
@@ -31,6 +32,7 @@ import {
   startAgentRun,
   subscribeAgentRunEvents,
   type AgentMessage,
+  type AgentMessagesCursor,
   type AgentRun,
   type AgentThread,
   type ListedDocument,
@@ -105,6 +107,16 @@ export function DocumentAgentPanel({
   const historyAnchorRef = React.useRef<HTMLButtonElement>(null);
   const historyMenuRef = React.useRef<HTMLDivElement>(null);
   const [messages, setMessages] = React.useState<AgentMessage[]>([]);
+  /** C6 pagination: whether older history exists beyond the currently loaded pages. */
+  const [hasMoreMessages, setHasMoreMessages] = React.useState(false);
+  const [oldestMessagesCursor, setOldestMessagesCursor] =
+    React.useState<AgentMessagesCursor | null>(null);
+  const [loadingOlderMessages, setLoadingOlderMessages] = React.useState(false);
+  const [loadOlderMessagesError, setLoadOlderMessagesError] = React.useState<
+    string | null
+  >(null);
+  /** Guards stale getAgentMessages responses from a thread we've since left. */
+  const activeThreadRequestRef = React.useRef<string | null>(null);
   const [draft, setDraft] = React.useState("");
   const [tagged, setTagged] = React.useState<TaggedDocument[]>([]);
   const [mentionOpen, setMentionOpen] = React.useState(false);
@@ -249,11 +261,57 @@ export function DocumentAgentPanel({
     return () => window.clearInterval(id);
   }, [busy, progress]);
 
+  /** Fetches the latest message page and merges it into the transcript by id. */
   const refreshMessages = React.useCallback(async (id: string) => {
     const result = await getAgentMessages(id);
-    setMessages(result.messages);
+    if (activeThreadRequestRef.current !== id) {
+      // Stale response for a thread the user has since navigated away from.
+      return result;
+    }
+    setMessages((prev) => mergeMessagePage(prev, result.messages));
+    setHasMoreMessages(result.hasMore);
+    setOldestMessagesCursor(result.oldestCursor);
     return result;
   }, []);
+
+  /** Loads the page preceding the oldest loaded message, preserving scroll position. */
+  const loadOlderMessages = React.useCallback(async () => {
+    const id = threadId;
+    const cursor = oldestMessagesCursor;
+    if (!id || !cursor || loadingOlderMessages) {
+      return;
+    }
+    setLoadingOlderMessages(true);
+    setLoadOlderMessagesError(null);
+    const container = scrollRef.current;
+    const scrollHeightBefore = container?.scrollHeight ?? 0;
+    const scrollTopBefore = container?.scrollTop ?? 0;
+    try {
+      const result = await getAgentMessages(id, { before: cursor });
+      if (activeThreadRequestRef.current !== id) {
+        return;
+      }
+      setMessages((prev) => prependOlderMessages(prev, result.messages));
+      setHasMoreMessages(result.hasMore);
+      setOldestMessagesCursor(result.oldestCursor);
+      requestAnimationFrame(() => {
+        const el = scrollRef.current;
+        if (!el) return;
+        const scrollHeightAfter = el.scrollHeight;
+        el.scrollTop = scrollTopBefore + (scrollHeightAfter - scrollHeightBefore);
+      });
+    } catch (error) {
+      if (activeThreadRequestRef.current === id) {
+        setLoadOlderMessagesError(
+          userFacingError(error, "Could not load earlier messages."),
+        );
+      }
+    } finally {
+      if (activeThreadRequestRef.current === id) {
+        setLoadingOlderMessages(false);
+      }
+    }
+  }, [threadId, oldestMessagesCursor, loadingOlderMessages]);
 
   const applyTerminalRunStatus = React.useCallback((run: AgentRun) => {
     const fromServer = agentRunDurationMs(run.startedAt, run.completedAt);
@@ -604,15 +662,23 @@ export function DocumentAgentPanel({
       setWorkspaceFiles(files);
       const latest = listed[0] ?? null;
       if (!latest) {
+        activeThreadRequestRef.current = null;
         setThreadId(null);
         setMessages([]);
+        setHasMoreMessages(false);
+        setOldestMessagesCursor(null);
+        setLoadOlderMessagesError(null);
         setPhase({ kind: "ready" });
         return;
       }
 
+      activeThreadRequestRef.current = latest.id;
       setThreadId(latest.id);
-      const { messages: history, latestRun } = await refreshMessages(latest.id);
-      setMessages(history);
+      setMessages([]);
+      setHasMoreMessages(false);
+      setOldestMessagesCursor(null);
+      setLoadOlderMessagesError(null);
+      const { latestRun } = await refreshMessages(latest.id);
       setPhase({ kind: "ready" });
 
       if (latestRun && isActiveAgentRunStatus(latestRun.status)) {
@@ -829,13 +895,13 @@ export function DocumentAgentPanel({
       if (!id) {
         const thread = await createWorkspaceAgentThread(workspaceId);
         id = thread.id;
+        activeThreadRequestRef.current = id;
         setThreadId(id);
         setThreads((prev) => [thread, ...prev.filter((t) => t.id !== thread.id)]);
       }
 
       const run = await startAgentRun(id, instruction, { documentIds });
-      const refreshed = await refreshMessages(id);
-      setMessages(refreshed.messages);
+      await refreshMessages(id);
       attachRun(run, id);
     } catch (error) {
       setMessages((prev) => prev.filter((m) => m.id !== optimisticId));
@@ -952,11 +1018,16 @@ export function DocumentAgentPanel({
     setDraft("");
     runIdRef.current = null;
     reconnectAttemptsRef.current = 0;
+    // C6: reset pagination state so old cursors/pages never leak into the new thread.
+    activeThreadRequestRef.current = nextId;
+    setMessages([]);
+    setHasMoreMessages(false);
+    setOldestMessagesCursor(null);
+    setLoadOlderMessagesError(null);
     setThreadId(nextId);
     setPhase({ kind: "loading" });
     try {
-      const { messages: history, latestRun } = await refreshMessages(nextId);
-      setMessages(history);
+      const { latestRun } = await refreshMessages(nextId);
       setPhase({ kind: "ready" });
       if (latestRun && isActiveAgentRunStatus(latestRun.status)) {
         attachRun(latestRun, nextId);
@@ -1017,8 +1088,12 @@ export function DocumentAgentPanel({
 
       const thread = await createWorkspaceAgentThread(workspaceId);
       setThreads((prev) => [thread, ...prev.filter((t) => t.id !== thread.id)]);
+      activeThreadRequestRef.current = thread.id;
       setThreadId(thread.id);
       setMessages([]);
+      setHasMoreMessages(false);
+      setOldestMessagesCursor(null);
+      setLoadOlderMessagesError(null);
       setActiveRun(null);
       setProgress([]);
       setLastTurn(null);
@@ -1251,6 +1326,30 @@ export function DocumentAgentPanel({
                   Ask OpenSuite to create or edit documents. Use @ to tag files,
                   or drag them from the explorer.
                 </p>
+              </div>
+            ) : null}
+
+            {hasMoreMessages ? (
+              <div className="mb-3 flex flex-col items-center gap-1">
+                <button
+                  type="button"
+                  onClick={() => void loadOlderMessages()}
+                  disabled={loadingOlderMessages}
+                  aria-label="Load earlier messages"
+                  className={cn(
+                    focusRingClass,
+                    "rounded-[var(--radius-sm)] px-2.5 py-1 text-[length:var(--text-xs)] font-medium text-accent hover:underline disabled:cursor-not-allowed disabled:opacity-60",
+                  )}
+                >
+                  {loadingOlderMessages
+                    ? "Loading earlier messages…"
+                    : "Load earlier messages"}
+                </button>
+                {loadOlderMessagesError ? (
+                  <p className="text-[length:var(--text-xs)] text-danger">
+                    {loadOlderMessagesError}
+                  </p>
+                ) : null}
               </div>
             ) : null}
 
