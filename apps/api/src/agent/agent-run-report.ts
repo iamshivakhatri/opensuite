@@ -75,6 +75,14 @@ export interface AgentRunReportContext {
   readonly estimatedInputTokens: number;
   readonly approximateTokenBudgetApplied: boolean;
   readonly historyTrimmedByTokenBudget: boolean;
+  /** C7: tool-result parts shrunk across in-run projections this run. */
+  readonly inRunObservationsCompacted?: number;
+  /** C7: peak estimated tokens of the in-run tool suffix before compaction. */
+  readonly estimatedInRunTokensBefore?: number;
+  /** C7: peak estimated tokens of the in-run tool suffix after compaction. */
+  readonly estimatedInRunTokensAfter?: number;
+  /** C7: peak estimated tokens of the full projected model input. */
+  readonly maxProjectedInputTokens?: number;
 }
 
 export interface AgentRunReport {

@@ -44,6 +44,11 @@ import {
   truncateToTokenBudget,
 } from "./context-projection.js";
 import { compactThreadContext, logContextCompaction } from "./context-compaction.js";
+import {
+  accumulateInRunObservationStats,
+  createInRunObservationStats,
+  projectInRunObservations,
+} from "./in-run-observation-projection.js";
 import { buildAgentOperatingInstruction } from "./operating-instruction.js";
 import {
   type AgentMessage,
@@ -425,6 +430,13 @@ async function runExecution(input: {
       { role: "user", content: input.instruction },
     ];
 
+    const inRunStats = createInRunObservationStats();
+    const projectMessages = composeProjectMessages({
+      retrievalMessage: retrieval?.message,
+      tools,
+      stats: inRunStats,
+    });
+
     // The one API → agent-core-v3 execution call.
     const executeAgent = input.deps.runAgent ?? runAgent;
     let result;
@@ -433,9 +445,7 @@ async function runExecution(input: {
         model: input.model.model,
         system,
         messages,
-        ...(retrieval?.message
-          ? { projectMessages: firstTurnContextProjection(retrieval.message) }
-          : {}),
+        projectMessages,
         tools,
         signal: input.signal,
         runId: runShort,
@@ -456,7 +466,13 @@ async function runExecution(input: {
         versionAdvances,
         documentTransitions: boundTools?.getTransitions() ?? [],
         retrieval: retrieval?.observation,
-        context,
+        context: {
+          ...context,
+          inRunObservationsCompacted: inRunStats.observationsCompacted,
+          estimatedInRunTokensBefore: inRunStats.estimatedInRunTokensBefore,
+          estimatedInRunTokensAfter: inRunStats.estimatedInRunTokensAfter,
+          maxProjectedInputTokens: inRunStats.maxProjectedInputTokens,
+        },
       });
       throw error;
     }
@@ -476,7 +492,13 @@ async function runExecution(input: {
       versionAdvances,
       documentTransitions: boundTools?.getTransitions() ?? [],
       retrieval: retrieval?.observation,
-      context,
+      context: {
+        ...context,
+        inRunObservationsCompacted: inRunStats.observationsCompacted,
+        estimatedInRunTokensBefore: inRunStats.estimatedInRunTokensBefore,
+        estimatedInRunTokensAfter: inRunStats.estimatedInRunTokensAfter,
+        maxProjectedInputTokens: inRunStats.maxProjectedInputTokens,
+      },
     });
 
     if (!isSuccessfulStop(result.stopReason)) {
@@ -605,6 +627,29 @@ export function firstTurnContextProjection(context: string): (messages: readonly
   };
 }
 
+/**
+ * Compose Phase 6 first-turn retrieval with C7 in-run observation projection.
+ * Retrieval injects once; C7 runs every turn on the model-facing view only.
+ */
+export function composeProjectMessages(input: {
+  readonly retrievalMessage?: string;
+  readonly tools: AgentToolSet;
+  readonly stats: ReturnType<typeof createInRunObservationStats>;
+}): (messages: readonly ModelMessage[]) => readonly ModelMessage[] {
+  const firstTurn = input.retrievalMessage
+    ? firstTurnContextProjection(input.retrievalMessage)
+    : (messages: readonly ModelMessage[]) => messages;
+  const isMutateTool = (toolName: string) =>
+    input.tools[toolName]?.kind === "mutate";
+
+  return (messages) => {
+    const afterFirstTurn = firstTurn(messages);
+    const projected = projectInRunObservations(afterFirstTurn, { isMutateTool });
+    accumulateInRunObservationStats(input.stats, projected);
+    return projected.messages;
+  };
+}
+
 /** AI SDK has no application-context role; label this API-owned user message. */
 function checkpointMessageContent(checkpoint: AgentThreadContextCheckpoint): string {
   return `Historical conversation checkpoint through ${checkpoint.throughMessageId}:\n${checkpoint.content}`;
@@ -646,6 +691,10 @@ function emitRunReport(input: {
     readonly estimatedInputTokens: number;
     readonly approximateTokenBudgetApplied: boolean;
     readonly historyTrimmedByTokenBudget: boolean;
+    readonly inRunObservationsCompacted?: number;
+    readonly estimatedInRunTokensBefore?: number;
+    readonly estimatedInRunTokensAfter?: number;
+    readonly maxProjectedInputTokens?: number;
   };
 }): void {
   if (!input.metrics) return;
