@@ -622,6 +622,8 @@ export interface AgentRun {
   readonly createdAt: string;
   readonly startedAt: string | null;
   readonly completedAt: string | null;
+  readonly errorCode: string | null;
+  readonly errorMessage: string | null;
 }
 
 export interface AgentStep {

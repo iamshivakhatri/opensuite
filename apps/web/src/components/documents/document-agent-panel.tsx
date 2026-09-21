@@ -251,6 +251,10 @@ export function DocumentAgentPanel({
   const [liveTranscript, setLiveTranscript] = React.useState<
     readonly LiveTranscriptEntry[]
   >([]);
+  const [terminalRunTranscript, setTerminalRunTranscript] = React.useState<{
+    readonly runId: string;
+    readonly steps: readonly AgentStep[];
+  } | null>(null);
   const [liveWorking, setLiveWorking] = React.useState(false);
 
   const busy =
@@ -349,8 +353,11 @@ export function DocumentAgentPanel({
 
   const saveRunTranscript = React.useCallback((snapshot: { run: AgentRun; steps: AgentStep[] }) => {
     const messageId = snapshot.run.resultMessageId;
-    if (!messageId) return;
-    setRunStepsByMessageId((previous) => ({ ...previous, [messageId]: snapshot.steps }));
+    if (messageId) {
+      setRunStepsByMessageId((previous) => ({ ...previous, [messageId]: snapshot.steps }));
+    } else {
+      setTerminalRunTranscript({ runId: snapshot.run.id, steps: snapshot.steps });
+    }
   }, []);
 
   /** Fetches the latest message page and merges it into the transcript by id. */
@@ -420,7 +427,11 @@ export function DocumentAgentPanel({
     const ms = fromServer ?? fromClient;
 
     if (run.status === "failed") {
-      setRunError("The agent run failed. You can try again.");
+      setRunError(
+        run.errorCode === "AGENT_MAX_TURNS"
+          ? run.errorMessage || "Stopped before completing the task."
+          : "The agent run failed. You can try again.",
+      );
       setRunNotice(null);
       setCanRetryRun(true);
     } else if (run.status === "cancelled") {
@@ -537,6 +548,7 @@ export function DocumentAgentPanel({
       if (!options?.preserveDraft) {
         setCanRetryRun(false);
         setLiveTranscript([]);
+        setTerminalRunTranscript(null);
         setLiveWorking(true);
         reconnectAttemptsRef.current = 0;
         const startedAt = Date.now();
@@ -736,6 +748,7 @@ export function DocumentAgentPanel({
     runIdRef.current = null;
     runStartedAtRef.current = null;
     setLiveTranscript([]);
+    setTerminalRunTranscript(null);
     setRunStepsByMessageId({});
     setHistoryOpen(false);
     reconnectAttemptsRef.current = 0;
@@ -773,6 +786,7 @@ export function DocumentAgentPanel({
       } else if (latestRun && !isActiveAgentRunStatus(latestRun.status)) {
         const snapshot = await getAgentRun(latestRun.id);
         saveRunTranscript(snapshot);
+        applyTerminalRunStatus(snapshot.run);
         const ms = agentRunDurationMs(latestRun.startedAt, latestRun.completedAt);
         if (ms !== null) {
           setRunTotalMs(ms);
@@ -861,6 +875,7 @@ export function DocumentAgentPanel({
     messages.length,
     progress.length,
     liveTranscript.length,
+    terminalRunTranscript,
     runError,
     runNotice,
     versionNotice,
@@ -1076,6 +1091,7 @@ export function DocumentAgentPanel({
       progressRef.current = nextProgress;
       setProgress(nextProgress);
       setLiveTranscript([]);
+      setTerminalRunTranscript(null);
       setLiveWorking(false);
       applyTerminalRunStatus(snapshot.run);
     } catch (error) {
@@ -1109,6 +1125,7 @@ export function DocumentAgentPanel({
     setCanRetryRun(false);
     setVersionNotice(null);
     setLiveTranscript([]);
+    setTerminalRunTranscript(null);
     setLiveWorking(false);
     setRunStepsByMessageId({});
     setDraft("");
@@ -1130,6 +1147,7 @@ export function DocumentAgentPanel({
       } else if (latestRun && !isActiveAgentRunStatus(latestRun.status)) {
         const snapshot = await getAgentRun(latestRun.id);
         saveRunTranscript(snapshot);
+        applyTerminalRunStatus(snapshot.run);
         const ms = agentRunDurationMs(latestRun.startedAt, latestRun.completedAt);
         if (ms !== null) {
           setRunTotalMs(ms);
@@ -1200,6 +1218,7 @@ export function DocumentAgentPanel({
       setCanRetryRun(false);
       setVersionNotice(null);
       setLiveTranscript([]);
+      setTerminalRunTranscript(null);
       setLiveWorking(false);
       setDraft("");
       setTagged([]);
@@ -1281,6 +1300,7 @@ export function DocumentAgentPanel({
   const showFinishedProgress =
     !isLiveTurn &&
     lastTurn !== null &&
+    terminalRunTranscript === null &&
     (showRunProgressOnLastAssistant || lastMessage?.role !== "assistant");
   const showEmpty =
     phase.kind === "ready" &&
@@ -1508,6 +1528,9 @@ export function DocumentAgentPanel({
               ) : null}
 
               {/* Finished turn with no assistant text yet (cancel / fail). */}
+              {!isLiveTurn && terminalRunTranscript ? (
+                <CompletedRunTranscript steps={terminalRunTranscript.steps} />
+              ) : null}
               {!isLiveTurn &&
               lastTurn &&
               showFinishedProgress &&

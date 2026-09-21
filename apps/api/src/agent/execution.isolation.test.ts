@@ -4,6 +4,7 @@ import { test } from "node:test";
 import type { RunAgentResult, RunModelResult, V3Model } from "@opensuite/agent-core-v3";
 
 import {
+  boundedStopMessage,
   createAgentExecutionService,
   type AgentEvent,
   type AgentExecutionServiceDeps,
@@ -761,11 +762,16 @@ test("short, failed, and malformed runs do not create a checkpoint", async () =>
   assert.equal(persistence.checkpoint, null);
 });
 
-test("max_turns soft stop becomes failed + AGENT_MAX_TURNS, not completed", async () => {
+test("max_turns settles as a bounded stop and persists its existing transcript", async () => {
   const persistence = memoryPersistence("user-1");
   const events: AgentEvent[] = [];
   const execution = createAgentExecutionService(
-    baseDeps(persistence, async () => softResult("max_turns")),
+    baseDeps(persistence, async (input) => {
+      await input.onEvent?.({ type: "text_delta", delta: "I found the section." });
+      await input.onEvent?.({ type: "tool_started", toolCallId: "edit-1", toolName: "document.delete_paragraph" });
+      await input.onEvent?.({ type: "tool_completed", toolCallId: "edit-1", toolName: "document.delete_paragraph" });
+      return softResult("max_turns");
+    }),
   );
 
   const unhandled = await collectUnhandledRejections(async () => {
@@ -783,6 +789,7 @@ test("max_turns soft stop becomes failed + AGENT_MAX_TURNS, not completed", asyn
     ).result;
     assert.equal(result.run.status, "failed");
     assert.equal(result.run.errorCode, "AGENT_MAX_TURNS");
+    assert.equal(result.run.errorMessage, "Stopped before completing the task.");
     assert.equal(result.assistantMessage, null);
   });
 
@@ -791,6 +798,21 @@ test("max_turns soft stop becomes failed + AGENT_MAX_TURNS, not completed", asyn
   assert.equal(events.some((e) => e.type === "agent.completed"), false);
   const failed = events.find((e) => e.type === "agent.failed");
   assert.equal(failed && failed.type === "agent.failed" && failed.code, "AGENT_MAX_TURNS");
+  assert.deepEqual(
+    persistence.steps.map((step) => [step.kind, step.status, step.name, step.summary]),
+    [
+      ["narration", "completed", "Assistant narration", "I found the section."],
+      ["tool", "completed", "document.delete_paragraph", "Completed"],
+    ],
+  );
+});
+
+test("max_turns reports preserved changes only after a version advance", () => {
+  assert.equal(
+    boundedStopMessage("max_turns", true),
+    "Stopped before completing the task. Changes made so far were preserved.",
+  );
+  assert.equal(boundedStopMessage("max_turns", false), "Stopped before completing the task.");
 });
 
 test("deadline soft stop becomes failed + AGENT_DEADLINE, not completed", async () => {

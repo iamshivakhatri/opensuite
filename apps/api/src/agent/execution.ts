@@ -570,8 +570,9 @@ async function runExecution(input: {
 
     if (!isSuccessfulStop(result.stopReason)) {
       transcript.finish();
+      const boundedStop = result.stopReason === "max_turns" || result.stopReason === "deadline";
       return settleTerminalRunFailure({
-        error: new Error(`Agent stopped: ${result.stopReason}`),
+        ...(boundedStop ? { expectedStop: result.stopReason } : {}),
         cancelled: input.signal?.aborted === true,
         persistence: input.deps.persistence,
         ownerUserId: input.ownerUserId,
@@ -580,7 +581,7 @@ async function runExecution(input: {
         run: input.run,
         liveEvents: input.liveEvents,
         failureCode: failureCodeForStopReason(result.stopReason),
-        failureMessage: `Agent stopped with ${result.stopReason}`,
+        failureMessage: boundedStopMessage(result.stopReason, versionAdvances.length > 0),
         transcript: transcript.entries(),
       });
     }
@@ -732,6 +733,16 @@ function failureCodeForStopReason(stopReason: StopReason): string {
   if (stopReason === "max_turns") return "AGENT_MAX_TURNS";
   if (stopReason === "deadline") return "AGENT_DEADLINE";
   return "AGENT_EXECUTION_FAILED";
+}
+
+export function boundedStopMessage(
+  stopReason: StopReason,
+  hasVersionAdvance: boolean,
+): string {
+  const stopped = stopReason === "max_turns"
+    ? "Stopped before completing the task."
+    : "Stopped before the task could be completed.";
+  return hasVersionAdvance ? `${stopped} Changes made so far were preserved.` : stopped;
 }
 
 function emitRunReport(input: {
@@ -897,7 +908,9 @@ async function finalizeCompletedRun(input: {
 }
 
 async function settleTerminalRunFailure(input: {
-  readonly error: unknown;
+  readonly error?: unknown;
+  /** A normal runtime boundary, not an unexpected exception. */
+  readonly expectedStop?: StopReason;
   readonly cancelled: boolean;
   readonly persistence: AgentPersistenceService;
   readonly ownerUserId: string;
@@ -974,7 +987,7 @@ async function settleTerminalRunFailure(input: {
     }
   }
 
-  if (!input.cancelled) {
+  if (!input.cancelled && input.expectedStop === undefined) {
     console.error(`[agent] run=${runShort} failed reason=${summarizeError(input.error)}`);
   }
 

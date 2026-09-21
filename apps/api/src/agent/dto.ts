@@ -31,6 +31,8 @@ export interface AgentRunDto {
   readonly createdAt: string;
   readonly startedAt: string | null;
   readonly completedAt: string | null;
+  readonly errorCode: string | null;
+  readonly errorMessage: string | null;
 }
 
 /** Concise step DTO — no tool input/output JSON in v1 HTTP responses. */
@@ -76,6 +78,8 @@ export function toAgentRunDto(run: AgentRun): AgentRunDto {
     createdAt: run.createdAt,
     startedAt: run.startedAt,
     completedAt: run.completedAt,
+    errorCode: run.errorCode,
+    errorMessage: run.errorMessage,
   };
 }
 
