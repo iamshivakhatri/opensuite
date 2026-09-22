@@ -8,6 +8,7 @@ const PAGE_LIMIT = 100;
 const MAX_BLOCKS = 5;
 const MAX_TEXT_LENGTH = 240;
 const MAX_ARTIFACTS = 3;
+const MAX_CATALOG_ARTIFACTS = 10;
 const IGNORED_WORDS = new Set([
   "about", "after", "and", "are", "document", "for", "from", "into", "make", "more", "that", "the", "this", "with", "your",
 ]);
@@ -153,7 +154,7 @@ export async function retrieveWorkspaceContext(input: {
   return {
     candidates,
     evidence,
-    ...(candidates.length > 0 ? { message: formatWorkspaceRetrievedContext(candidates, evidence) } : {}),
+    ...(candidates.length > 0 ? { message: formatWorkspaceRetrievedContext(input.artifacts, candidates, evidence, input.primaryDocumentId, input.taggedDocumentIds) } : {}),
   };
 }
 
@@ -226,10 +227,24 @@ export function formatRetrievedDocumentContext(context: RetrievedDocumentContext
 }
 
 export function formatWorkspaceRetrievedContext(
+  artifacts: readonly WorkspaceArtifact[],
   candidates: readonly ArtifactCandidate[],
   evidence: readonly RetrievedArtifactEvidence[],
+  primaryDocumentId: string | null,
+  taggedDocumentIds: readonly string[],
 ): string {
-  const lines = ["WORKSPACE / REQUEST CONTEXT", "LIKELY ARTIFACTS"];
+  const tagged = new Set(taggedDocumentIds);
+  const catalog = [...artifacts]
+    .sort((a, b) => Number(b.documentId === primaryDocumentId) - Number(a.documentId === primaryDocumentId) || a.name.localeCompare(b.name))
+    .slice(0, MAX_CATALOG_ARTIFACTS);
+  const lines = ["WORKSPACE / REQUEST CONTEXT", "WORKSPACE CATALOG", `${artifacts.length} documents`];
+  for (const artifact of catalog) {
+    const state = [artifact.documentId === primaryDocumentId ? "active" : undefined, tagged.has(artifact.documentId) ? "tagged" : undefined].filter(Boolean).join(", ");
+    lines.push(`- ${artifact.name} (${artifact.format})${state ? ` [${state}]` : ""}`);
+  }
+  if (artifacts.length > catalog.length) lines.push(`- ${artifacts.length - catalog.length} additional documents omitted`);
+  if (primaryDocumentId) lines.push("The exposed document tools are bound to the active artifact only.");
+  lines.push("RELEVANT ARTIFACTS");
   for (const candidate of candidates) {
     lines.push(`- ${candidate.name} (${candidate.format}; ${candidate.reason}${candidate.format === "docx" ? "" : "; semantic inspection unavailable"})`);
   }

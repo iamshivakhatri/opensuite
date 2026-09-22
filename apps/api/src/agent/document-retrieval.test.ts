@@ -102,31 +102,55 @@ test("retrieval bounds long text and never injects a whole document", () => {
 });
 
 test("workspace ranking keeps primary and tagged artifacts visible", () => {
+  const artifacts = [
+    { documentId: "deck", versionId: "v1", name: "Board Deck.pptx", format: "pptx" },
+    { documentId: "numbers", versionId: "v2", name: "Enterprise Numbers.xlsx", format: "xlsx" },
+    { documentId: "notes", versionId: "v3", name: "Vacation Notes.docx", format: "docx" },
+  ];
   const candidates = rankWorkspaceArtifacts({
     instruction: "Update enterprise numbers in the board deck",
     primaryDocumentId: "deck",
     taggedDocumentIds: ["numbers"],
-    artifacts: [
-      { documentId: "deck", versionId: "v1", name: "Board Deck.pptx", format: "pptx" },
-      { documentId: "numbers", versionId: "v2", name: "Enterprise Numbers.xlsx", format: "xlsx" },
-      { documentId: "notes", versionId: "v3", name: "Vacation Notes.docx", format: "docx" },
-    ],
+    artifacts,
   });
   assert.deepEqual(new Set(candidates.map((candidate) => candidate.documentId)), new Set(["deck", "numbers"]));
   assert.equal(candidates.find((candidate) => candidate.documentId === "deck")?.reason, "name_match");
   assert.equal(candidates.find((candidate) => candidate.documentId === "numbers")?.versionId, "v2");
-  assert.match(formatWorkspaceRetrievedContext(candidates, []), /semantic inspection unavailable/);
+  assert.match(formatWorkspaceRetrievedContext(artifacts, candidates, [], "deck", ["numbers"]), /semantic inspection unavailable/);
 });
 
-test("workspace context keeps exact DOCX provenance compact", () => {
+test("workspace catalog remains separate from selected DOCX evidence", () => {
+  const artifacts = [
+    { documentId: "a", versionId: "v1", name: "A.docx", format: "docx" },
+    { documentId: "b", versionId: "v2", name: "B.xlsx", format: "xlsx" },
+    { documentId: "c", versionId: "v3", name: "C.pptx", format: "pptx" },
+  ];
   const message = formatWorkspaceRetrievedContext(
-    [{ documentId: "doc", versionId: "v7", name: "Launch Plan.docx", format: "docx", reason: "primary" }],
-    [{ artifact: { documentId: "doc", versionId: "v7", name: "Launch Plan.docx", format: "docx" }, context: { blocks: [structure.blocks[0]!], reason: "heading_match" } }],
+    artifacts,
+    [{ ...artifacts[0]!, reason: "primary" }],
+    [{ artifact: artifacts[0]!, context: { blocks: [structure.blocks[0]!], reason: "heading_match" } }],
+    "a",
+    [],
   );
-  assert.match(message, /WORKSPACE \/ REQUEST CONTEXT/);
-  assert.match(message, /Document: Launch Plan\.docx/);
-  assert.match(message, /Version: v7/);
+  assert.match(message, /WORKSPACE CATALOG\n3 documents/);
+  assert.match(message, /A\.docx \(docx\) \[active\]/);
+  assert.match(message, /B\.xlsx \(xlsx\)/);
+  assert.match(message, /C\.pptx \(pptx\)/);
+  assert.match(message, /RELEVANT ARTIFACTS\n- A\.docx/);
+  assert.match(message, /Document: A\.docx/);
   assert.match(message, /Project Objective/);
+  assert.equal((message.match(/Relevant document structure/g) ?? []).length, 1);
+});
+
+test("workspace catalog is clean when empty and bounded when large", () => {
+  assert.match(formatWorkspaceRetrievedContext([], [], [], null, []), /WORKSPACE CATALOG\n0 documents/);
+  const single = [{ documentId: "doc", versionId: "v1", name: "Only.docx", format: "docx" }];
+  assert.match(formatWorkspaceRetrievedContext(single, [{ ...single[0]!, reason: "primary" }], [], "doc", []), /1 documents\n- Only\.docx \(docx\) \[active\]/);
+  const artifacts = Array.from({ length: 11 }, (_, index) => ({ documentId: `doc-${index}`, versionId: `v${index}`, name: `Document ${index}.docx`, format: "docx" }));
+  const message = formatWorkspaceRetrievedContext(artifacts, [{ ...artifacts[0]!, reason: "primary" }], [], "doc-0", []);
+  assert.match(message, /11 documents/);
+  assert.match(message, /1 additional documents omitted/);
+  assert.doesNotMatch(message, /Document 9\.docx/);
 });
 
 test("workspace retrieval reads only selected DOCX versions and falls back without evidence", async () => {
@@ -155,6 +179,7 @@ test("workspace retrieval reads only selected DOCX versions and falls back witho
   assert.deepEqual(readVersions, ["v-exact"]);
   assert.equal(retrieved.evidence[0]?.artifact.versionId, "v-exact");
   assert.match(retrieved.message ?? "", /Version: v-exact/);
+  assert.match(retrieved.message ?? "", /Vacation Notes\.docx \(docx\)/);
 });
 
 test("first-turn projection places retrieval context before the latest user instruction", () => {
