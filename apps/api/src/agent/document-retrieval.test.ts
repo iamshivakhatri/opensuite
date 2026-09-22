@@ -157,9 +157,19 @@ test("workspace retrieval reads only selected DOCX versions and falls back witho
   assert.match(retrieved.message ?? "", /Version: v-exact/);
 });
 
-test("first-turn projection appends context once without changing the system prompt", () => {
-  const project = firstTurnContextProjection("Relevant document structure:\n- Table t0");
-  const messages = [{ role: "user" as const, content: "Add milestones" }];
-  assert.equal(project(messages).length, 2);
+test("first-turn projection places retrieval context before the latest user instruction", () => {
+  const context = "Relevant document structure:\n- Table t0";
+  const project = firstTurnContextProjection(context);
+  const messages = [
+    { role: "user" as const, content: "Earlier request" },
+    { role: "assistant" as const, content: "Earlier answer" },
+    { role: "user" as const, content: "Add milestones" },
+  ];
+  assert.deepEqual(project(messages), [
+    messages[0],
+    messages[1],
+    { role: "user", content: context },
+    messages[2],
+  ]);
   assert.deepEqual(project(messages), messages);
 });

@@ -771,7 +771,11 @@ export function firstTurnContextProjection(context: string): (messages: readonly
   return (messages) => {
     if (!firstTurn) return messages;
     firstTurn = false;
-    return [...messages, { role: "user", content: context }];
+    const instruction = messages.at(-1);
+    if (!instruction || instruction.role !== "user") {
+      return [...messages, { role: "user", content: context }];
+    }
+    return [...messages.slice(0, -1), { role: "user", content: context }, instruction];
   };
 }
 

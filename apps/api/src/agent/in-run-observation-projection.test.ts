@@ -462,8 +462,8 @@ test("C7 + Phase 6: first-turn retrieval appears once; later turns only apply C7
   const seed: ModelMessage[] = [{ role: "user", content: "Add milestones" }];
   const turn1 = project(seed);
   assert.equal(turn1.length, 2);
-  assert.equal(turn1[1]?.role, "user");
-  assert.match(String((turn1[1] as { content: string }).content), /Relevant document structure/);
+  assert.match(String((turn1[0] as { content: string }).content), /Relevant document structure/);
+  assert.deepEqual(turn1[1], seed[0]);
 
   // Simulate transcript after first tool turn (retrieval is NOT in raw transcript).
   const afterTools: ModelMessage[] = [
@@ -488,7 +488,7 @@ test("C7 + Phase 6: first-turn retrieval appears once; later turns only apply C7
   assert.ok(stats.observationsCompacted >= 1);
 });
 
-test("firstTurnContextProjection still appends once (unchanged contract)", () => {
+test("firstTurnContextProjection still injects once", () => {
   const project = firstTurnContextProjection("Relevant document structure:\n- Table t0");
   const messages = [{ role: "user" as const, content: "Add milestones" }];
   assert.equal(project(messages).length, 2);
