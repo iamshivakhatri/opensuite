@@ -25,15 +25,13 @@ import type { ModelUsageService } from "../model-usage/service.js";
 import {
   composeAgentRunReport,
   logAgentRunReport,
+  type AgentRunReportRetrieval,
   type DocumentTransition,
   type DocumentVersionAdvance,
 } from "./agent-run-report.js";
 import { createPrimaryDocxTools } from "./docx-tools.js";
 import {
-  formatRetrievedDocumentContext,
-  formatTableRowDetail,
-  retrieveRelevantDocumentContext,
-  selectTableRowDetail,
+  retrieveWorkspaceContext,
   SlimDocumentStructureCache,
 } from "./document-retrieval.js";
 import {
@@ -224,6 +222,7 @@ export interface AgentExecutionServiceDeps {
   readonly documents: Pick<
     DocumentService,
     | "getOwnedDocument"
+    | "listInWorkspace"
     | "readExactVersionBytes"
     | "appendDocumentVersion"
     | "createBlankDocxDocument"
@@ -300,6 +299,7 @@ export function createAgentExecutionService(deps: AgentExecutionServiceDeps) {
         structureCache,
         ownerUserId: input.userId,
         instruction: input.instruction,
+        submittedDocumentIds: input.documentIds ?? [],
         ...(continuation ? { continuationContext: continuation.context } : {}),
         signal: input.signal,
         liveEvents: input.liveEvents,
@@ -399,6 +399,7 @@ async function runExecution(input: {
   readonly structureCache: SlimDocumentStructureCache;
   readonly ownerUserId: string;
   readonly instruction: string;
+  readonly submittedDocumentIds: readonly string[];
   readonly continuationContext?: string;
   readonly signal?: AbortSignal;
   readonly liveEvents?: AgentEventSink;
@@ -422,10 +423,11 @@ async function runExecution(input: {
       binding: input.deps.docxBinding,
       documents: input.deps.documents,
       ownerUserId: input.ownerUserId,
-      documentId: input.primaryDocumentId,
-      versionId: input.run.baseDocumentVersionId,
-      format: input.primaryDocumentFormat,
       instruction: input.instruction,
+      workspaceId: input.thread.workspaceId,
+      primaryDocumentId: input.primaryDocumentId,
+      primaryVersionId: input.run.baseDocumentVersionId,
+      submittedDocumentIds: input.submittedDocumentIds,
     });
 
     await input.deps.persistence.updateRunStatus({
@@ -700,41 +702,66 @@ async function loadRetrievedContext(input: {
   readonly binding: DocxEngineBinding | undefined;
   readonly documents: AgentExecutionServiceDeps["documents"];
   readonly ownerUserId: string;
-  readonly documentId: string | null;
-  readonly versionId: string | null;
-  readonly format: string | null;
   readonly instruction: string;
+  readonly workspaceId: string;
+  readonly primaryDocumentId: string | null;
+  readonly primaryVersionId: string | null;
+  readonly submittedDocumentIds: readonly string[];
 }): Promise<{
   readonly message?: string;
-  readonly observation: { readonly cache: "hit" | "miss"; readonly blockCount: number; readonly reason?: string; readonly detail?: { readonly kind: "table_rows"; readonly itemCount: number } };
+  readonly observation: {
+    readonly workspaceArtifactCount: number;
+    readonly candidateCount: number;
+    readonly evidenceCount: number;
+    readonly durationMs: number;
+    readonly contextCharacters: number;
+    readonly candidates: readonly {
+      readonly documentId: string;
+      readonly versionId: string;
+      readonly name: string;
+      readonly format: string;
+      readonly reason: string;
+    }[];
+  };
 } | undefined> {
-  if (!input.binding || !input.documentId || !input.versionId || input.format !== "docx") return undefined;
+  if (!input.binding) return undefined;
+  const startedAt = Date.now();
   try {
-    const bytes = await input.documents.readExactVersionBytes({
-      documentId: input.documentId,
-      versionId: input.versionId,
-      ownerUserId: input.ownerUserId,
-    });
-    const loaded = await input.cache.get({
-      versionId: input.versionId,
-      bytes: new Uint8Array(bytes),
+    const documents = await input.documents.listInWorkspace(input.workspaceId, input.ownerUserId);
+    const retrieved = await retrieveWorkspaceContext({
+      artifacts: documents.map((document) => ({
+        documentId: document.id,
+        versionId: document.id === input.primaryDocumentId && input.primaryVersionId
+          ? input.primaryVersionId
+          : document.latestVersion.id,
+        name: document.name,
+        format: document.format,
+      })),
+      instruction: input.instruction,
+      primaryDocumentId: input.primaryDocumentId,
+      taggedDocumentIds: input.submittedDocumentIds,
       binding: input.binding,
+      cache: input.cache,
+      readBytes: async (artifact) => new Uint8Array(await input.documents.readExactVersionBytes({
+        documentId: artifact.documentId,
+        versionId: artifact.versionId,
+        ownerUserId: input.ownerUserId,
+      })),
     });
-    const context = retrieveRelevantDocumentContext(input.instruction, loaded.structure);
-    const detailRequest = context && selectTableRowDetail(input.instruction, context);
-    const tableRows = detailRequest
-      ? await input.binding.inspectDocx(new Uint8Array(bytes), { focus: { kind: "table_rows", tableHandle: detailRequest.tableHandle, rowOffset: detailRequest.rowOffset, rowLimit: detailRequest.rowLimit } })
-      : undefined;
-    const detail = tableRows?.ok ? tableRows.tableRows : undefined;
-    const observation = context
-      ? { cache: loaded.cache, blockCount: context.blocks.length, reason: context.reason, ...(detail ? { detail: { kind: "table_rows" as const, itemCount: detail.rows.length } } : {}) }
-      : { cache: loaded.cache, blockCount: 0 };
-    console.info(`[agent-v3] structure_cache=${loaded.cache} retrieved_blocks=${observation.blockCount}`);
-    return context
-      ? { message: [formatRetrievedDocumentContext(context), ...(detail ? [formatTableRowDetail(detail)] : [])].join("\n"), observation }
-      : { observation };
+    const message = retrieved.message;
+    return {
+      ...(message ? { message } : {}),
+      observation: {
+        workspaceArtifactCount: documents.length,
+        candidateCount: retrieved.candidates.length,
+        evidenceCount: retrieved.evidence.length,
+        durationMs: Date.now() - startedAt,
+        contextCharacters: message?.length ?? 0,
+        candidates: retrieved.candidates,
+      },
+    };
   } catch (error) {
-    console.warn(`[agent-v3] structure_retrieval_skipped reason=${summarizeError(error)}`);
+    console.warn(`[agent-v3] workspace_retrieval_skipped reason=${summarizeError(error)}`);
     return undefined;
   }
 }
@@ -806,7 +833,7 @@ function emitRunReport(input: {
   readonly finalVersionId?: string | null;
   readonly versionAdvances: readonly DocumentVersionAdvance[];
   readonly documentTransitions?: readonly DocumentTransition[];
-  readonly retrieval?: { readonly cache: "hit" | "miss"; readonly blockCount: number; readonly reason?: string; readonly detail?: { readonly kind: "table_rows"; readonly itemCount: number } };
+  readonly retrieval?: AgentRunReportRetrieval;
   readonly context: {
     readonly checkpointUsed: boolean;
     readonly checkpointThroughMessageId?: string;

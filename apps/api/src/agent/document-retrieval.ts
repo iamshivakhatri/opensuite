@@ -7,6 +7,7 @@ const CACHE_LIMIT = 64;
 const PAGE_LIMIT = 100;
 const MAX_BLOCKS = 5;
 const MAX_TEXT_LENGTH = 240;
+const MAX_ARTIFACTS = 3;
 const IGNORED_WORDS = new Set([
   "about", "after", "and", "are", "document", "for", "from", "into", "make", "more", "that", "the", "this", "with", "your",
 ]);
@@ -27,6 +28,35 @@ export interface RetrievedDocumentContext {
 }
 
 export interface TableRowDetailRequest { readonly tableHandle: string; readonly rowOffset: number; readonly rowLimit: number; }
+
+export interface WorkspaceArtifact {
+  readonly documentId: string;
+  readonly versionId: string;
+  readonly name: string;
+  readonly format: string;
+}
+
+export interface ArtifactCandidate extends WorkspaceArtifact {
+  readonly reason: "primary" | "tagged" | "name_match";
+}
+
+export interface RetrievedArtifactEvidence {
+  readonly artifact: WorkspaceArtifact;
+  readonly context: RetrievedDocumentContext;
+  readonly detail?: {
+    readonly tableHandle: string;
+    readonly rowCount: number;
+    readonly columnCount: number;
+    readonly headerTexts: readonly string[];
+    readonly rows: readonly { readonly index: number; readonly cells: readonly string[] }[];
+  };
+}
+
+export interface WorkspaceRetrieval {
+  readonly candidates: readonly ArtifactCandidate[];
+  readonly evidence: readonly RetrievedArtifactEvidence[];
+  readonly message?: string;
+}
 
 export class SlimDocumentStructureCache {
   private readonly entries = new Map<string, Promise<SlimDocumentStructure>>();
@@ -49,6 +79,82 @@ export class SlimDocumentStructureCache {
       throw error;
     }
   }
+}
+
+/** Cheap metadata recall before any document bytes are loaded. */
+export function rankWorkspaceArtifacts(input: {
+  readonly artifacts: readonly WorkspaceArtifact[];
+  readonly instruction: string;
+  readonly primaryDocumentId: string | null;
+  readonly taggedDocumentIds: readonly string[];
+}): ArtifactCandidate[] {
+  const words = meaningfulWords(input.instruction);
+  const tagged = new Set(input.taggedDocumentIds);
+  return input.artifacts
+    .map((artifact) => {
+      const nameWords = meaningfulWords(stripExtension(artifact.name));
+      const exactName = normalizedName(artifact.name) === normalizedName(input.instruction);
+      const overlapCount = [...nameWords].filter((word) => words.has(word)).length;
+      const primary = artifact.documentId === input.primaryDocumentId;
+      const isTagged = tagged.has(artifact.documentId);
+      const score = (exactName ? 100 : 0) + (isTagged ? 30 : 0) + (primary ? 20 : 0) + overlapCount;
+      if (score === 0) return undefined;
+      return {
+        artifact,
+        score,
+        reason: exactName || overlapCount > 0 ? "name_match" as const : isTagged ? "tagged" as const : "primary" as const,
+      };
+    })
+    .filter((value): value is { artifact: WorkspaceArtifact; score: number; reason: ArtifactCandidate["reason"] } => value !== undefined)
+    .sort((a, b) => b.score - a.score || a.artifact.name.localeCompare(b.artifact.name))
+    .slice(0, MAX_ARTIFACTS)
+    .map(({ artifact, reason }) => ({ ...artifact, reason }));
+}
+
+/**
+ * Inspect only selected DOCX candidates. The engine remains the source of all
+ * document structure; metadata-only formats stay candidates without evidence.
+ */
+export async function retrieveWorkspaceContext(input: {
+  readonly artifacts: readonly WorkspaceArtifact[];
+  readonly instruction: string;
+  readonly primaryDocumentId: string | null;
+  readonly taggedDocumentIds: readonly string[];
+  readonly binding: DocxEngineBinding | undefined;
+  readonly cache: SlimDocumentStructureCache;
+  readonly readBytes: (artifact: WorkspaceArtifact) => Promise<Uint8Array>;
+}): Promise<WorkspaceRetrieval> {
+  const candidates = rankWorkspaceArtifacts(input);
+  if (!input.binding || candidates.length === 0) return { candidates, evidence: [] };
+
+  const evidence: RetrievedArtifactEvidence[] = [];
+  for (const candidate of candidates) {
+    if (candidate.format !== "docx") continue;
+    const bytes = await input.readBytes(candidate);
+    const loaded = await input.cache.get({
+      versionId: candidate.versionId,
+      bytes,
+      binding: input.binding,
+    });
+    const context = retrieveRelevantDocumentContext(input.instruction, loaded.structure);
+    if (!context) continue;
+    const detailRequest = selectTableRowDetail(input.instruction, context);
+    const tableRows = detailRequest
+      ? await input.binding.inspectDocx(bytes, { focus: { kind: "table_rows", tableHandle: detailRequest.tableHandle, rowOffset: detailRequest.rowOffset, rowLimit: detailRequest.rowLimit } })
+      : undefined;
+    const detail = tableRows?.ok ? tableRows.tableRows : undefined;
+    evidence.push({
+      artifact: candidate,
+      context,
+      ...(detail ? { detail } : {}),
+    });
+  }
+
+  return {
+    candidates,
+    evidence,
+    ...(candidates.length > 0 ? { message: formatWorkspaceRetrievedContext(candidates, evidence) } : {}),
+  };
 }
 
 async function loadStructure(input: {
@@ -119,6 +225,24 @@ export function formatRetrievedDocumentContext(context: RetrievedDocumentContext
   return lines.join("\n");
 }
 
+export function formatWorkspaceRetrievedContext(
+  candidates: readonly ArtifactCandidate[],
+  evidence: readonly RetrievedArtifactEvidence[],
+): string {
+  const lines = ["WORKSPACE / REQUEST CONTEXT", "LIKELY ARTIFACTS"];
+  for (const candidate of candidates) {
+    lines.push(`- ${candidate.name} (${candidate.format}; ${candidate.reason}${candidate.format === "docx" ? "" : "; semantic inspection unavailable"})`);
+  }
+  lines.push("RETRIEVED DOCX EVIDENCE");
+  for (const item of evidence) {
+    lines.push(`Document: ${item.artifact.name}`);
+    lines.push(`Version: ${item.artifact.versionId}`);
+    lines.push(formatRetrievedDocumentContext(item.context));
+    if (item.detail) lines.push(formatTableRowDetail(item.detail));
+  }
+  return lines.join("\n");
+}
+
 export function selectTableRowDetail(instruction: string, context: RetrievedDocumentContext): TableRowDetailRequest | undefined {
   if (context.blocks.length !== 1 || context.blocks[0]?.kind !== "table") return undefined;
   const table = context.blocks[0];
@@ -158,4 +282,12 @@ function overlap(words: ReadonlySet<string>, value: string): number {
 
 function truncate(value: string): string {
   return value.length <= MAX_TEXT_LENGTH ? value : `${value.slice(0, MAX_TEXT_LENGTH - 1)}…`;
+}
+
+function stripExtension(value: string): string {
+  return value.replace(/\.(docx|pptx|xlsx)$/i, "");
+}
+
+function normalizedName(value: string): string {
+  return stripExtension(value).toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
 }

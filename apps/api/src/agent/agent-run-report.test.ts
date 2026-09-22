@@ -120,17 +120,27 @@ test("composeAgentRunReport merges runtime metrics + document facts", () => {
   assert.ok(typeof report.estimatedCostUsd === "number");
 });
 
-test("composeAgentRunReport includes retrieval observation without model context", () => {
+test("composeAgentRunReport includes workspace retrieval trace without model context", () => {
   const report = composeAgentRunReport({
     runId: "run-retrieval",
     instruction: "add milestones to the table",
     metrics: baseMetrics(),
-    retrieval: { cache: "hit", blockCount: 1, reason: "single_table" },
+    retrieval: {
+      workspaceArtifactCount: 3,
+      candidateCount: 2,
+      evidenceCount: 1,
+      durationMs: 12,
+      contextCharacters: 240,
+      candidates: [{ documentId: "doc", versionId: "v1", name: "Plan.docx", format: "docx", reason: "primary" }],
+    },
   });
   assert.deepEqual(report.retrieval, {
-    cache: "hit",
-    blockCount: 1,
-    reason: "single_table",
+    workspaceArtifactCount: 3,
+    candidateCount: 2,
+    evidenceCount: 1,
+    durationMs: 12,
+    contextCharacters: 240,
+    candidates: [{ documentId: "doc", versionId: "v1", name: "Plan.docx", format: "docx", reason: "primary" }],
   });
 });
 

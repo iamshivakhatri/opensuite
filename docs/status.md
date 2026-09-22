@@ -13,6 +13,7 @@ _Read this before starting any work. Keep it a concise current-state handoff, no
 
 ## Just Completed
 
+* **Phase 1 pre-model retrieval** — API-only workspace metadata ranking before model invocation; selected DOCX artifacts are inspected through the existing engine-client path and injected once with exact-version provenance. PPTX/XLSX remain metadata-only; retrieval errors fall back to the previous model path. Run reports now log artifact/evidence counts, duration, context size, and candidates.
 * **Deploy restart loop** — Dokploy image was missing gitignored `0013`/`0014` migration SQL (`No file … found`); entrypoint now uses programmatic migrate with real pg errors; engine check uses `require()` (pnpm layout).
 * **Prod API URL join** — web strips trailing `/` on `NEXT_PUBLIC_API_URL`; API `GET /` returns plain `OpenSuite API` for browser up-checks. Hosted web must point at API host (not Vercel apex/www).
 * **Engine npm cutover** — `@opensuite/engine-client` depends on `@opensuitehq/engine@0.1.1` from npm (not sibling `link:` / vendor stub). Docker `node:22-bookworm-slim` (glibc) validated: installs `engine-linux-arm64-gnu@0.1.1`, raw + engine-client smoke, API soft-boots without sibling/vendor. Alpine/musl unsupported.
@@ -51,6 +52,7 @@ _Read this before starting any work. Keep it a concise current-state handoff, no
 | API unit (184; 17 skipped) | Pass |
 | Context lifecycle C1–C7 targeted API checks | Pass |
 | Phase 6A API retrieval + lifecycle/report tests (22) | Pass |
+| Phase 1 workspace retrieval API tests | Pass |
 | engine-client tests (13) | Pass (npm `@opensuitehq/engine@0.1.1` + darwin-arm64) |
 | web agent-progress unit (26) | Pass |
 | web typecheck | Pass |

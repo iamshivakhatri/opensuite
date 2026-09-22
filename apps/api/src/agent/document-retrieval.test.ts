@@ -5,6 +5,9 @@ import type { DocxEngineBinding } from "@opensuite/engine-client";
 
 import {
   formatRetrievedDocumentContext,
+  formatWorkspaceRetrievedContext,
+  rankWorkspaceArtifacts,
+  retrieveWorkspaceContext,
   formatTableRowDetail,
   retrieveRelevantDocumentContext,
   selectTableRowDetail,
@@ -96,6 +99,62 @@ test("retrieval bounds long text and never injects a whole document", () => {
   assert.ok(context!.blocks.length < many.blocks.length);
   assert.ok((context!.blocks[0] as { text: string }).text.length <= 240);
   assert.match(formatRetrievedDocumentContext(context!), /Relevant document structure/);
+});
+
+test("workspace ranking keeps primary and tagged artifacts visible", () => {
+  const candidates = rankWorkspaceArtifacts({
+    instruction: "Update enterprise numbers in the board deck",
+    primaryDocumentId: "deck",
+    taggedDocumentIds: ["numbers"],
+    artifacts: [
+      { documentId: "deck", versionId: "v1", name: "Board Deck.pptx", format: "pptx" },
+      { documentId: "numbers", versionId: "v2", name: "Enterprise Numbers.xlsx", format: "xlsx" },
+      { documentId: "notes", versionId: "v3", name: "Vacation Notes.docx", format: "docx" },
+    ],
+  });
+  assert.deepEqual(new Set(candidates.map((candidate) => candidate.documentId)), new Set(["deck", "numbers"]));
+  assert.equal(candidates.find((candidate) => candidate.documentId === "deck")?.reason, "name_match");
+  assert.equal(candidates.find((candidate) => candidate.documentId === "numbers")?.versionId, "v2");
+  assert.match(formatWorkspaceRetrievedContext(candidates, []), /semantic inspection unavailable/);
+});
+
+test("workspace context keeps exact DOCX provenance compact", () => {
+  const message = formatWorkspaceRetrievedContext(
+    [{ documentId: "doc", versionId: "v7", name: "Launch Plan.docx", format: "docx", reason: "primary" }],
+    [{ artifact: { documentId: "doc", versionId: "v7", name: "Launch Plan.docx", format: "docx" }, context: { blocks: [structure.blocks[0]!], reason: "heading_match" } }],
+  );
+  assert.match(message, /WORKSPACE \/ REQUEST CONTEXT/);
+  assert.match(message, /Document: Launch Plan\.docx/);
+  assert.match(message, /Version: v7/);
+  assert.match(message, /Project Objective/);
+});
+
+test("workspace retrieval reads only selected DOCX versions and falls back without evidence", async () => {
+  const readVersions: string[] = [];
+  const binding = {
+    inspectDocx: async (_bytes: Uint8Array, request: { focus: { kind: string; offset?: number } }) => {
+      assert.equal(request.focus.kind, "body_blocks");
+      return { ok: true, diagnostics: [], bodyBlocks: { page: { total: 1, offset: 0, returned: 1, hasMore: false }, items: bodyBlocks([structure.blocks[1]!]) } };
+    },
+  } as unknown as DocxEngineBinding;
+  const retrieved = await retrieveWorkspaceContext({
+    artifacts: [
+      { documentId: "doc", versionId: "v-exact", name: "Launch Plan.docx", format: "docx" },
+      { documentId: "other", versionId: "v-other", name: "Vacation Notes.docx", format: "docx" },
+    ],
+    instruction: "Tell me about the launch plan",
+    primaryDocumentId: "doc",
+    taggedDocumentIds: [],
+    binding,
+    cache: new SlimDocumentStructureCache(),
+    readBytes: async (artifact) => {
+      readVersions.push(artifact.versionId);
+      return new Uint8Array();
+    },
+  });
+  assert.deepEqual(readVersions, ["v-exact"]);
+  assert.equal(retrieved.evidence[0]?.artifact.versionId, "v-exact");
+  assert.match(retrieved.message ?? "", /Version: v-exact/);
 });
 
 test("first-turn projection appends context once without changing the system prompt", () => {

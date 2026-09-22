@@ -281,6 +281,7 @@ function baseDeps(
   return {
     persistence,
     documents: {
+      listInWorkspace: async () => [],
       getOwnedDocument: async () => {
         throw new Error("no document");
       },

@@ -54,10 +54,18 @@ export interface AgentRunReportTool {
 }
 
 export interface AgentRunReportRetrieval {
-  readonly cache: "hit" | "miss";
-  readonly blockCount: number;
-  readonly reason?: string;
-  readonly detail?: { readonly kind: "table_rows"; readonly itemCount: number };
+  readonly workspaceArtifactCount: number;
+  readonly candidateCount: number;
+  readonly evidenceCount: number;
+  readonly durationMs: number;
+  readonly contextCharacters: number;
+  readonly candidates: readonly {
+    readonly documentId: string;
+    readonly versionId: string;
+    readonly name: string;
+    readonly format: string;
+    readonly reason: string;
+  }[];
 }
 
 export interface AgentRunReportContext {
