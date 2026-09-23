@@ -82,12 +82,14 @@ function memoryPersistence(ownerUserId: string): AgentPersistenceService & {
       ownerUserId: string;
       role: AgentMessage["role"];
       content: string;
+      documentIds?: readonly string[];
     }) {
       const message: AgentMessage = {
         id: `msg-${++messageSeq}`,
         threadId: input.threadId,
         role: input.role,
         content: input.content,
+        ...(input.documentIds?.length ? { documentIds: input.documentIds } : {}),
         createdAt: now(),
       };
       messages.push(message);
@@ -456,9 +458,10 @@ test("later runs restore durable working documents into model context", async ()
     threadId: "thread-1",
     instruction: "first",
     activeDocumentId: "doc-a",
-    documentIds: ["doc-a", "doc-b"],
+    documentIds: ["doc-b"],
   })).result;
   assert.equal(first.run.baseDocumentVersionId, "v-a");
+  assert.deepEqual(first.userMessage.documentIds, ["doc-b"]);
   assert.deepEqual(new Set(persistence.workingDocumentIds), new Set(["doc-a", "doc-b"]));
 
   const logs: string[] = [];

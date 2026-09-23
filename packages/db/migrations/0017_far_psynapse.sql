@@ -1,0 +1,1 @@
+ALTER TABLE "agent_message" ADD COLUMN "document_ids" jsonb DEFAULT '[]'::jsonb NOT NULL;

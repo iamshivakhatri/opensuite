@@ -1,4 +1,4 @@
-import type { AgentMessage } from "@/lib/api";
+import type { AgentMessage, ListedDocument } from "@/lib/api";
 
 /**
  * Pure message-list merge helpers for the Agent Panel's paginated transcript
@@ -36,4 +36,16 @@ export function prependOlderMessages(
   const existingIds = new Set(prev.map((message) => message.id));
   const unique = older.filter((message) => !existingIds.has(message.id));
   return [...unique, ...prev];
+}
+
+/** Resolves one historical message's submitted document references. */
+export function messageTaggedDocuments(
+  message: AgentMessage,
+  documents: readonly ListedDocument[],
+): ListedDocument[] {
+  const byId = new Map(documents.map((document) => [document.id, document]));
+  return (message.documentIds ?? []).flatMap((documentId) => {
+    const document = byId.get(documentId);
+    return document ? [document] : [];
+  });
 }

@@ -133,6 +133,7 @@ export const agentMessage = pgTable(
       .references(() => agentThread.id, { onDelete: "restrict" }),
     role: agentMessageRoleEnum("role").notNull(),
     content: text("content").notNull(),
+    documentIds: jsonb("document_ids").$type<string[]>().notNull().default([]),
     createdAt: timestamp("created_at").defaultNow().notNull(),
   },
   (table) => [

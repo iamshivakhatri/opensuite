@@ -224,7 +224,7 @@ test("small single DOCX uses complete direct context, including every table row"
   });
   assert.equal(retrieved.contextStrategy, "direct");
   assert.equal(retrieved.plannerEvidenceBudgetTokens, 24_000);
-  assert.match(retrieved.message ?? "", /COMPLETE ACTIVE DOCUMENT CONTENT/);
+  assert.match(retrieved.message ?? "", /COMPLETE WORKING DOCUMENT CONTENT/);
   assert.match(retrieved.message ?? "", /Milestone 11/);
   assert.doesNotMatch(retrieved.message ?? "", /DOCUMENT MAPS/);
 });
@@ -251,6 +251,113 @@ test("direct context remains bounded under a huge physical budget and multi-docu
   });
   assert.equal(retrieved.contextStrategy, "hierarchical");
   assert.ok(retrieved.fullDocumentEstimatedTokens! > 8_000);
+});
+
+function tinyDocumentBinding(): DocxEngineBinding {
+  return {
+    inspectDocx: async (_bytes: Uint8Array, request: { focus: { kind: string } }) => request.focus.kind === "overview"
+      ? { ok: true, diagnostics: [], overview: { bodyBlockCount: 1, paragraphCount: 1, tableCount: 0, sectionCount: 1 } }
+      : { ok: true, diagnostics: [], bodyBlocks: { page: { total: 1, offset: 0, returned: 1, hasMore: false }, items: bodyBlocks([{ kind: "paragraph", handle: "p", text: "Tiny document." }]) } },
+  } as unknown as DocxEngineBinding;
+}
+
+test("ten tiny working documents use one shared direct budget", async () => {
+  const artifacts = Array.from({ length: 10 }, (_, index) => ({ documentId: `doc-${index}`, versionId: `v-${index}`, name: `Tiny ${index}.docx`, format: "docx" }));
+  const retrieved = await retrieveWorkspaceContext({
+    artifacts,
+    instruction: "What can you tell me about these documents?",
+    primaryDocumentId: "doc-0",
+    taggedDocumentIds: artifacts.slice(1).map((artifact) => artifact.documentId),
+    workingSetDocumentIds: artifacts.map((artifact) => artifact.documentId),
+    binding: tinyDocumentBinding(),
+    cache: new SlimDocumentStructureCache(),
+    availableEvidenceTokens: 100_000,
+    readBytes: async () => new Uint8Array(),
+  });
+  assert.equal(retrieved.contextStrategy, "direct");
+  assert.ok(retrieved.fullDocumentEstimatedTokens! < 12_000);
+  assert.match(retrieved.message ?? "", /=== Document: Tiny 0\.docx ===/);
+  assert.match(retrieved.message ?? "", /=== Document: Tiny 9\.docx ===/);
+  assert.match(retrieved.message ?? "", /bound to the active artifact only/);
+});
+
+test("combined direct content falls back when two documents exceed the shared limit", async () => {
+  const artifacts = [0, 1].map((index) => ({ documentId: `doc-${index}`, versionId: `v-${index}`, name: `Large ${index}.docx`, format: "docx" }));
+  const binding = {
+    inspectDocx: async (_bytes: Uint8Array, request: { focus: { kind: string } }) => request.focus.kind === "overview"
+      ? { ok: true, diagnostics: [], overview: { bodyBlockCount: 1, paragraphCount: 1, tableCount: 0, sectionCount: 1 } }
+      : { ok: true, diagnostics: [], bodyBlocks: { page: { total: 1, offset: 0, returned: 1, hasMore: false }, items: bodyBlocks([{ kind: "paragraph", handle: "p", text: "x".repeat(30_000) }]) } },
+  } as unknown as DocxEngineBinding;
+  const retrieved = await retrieveWorkspaceContext({
+    artifacts,
+    instruction: "Review these documents",
+    primaryDocumentId: "doc-0",
+    taggedDocumentIds: ["doc-1"],
+    workingSetDocumentIds: artifacts.map((artifact) => artifact.documentId),
+    binding,
+    cache: new SlimDocumentStructureCache(),
+    availableEvidenceTokens: 100_000,
+    readBytes: async () => new Uint8Array(),
+  });
+  assert.notEqual(retrieved.contextStrategy, "direct");
+  assert.ok(retrieved.fullDocumentEstimatedTokens! > 12_000);
+});
+
+test("many documents just over the shared limit fall back", async () => {
+  const artifacts = Array.from({ length: 4 }, (_, index) => ({ documentId: `doc-${index}`, versionId: `v-${index}`, name: `Near ${index}.docx`, format: "docx" }));
+  const binding = {
+    inspectDocx: async (_bytes: Uint8Array, request: { focus: { kind: string } }) => request.focus.kind === "overview"
+      ? { ok: true, diagnostics: [], overview: { bodyBlockCount: 1, paragraphCount: 1, tableCount: 0, sectionCount: 1 } }
+      : { ok: true, diagnostics: [], bodyBlocks: { page: { total: 1, offset: 0, returned: 1, hasMore: false }, items: bodyBlocks([{ kind: "paragraph", handle: "p", text: "x".repeat(13_000) }]) } },
+  } as unknown as DocxEngineBinding;
+  const retrieved = await retrieveWorkspaceContext({
+    artifacts,
+    instruction: "Review these documents",
+    primaryDocumentId: "doc-0",
+    taggedDocumentIds: artifacts.slice(1).map((artifact) => artifact.documentId),
+    workingSetDocumentIds: artifacts.map((artifact) => artifact.documentId),
+    binding,
+    cache: new SlimDocumentStructureCache(),
+    availableEvidenceTokens: 100_000,
+    readBytes: async () => new Uint8Array(),
+  });
+  assert.notEqual(retrieved.contextStrategy, "direct");
+  assert.ok(retrieved.fullDocumentEstimatedTokens! > 12_000);
+});
+
+test("mixed or incomplete working documents fall back from direct context", async () => {
+  const artifacts = [
+    { documentId: "doc", versionId: "v-doc", name: "Complete.docx", format: "docx" },
+    { documentId: "sheet", versionId: "v-sheet", name: "Source.xlsx", format: "xlsx" },
+  ];
+  const mixed = await retrieveWorkspaceContext({
+    artifacts,
+    instruction: "Review these documents",
+    primaryDocumentId: "doc",
+    taggedDocumentIds: ["sheet"],
+    workingSetDocumentIds: artifacts.map((artifact) => artifact.documentId),
+    binding: tinyDocumentBinding(),
+    cache: new SlimDocumentStructureCache(),
+    availableEvidenceTokens: 100_000,
+    readBytes: async () => new Uint8Array(),
+  });
+  assert.notEqual(mixed.contextStrategy, "direct");
+
+  const incomplete = await retrieveWorkspaceContext({
+    artifacts: artifacts.slice(0, 1),
+    instruction: "Review this document",
+    primaryDocumentId: "doc",
+    taggedDocumentIds: [],
+    binding: {
+      inspectDocx: async (_bytes: Uint8Array, request: { focus: { kind: string } }) => request.focus.kind === "overview"
+        ? { ok: true, diagnostics: [], overview: { bodyBlockCount: 1, paragraphCount: 2, tableCount: 0, sectionCount: 1 } }
+        : { ok: true, diagnostics: [], bodyBlocks: { page: { total: 1, offset: 0, returned: 1, hasMore: false }, items: bodyBlocks([{ kind: "paragraph", handle: "p", text: "Partial" }]) } },
+    } as unknown as DocxEngineBinding,
+    cache: new SlimDocumentStructureCache(),
+    availableEvidenceTokens: 100_000,
+    readBytes: async () => new Uint8Array(),
+  });
+  assert.notEqual(incomplete.contextStrategy, "direct");
 });
 
 test("direct context falls back when body blocks omit paragraphs", async () => {

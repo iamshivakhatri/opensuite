@@ -288,7 +288,13 @@ export function createAgentExecutionService(deps: AgentExecutionServiceDeps) {
           documentIds: workingDocumentIds,
         }, tx);
         const userMessage = await deps.persistence.appendMessage(
-          { threadId: thread.id, ownerUserId: input.userId, role: "user", content: input.instruction },
+          {
+            threadId: thread.id,
+            ownerUserId: input.userId,
+            role: "user",
+            content: input.instruction,
+            documentIds: input.documentIds,
+          },
           tx,
         );
         const run = await deps.persistence.createRun(

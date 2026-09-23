@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
-import { mergeMessagePage, prependOlderMessages } from "./agent-messages.ts";
-import type { AgentMessage } from "./api.ts";
+import { mergeMessagePage, messageTaggedDocuments, prependOlderMessages } from "./agent-messages.ts";
+import type { AgentMessage, ListedDocument } from "./api.ts";
 
 function msg(
   id: string,
@@ -85,4 +85,14 @@ describe("prependOlderMessages (C6 load-earlier)", () => {
     const result = prependOlderMessages(prev, []);
     assert.deepEqual(result, prev);
   });
+});
+
+it("keeps submitted document tags on only their historical message", () => {
+  const documents = [
+    { id: "b", name: "B.docx" },
+    { id: "c", name: "C.docx" },
+  ] as ListedDocument[];
+  const tagged = { ...msg("tagged", "2026-01-01T00:00:00.000Z"), documentIds: ["b", "c"] };
+  assert.deepEqual(messageTaggedDocuments(tagged, documents).map((document) => document.name), ["B.docx", "C.docx"]);
+  assert.deepEqual(messageTaggedDocuments(msg("plain", "2026-01-01T00:00:01.000Z"), documents), []);
 });

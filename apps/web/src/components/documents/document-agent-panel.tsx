@@ -19,7 +19,11 @@ import {
 } from "@/lib/agent-progress";
 import { AgentRunProgress } from "@/components/documents/agent-run-progress";
 import { AgentMarkdown } from "@/lib/agent-markdown";
-import { mergeMessagePage, prependOlderMessages } from "@/lib/agent-messages";
+import {
+  mergeMessagePage,
+  messageTaggedDocuments,
+  prependOlderMessages,
+} from "@/lib/agent-messages";
 import { shouldAcceptSubmit } from "@/lib/agent-submit";
 import {
   ApiError,
@@ -1001,6 +1005,7 @@ export function DocumentAgentPanel({
         id: optimisticId,
         role: "user",
         content: instruction,
+        ...(documentIds.length ? { documentIds } : {}),
         createdAt: new Date().toISOString(),
       },
     ]);
@@ -1022,6 +1027,8 @@ export function DocumentAgentPanel({
           ? { continueFromRunId: options.continueFromRunId }
           : {}),
       });
+      if (options?.restoreDraftOnError) setDraft("");
+      setTagged([]);
       await refreshMessages(id);
       attachRun(run, id);
     } catch (error) {
@@ -1066,7 +1073,6 @@ export function DocumentAgentPanel({
       return;
     }
     const documentIds = taggedDocumentIdsForRun();
-    setDraft("");
     await submitInstruction(instruction, documentIds, {
       restoreDraftOnError: true,
     });
@@ -1498,11 +1504,24 @@ export function DocumentAgentPanel({
                 const isLast = index === messages.length - 1;
                 const transcriptSteps = runStepsByMessageId[message.id];
                 if (message.role === "user") {
+                  const messageTags = messageTaggedDocuments(message, workspaceFiles);
                   return (
                     <div
                       key={message.id}
                       className="rounded-[var(--radius-md)] bg-secondary-soft px-2.5 py-2 text-[length:var(--text-panel)] leading-[1.55] text-ink"
                     >
+                      {messageTags.length > 0 ? (
+                        <div className="mb-1.5 flex flex-wrap gap-1">
+                          {messageTags.map((file) => (
+                            <span
+                              key={file.id}
+                              className="inline-flex max-w-full rounded-[var(--radius-sm)] bg-accent-soft px-1.5 py-0.5 text-[length:var(--text-2xs)] font-medium text-accent-hover"
+                            >
+                              @{file.name}
+                            </span>
+                          ))}
+                        </div>
+                      ) : null}
                       {message.content}
                     </div>
                   );

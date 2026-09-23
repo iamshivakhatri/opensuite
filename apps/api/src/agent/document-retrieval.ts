@@ -168,26 +168,39 @@ export async function retrieveWorkspaceContext(input: {
   const documentMaps: DocumentMap[] = [];
   let directContent: string | undefined;
   let fullDocumentEstimatedTokens: number | undefined;
+  const loadedDocuments = new Map<string, Promise<{ readonly bytes: Uint8Array; readonly structure: SlimDocumentStructure }>>();
+  const loadDocument = (artifact: WorkspaceArtifact) => {
+    const existing = loadedDocuments.get(artifact.versionId);
+    if (existing) return existing;
+    const loaded = (async () => {
+      const bytes = await input.readBytes(artifact);
+      const { structure } = await input.cache.get({ versionId: artifact.versionId, bytes, binding: input.binding! });
+      return { bytes, structure };
+    })();
+    loadedDocuments.set(artifact.versionId, loaded);
+    return loaded;
+  };
+  if (plannerEvidenceBudgetTokens !== undefined && workingSet.length > 0) {
+    const directDocuments = await Promise.all(workingSet.map(async (artifact) => {
+      if (artifact.format !== "docx") return undefined;
+      const { bytes, structure } = await loadDocument(artifact);
+      return { artifact, content: await formatCompleteDocument(artifact, structure, bytes, input.binding!) };
+    }).map((task) => task.catch(() => undefined)));
+    if (directDocuments.every((document) => document !== undefined)) {
+      const completeDocuments = directDocuments as { artifact: WorkspaceArtifact; content: string }[];
+      const combinedTokens = completeDocuments.reduce((total, document) => total + estimateTokens(document.content), 0);
+      fullDocumentEstimatedTokens = combinedTokens;
+      if (combinedTokens <= directTokenLimit(plannerEvidenceBudgetTokens)) {
+        directContent = formatCompleteWorkingDocuments(completeDocuments);
+      }
+    }
+  }
   for (const candidate of candidates) {
     if (candidate.format !== "docx") continue;
     try {
-      const bytes = await input.readBytes(candidate);
-      const loaded = await input.cache.get({
-        versionId: candidate.versionId,
-        bytes,
-        binding: input.binding,
-      });
+      const { bytes, structure } = await loadDocument(candidate);
+      const loaded = { structure };
       documentMaps.push(buildDocumentMap(candidate, loaded.structure));
-      if (isDirectCandidate(candidate, candidates, workingSet, input.primaryDocumentId) && plannerEvidenceBudgetTokens !== undefined) {
-        try {
-          const complete = await formatCompleteDocument(candidate, loaded.structure, bytes, input.binding);
-          const estimatedTokens = estimateTokens(complete);
-          fullDocumentEstimatedTokens = estimatedTokens;
-          if (estimatedTokens <= directTokenLimit(plannerEvidenceBudgetTokens)) directContent = complete;
-        } catch {
-          // Direct context is optional; keep the existing map/evidence path.
-        }
-      }
       const context = retrieveRelevantDocumentContext(input.instruction, loaded.structure);
       if (!context) continue;
       const detailRequest = selectTableRowDetail(input.instruction, context);
@@ -221,15 +234,6 @@ function directTokenLimit(plannerEvidenceBudgetTokens: number): number {
   return Math.min(ABSOLUTE_DIRECT_TOKEN_CAP, Math.floor(plannerEvidenceBudgetTokens * DIRECT_BUDGET_FRACTION));
 }
 
-function isDirectCandidate(
-  candidate: ArtifactCandidate,
-  candidates: readonly ArtifactCandidate[],
-  workingSet: readonly WorkspaceArtifact[],
-  primaryDocumentId: string | null,
-): boolean {
-  return candidate.documentId === primaryDocumentId && candidate.format === "docx" && candidates.length === 1 && workingSet.length === 1;
-}
-
 async function formatCompleteDocument(
   artifact: WorkspaceArtifact,
   structure: SlimDocumentStructure,
@@ -256,7 +260,7 @@ async function formatCompleteDocument(
       offset += result.tables.page.returned;
     }
   }
-  const lines = [`# ${stripExtension(artifact.name)}`, "Complete current-view document content:"];
+  const lines = ["Complete current-view document content:"];
   for (const block of structure.blocks) {
     if (block.kind === "paragraph") {
       lines.push(block.headingLevel !== undefined ? `${"#".repeat(Math.min(6, block.headingLevel + 1))} ${block.text}` : block.text);
@@ -267,6 +271,13 @@ async function formatCompleteDocument(
     }
   }
   return lines.join("\n\n");
+}
+
+function formatCompleteWorkingDocuments(documents: readonly { artifact: WorkspaceArtifact; content: string }[]): string {
+  return [
+    "COMPLETE WORKING DOCUMENT CONTENT",
+    ...documents.map((document) => `=== Document: ${document.artifact.name} ===\n${document.content}`),
+  ].join("\n\n");
 }
 
 function markdownCell(value: string): string {
@@ -406,7 +417,7 @@ export function formatWorkspaceRetrievedContext(
   lines.push("WORKING SET");
   for (const artifact of workingSet) lines.push(`- ${artifact.name} (${artifact.format})`);
   if (workingSet.length === 0) lines.push("- No active or tagged documents");
-  if (directContent) lines.push("COMPLETE ACTIVE DOCUMENT CONTENT", directContent);
+  if (directContent) lines.push(directContent);
   else {
     lines.push("DOCUMENT MAPS");
     for (const map of documentMaps) lines.push(formatDocumentMap(map));
