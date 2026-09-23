@@ -693,6 +693,19 @@ export async function createWorkspaceAgentThread(
   return body.thread;
 }
 
+export async function renameAgentThread(
+  threadId: string,
+  title: string,
+): Promise<AgentThread> {
+  const response = await apiFetch(`/api/agent/threads/${threadId}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ title }),
+  });
+  if (!response.ok) throw await parseError(response);
+  return ((await response.json()) as { thread: AgentThread }).thread;
+}
+
 export interface AgentMessagesCursor {
   readonly createdAt: string;
   readonly id: string;

@@ -1,10 +1,36 @@
-import type { AgentMessage, ListedDocument } from "@/lib/api";
+import type { AgentMessage, AgentStep, ListedDocument } from "@/lib/api";
 
 /**
  * Pure message-list merge helpers for the Agent Panel's paginated transcript
  * (Context Lifecycle C6). Kept separate from the React component so the
  * dedupe/ordering semantics are directly unit-testable without a DOM.
  */
+
+/**
+ * Durable run steps shown beside an assistant message.
+ *
+ * Final answer text lives on `agent_message`. Narration flushed only because
+ * `finish` started is identified by step order (narration immediately before a
+ * finish tool step) and omitted when that message content is also rendered.
+ */
+export function presentationStepsForAssistantMessage(
+  steps: readonly AgentStep[],
+  hasAssistantContent: boolean,
+): readonly AgentStep[] {
+  if (!hasAssistantContent) return steps;
+  return steps.filter((step, index) => {
+    if (step.kind !== "narration") return true;
+    return steps[index + 1]?.name !== "finish";
+  });
+}
+
+/** Clear live SSE transcript once the durable assistant answer (or terminal run) is present. */
+export function shouldClearLiveTranscript(options: {
+  readonly hasAssistantContent: boolean;
+  readonly runIsTerminal: boolean;
+}): boolean {
+  return options.hasAssistantContent || options.runIsTerminal;
+}
 
 function compareMessagesChronologically(a: AgentMessage, b: AgentMessage): number {
   const byTime = a.createdAt.localeCompare(b.createdAt);

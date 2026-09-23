@@ -13,6 +13,9 @@ _Read this before starting any work. Keep it a concise current-state handoff, no
 
 ## Just Completed
 
+* **Semantic agent-thread titles** — existing nullable `agent_thread.title` is filled by a separate short title request from the current instruction plus existing working-set names/maps; it is not awaited by the V3 stream. Conditional persistence preserves manual renames; active title is the Agent Panel header, and Previous chats supports Rename while excluding the active session.
+* **Agent response follow** — panel follows live text while already at the bottom, without pulling a reader away from earlier messages; leading quote markers in agent text are no longer displayed.
+* **Agent transcript finish duplication** — one-turn `finish` no longer persists final answer as narration; panel omits narration immediately before `finish` when `message.content` is shown. Live answer streams, then reconciles to one persisted assistant message (reload-safe).
 * **Agent context correctness** — run requests keep `activeDocumentId` (tool-bound primary) separate from submitted `documentIds` (additional tags); durable working set unions persisted members + active + tags. DIRECT uses verified complete DOCX content for the whole working set only when its combined token cost fits one shared limit; unsupported/incomplete documents fall back. Submitted tag IDs persist on the user message and render in its historical transcript entry.
 * **Phase 2A.3 adaptive context planning** — single, unambiguous small active DOCX can enter first turn as compact complete content (including full tables); a 24k planner evidence cap separates practical context policy from physical model capacity. Larger, competing, or failed direct reads retain map + Phase 1 evidence fallback. Reports show planner budget and evaluated full-document cost.
 * **Model/context accounting** — OpenRouter catalog `contextLength`/`maxOutputTokens` attached for managed + BYOK; explicit output/continuation/safety reserves replace blind 60%-of-window budget; `retrieval.availableEvidenceTokens` from real model window; agent-core-v3 preserves OpenRouter `usage.cost` + reasoning tokens; reports show `actualProviderCostUsd` vs estimated.
@@ -62,7 +65,10 @@ _Read this before starting any work. Keep it a concise current-state handoff, no
 | Phase 1 workspace retrieval API tests | Pass |
 | engine-client tests (13) | Pass (npm `@opensuitehq/engine@0.1.1` + darwin-arm64) |
 | web agent-progress unit (26) | Pass |
+| web agent-messages + reconciliation (A–F) | Pass |
 | web typecheck | Pass |
+| API isolation one-turn finish transcript | Pass |
+| Browser Agent panel (Hello world) | Pass — answer once; reload once; screenshots `.tmp/transcript-dup-fix/09|10` |
 | Fixture screenshots A–G (`/.tmp/phase35-screenshots`) | Inspected |
 | Manual live OpenRouter A–D / dogfood | pending (user) |
 

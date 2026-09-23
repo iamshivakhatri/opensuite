@@ -22,7 +22,9 @@ import { AgentMarkdown } from "@/lib/agent-markdown";
 import {
   mergeMessagePage,
   messageTaggedDocuments,
+  presentationStepsForAssistantMessage,
   prependOlderMessages,
+  shouldClearLiveTranscript,
 } from "@/lib/agent-messages";
 import { shouldAcceptSubmit } from "@/lib/agent-submit";
 import {
@@ -35,6 +37,7 @@ import {
   isActiveAgentRunStatus,
   listDocuments,
   listWorkspaceAgentThreads,
+  renameAgentThread,
   startAgentRun,
   subscribeAgentRunEvents,
   type AgentMessage,
@@ -54,6 +57,7 @@ import {
 } from "@/lib/ai-settings-api";
 import { agentPanelByokModelLabel } from "@/lib/ai-settings-model";
 import { Button } from "@/components/ui/button";
+import { Dialog } from "@/components/ui/dialog";
 import { documentPath } from "@/lib/paths";
 import { focusRingClass } from "@/lib/focus-scope";
 import { cn } from "@/lib/utils";
@@ -143,11 +147,17 @@ function RunTranscript({
 function CompletedRunTranscript({
   steps,
   summary,
+  omitFinishNarration = false,
 }: {
   steps: readonly AgentStep[];
   /** Compact completion line (includes total elapsed). */
   summary?: string | null;
+  /** When true, narration immediately before `finish` is omitted (answer is message.content). */
+  omitFinishNarration?: boolean;
 }) {
+  const visibleSteps = omitFinishNarration
+    ? presentationStepsForAssistantMessage(steps, true)
+    : steps;
   return (
     <div className="flex flex-col gap-1.5">
       {summary ? (
@@ -158,7 +168,7 @@ function CompletedRunTranscript({
           <span className="min-w-0 truncate font-medium">{summary}</span>
         </p>
       ) : null}
-      <RunTranscript entries={durableTranscript(steps)} />
+      <RunTranscript entries={durableTranscript(visibleSteps)} />
     </div>
   );
 }
@@ -181,7 +191,6 @@ function threadLabel(thread: AgentThread): string {
 export function DocumentAgentPanel({
   workspaceId,
   documentId,
-  documentName,
   collapsed,
   onToggle,
   width = 320,
@@ -247,6 +256,9 @@ export function DocumentAgentPanel({
   const [submitting, setSubmitting] = React.useState(false);
   const [cancelling, setCancelling] = React.useState(false);
   const [creatingChat, setCreatingChat] = React.useState(false);
+  const [renameThreadId, setRenameThreadId] = React.useState<string | null>(null);
+  const [renameThreadValue, setRenameThreadValue] = React.useState("");
+  const [renameThreadError, setRenameThreadError] = React.useState<string | null>(null);
 
   const scrollRef = React.useRef<HTMLDivElement>(null);
   const composerRef = React.useRef<HTMLTextAreaElement>(null);
@@ -508,17 +520,25 @@ export function DocumentAgentPanel({
       setActiveRun(snapshot.run);
       saveRunTranscript(snapshot);
       const refreshed = await refreshMessages(thread);
+      void listWorkspaceAgentThreads(workspaceId)
+        .then(setThreads)
+        .catch(() => undefined);
       // Keep the live entries until durable steps and the final answer are present.
       const hasAssistant = refreshed.messages.some(
         (message) => message.role === "assistant" && message.content.length > 0,
       );
-      if (hasAssistant || !isActiveAgentRunStatus(snapshot.run.status)) {
+      if (
+        shouldClearLiveTranscript({
+          hasAssistantContent: hasAssistant,
+          runIsTerminal: !isActiveAgentRunStatus(snapshot.run.status),
+        })
+      ) {
         setLiveTranscript([]);
       }
       applyTerminalRunStatus(snapshot.run);
       return snapshot.run;
     },
-    [applyTerminalRunStatus, refreshMessages, saveRunTranscript],
+    [applyTerminalRunStatus, refreshMessages, saveRunTranscript, workspaceId],
   );
 
   /** Clear busy UI when SSE dies and the run is no longer live (abandoned). */
@@ -894,7 +914,7 @@ export function DocumentAgentPanel({
   }, [
     messages.length,
     progress.length,
-    liveTranscript.length,
+    liveTranscript,
     terminalRunTranscript,
     runError,
     runNotice,
@@ -1076,6 +1096,19 @@ export function DocumentAgentPanel({
     await submitInstruction(instruction, documentIds, {
       restoreDraftOnError: true,
     });
+  }
+
+  async function handleRenameThread(event: React.FormEvent) {
+    event.preventDefault();
+    const title = renameThreadValue.trim();
+    if (!renameThreadId || !title) return;
+    try {
+      const updated = await renameAgentThread(renameThreadId, title);
+      setThreads((threads) => threads.map((thread) => thread.id === updated.id ? updated : thread));
+      setRenameThreadId(null);
+    } catch (error) {
+      setRenameThreadError(userFacingError(error, "Could not rename chat."));
+    }
   }
 
   /**
@@ -1302,12 +1335,6 @@ export function DocumentAgentPanel({
     );
   }
 
-  const contextLabel =
-    tagged.length > 0
-      ? `${tagged.length} file${tagged.length === 1 ? "" : "s"} tagged`
-      : documentName?.trim()
-        ? `Working on ${documentName.trim()}`
-        : "Workspace agent";
   const activeThread = threads.find((thread) => thread.id === threadId);
   const lastMessage = messages[messages.length - 1];
   const visibleProgress = visibleAgentProgress(progress);
@@ -1344,13 +1371,14 @@ export function DocumentAgentPanel({
     !canRetryRun;
 
   return (
+    <>
     <aside
       className="flex h-full shrink-0 flex-col border-l border-line bg-sidebar"
       style={{ width }}
     >
       <div className="os-workspace-rail relative flex items-center justify-between gap-2 bg-sidebar px-2.5">
         <div className="min-w-0 truncate text-[length:var(--text-sm)] font-semibold tracking-[-0.01em] text-ink">
-          Agent
+          {activeThread ? threadLabel(activeThread) : "New chat"}
         </div>
         <div className="flex shrink-0 items-center gap-0.5">
             <Button
@@ -1403,30 +1431,35 @@ export function DocumentAgentPanel({
             <div className="px-2.5 py-1.5 text-[length:var(--text-2xs)] font-medium uppercase tracking-[0.04em] text-ink-faint">
               Previous chats
             </div>
-            {threads.map((thread) => {
-              const active = thread.id === threadId;
+            {threads.filter((thread) => thread.id !== threadId).map((thread) => {
               return (
-                <button
-                  key={thread.id}
-                  type="button"
-                  role="menuitem"
-                  aria-current={active ? "true" : undefined}
-                  onClick={() => void handleSelectThread(thread.id)}
-                  className={cn(
-                    focusRingClass,
-                    "flex w-full flex-col gap-0.5 px-2.5 py-1.5 text-left hover:bg-primary-soft",
-                    active && "bg-selected",
-                  )}
-                >
+                <div key={thread.id} className="group flex items-center hover:bg-primary-soft">
+                  <button
+                    type="button"
+                    role="menuitem"
+                    onClick={() => void handleSelectThread(thread.id)}
+                    className={cn(focusRingClass, "min-w-0 flex-1 px-2.5 py-1.5 text-left")}
+                  >
                   <span
-                    className={cn(
-                      "truncate text-[length:var(--text-sm)]",
-                      active ? "font-medium text-ink" : "text-ink-soft",
-                    )}
+                    className="truncate text-[length:var(--text-sm)] text-ink-soft"
                   >
                     {threadLabel(thread)}
                   </span>
-                </button>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setRenameThreadId(thread.id);
+                      setRenameThreadValue(thread.title ?? "");
+                      setRenameThreadError(null);
+                    }}
+                    className={cn(focusRingClass, "mr-1 rounded px-1.5 py-1 text-[length:var(--text-xs)] text-ink-faint opacity-0 group-hover:opacity-100 focus:opacity-100")}
+                    aria-label={`Rename ${threadLabel(thread)}`}
+                    title="Rename chat"
+                  >
+                    Rename
+                  </button>
+                </div>
               );
             })}
           </div>
@@ -1437,9 +1470,6 @@ export function DocumentAgentPanel({
         ref={scrollRef}
         className="min-h-0 flex-1 overflow-y-auto px-3 py-3"
       >
-        <p className="os-type-meta mb-3 truncate text-ink-faint">
-          {activeThread ? threadLabel(activeThread) : contextLabel}
-        </p>
         {phase.kind === "loading" ? (
           <p className="text-center text-[length:var(--text-xs)] text-ink-faint">
             Loading conversation…
@@ -1531,6 +1561,7 @@ export function DocumentAgentPanel({
                     {transcriptSteps ? (
                       <CompletedRunTranscript
                         steps={transcriptSteps}
+                        omitFinishNarration={message.content.length > 0}
                         summary={
                           isLast && lastTurn
                             ? presentAgentRun(lastTurn.lines, {
@@ -1818,5 +1849,24 @@ export function DocumentAgentPanel({
         </div>
       </div>
     </aside>
+    {renameThreadId ? (
+      <Dialog title="Rename chat" onClose={() => setRenameThreadId(null)}>
+        <form onSubmit={(event) => void handleRenameThread(event)} className="space-y-3">
+          <input
+            autoFocus
+            value={renameThreadValue}
+            onChange={(event) => setRenameThreadValue(event.target.value)}
+            maxLength={60}
+            className="w-full rounded border border-line bg-surface px-2 py-1.5 text-[length:var(--text-sm)] text-ink"
+          />
+          {renameThreadError ? <p className="os-type-meta text-danger">{renameThreadError}</p> : null}
+          <div className="flex justify-end gap-2">
+            <Button type="button" size="sm" variant="ghost" onClick={() => setRenameThreadId(null)}>Cancel</Button>
+            <Button type="submit" size="sm" disabled={!renameThreadValue.trim()}>Save</Button>
+          </div>
+        </form>
+      </Dialog>
+    ) : null}
+    </>
   );
 }

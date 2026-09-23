@@ -19,6 +19,7 @@ import {
   type LiveEvent,
 } from "../agent/run-manager.js";
 import type { AgentExecutionLeaseService } from "../agent/execution-lease.js";
+import { MAX_THREAD_TITLE_LENGTH } from "../agent/thread-title.js";
 import { getRequestUser, type SessionAuth } from "../auth/session.js";
 const WorkspaceIdParams = z.object({
   workspaceId: z.uuid("workspaceId must be a UUID"),
@@ -62,9 +63,13 @@ const CreateThreadBody = z.object({
   title: z
     .string()
     .trim()
-    .max(200, "Title must be at most 200 characters")
+    .max(MAX_THREAD_TITLE_LENGTH, `Title must be at most ${MAX_THREAD_TITLE_LENGTH} characters`)
     .optional()
     .transform((value) => (value === undefined || value === "" ? null : value)),
+});
+
+const RenameThreadBody = z.object({
+  title: z.string().trim().min(1, "Title is required").max(MAX_THREAD_TITLE_LENGTH, `Title must be at most ${MAX_THREAD_TITLE_LENGTH} characters`),
 });
 
 const CreateRunBody = z.object({
@@ -229,6 +234,25 @@ export function registerAgentRoutes(
     }
 
     return reply.send({ thread: toAgentThreadDto(thread) });
+  });
+
+  app.patch("/api/agent/threads/:threadId", async (request, reply) => {
+    const user = await getRequestUser(auth, request);
+    if (!user) return reply.status(401).send(unauthenticated());
+    const params = ThreadIdParams.safeParse(request.params);
+    const body = RenameThreadBody.safeParse(request.body);
+    if (!params.success) {
+      return reply.status(400).send({ error: { statusCode: 400, message: params.error.issues[0]?.message ?? "Invalid thread id", code: "INVALID_THREAD_ID" } });
+    }
+    if (!body.success) {
+      return reply.status(400).send({ error: { statusCode: 400, message: body.error.issues[0]?.message ?? "Invalid thread title", code: "INVALID_AGENT_THREAD_TITLE" } });
+    }
+    try {
+      const thread = await persistence.renameThread({ threadId: params.data.threadId, ownerUserId: user.id, title: body.data.title });
+      return reply.send({ thread: toAgentThreadDto(thread) });
+    } catch (error) {
+      return mapPersistenceError(reply, error);
+    }
   });
 
   app.get("/api/agent/threads/:threadId/messages", async (request, reply) => {

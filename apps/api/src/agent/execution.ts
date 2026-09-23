@@ -34,7 +34,10 @@ import {
   retrieveWorkspaceContext,
   SlimDocumentStructureCache,
   formatDocumentMap,
+  type DocumentMap,
+  type WorkspaceArtifact,
 } from "./document-retrieval.js";
+import { generateThreadTitle } from "./thread-title.js";
 import {
   estimateTokens,
   availableEvidenceTokenBudget,
@@ -86,7 +89,10 @@ function createTranscriptCollector() {
     text(delta: string) {
       narration += delta;
     },
-    toolStarted() {
+    toolStarted(toolName?: string) {
+      // Final answer text before `finish` stays buffered so finish(finalText)
+      // can drop it; flushing here would duplicate agent_message content.
+      if (toolName === "finish") return;
       flushNarration();
     },
     toolFinished(toolName: string, status: AgentStepStatus, skipped = false) {
@@ -560,6 +566,23 @@ async function runExecution(input: {
       workingDocumentIds: input.workingDocumentIds,
       availableEvidenceTokens: planningAvailableEvidenceTokens,
     });
+    if (!input.thread.title?.trim()) {
+      const titleStartedAt = Date.now();
+      void generateThreadTitle({
+        model: input.model.model,
+        instruction: input.instruction,
+        workingSet: retrieval?.workingSet ?? [],
+        documentMaps: retrieval?.documentMaps ?? [],
+      })
+        .then(async (title) => {
+          const generated = title !== null && await input.deps.persistence.setThreadTitleIfMissing({ threadId: input.thread.id, title });
+          console.debug(`[agent-title] thread=${input.thread.id.slice(0, 8)} generated=${generated} durationMs=${Date.now() - titleStartedAt} model=${input.model.usageAttribution?.model ?? "unknown"}`);
+        })
+        .catch((error) => {
+          const reason = error instanceof Error ? error.message : String(error);
+          console.debug(`[agent-title] thread=${input.thread.id.slice(0, 8)} generated=false durationMs=${Date.now() - titleStartedAt} model=${input.model.usageAttribution?.model ?? "unknown"} reason=${reason.slice(0, 120)}`);
+        });
+    }
     const evidenceTokens = estimateTokens(retrieval?.message ?? "");
     const finalCheckpointBudget = inputBudget === undefined
       ? undefined
@@ -793,6 +816,8 @@ async function loadRetrievedContext(input: {
   readonly availableEvidenceTokens?: number;
 }): Promise<{
   readonly message?: string;
+  readonly workingSet: readonly WorkspaceArtifact[];
+  readonly documentMaps: readonly DocumentMap[];
   readonly observation: {
     readonly workspaceArtifactCount: number;
     readonly workingSetArtifactCount: number;
@@ -842,6 +867,8 @@ async function loadRetrievedContext(input: {
     const message = retrieved.message;
     return {
       ...(message ? { message } : {}),
+      workingSet: retrieved.workingSet,
+      documentMaps: retrieved.documentMaps,
       observation: {
         workspaceArtifactCount: documents.length,
         workingSetArtifactCount: retrieved.workingSet.length,
@@ -1010,7 +1037,7 @@ async function relayEvent(
   transcript: ReturnType<typeof createTranscriptCollector>,
 ): Promise<void> {
   if (event.type === "text_delta") transcript.text(event.delta);
-  if (event.type === "tool_started") transcript.toolStarted();
+  if (event.type === "tool_started") transcript.toolStarted(event.toolName);
   if (event.type === "tool_completed") transcript.toolFinished(event.toolName, "completed");
   if (event.type === "tool_failed") transcript.toolFinished(event.toolName, "failed");
   if (event.type === "tool_skipped") transcript.toolFinished(event.toolName, "cancelled", true);

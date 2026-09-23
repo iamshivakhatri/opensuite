@@ -119,6 +119,28 @@ test(
         null,
       );
 
+      const renamed = await agents.renameThread({
+        threadId: workspaceThread.id,
+        ownerUserId: aliceId,
+        title: "Semantic Retrieval Work",
+      });
+      assert.equal(renamed.title, "Semantic Retrieval Work");
+      assert.equal(
+        await agents.setThreadTitleIfMissing({
+          threadId: workspaceThread.id,
+          title: "Automatic title loses",
+        }),
+        false,
+      );
+      assert.equal(
+        (await agents.getOwnedThread({ threadId: workspaceThread.id, ownerUserId: aliceId }))?.title,
+        "Semantic Retrieval Work",
+      );
+      await assert.rejects(
+        () => agents.renameThread({ threadId: workspaceThread.id, ownerUserId: bobId, title: "Nope" }),
+        (error: unknown) => error instanceof AgentPersistenceError && error.code === "THREAD_NOT_FOUND",
+      );
+
       // --- DURABLE WORKING SET ---
       await agents.addWorkingDocuments({
         threadId: workspaceThread.id,

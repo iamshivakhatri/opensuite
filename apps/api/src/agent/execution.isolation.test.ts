@@ -508,6 +508,31 @@ test("completed runs persist narration at tool boundaries without duplicating th
   );
 });
 
+test("one-turn finish tool does not persist the final answer as narration", async () => {
+  const persistence = memoryPersistence("user-1");
+  const execution = createAgentExecutionService(
+    baseDeps(persistence, async (input) => {
+      await input.onEvent?.({ type: "text_delta", delta: "Hello world" });
+      await input.onEvent?.({ type: "tool_started", toolCallId: "fin-1", toolName: "finish" });
+      await input.onEvent?.({ type: "tool_completed", toolCallId: "fin-1", toolName: "finish" });
+      return softResult("finish_tool", "Hello world");
+    }),
+  );
+
+  const settled = await (
+    await execution.start({ userId: "user-1", threadId: "thread-1", instruction: "hi" })
+  ).result;
+
+  assert.deepEqual(
+    persistence.steps.map((step) => [step.sequence, step.kind, step.status, step.name, step.summary]),
+    [[0, "tool", "completed", "finish", "Completed"]],
+  );
+  const assistant = persistence.messages.filter((message) => message.role === "assistant");
+  assert.equal(assistant.length, 1);
+  assert.equal(assistant[0]?.content, "Hello world");
+  assert.equal(settled.run.resultMessageId, assistant[0]?.id);
+});
+
 test("execution sends a bounded historical tail while retaining full persistence", async () => {
   const persistence = memoryPersistence("user-1");
   const history = Array.from({ length: MAX_HISTORY_MESSAGES + 4 }, (_, index) => ({

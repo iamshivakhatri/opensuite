@@ -37,7 +37,7 @@ function splitTableCells(line: string): string[] {
 }
 
 export function parseBlocks(text: string): MdBlock[] {
-  const normalized = text.replace(/\r\n/g, "\n").trim();
+  const normalized = text.replace(/\r\n/g, "\n").replace(/^>[ \t]?/gm, "").trim();
   if (!normalized) {
     return [];
   }

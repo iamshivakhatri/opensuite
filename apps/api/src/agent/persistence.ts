@@ -890,6 +890,38 @@ export function createAgentPersistenceService(db: Db) {
       }
     },
 
+    async renameThread(input: {
+      threadId: string;
+      ownerUserId: string;
+      title: string;
+    }): Promise<AgentThread> {
+      const client = executor();
+      await requireOwnedThread(client, input.threadId, input.ownerUserId);
+      const [row] = await client
+        .update(schema.agentThread)
+        .set({ title: input.title, updatedAt: new Date() })
+        .where(eq(schema.agentThread.id, input.threadId))
+        .returning(threadSelect);
+      if (!row) throw new AgentPersistenceError("THREAD_NOT_FOUND", "Agent thread not found");
+      return toThread(row);
+    },
+
+    /** Only fills a missing title, so an in-flight automatic title cannot win over a rename. */
+    async setThreadTitleIfMissing(input: {
+      threadId: string;
+      title: string;
+    }): Promise<boolean> {
+      const [row] = await executor()
+        .update(schema.agentThread)
+        .set({ title: input.title, updatedAt: new Date() })
+        .where(and(
+          eq(schema.agentThread.id, input.threadId),
+          or(isNull(schema.agentThread.title), eq(sql`btrim(${schema.agentThread.title})`, "")),
+        ))
+        .returning({ id: schema.agentThread.id });
+      return row !== undefined;
+    },
+
     async listWorkingDocumentIds(
       input: { threadId: string; ownerUserId: string },
       tx?: AgentPersistenceExecutor,

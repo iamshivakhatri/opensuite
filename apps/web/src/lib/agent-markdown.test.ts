@@ -29,3 +29,13 @@ test("parseBlocks keeps bold headings and lists", () => {
   assert.equal(blocks[0]?.kind, "h");
   assert.equal(blocks[1]?.kind, "ul");
 });
+
+test("parseBlocks removes leading quote markers from agent text", () => {
+  const blocks = parseBlocks(`> The Quiet Hour
+>
+> The morning leans against the glass`);
+  assert.deepEqual(blocks, [
+    { kind: "p", text: "The Quiet Hour" },
+    { kind: "p", text: "The morning leans against the glass" },
+  ]);
+});
