@@ -191,6 +191,63 @@ test("active and tagged documents form the request working set", async () => {
   assert.match(retrieved.message ?? "", /WORKING SET\n- Plan\.docx \(docx\)\n- Numbers\.xlsx \(xlsx\)/);
 });
 
+test("small single DOCX uses complete direct context, including every table row", async () => {
+  const directStructure: SlimDocumentStructure = {
+    versionId: "v-direct",
+    blocks: [
+      { kind: "paragraph", handle: "h1", text: "Project Objective", headingLevel: 1 },
+      { kind: "paragraph", handle: "p1", text: "Ship the project." },
+      { kind: "table", handle: "t1", tableHandle: "t1", rowCount: 12, columnCount: 2, headerTexts: ["Milestone", "Owner"] },
+    ],
+  };
+  const rows = Array.from({ length: 12 }, (_, index) => ({ handle: `r${index}`, cells: [`Milestone ${index}`, `Owner ${index}`], cellHandles: [] }));
+  const binding = {
+    inspectDocx: async (_bytes: Uint8Array, request: { focus: { kind: string; offset?: number } }) => {
+      if (request.focus.kind === "tables") {
+        return { ok: true, diagnostics: [], tables: { page: { total: 1, offset: 0, returned: 1, hasMore: false }, items: [{ occurrence: 0, handle: "t1", rowCount: 12, isRectangular: true, columns: [], rows }] } };
+      }
+      return { ok: true, diagnostics: [], bodyBlocks: { page: { total: directStructure.blocks.length, offset: 0, returned: directStructure.blocks.length, hasMore: false }, items: bodyBlocks(directStructure.blocks) } };
+    },
+  } as unknown as DocxEngineBinding;
+  const retrieved = await retrieveWorkspaceContext({
+    artifacts: [{ documentId: "doc", versionId: "v-direct", name: "Plan.docx", format: "docx" }],
+    instruction: "What can you tell me about this document?",
+    primaryDocumentId: "doc",
+    taggedDocumentIds: [],
+    binding,
+    cache: new SlimDocumentStructureCache(),
+    availableEvidenceTokens: 100_000,
+    readBytes: async () => new Uint8Array(),
+  });
+  assert.equal(retrieved.contextStrategy, "direct");
+  assert.equal(retrieved.plannerEvidenceBudgetTokens, 24_000);
+  assert.match(retrieved.message ?? "", /ACTIVE DOCUMENT CONTEXT/);
+  assert.match(retrieved.message ?? "", /Milestone 11/);
+  assert.doesNotMatch(retrieved.message ?? "", /DOCUMENT MAPS/);
+});
+
+test("direct context remains bounded under a huge physical budget and multi-document working set", async () => {
+  const huge: SlimDocumentStructure = {
+    versionId: "v-huge",
+    blocks: [{ kind: "paragraph", handle: "p", text: "x".repeat(30_000) }],
+  };
+  const binding = {
+    inspectDocx: async () => ({ ok: true, diagnostics: [], bodyBlocks: { page: { total: 1, offset: 0, returned: 1, hasMore: false }, items: bodyBlocks(huge.blocks) } }),
+  } as unknown as DocxEngineBinding;
+  const retrieved = await retrieveWorkspaceContext({
+    artifacts: [{ documentId: "doc", versionId: "v-huge", name: "Huge.docx", format: "docx" }],
+    instruction: "Review this document",
+    primaryDocumentId: "doc",
+    taggedDocumentIds: [],
+    binding,
+    cache: new SlimDocumentStructureCache(),
+    availableEvidenceTokens: 1_000_000,
+    readBytes: async () => new Uint8Array(),
+  });
+  assert.equal(retrieved.contextStrategy, "hierarchical");
+  assert.ok(retrieved.fullDocumentEstimatedTokens! > 8_000);
+});
+
 test("workspace catalog is clean when empty and bounded when large", () => {
   assert.match(formatWorkspaceRetrievedContext([], [], [], null, []), /WORKSPACE CATALOG\n0 documents/);
   const single = [{ documentId: "doc", versionId: "v1", name: "Only.docx", format: "docx" }];

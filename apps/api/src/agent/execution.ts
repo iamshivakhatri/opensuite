@@ -437,19 +437,6 @@ async function runExecution(input: {
       limit: MAX_HISTORY_MESSAGES,
     });
     const messageId = `v3-${input.run.id}`;
-    const retrieval = await loadRetrievedContext({
-      cache: input.structureCache,
-      binding: input.deps.docxBinding,
-      documents: input.deps.documents,
-      ownerUserId: input.ownerUserId,
-      instruction: input.instruction,
-      workspaceId: input.thread.workspaceId,
-      primaryDocumentId: input.primaryDocumentId,
-      primaryVersionId: input.run.baseDocumentVersionId,
-      submittedDocumentIds: input.submittedDocumentIds,
-      workingDocumentIds: input.workingDocumentIds,
-    });
-
     await input.deps.persistence.updateRunStatus({
       runId: input.run.id,
       ownerUserId: input.ownerUserId,
@@ -520,7 +507,6 @@ async function runExecution(input: {
       estimateTokens(toolContext(tools)) +
       estimateTokens(input.instruction) +
       estimateTokens(input.continuationContext ?? "");
-    const evidenceTokens = estimateTokens(retrieval?.message ?? "");
     const budget =
       input.model.contextLength !== undefined
         ? computeInputBudget({
@@ -539,24 +525,55 @@ async function runExecution(input: {
       : "";
     const checkpointBudget = inputBudget === undefined
       ? undefined
-      : Math.max(0, inputBudget - requiredTokens - evidenceTokens);
+      : Math.max(0, inputBudget - requiredTokens);
     const projectedCheckpoint = checkpoint
       ? truncateToTokenBudget(checkpointContent, checkpointBudget ?? estimateTokens(checkpointContent))
       : "";
     const historicalBudget = inputBudget === undefined
       ? undefined
-      : Math.max(0, inputBudget - requiredTokens - evidenceTokens - estimateTokens(projectedCheckpoint));
+      : Math.max(0, inputBudget - requiredTokens - estimateTokens(projectedCheckpoint));
     const historical = projectHistoricalMessages(historicalMessages, {
       ...(historicalBudget !== undefined ? { maxTokens: historicalBudget } : {}),
     });
-    const { messages: projectedHistoricalMessages, ...historicalContext } = historical;
-    const availableEvidenceTokens = availableEvidenceTokenBudget(
+    const planningAvailableEvidenceTokens = availableEvidenceTokenBudget(
       input.model.contextLength,
       requiredTokens + estimateTokens(projectedCheckpoint) + historical.estimatedHistoricalTokens,
       input.model.maxOutputTokens,
     );
+    const retrieval = await loadRetrievedContext({
+      cache: input.structureCache,
+      binding: input.deps.docxBinding,
+      documents: input.deps.documents,
+      ownerUserId: input.ownerUserId,
+      instruction: input.instruction,
+      workspaceId: input.thread.workspaceId,
+      primaryDocumentId: input.primaryDocumentId,
+      primaryVersionId: input.run.baseDocumentVersionId,
+      submittedDocumentIds: input.submittedDocumentIds,
+      workingDocumentIds: input.workingDocumentIds,
+      availableEvidenceTokens: planningAvailableEvidenceTokens,
+    });
+    const evidenceTokens = estimateTokens(retrieval?.message ?? "");
+    const finalCheckpointBudget = inputBudget === undefined
+      ? undefined
+      : Math.max(0, inputBudget - requiredTokens - evidenceTokens);
+    const finalProjectedCheckpoint = checkpoint
+      ? truncateToTokenBudget(checkpointContent, finalCheckpointBudget ?? estimateTokens(checkpointContent))
+      : "";
+    const finalHistoricalBudget = inputBudget === undefined
+      ? undefined
+      : Math.max(0, inputBudget - requiredTokens - evidenceTokens - estimateTokens(finalProjectedCheckpoint));
+    const finalHistorical = projectHistoricalMessages(historicalMessages, {
+      ...(finalHistoricalBudget !== undefined ? { maxTokens: finalHistoricalBudget } : {}),
+    });
+    const { messages: finalProjectedHistoricalMessages, ...finalHistoricalContext } = finalHistorical;
+    const availableEvidenceTokens = availableEvidenceTokenBudget(
+      input.model.contextLength,
+      requiredTokens + estimateTokens(finalProjectedCheckpoint) + finalHistorical.estimatedHistoricalTokens,
+      input.model.maxOutputTokens,
+    );
     const context = {
-      ...historicalContext,
+      ...finalHistoricalContext,
       checkpointUsed: checkpoint !== null,
       historyQueryMode: checkpoint ? "post_checkpoint" as const : "recent" as const,
       ...(checkpoint
@@ -572,7 +589,7 @@ async function runExecution(input: {
             safeInputBudgetTokens: budget.safeInputBudget,
           }
         : {}),
-      estimatedInputTokens: requiredTokens + evidenceTokens + estimateTokens(projectedCheckpoint) + historical.estimatedHistoricalTokens,
+      estimatedInputTokens: requiredTokens + evidenceTokens + estimateTokens(finalProjectedCheckpoint) + finalHistorical.estimatedHistoricalTokens,
       approximateTokenBudgetApplied: inputBudget !== undefined,
     };
     const reportRetrieval = retrieval
@@ -584,8 +601,8 @@ async function runExecution(input: {
         }
       : undefined;
     const messages: ModelMessage[] = [
-      ...(projectedCheckpoint ? [{ role: "user" as const, content: projectedCheckpoint }] : []),
-      ...projectedHistoricalMessages,
+      ...(finalProjectedCheckpoint ? [{ role: "user" as const, content: finalProjectedCheckpoint }] : []),
+      ...finalProjectedHistoricalMessages,
       ...(input.continuationContext
         ? [{ role: "user" as const, content: input.continuationContext }]
         : []),
@@ -766,6 +783,7 @@ async function loadRetrievedContext(input: {
   readonly primaryVersionId: string | null;
   readonly submittedDocumentIds: readonly string[];
   readonly workingDocumentIds: readonly string[];
+  readonly availableEvidenceTokens?: number;
 }): Promise<{
   readonly message?: string;
   readonly observation: {
@@ -773,6 +791,8 @@ async function loadRetrievedContext(input: {
     readonly workingSetArtifactCount: number;
     readonly documentMapCharacters: number;
     readonly contextStrategy: "direct" | "hierarchical" | "retrieval";
+    readonly plannerEvidenceBudgetTokens?: number;
+    readonly fullDocumentEstimatedTokens?: number;
     readonly candidateCount: number;
     readonly evidenceCount: number;
     readonly durationMs: number;
@@ -805,6 +825,7 @@ async function loadRetrievedContext(input: {
       workingSetDocumentIds: input.workingDocumentIds,
       binding: input.binding,
       cache: input.cache,
+      availableEvidenceTokens: input.availableEvidenceTokens,
       readBytes: async (artifact) => new Uint8Array(await input.documents.readExactVersionBytes({
         documentId: artifact.documentId,
         versionId: artifact.versionId,
@@ -819,6 +840,8 @@ async function loadRetrievedContext(input: {
         workingSetArtifactCount: retrieved.workingSet.length,
         documentMapCharacters: retrieved.documentMaps.reduce((total, map) => total + formatDocumentMap(map).length, 0),
         contextStrategy: retrieved.contextStrategy,
+        ...(retrieved.plannerEvidenceBudgetTokens !== undefined ? { plannerEvidenceBudgetTokens: retrieved.plannerEvidenceBudgetTokens } : {}),
+        ...(retrieved.fullDocumentEstimatedTokens !== undefined ? { fullDocumentEstimatedTokens: retrieved.fullDocumentEstimatedTokens } : {}),
         candidateCount: retrieved.candidates.length,
         evidenceCount: retrieved.evidence.length,
         durationMs: Date.now() - startedAt,

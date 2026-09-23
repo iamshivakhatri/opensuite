@@ -13,6 +13,7 @@ _Read this before starting any work. Keep it a concise current-state handoff, no
 
 ## Just Completed
 
+* **Phase 2A.3 adaptive context planning** — single, unambiguous small active DOCX can enter first turn as compact complete content (including full tables); a 24k planner evidence cap separates practical context policy from physical model capacity. Larger, competing, or failed direct reads retain map + Phase 1 evidence fallback. Reports show planner budget and evaluated full-document cost.
 * **Model/context accounting** — OpenRouter catalog `contextLength`/`maxOutputTokens` attached for managed + BYOK; explicit output/continuation/safety reserves replace blind 60%-of-window budget; `retrieval.availableEvidenceTokens` from real model window; agent-core-v3 preserves OpenRouter `usage.cost` + reasoning tokens; reports show `actualProviderCostUsd` vs estimated.
 * **Phase 2A.2 durable working set** — persisted thread↔document membership restores active/tagged docs across runs; stale soft-deleted members are ignored; retrieval reports include available evidence budget; diagnostic JSON is multiline.
 * **Phase 2A.1 pre-model foundation** — request working set (active + tagged docs), compact heading/table DOCX maps, report-level available-evidence budget, and existing retrieval as the first hierarchical context strategy; no schema or engine change.
@@ -70,8 +71,7 @@ _Read this before starting any work. Keep it a concise current-state handoff, no
 * Rename/move/delete/folder tools; multi-document inspect
 * Finish-as-read scheduling redesign
 * AgentRunReport developer dashboard
-* Phase 2A.3 adaptive DIRECT/HIERARCHICAL/RETRIEVAL planning
 
 ## Recommended Next Step
 
-Phase 2A.3 adaptive context strategy selection using trustworthy `availableEvidenceTokens` + model metadata (still no Gemini/Qdrant/Jev).
+Manual OpenRouter dogfood of direct context on a small DOCX; then decide whether multi-document source allocation needs a later phase.

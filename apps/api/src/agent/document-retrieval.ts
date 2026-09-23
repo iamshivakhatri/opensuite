@@ -1,7 +1,10 @@
 import type {
   DocxEngineBinding,
   DocxInspectBodyBlockItem,
+  DocxInspectTableItem,
 } from "@opensuite/engine-client";
+
+import { estimateTokens } from "./context-projection.js";
 
 const CACHE_LIMIT = 64;
 const PAGE_LIMIT = 100;
@@ -9,6 +12,10 @@ const MAX_BLOCKS = 5;
 const MAX_TEXT_LENGTH = 240;
 const MAX_ARTIFACTS = 3;
 const MAX_CATALOG_ARTIFACTS = 10;
+/** Initial runtime policy: enough for useful evidence without bloating every turn. */
+export const PLANNER_EVIDENCE_TOKEN_CAP = 24_000;
+const ABSOLUTE_DIRECT_TOKEN_CAP = 8_000;
+const DIRECT_BUDGET_FRACTION = 0.5;
 const IGNORED_WORDS = new Set([
   "about", "after", "and", "are", "document", "for", "from", "into", "make", "more", "that", "the", "this", "with", "your",
 ]);
@@ -59,6 +66,8 @@ export interface WorkspaceRetrieval {
   readonly contextStrategy: ContextStrategy;
   readonly candidates: readonly ArtifactCandidate[];
   readonly evidence: readonly RetrievedArtifactEvidence[];
+  readonly plannerEvidenceBudgetTokens?: number;
+  readonly fullDocumentEstimatedTokens?: number;
   readonly message?: string;
 }
 
@@ -138,6 +147,7 @@ export async function retrieveWorkspaceContext(input: {
   readonly workingSetDocumentIds?: readonly string[];
   readonly binding: DocxEngineBinding | undefined;
   readonly cache: SlimDocumentStructureCache;
+  readonly availableEvidenceTokens?: number;
   readonly readBytes: (artifact: WorkspaceArtifact) => Promise<Uint8Array>;
 }): Promise<WorkspaceRetrieval> {
   const candidates = rankWorkspaceArtifacts({
@@ -149,12 +159,15 @@ export async function retrieveWorkspaceContext(input: {
     input.primaryDocumentId,
     input.workingSetDocumentIds ?? input.taggedDocumentIds,
   );
+  const plannerEvidenceBudgetTokens = plannerEvidenceBudget(input.availableEvidenceTokens);
   if (!input.binding || candidates.length === 0) {
-    return { workingSet, documentMaps: [], contextStrategy: "retrieval", candidates, evidence: [] };
+    return { workingSet, documentMaps: [], contextStrategy: "retrieval", candidates, evidence: [], ...(plannerEvidenceBudgetTokens !== undefined ? { plannerEvidenceBudgetTokens } : {}) };
   }
 
   const evidence: RetrievedArtifactEvidence[] = [];
   const documentMaps: DocumentMap[] = [];
+  let directContent: string | undefined;
+  let fullDocumentEstimatedTokens: number | undefined;
   for (const candidate of candidates) {
     if (candidate.format !== "docx") continue;
     try {
@@ -165,6 +178,16 @@ export async function retrieveWorkspaceContext(input: {
         binding: input.binding,
       });
       documentMaps.push(buildDocumentMap(candidate, loaded.structure));
+      if (isDirectCandidate(candidate, candidates, workingSet, input.primaryDocumentId) && plannerEvidenceBudgetTokens !== undefined) {
+        try {
+          const complete = await formatCompleteDocument(candidate, loaded.structure, bytes, input.binding);
+          const estimatedTokens = estimateTokens(complete);
+          fullDocumentEstimatedTokens = estimatedTokens;
+          if (estimatedTokens <= directTokenLimit(plannerEvidenceBudgetTokens)) directContent = complete;
+        } catch {
+          // Direct context is optional; keep the existing map/evidence path.
+        }
+      }
       const context = retrieveRelevantDocumentContext(input.instruction, loaded.structure);
       if (!context) continue;
       const detailRequest = selectTableRowDetail(input.instruction, context);
@@ -181,11 +204,65 @@ export async function retrieveWorkspaceContext(input: {
   return {
     workingSet,
     documentMaps,
-    contextStrategy: documentMaps.length > 0 ? "hierarchical" : "retrieval",
+    contextStrategy: directContent ? "direct" : documentMaps.length > 0 ? "hierarchical" : "retrieval",
     candidates,
     evidence,
-    ...(candidates.length > 0 ? { message: formatWorkspaceRetrievedContext(input.artifacts, candidates, evidence, input.primaryDocumentId, input.taggedDocumentIds, workingSet, documentMaps) } : {}),
+    ...(plannerEvidenceBudgetTokens !== undefined ? { plannerEvidenceBudgetTokens } : {}),
+    ...(fullDocumentEstimatedTokens !== undefined ? { fullDocumentEstimatedTokens } : {}),
+    ...(candidates.length > 0 ? { message: formatWorkspaceRetrievedContext(input.artifacts, candidates, evidence, input.primaryDocumentId, input.taggedDocumentIds, workingSet, directContent ? [] : documentMaps, directContent) } : {}),
   };
+}
+
+export function plannerEvidenceBudget(availableEvidenceTokens: number | undefined): number | undefined {
+  return availableEvidenceTokens === undefined ? undefined : Math.min(availableEvidenceTokens, PLANNER_EVIDENCE_TOKEN_CAP);
+}
+
+function directTokenLimit(plannerEvidenceBudgetTokens: number): number {
+  return Math.min(ABSOLUTE_DIRECT_TOKEN_CAP, Math.floor(plannerEvidenceBudgetTokens * DIRECT_BUDGET_FRACTION));
+}
+
+function isDirectCandidate(
+  candidate: ArtifactCandidate,
+  candidates: readonly ArtifactCandidate[],
+  workingSet: readonly WorkspaceArtifact[],
+  primaryDocumentId: string | null,
+): boolean {
+  return candidate.documentId === primaryDocumentId && candidate.format === "docx" && candidates.length === 1 && workingSet.length === 1;
+}
+
+async function formatCompleteDocument(
+  artifact: WorkspaceArtifact,
+  structure: SlimDocumentStructure,
+  bytes: Uint8Array,
+  binding: DocxEngineBinding,
+): Promise<string> {
+  const tables = new Map<string, DocxInspectTableItem>();
+  if (structure.blocks.some((block) => block.kind === "table")) {
+    let offset = 0;
+    for (;;) {
+      const result = await binding.inspectDocx(bytes, { focus: { kind: "tables", offset, limit: PAGE_LIMIT } });
+      if (!result.ok || !result.tables) throw new Error("Could not inspect document tables");
+      for (const table of result.tables.items) tables.set(table.handle, table);
+      if (!result.tables.page.hasMore) break;
+      if (result.tables.page.returned === 0) throw new Error("Document table paging did not advance");
+      offset += result.tables.page.returned;
+    }
+  }
+  const lines = [`# ${stripExtension(artifact.name)}`];
+  for (const block of structure.blocks) {
+    if (block.kind === "paragraph") {
+      lines.push(block.headingLevel !== undefined ? `${"#".repeat(Math.min(6, block.headingLevel + 1))} ${block.text}` : block.text);
+    } else if (block.kind === "table") {
+      const table = tables.get(block.tableHandle);
+      if (!table) throw new Error("Could not match document table");
+      for (const row of table.rows) lines.push(`| ${row.cells.map(markdownCell).join(" | ")} |`);
+    }
+  }
+  return lines.join("\n\n");
+}
+
+function markdownCell(value: string): string {
+  return value.replace(/\|/g, "\\|").replace(/\s*\n\s*/g, " ");
 }
 
 export function buildDocumentMap(artifact: WorkspaceArtifact, structure: SlimDocumentStructure): DocumentMap {
@@ -305,6 +382,7 @@ export function formatWorkspaceRetrievedContext(
   taggedDocumentIds: readonly string[],
   workingSet: readonly WorkspaceArtifact[] = [],
   documentMaps: readonly DocumentMap[] = [],
+  directContent?: string,
 ): string {
   const tagged = new Set(taggedDocumentIds);
   const catalog = [...artifacts]
@@ -320,9 +398,10 @@ export function formatWorkspaceRetrievedContext(
   lines.push("WORKING SET");
   for (const artifact of workingSet) lines.push(`- ${artifact.name} (${artifact.format})`);
   if (workingSet.length === 0) lines.push("- No active or tagged documents");
-  lines.push("DOCUMENT MAPS");
-  for (const map of documentMaps) {
-    lines.push(formatDocumentMap(map));
+  if (directContent) lines.push("ACTIVE DOCUMENT CONTEXT", directContent);
+  else {
+    lines.push("DOCUMENT MAPS");
+    for (const map of documentMaps) lines.push(formatDocumentMap(map));
   }
   lines.push("RELEVANT ARTIFACTS");
   for (const candidate of candidates) {

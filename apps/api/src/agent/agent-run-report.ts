@@ -59,6 +59,8 @@ export interface AgentRunReportRetrieval {
   readonly documentMapCharacters: number;
   readonly contextStrategy: "direct" | "hierarchical" | "retrieval";
   readonly availableEvidenceTokens?: number;
+  readonly plannerEvidenceBudgetTokens?: number;
+  readonly fullDocumentEstimatedTokens?: number;
   readonly candidateCount: number;
   readonly evidenceCount: number;
   readonly durationMs: number;
@@ -486,6 +488,16 @@ export function formatAgentRunSummary(report: AgentRunReport): string {
   if (report.retrieval?.availableEvidenceTokens !== undefined) {
     lines.push(
       `${padLabel("evid. room")}${report.retrieval.availableEvidenceTokens.toLocaleString("en-US")}`,
+    );
+  }
+  if (report.retrieval?.plannerEvidenceBudgetTokens !== undefined) {
+    lines.push(
+      `${padLabel("evid. budget")}${report.retrieval.plannerEvidenceBudgetTokens.toLocaleString("en-US")}`,
+    );
+  }
+  if (report.retrieval?.fullDocumentEstimatedTokens !== undefined) {
+    lines.push(
+      `${padLabel("full doc")}${report.retrieval.fullDocumentEstimatedTokens.toLocaleString("en-US")}`,
     );
   }
   lines.push("");
