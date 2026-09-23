@@ -203,6 +203,9 @@ test("small single DOCX uses complete direct context, including every table row"
   const rows = Array.from({ length: 12 }, (_, index) => ({ handle: `r${index}`, cells: [`Milestone ${index}`, `Owner ${index}`], cellHandles: [] }));
   const binding = {
     inspectDocx: async (_bytes: Uint8Array, request: { focus: { kind: string; offset?: number } }) => {
+      if (request.focus.kind === "overview") {
+        return { ok: true, diagnostics: [], overview: { bodyBlockCount: directStructure.blocks.length, paragraphCount: 2, tableCount: 1, sectionCount: 1 } };
+      }
       if (request.focus.kind === "tables") {
         return { ok: true, diagnostics: [], tables: { page: { total: 1, offset: 0, returned: 1, hasMore: false }, items: [{ occurrence: 0, handle: "t1", rowCount: 12, isRectangular: true, columns: [], rows }] } };
       }
@@ -221,7 +224,7 @@ test("small single DOCX uses complete direct context, including every table row"
   });
   assert.equal(retrieved.contextStrategy, "direct");
   assert.equal(retrieved.plannerEvidenceBudgetTokens, 24_000);
-  assert.match(retrieved.message ?? "", /ACTIVE DOCUMENT CONTEXT/);
+  assert.match(retrieved.message ?? "", /COMPLETE ACTIVE DOCUMENT CONTENT/);
   assert.match(retrieved.message ?? "", /Milestone 11/);
   assert.doesNotMatch(retrieved.message ?? "", /DOCUMENT MAPS/);
 });
@@ -232,7 +235,9 @@ test("direct context remains bounded under a huge physical budget and multi-docu
     blocks: [{ kind: "paragraph", handle: "p", text: "x".repeat(30_000) }],
   };
   const binding = {
-    inspectDocx: async () => ({ ok: true, diagnostics: [], bodyBlocks: { page: { total: 1, offset: 0, returned: 1, hasMore: false }, items: bodyBlocks(huge.blocks) } }),
+    inspectDocx: async (_bytes: Uint8Array, request: { focus: { kind: string } }) => request.focus.kind === "overview"
+      ? { ok: true, diagnostics: [], overview: { bodyBlockCount: 1, paragraphCount: 1, tableCount: 0, sectionCount: 1 } }
+      : { ok: true, diagnostics: [], bodyBlocks: { page: { total: 1, offset: 0, returned: 1, hasMore: false }, items: bodyBlocks(huge.blocks) } },
   } as unknown as DocxEngineBinding;
   const retrieved = await retrieveWorkspaceContext({
     artifacts: [{ documentId: "doc", versionId: "v-huge", name: "Huge.docx", format: "docx" }],
@@ -246,6 +251,26 @@ test("direct context remains bounded under a huge physical budget and multi-docu
   });
   assert.equal(retrieved.contextStrategy, "hierarchical");
   assert.ok(retrieved.fullDocumentEstimatedTokens! > 8_000);
+});
+
+test("direct context falls back when body blocks omit paragraphs", async () => {
+  const binding = {
+    inspectDocx: async (_bytes: Uint8Array, request: { focus: { kind: string } }) => request.focus.kind === "overview"
+      ? { ok: true, diagnostics: [], overview: { bodyBlockCount: 1, paragraphCount: 2, tableCount: 0, sectionCount: 1 } }
+      : { ok: true, diagnostics: [], bodyBlocks: { page: { total: 1, offset: 0, returned: 1, hasMore: false }, items: bodyBlocks([{ kind: "paragraph", handle: "p1", text: "Visible body paragraph" }]) } },
+  } as unknown as DocxEngineBinding;
+  const retrieved = await retrieveWorkspaceContext({
+    artifacts: [{ documentId: "doc", versionId: "v1", name: "Wrapped.docx", format: "docx" }],
+    instruction: "What can you tell me about this document?",
+    primaryDocumentId: "doc",
+    taggedDocumentIds: [],
+    binding,
+    cache: new SlimDocumentStructureCache(),
+    availableEvidenceTokens: 100_000,
+    readBytes: async () => new Uint8Array(),
+  });
+  assert.equal(retrieved.contextStrategy, "hierarchical");
+  assert.doesNotMatch(retrieved.message ?? "", /COMPLETE ACTIVE DOCUMENT CONTENT/);
 });
 
 test("workspace catalog is clean when empty and bounded when large", () => {

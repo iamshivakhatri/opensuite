@@ -236,6 +236,14 @@ async function formatCompleteDocument(
   bytes: Uint8Array,
   binding: DocxEngineBinding,
 ): Promise<string> {
+  const overview = await binding.inspectDocx(bytes, { focus: { kind: "overview" } });
+  if (!overview.ok || !overview.overview) throw new Error("Could not inspect document overview");
+  const bodyParagraphs = structure.blocks.filter((block) => block.kind === "paragraph").length;
+  // body_blocks does not cover every paragraph shape (for example wrapped content).
+  // A direct context must be complete, so retain the established map path instead.
+  if (bodyParagraphs !== overview.overview.paragraphCount) {
+    throw new Error("Body blocks do not contain every paragraph");
+  }
   const tables = new Map<string, DocxInspectTableItem>();
   if (structure.blocks.some((block) => block.kind === "table")) {
     let offset = 0;
@@ -248,7 +256,7 @@ async function formatCompleteDocument(
       offset += result.tables.page.returned;
     }
   }
-  const lines = [`# ${stripExtension(artifact.name)}`];
+  const lines = [`# ${stripExtension(artifact.name)}`, "Complete current-view document content:"];
   for (const block of structure.blocks) {
     if (block.kind === "paragraph") {
       lines.push(block.headingLevel !== undefined ? `${"#".repeat(Math.min(6, block.headingLevel + 1))} ${block.text}` : block.text);
@@ -398,7 +406,7 @@ export function formatWorkspaceRetrievedContext(
   lines.push("WORKING SET");
   for (const artifact of workingSet) lines.push(`- ${artifact.name} (${artifact.format})`);
   if (workingSet.length === 0) lines.push("- No active or tagged documents");
-  if (directContent) lines.push("ACTIVE DOCUMENT CONTEXT", directContent);
+  if (directContent) lines.push("COMPLETE ACTIVE DOCUMENT CONTENT", directContent);
   else {
     lines.push("DOCUMENT MAPS");
     for (const map of documentMaps) lines.push(formatDocumentMap(map));

@@ -200,6 +200,7 @@ export interface AgentExecutionInput {
   readonly userId: string;
   readonly threadId: string;
   readonly instruction: string;
+  readonly activeDocumentId?: string;
   readonly documentIds?: readonly string[];
   readonly continueFromRunId?: string;
   readonly signal?: AbortSignal;
@@ -269,7 +270,7 @@ export function createAgentExecutionService(deps: AgentExecutionServiceDeps) {
         deps.documents,
         thread,
         input.userId,
-        input.documentIds,
+        input.activeDocumentId,
       );
       const persistedWorkingDocumentIds = await deps.persistence.listWorkingDocumentIds({
         threadId: thread.id,
@@ -390,9 +391,9 @@ async function resolvePrimaryDocument(
   documents: Pick<DocumentService, "getOwnedDocument">,
   thread: AgentThread,
   userId: string,
-  documentIds: readonly string[] | undefined,
+  activeDocumentId: string | undefined,
 ): Promise<{ documentId: string; versionId: string; format: string } | null> {
-  const documentId = documentIds?.[0] ?? thread.documentId;
+  const documentId = activeDocumentId ?? thread.documentId;
   if (!documentId) return null;
   try {
     const document = await documents.getOwnedDocument({ documentId, ownerUserId: userId });

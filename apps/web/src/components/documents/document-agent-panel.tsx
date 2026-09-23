@@ -172,8 +172,7 @@ function threadLabel(thread: AgentThread): string {
 
 /**
  * Workspace-scoped OpenSuite agent panel (Cursor-style).
- * Tag files with @ or drag from the explorer; optional active file is used
- * as primary when nothing is tagged.
+ * Tag files with @ or drag from the explorer; the active file remains primary.
  */
 export function DocumentAgentPanel({
   workspaceId,
@@ -920,14 +919,8 @@ export function DocumentAgentPanel({
     setTagged((prev) => prev.filter((item) => item.id !== id));
   }
 
-  function resolveDocumentIdsForRun(): string[] {
-    if (tagged.length > 0) {
-      return tagged.map((file) => file.id);
-    }
-    if (documentId) {
-      return [documentId];
-    }
-    return [];
+  function taggedDocumentIdsForRun(): string[] {
+    return tagged.map((file) => file.id);
   }
 
   function updateDraftAndMention(value: string) {
@@ -1023,6 +1016,7 @@ export function DocumentAgentPanel({
       }
 
       const run = await startAgentRun(id, instruction, {
+        activeDocumentId: documentId,
         documentIds,
         ...(options?.continueFromRunId
           ? { continueFromRunId: options.continueFromRunId }
@@ -1071,7 +1065,7 @@ export function DocumentAgentPanel({
     ) {
       return;
     }
-    const documentIds = resolveDocumentIdsForRun();
+    const documentIds = taggedDocumentIdsForRun();
     setDraft("");
     await submitInstruction(instruction, documentIds, {
       restoreDraftOnError: true,
@@ -1089,12 +1083,12 @@ export function DocumentAgentPanel({
       .reverse()
       .find((message) => message.role === "user");
     if (!lastUserMessage) return;
-    await submitInstruction(lastUserMessage.content, resolveDocumentIdsForRun());
+    await submitInstruction(lastUserMessage.content, taggedDocumentIdsForRun());
   }
 
   async function handleContinue() {
     if (!continueRunId || busy) return;
-    await submitInstruction("Continue", resolveDocumentIdsForRun(), {
+    await submitInstruction("Continue", taggedDocumentIdsForRun(), {
       continueFromRunId: continueRunId,
     });
   }

@@ -451,28 +451,32 @@ test("later runs restore durable working documents into model context", async ()
   } satisfies AgentExecutionServiceDeps;
   const execution = createAgentExecutionService(deps);
 
-  await (await execution.start({
+  const first = await (await execution.start({
     userId: "user-1",
     threadId: "thread-1",
     instruction: "first",
+    activeDocumentId: "doc-a",
     documentIds: ["doc-a", "doc-b"],
   })).result;
+  assert.equal(first.run.baseDocumentVersionId, "v-a");
   assert.deepEqual(new Set(persistence.workingDocumentIds), new Set(["doc-a", "doc-b"]));
 
   const logs: string[] = [];
   const original = console.info;
   console.info = (message?: unknown) => logs.push(String(message));
   try {
-    await (await execution.start({
+    const second = await (await execution.start({
       userId: "user-1",
       threadId: "thread-1",
       instruction: "second",
+      activeDocumentId: "doc-b",
       documentIds: ["doc-a"],
     })).result;
+    assert.equal(second.run.baseDocumentVersionId, "v-b");
   } finally {
     console.info = original;
   }
-  assert.match(String(projected.at(-2)?.content), /WORKING SET\n- A\.docx \(docx\)\n- B\.docx \(docx\)/);
+  assert.match(String(projected.at(-2)?.content), /WORKING SET\n- B\.docx \(docx\)\n- A\.docx \(docx\)/);
   assert.equal(projected.at(-1)?.content, "second");
   assert.ok(logs.some((message) => message.includes('"workingSetArtifactCount": 2')));
   assert.ok(logs.some((message) => message.includes('"availableEvidenceTokens"')));

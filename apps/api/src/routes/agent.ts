@@ -73,6 +73,7 @@ const CreateRunBody = z.object({
     .trim()
     .min(1, "Instruction is required")
     .max(20_000, "Instruction must be at most 20000 characters"),
+  activeDocumentId: z.uuid("activeDocumentId must be a UUID").optional(),
   documentIds: z
     .array(z.uuid("documentIds must be UUIDs"))
     .max(20, "At most 20 tagged documents")
@@ -329,6 +330,9 @@ export function registerAgentRoutes(
         userId: user.id,
         threadId: params.data.threadId,
         instruction: body.data.instruction,
+        ...(body.data.activeDocumentId !== undefined
+          ? { activeDocumentId: body.data.activeDocumentId }
+          : {}),
         ...(body.data.continueFromRunId !== undefined
           ? { continueFromRunId: body.data.continueFromRunId }
           : {}),

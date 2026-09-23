@@ -223,6 +223,7 @@ export function createAgentRunManager(deps: AgentRunManagerDeps) {
     userId: string;
     threadId: string;
     instruction: string;
+    activeDocumentId?: string;
     documentIds?: readonly string[];
     continueFromRunId?: string;
   }): Promise<StartedLiveRun> {
@@ -239,6 +240,9 @@ export function createAgentRunManager(deps: AgentRunManagerDeps) {
       userId: input.userId,
       threadId: input.threadId,
       instruction: input.instruction,
+      ...(input.activeDocumentId !== undefined
+        ? { activeDocumentId: input.activeDocumentId }
+        : {}),
       ...(input.continueFromRunId !== undefined
         ? { continueFromRunId: input.continueFromRunId }
         : {}),

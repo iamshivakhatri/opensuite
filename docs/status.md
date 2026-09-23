@@ -13,6 +13,7 @@ _Read this before starting any work. Keep it a concise current-state handoff, no
 
 ## Just Completed
 
+* **Agent context correctness** — run requests now keep `activeDocumentId` (tool-bound primary) separate from submitted `documentIds` (additional tags); durable working set unions persisted members + active + tags. DIRECT content is labeled complete only after engine overview confirms `body_blocks` covers every paragraph; otherwise it safely uses the existing hierarchical map.
 * **Phase 2A.3 adaptive context planning** — single, unambiguous small active DOCX can enter first turn as compact complete content (including full tables); a 24k planner evidence cap separates practical context policy from physical model capacity. Larger, competing, or failed direct reads retain map + Phase 1 evidence fallback. Reports show planner budget and evaluated full-document cost.
 * **Model/context accounting** — OpenRouter catalog `contextLength`/`maxOutputTokens` attached for managed + BYOK; explicit output/continuation/safety reserves replace blind 60%-of-window budget; `retrieval.availableEvidenceTokens` from real model window; agent-core-v3 preserves OpenRouter `usage.cost` + reasoning tokens; reports show `actualProviderCostUsd` vs estimated.
 * **Phase 2A.2 durable working set** — persisted thread↔document membership restores active/tagged docs across runs; stale soft-deleted members are ignored; retrieval reports include available evidence budget; diagnostic JSON is multiline.
