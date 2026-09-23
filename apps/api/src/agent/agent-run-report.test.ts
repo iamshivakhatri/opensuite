@@ -127,6 +127,9 @@ test("composeAgentRunReport includes workspace retrieval trace without model con
     metrics: baseMetrics(),
     retrieval: {
       workspaceArtifactCount: 3,
+      workingSetArtifactCount: 1,
+      documentMapCharacters: 80,
+      contextStrategy: "hierarchical",
       candidateCount: 2,
       evidenceCount: 1,
       durationMs: 12,
@@ -136,6 +139,9 @@ test("composeAgentRunReport includes workspace retrieval trace without model con
   });
   assert.deepEqual(report.retrieval, {
     workspaceArtifactCount: 3,
+    workingSetArtifactCount: 1,
+    documentMapCharacters: 80,
+    contextStrategy: "hierarchical",
     candidateCount: 2,
     evidenceCount: 1,
     durationMs: 12,

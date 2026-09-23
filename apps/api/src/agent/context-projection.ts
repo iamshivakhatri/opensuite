@@ -37,6 +37,16 @@ export function safeInputTokenBudget(contextLength: number): number {
   return Math.floor(contextLength * SAFE_INPUT_FRACTION);
 }
 
+/** Token room for optional document evidence after required model input. */
+export function availableEvidenceTokenBudget(
+  contextLength: number | undefined,
+  reservedTokens: number,
+): number | undefined {
+  return contextLength === undefined
+    ? undefined
+    : Math.max(0, safeInputTokenBudget(contextLength) - reservedTokens);
+}
+
 /** Keep a prefix for compaction so its boundary only covers represented messages. */
 export function projectCompactionPrefix(
   messages: readonly HistoricalMessage[],

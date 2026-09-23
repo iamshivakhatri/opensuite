@@ -54,9 +54,23 @@ export interface RetrievedArtifactEvidence {
 }
 
 export interface WorkspaceRetrieval {
+  readonly workingSet: readonly WorkspaceArtifact[];
+  readonly documentMaps: readonly DocumentMap[];
+  readonly contextStrategy: ContextStrategy;
   readonly candidates: readonly ArtifactCandidate[];
   readonly evidence: readonly RetrievedArtifactEvidence[];
   readonly message?: string;
+}
+
+/** Current choice is compact maps when available; direct is reserved for tiny documents. */
+export type ContextStrategy = "direct" | "hierarchical" | "retrieval";
+
+export interface DocumentMap {
+  readonly artifact: WorkspaceArtifact;
+  readonly entries: readonly (
+    | { readonly kind: "heading"; readonly level: number; readonly text: string }
+    | { readonly kind: "table"; readonly headingPath: readonly string[]; readonly rowCount: number; readonly columnCount: number; readonly headerTexts: readonly string[] }
+  )[];
 }
 
 export class SlimDocumentStructureCache {
@@ -126,36 +140,85 @@ export async function retrieveWorkspaceContext(input: {
   readonly readBytes: (artifact: WorkspaceArtifact) => Promise<Uint8Array>;
 }): Promise<WorkspaceRetrieval> {
   const candidates = rankWorkspaceArtifacts(input);
-  if (!input.binding || candidates.length === 0) return { candidates, evidence: [] };
+  const workingSet = workingSetArtifacts(input.artifacts, input.primaryDocumentId, input.taggedDocumentIds);
+  if (!input.binding || candidates.length === 0) {
+    return { workingSet, documentMaps: [], contextStrategy: "retrieval", candidates, evidence: [] };
+  }
 
   const evidence: RetrievedArtifactEvidence[] = [];
+  const documentMaps: DocumentMap[] = [];
   for (const candidate of candidates) {
     if (candidate.format !== "docx") continue;
-    const bytes = await input.readBytes(candidate);
-    const loaded = await input.cache.get({
-      versionId: candidate.versionId,
-      bytes,
-      binding: input.binding,
-    });
-    const context = retrieveRelevantDocumentContext(input.instruction, loaded.structure);
-    if (!context) continue;
-    const detailRequest = selectTableRowDetail(input.instruction, context);
-    const tableRows = detailRequest
-      ? await input.binding.inspectDocx(bytes, { focus: { kind: "table_rows", tableHandle: detailRequest.tableHandle, rowOffset: detailRequest.rowOffset, rowLimit: detailRequest.rowLimit } })
-      : undefined;
-    const detail = tableRows?.ok ? tableRows.tableRows : undefined;
-    evidence.push({
-      artifact: candidate,
-      context,
-      ...(detail ? { detail } : {}),
-    });
+    try {
+      const bytes = await input.readBytes(candidate);
+      const loaded = await input.cache.get({
+        versionId: candidate.versionId,
+        bytes,
+        binding: input.binding,
+      });
+      documentMaps.push(buildDocumentMap(candidate, loaded.structure));
+      const context = retrieveRelevantDocumentContext(input.instruction, loaded.structure);
+      if (!context) continue;
+      const detailRequest = selectTableRowDetail(input.instruction, context);
+      const tableRows = detailRequest
+        ? await input.binding.inspectDocx(bytes, { focus: { kind: "table_rows", tableHandle: detailRequest.tableHandle, rowOffset: detailRequest.rowOffset, rowLimit: detailRequest.rowLimit } })
+        : undefined;
+      const detail = tableRows?.ok ? tableRows.tableRows : undefined;
+      evidence.push({ artifact: candidate, context, ...(detail ? { detail } : {}) });
+    } catch {
+      // A map is optional context. Keep the old metadata/evidence path alive.
+    }
   }
 
   return {
+    workingSet,
+    documentMaps,
+    contextStrategy: documentMaps.length > 0 ? "hierarchical" : "retrieval",
     candidates,
     evidence,
-    ...(candidates.length > 0 ? { message: formatWorkspaceRetrievedContext(input.artifacts, candidates, evidence, input.primaryDocumentId, input.taggedDocumentIds) } : {}),
+    ...(candidates.length > 0 ? { message: formatWorkspaceRetrievedContext(input.artifacts, candidates, evidence, input.primaryDocumentId, input.taggedDocumentIds, workingSet, documentMaps) } : {}),
   };
+}
+
+export function buildDocumentMap(artifact: WorkspaceArtifact, structure: SlimDocumentStructure): DocumentMap {
+  const entries: Array<DocumentMap["entries"][number]> = [];
+  const headings: string[] = [];
+  for (const block of structure.blocks) {
+    if (block.kind === "paragraph" && block.headingLevel !== undefined) {
+      headings.length = block.headingLevel - 1;
+      headings[block.headingLevel - 1] = truncate(block.text);
+      entries.push({ kind: "heading", level: block.headingLevel, text: truncate(block.text) });
+    } else if (block.kind === "table") {
+      entries.push({
+        kind: "table",
+        headingPath: headings.filter(Boolean),
+        rowCount: block.rowCount,
+        columnCount: block.columnCount,
+        headerTexts: block.headerTexts.map(truncate),
+      });
+    }
+  }
+  return { artifact, entries };
+}
+
+export function formatDocumentMap(map: DocumentMap): string {
+  const lines = [`Document: ${map.artifact.name}`];
+  for (const entry of map.entries) {
+    if (entry.kind === "heading") lines.push(`- ${"#".repeat(entry.level)} ${entry.text}`);
+    else lines.push(`- Table${entry.headingPath.length ? ` under ${entry.headingPath.join(" > ")}` : ""}: ${entry.rowCount} rows × ${entry.columnCount} columns${entry.headerTexts.length ? `; headers: ${entry.headerTexts.join(" | ")}` : ""}`);
+  }
+  return lines.join("\n");
+}
+
+function workingSetArtifacts(
+  artifacts: readonly WorkspaceArtifact[],
+  primaryDocumentId: string | null,
+  taggedDocumentIds: readonly string[],
+): WorkspaceArtifact[] {
+  const ids = new Set([primaryDocumentId, ...taggedDocumentIds].filter((id): id is string => id !== null));
+  return artifacts.filter((artifact) => ids.has(artifact.documentId)).sort(
+    (a, b) => Number(b.documentId === primaryDocumentId) - Number(a.documentId === primaryDocumentId) || a.name.localeCompare(b.name),
+  );
 }
 
 async function loadStructure(input: {
@@ -232,6 +295,8 @@ export function formatWorkspaceRetrievedContext(
   evidence: readonly RetrievedArtifactEvidence[],
   primaryDocumentId: string | null,
   taggedDocumentIds: readonly string[],
+  workingSet: readonly WorkspaceArtifact[] = [],
+  documentMaps: readonly DocumentMap[] = [],
 ): string {
   const tagged = new Set(taggedDocumentIds);
   const catalog = [...artifacts]
@@ -244,6 +309,13 @@ export function formatWorkspaceRetrievedContext(
   }
   if (artifacts.length > catalog.length) lines.push(`- ${artifacts.length - catalog.length} additional documents omitted`);
   if (primaryDocumentId) lines.push("The exposed document tools are bound to the active artifact only.");
+  lines.push("WORKING SET");
+  for (const artifact of workingSet) lines.push(`- ${artifact.name} (${artifact.format})`);
+  if (workingSet.length === 0) lines.push("- No active or tagged documents");
+  lines.push("DOCUMENT MAPS");
+  for (const map of documentMaps) {
+    lines.push(formatDocumentMap(map));
+  }
   lines.push("RELEVANT ARTIFACTS");
   for (const candidate of candidates) {
     lines.push(`- ${candidate.name} (${candidate.format}; ${candidate.reason}${candidate.format === "docx" ? "" : "; semantic inspection unavailable"})`);

@@ -215,6 +215,7 @@ export default function AgentPanelUxPreviewPage() {
             status="done"
             expanded={openCompleted}
             onToggle={() => setOpenCompleted((v) => !v)}
+            showCompletedSummary
           />
           <AgentMarkdown text="Added three milestones to the table." />
         </FixtureCard>
@@ -229,6 +230,7 @@ export default function AgentPanelUxPreviewPage() {
             status="done"
             expanded={openDetails}
             onToggle={() => setOpenDetails((v) => !v)}
+            showCompletedSummary
           />
           <AgentMarkdown text="Added three milestones to the table." />
         </FixtureCard>

@@ -156,6 +156,8 @@ export function AgentRunProgress({
   onToggle,
   live = false,
   showDetails = true,
+  /** When done with activity rows, still show the compact summary (includes total time). */
+  showCompletedSummary = false,
 }: {
   presentation: AgentRunPresentation;
   status: AgentProgressLine["status"];
@@ -164,8 +166,13 @@ export function AgentRunProgress({
   onToggle: () => void;
   live?: boolean;
   showDetails?: boolean;
+  showCompletedSummary?: boolean;
 }) {
   const isActive = status === "active" || live;
+  // Live + rows: activity list is enough. Empty live / completed summary: compact headline.
+  const showHeadline =
+    presentation.activities.length === 0 ||
+    (showCompletedSummary && !isActive);
   const hasDetails = showDetails && presentation.actionCount > 0;
   const detailsLabel = expanded
     ? "Hide details"
@@ -173,9 +180,7 @@ export function AgentRunProgress({
 
   return (
     <div className="min-w-0">
-      {/* Live with rows: activity group is the primary surface (no duplicate headline).
-          Completed / streaming-finish: compact headline. */}
-      {presentation.activities.length === 0 ? (
+      {showHeadline ? (
         <div
           className={cn(
             "flex max-w-full items-center gap-1.5 text-[length:var(--text-xs)] leading-[1.4]",
@@ -184,6 +189,9 @@ export function AgentRunProgress({
               : isActive
                 ? "text-ink"
                 : "text-ink-faint",
+            showCompletedSummary && presentation.activities.length > 0
+              ? "mb-1"
+              : undefined,
           )}
         >
           {isActive ? (
@@ -217,7 +225,7 @@ export function AgentRunProgress({
       ) : null}
 
       {hasDetails ? (
-        <div className={cn(isActive && presentation.activities.length > 0 ? "mt-1" : "mt-1")}>
+        <div className="mt-1">
           <button
             type="button"
             onClick={onToggle}

@@ -33,9 +33,11 @@ import { createPrimaryDocxTools } from "./docx-tools.js";
 import {
   retrieveWorkspaceContext,
   SlimDocumentStructureCache,
+  formatDocumentMap,
 } from "./document-retrieval.js";
 import {
   estimateTokens,
+  availableEvidenceTokenBudget,
   MAX_HISTORY_MESSAGES,
   projectHistoricalMessages,
   safeInputTokenBudget,
@@ -495,12 +497,12 @@ async function runExecution(input: {
       role: message.role,
       content: message.content,
     }));
-    const fixedTokens =
+    const requiredTokens =
       estimateTokens(system) +
       estimateTokens(toolContext(tools)) +
       estimateTokens(input.instruction) +
-      estimateTokens(input.continuationContext ?? "") +
-      estimateTokens(retrieval?.message ?? "");
+      estimateTokens(input.continuationContext ?? "");
+    const evidenceTokens = estimateTokens(retrieval?.message ?? "");
     const inputBudget =
       input.model.contextLength !== undefined
         ? safeInputTokenBudget(input.model.contextLength)
@@ -510,17 +512,21 @@ async function runExecution(input: {
       : "";
     const checkpointBudget = inputBudget === undefined
       ? undefined
-      : Math.max(0, inputBudget - fixedTokens);
+      : Math.max(0, inputBudget - requiredTokens - evidenceTokens);
     const projectedCheckpoint = checkpoint
       ? truncateToTokenBudget(checkpointContent, checkpointBudget ?? estimateTokens(checkpointContent))
       : "";
     const historicalBudget = inputBudget === undefined
       ? undefined
-      : Math.max(0, inputBudget - fixedTokens - estimateTokens(projectedCheckpoint));
+      : Math.max(0, inputBudget - requiredTokens - evidenceTokens - estimateTokens(projectedCheckpoint));
     const historical = projectHistoricalMessages(historicalMessages, {
       ...(historicalBudget !== undefined ? { maxTokens: historicalBudget } : {}),
     });
     const { messages: projectedHistoricalMessages, ...historicalContext } = historical;
+    const availableEvidenceTokens = availableEvidenceTokenBudget(
+      input.model.contextLength,
+      requiredTokens + estimateTokens(projectedCheckpoint) + historical.estimatedHistoricalTokens,
+    );
     const context = {
       ...historicalContext,
       checkpointUsed: checkpoint !== null,
@@ -532,8 +538,10 @@ async function runExecution(input: {
       ...(input.model.contextLength !== undefined
         ? { modelContextLength: input.model.contextLength }
         : {}),
-      estimatedInputTokens:
-        fixedTokens + estimateTokens(projectedCheckpoint) + historical.estimatedHistoricalTokens,
+      estimatedInputTokens: requiredTokens + evidenceTokens + estimateTokens(projectedCheckpoint) + historical.estimatedHistoricalTokens,
+      ...(availableEvidenceTokens !== undefined
+        ? { availableEvidenceTokens }
+        : {}),
       approximateTokenBudgetApplied: inputBudget !== undefined,
     };
     const messages: ModelMessage[] = [
@@ -711,6 +719,9 @@ async function loadRetrievedContext(input: {
   readonly message?: string;
   readonly observation: {
     readonly workspaceArtifactCount: number;
+    readonly workingSetArtifactCount: number;
+    readonly documentMapCharacters: number;
+    readonly contextStrategy: "direct" | "hierarchical" | "retrieval";
     readonly candidateCount: number;
     readonly evidenceCount: number;
     readonly durationMs: number;
@@ -753,6 +764,9 @@ async function loadRetrievedContext(input: {
       ...(message ? { message } : {}),
       observation: {
         workspaceArtifactCount: documents.length,
+        workingSetArtifactCount: retrieved.workingSet.length,
+        documentMapCharacters: retrieved.documentMaps.reduce((total, map) => total + formatDocumentMap(map).length, 0),
+        contextStrategy: retrieved.contextStrategy,
         candidateCount: retrieved.candidates.length,
         evidenceCount: retrieved.evidence.length,
         durationMs: Date.now() - startedAt,
@@ -851,6 +865,7 @@ function emitRunReport(input: {
     readonly historyWasTrimmed: boolean;
     readonly modelContextLength?: number;
     readonly estimatedInputTokens: number;
+    readonly availableEvidenceTokens?: number;
     readonly approximateTokenBudgetApplied: boolean;
     readonly historyTrimmedByTokenBudget: boolean;
     readonly inRunObservationsCompacted?: number;

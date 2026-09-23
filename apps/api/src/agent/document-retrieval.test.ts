@@ -5,7 +5,9 @@ import type { DocxEngineBinding } from "@opensuite/engine-client";
 
 import {
   formatRetrievedDocumentContext,
+  formatDocumentMap,
   formatWorkspaceRetrievedContext,
+  buildDocumentMap,
   rankWorkspaceArtifacts,
   retrieveWorkspaceContext,
   formatTableRowDetail,
@@ -140,6 +142,53 @@ test("workspace catalog remains separate from selected DOCX evidence", () => {
   assert.match(message, /Document: A\.docx/);
   assert.match(message, /Project Objective/);
   assert.equal((message.match(/Relevant document structure/g) ?? []).length, 1);
+});
+
+test("document map keeps headings and tables in source order with heading ancestry", () => {
+  const map = buildDocumentMap(
+    { documentId: "doc", versionId: "v1", name: "Board Report.docx", format: "docx" },
+    { versionId: "v1", blocks: [
+      { kind: "paragraph", handle: "h1", text: "Financial Results", headingLevel: 1 },
+      { kind: "paragraph", handle: "h2", text: "Revenue", headingLevel: 2 },
+      { kind: "table", handle: "t1", tableHandle: "table-1", rowCount: 12, columnCount: 4, headerTexts: ["Segment", "Revenue"] },
+      { kind: "paragraph", handle: "h3", text: "Costs", headingLevel: 2 },
+    ] },
+  );
+  assert.deepEqual(map.entries.map((entry) => entry.kind), ["heading", "heading", "table", "heading"]);
+  assert.deepEqual(map.entries[2], { kind: "table", headingPath: ["Financial Results", "Revenue"], rowCount: 12, columnCount: 4, headerTexts: ["Segment", "Revenue"] });
+  assert.match(formatDocumentMap(map), /## Revenue\n- Table under Financial Results > Revenue: 12 rows × 4 columns/);
+});
+
+test("map failures leave metadata context available", async () => {
+  const retrieved = await retrieveWorkspaceContext({
+    artifacts: [{ documentId: "doc", versionId: "v1", name: "Report.docx", format: "docx" }],
+    instruction: "Review the report",
+    primaryDocumentId: "doc",
+    taggedDocumentIds: [],
+    binding: { inspectDocx: async () => { throw new Error("engine unavailable"); } } as unknown as DocxEngineBinding,
+    cache: new SlimDocumentStructureCache(),
+    readBytes: async () => new Uint8Array(),
+  });
+  assert.equal(retrieved.documentMaps.length, 0);
+  assert.equal(retrieved.evidence.length, 0);
+  assert.match(retrieved.message ?? "", /WORKSPACE CATALOG/);
+});
+
+test("active and tagged documents form the request working set", async () => {
+  const retrieved = await retrieveWorkspaceContext({
+    artifacts: [
+      { documentId: "active", versionId: "v1", name: "Plan.docx", format: "docx" },
+      { documentId: "tagged", versionId: "v2", name: "Numbers.xlsx", format: "xlsx" },
+    ],
+    instruction: "Review the plan",
+    primaryDocumentId: "active",
+    taggedDocumentIds: ["tagged"],
+    binding: { inspectDocx: async () => ({ ok: true, diagnostics: [], bodyBlocks: { page: { total: 0, offset: 0, returned: 0, hasMore: false }, items: [] } }) } as unknown as DocxEngineBinding,
+    cache: new SlimDocumentStructureCache(),
+    readBytes: async () => new Uint8Array(),
+  });
+  assert.deepEqual(retrieved.workingSet.map((artifact) => artifact.documentId), ["active", "tagged"]);
+  assert.match(retrieved.message ?? "", /WORKING SET\n- Plan\.docx \(docx\)\n- Numbers\.xlsx \(xlsx\)/);
 });
 
 test("workspace catalog is clean when empty and bounded when large", () => {

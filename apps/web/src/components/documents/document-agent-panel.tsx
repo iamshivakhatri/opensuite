@@ -12,7 +12,6 @@ import {
   presentAgentRun,
   reduceAgentProgress,
   reduceLiveTranscript,
-  reduceLiveWorking,
   visibleAgentProgress,
   type AgentProgressLine,
   type AgentTurnProgress,
@@ -137,9 +136,26 @@ function RunTranscript({
   return <div className="flex flex-col gap-2">{parts}</div>;
 }
 
-function CompletedRunTranscript({ steps }: { steps: readonly AgentStep[] }) {
+function CompletedRunTranscript({
+  steps,
+  summary,
+}: {
+  steps: readonly AgentStep[];
+  /** Compact completion line (includes total elapsed). */
+  summary?: string | null;
+}) {
   return (
-    <RunTranscript entries={durableTranscript(steps)} />
+    <div className="flex flex-col gap-1.5">
+      {summary ? (
+        <p className="flex items-center gap-1.5 text-[length:var(--text-xs)] text-ink-faint">
+          <span className="shrink-0 text-[length:var(--text-2xs)]" aria-hidden>
+            ✓
+          </span>
+          <span className="min-w-0 truncate font-medium">{summary}</span>
+        </p>
+      ) : null}
+      <RunTranscript entries={durableTranscript(steps)} />
+    </div>
   );
 }
 
@@ -256,8 +272,6 @@ export function DocumentAgentPanel({
     readonly runId: string;
     readonly steps: readonly AgentStep[];
   } | null>(null);
-  const [liveWorking, setLiveWorking] = React.useState(false);
-
   const busy =
     submitting ||
     cancelling ||
@@ -498,7 +512,6 @@ export function DocumentAgentPanel({
       if (hasAssistant || !isActiveAgentRunStatus(snapshot.run.status)) {
         setLiveTranscript([]);
       }
-      setLiveWorking(false);
       applyTerminalRunStatus(snapshot.run);
       return snapshot.run;
     },
@@ -530,7 +543,6 @@ export function DocumentAgentPanel({
       runStartedAtRef.current = null;
       setProgress([]);
       setLiveTranscript([]);
-      setLiveWorking(false);
       setTimelineOpen(false);
       await refreshMessages(thread).catch(() => undefined);
     },
@@ -556,7 +568,6 @@ export function DocumentAgentPanel({
         setContinueRunId(null);
         setLiveTranscript([]);
         setTerminalRunTranscript(null);
-        setLiveWorking(true);
         reconnectAttemptsRef.current = 0;
         const startedAt = Date.now();
         runStartedAtRef.current = startedAt;
@@ -589,7 +600,6 @@ export function DocumentAgentPanel({
           progressRef.current = nextProgress;
           setProgress(nextProgress);
           setLiveTranscript((entries) => reduceLiveTranscript(entries, event, nextProgress));
-          setLiveWorking((working) => reduceLiveWorking(working, event));
 
           if (event.type === "document.version.advanced") {
             const advancedDocumentId = String(event.data.documentId ?? "");
@@ -1117,7 +1127,6 @@ export function DocumentAgentPanel({
       setProgress(nextProgress);
       setLiveTranscript([]);
       setTerminalRunTranscript(null);
-      setLiveWorking(false);
       applyTerminalRunStatus(snapshot.run);
     } catch (error) {
       if (error instanceof ApiError && error.statusCode === 404) {
@@ -1151,7 +1160,6 @@ export function DocumentAgentPanel({
     setVersionNotice(null);
     setLiveTranscript([]);
     setTerminalRunTranscript(null);
-    setLiveWorking(false);
     setRunStepsByMessageId({});
     setDraft("");
     runIdRef.current = null;
@@ -1244,7 +1252,6 @@ export function DocumentAgentPanel({
       setVersionNotice(null);
       setLiveTranscript([]);
       setTerminalRunTranscript(null);
-      setLiveWorking(false);
       setDraft("");
       setTagged([]);
       runIdRef.current = null;
@@ -1509,7 +1516,17 @@ export function DocumentAgentPanel({
                 return (
                   <div key={message.id} className="flex flex-col gap-1.5">
                     {transcriptSteps ? (
-                      <CompletedRunTranscript steps={transcriptSteps} />
+                      <CompletedRunTranscript
+                        steps={transcriptSteps}
+                        summary={
+                          isLast && lastTurn
+                            ? presentAgentRun(lastTurn.lines, {
+                                durationMs: lastTurn.durationMs,
+                                outcome: lastTurn.outcome,
+                              }).headline
+                            : null
+                        }
+                      />
                     ) : isLast && showRunProgressOnLastAssistant && lastTurn ? (
                       <AgentRunProgress
                         presentation={presentAgentRun(lastTurn.lines, {
@@ -1521,6 +1538,7 @@ export function DocumentAgentPanel({
                         }
                         expanded={timelineOpen}
                         onToggle={() => setTimelineOpen((open) => !open)}
+                        showCompletedSummary
                       />
                     ) : null}
                     <AgentMarkdown text={message.content} />
@@ -1543,18 +1561,22 @@ export function DocumentAgentPanel({
                       live
                     />
                   )}
-                  {liveWorking ? (
-                    <p role="status" className="flex items-center gap-1.5 text-[length:var(--text-xs)] text-ink-faint">
-                      <span aria-hidden className="h-1.5 w-1.5 rounded-full bg-ink-faint/70" />
-                      Working…
-                    </p>
-                  ) : null}
                 </div>
               ) : null}
 
               {/* Finished turn with no assistant text yet (cancel / fail). */}
               {!isLiveTurn && terminalRunTranscript ? (
-                <CompletedRunTranscript steps={terminalRunTranscript.steps} />
+                <CompletedRunTranscript
+                  steps={terminalRunTranscript.steps}
+                  summary={
+                    lastTurn
+                      ? presentAgentRun(lastTurn.lines, {
+                          durationMs: lastTurn.durationMs,
+                          outcome: lastTurn.outcome,
+                        }).headline
+                      : null
+                  }
+                />
               ) : null}
               {!isLiveTurn &&
               lastTurn &&
@@ -1568,6 +1590,7 @@ export function DocumentAgentPanel({
                   status={lastTurn.outcome === "failed" ? "error" : "done"}
                   expanded={timelineOpen}
                   onToggle={() => setTimelineOpen((open) => !open)}
+                  showCompletedSummary
                 />
               ) : null}
 

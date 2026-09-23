@@ -5,6 +5,7 @@ import {
   MAX_HISTORY_CHARACTERS,
   MAX_HISTORY_MESSAGES,
   MAX_SINGLE_HISTORY_MESSAGE_CHARACTERS,
+  availableEvidenceTokenBudget,
   estimateTokens,
   projectHistoricalMessages,
   safeInputTokenBudget,
@@ -72,6 +73,9 @@ test("uses one conservative deterministic token estimate", () => {
   assert.equal(estimateTokens("abcdef"), estimateTokens("abcdef"));
   assert.ok(estimateTokens("a".repeat(300)) > estimateTokens("a".repeat(30)));
   assert.equal(safeInputTokenBudget(10_000), 6_000);
+  assert.equal(availableEvidenceTokenBudget(10_000, 1_000), 5_000);
+  assert.equal(availableEvidenceTokenBudget(10_000, 6_500), 0);
+  assert.equal(availableEvidenceTokenBudget(undefined, 1_000), undefined);
 });
 
 test("unknown context keeps C1 behavior while a token budget keeps the recent suffix", () => {

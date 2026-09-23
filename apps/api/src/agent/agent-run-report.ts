@@ -55,6 +55,9 @@ export interface AgentRunReportTool {
 
 export interface AgentRunReportRetrieval {
   readonly workspaceArtifactCount: number;
+  readonly workingSetArtifactCount: number;
+  readonly documentMapCharacters: number;
+  readonly contextStrategy: "direct" | "hierarchical" | "retrieval";
   readonly candidateCount: number;
   readonly evidenceCount: number;
   readonly durationMs: number;
@@ -81,6 +84,7 @@ export interface AgentRunReportContext {
   readonly historyWasTrimmed: boolean;
   readonly modelContextLength?: number;
   readonly estimatedInputTokens: number;
+  readonly availableEvidenceTokens?: number;
   readonly approximateTokenBudgetApplied: boolean;
   readonly historyTrimmedByTokenBudget: boolean;
   /** C7: tool-result parts shrunk across in-run projections this run. */
