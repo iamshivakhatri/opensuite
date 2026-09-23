@@ -8,6 +8,7 @@ import {
   deriveRunOutcome,
   estimateModelCostUsd,
   formatAgentRunSummary,
+  logAgentRunReport,
 } from "./agent-run-report.js";
 import type { ModelPricingEntry } from "../model-usage/pricing.js";
 
@@ -130,6 +131,7 @@ test("composeAgentRunReport includes workspace retrieval trace without model con
       workingSetArtifactCount: 1,
       documentMapCharacters: 80,
       contextStrategy: "hierarchical",
+      availableEvidenceTokens: 18_000,
       candidateCount: 2,
       evidenceCount: 1,
       durationMs: 12,
@@ -142,12 +144,43 @@ test("composeAgentRunReport includes workspace retrieval trace without model con
     workingSetArtifactCount: 1,
     documentMapCharacters: 80,
     contextStrategy: "hierarchical",
+    availableEvidenceTokens: 18_000,
     candidateCount: 2,
     evidenceCount: 1,
     durationMs: 12,
     contextCharacters: 240,
     candidates: [{ documentId: "doc", versionId: "v1", name: "Plan.docx", format: "docx", reason: "primary" }],
   });
+});
+
+test("run report JSON is multiline and includes the evidence budget", () => {
+  const report = composeAgentRunReport({
+    runId: "run-log",
+    instruction: "test",
+    metrics: baseMetrics(),
+    retrieval: {
+      workspaceArtifactCount: 1,
+      workingSetArtifactCount: 1,
+      documentMapCharacters: 20,
+      contextStrategy: "hierarchical",
+      availableEvidenceTokens: 18_000,
+      candidateCount: 1,
+      evidenceCount: 0,
+      durationMs: 1,
+      contextCharacters: 20,
+      candidates: [],
+    },
+  });
+  const messages: string[] = [];
+  const original = console.info;
+  console.info = (message?: unknown) => messages.push(String(message));
+  try {
+    logAgentRunReport(report);
+  } finally {
+    console.info = original;
+  }
+  assert.match(messages[1] ?? "", /^\[agent-run-report:json\]\n\{/);
+  assert.match(messages[1] ?? "", /\n    "availableEvidenceTokens": 18000/);
 });
 
 test("composeAgentRunReport includes history diagnostics without message content", () => {

@@ -6,6 +6,7 @@ import { getTableConfig } from "drizzle-orm/pg-core";
 import {
   agentMessage,
   agentThreadContextCheckpoint,
+  agentThreadWorkingDocument,
   agentExecutionLease,
   agentMessageRoleEnum,
   agentRun,
@@ -87,8 +88,9 @@ test("format and source enums match the decided product vocabulary", () => {
   ]);
 });
 
-test("agent schema exports thread, message, checkpoint, run, step, and execution lease tables", () => {
+test("agent schema exports thread, working document, message, checkpoint, run, step, and execution lease tables", () => {
   assert.equal(getTableName(agentThread), "agent_thread");
+  assert.equal(getTableName(agentThreadWorkingDocument), "agent_thread_working_document");
   assert.equal(getTableName(agentMessage), "agent_message");
   assert.equal(getTableName(agentThreadContextCheckpoint), "agent_thread_context_checkpoint");
   assert.equal(getTableName(agentRun), "agent_run");

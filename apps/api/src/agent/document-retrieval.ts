@@ -135,12 +135,20 @@ export async function retrieveWorkspaceContext(input: {
   readonly instruction: string;
   readonly primaryDocumentId: string | null;
   readonly taggedDocumentIds: readonly string[];
+  readonly workingSetDocumentIds?: readonly string[];
   readonly binding: DocxEngineBinding | undefined;
   readonly cache: SlimDocumentStructureCache;
   readonly readBytes: (artifact: WorkspaceArtifact) => Promise<Uint8Array>;
 }): Promise<WorkspaceRetrieval> {
-  const candidates = rankWorkspaceArtifacts(input);
-  const workingSet = workingSetArtifacts(input.artifacts, input.primaryDocumentId, input.taggedDocumentIds);
+  const candidates = rankWorkspaceArtifacts({
+    ...input,
+    taggedDocumentIds: input.workingSetDocumentIds ?? input.taggedDocumentIds,
+  });
+  const workingSet = workingSetArtifacts(
+    input.artifacts,
+    input.primaryDocumentId,
+    input.workingSetDocumentIds ?? input.taggedDocumentIds,
+  );
   if (!input.binding || candidates.length === 0) {
     return { workingSet, documentMaps: [], contextStrategy: "retrieval", candidates, evidence: [] };
   }

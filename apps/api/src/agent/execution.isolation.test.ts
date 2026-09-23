@@ -41,6 +41,7 @@ function memoryPersistence(ownerUserId: string): AgentPersistenceService & {
   checkpoints: AgentThreadContextCheckpoint[];
   contextRowsLoaded: number[];
   compactionSourceRowsLoaded: number[];
+  workingDocumentIds: string[];
   runs: Map<string, AgentRun>;
   steps: { runId: string; sequence: number; kind: string; status: string; name: string; summary?: string | null }[];
   failOnStatus?: AgentRun["status"];
@@ -58,6 +59,7 @@ function memoryPersistence(ownerUserId: string): AgentPersistenceService & {
     checkpoints: [] as AgentThreadContextCheckpoint[],
     contextRowsLoaded: [] as number[],
     compactionSourceRowsLoaded: [] as number[],
+    workingDocumentIds: [] as string[],
     runs,
     steps,
     failOnStatus: undefined as AgentRun["status"] | undefined,
@@ -66,6 +68,14 @@ function memoryPersistence(ownerUserId: string): AgentPersistenceService & {
     },
     async getOwnedThread() {
       return thread;
+    },
+    async listWorkingDocumentIds() {
+      return [...api.workingDocumentIds];
+    },
+    async addWorkingDocuments(input: { documentIds: readonly string[] }) {
+      api.workingDocumentIds.push(...input.documentIds.filter(
+        (documentId) => !api.workingDocumentIds.includes(documentId),
+      ));
     },
     async appendMessage(input: {
       threadId: string;
@@ -241,6 +251,7 @@ function memoryPersistence(ownerUserId: string): AgentPersistenceService & {
     checkpoints: AgentThreadContextCheckpoint[];
     contextRowsLoaded: number[];
     compactionSourceRowsLoaded: number[];
+    workingDocumentIds: string[];
     runs: Map<string, AgentRun>;
     steps: { runId: string; sequence: number; kind: string; status: string; name: string; summary?: string | null }[];
     failOnStatus?: AgentRun["status"];
@@ -398,6 +409,73 @@ test("successful V3 completed (no tools) settles completed", async () => {
     })
   ).result;
   assert.equal(result.run.status, "completed");
+});
+
+test("later runs restore durable working documents into model context", async () => {
+  const persistence = memoryPersistence("user-1");
+  const artifacts = [
+    { id: "doc-a", name: "A.docx", format: "docx" as const, workspaceId: "ws-1", latestVersion: { id: "v-a", versionNumber: 1, sizeBytes: 1, source: "upload" as const, createdAt: now() }, createdAt: now(), updatedAt: now(), starred: false },
+    { id: "doc-b", name: "B.docx", format: "docx" as const, workspaceId: "ws-1", latestVersion: { id: "v-b", versionNumber: 1, sizeBytes: 1, source: "upload" as const, createdAt: now() }, createdAt: now(), updatedAt: now(), starred: false },
+  ];
+  let projected: readonly { readonly role: string; readonly content: unknown }[] = [];
+  const deps = {
+    ...baseDeps(persistence, async (input) => {
+      projected = input.projectMessages!(input.messages) as typeof projected;
+      return softResult("completed", "done");
+    }, undefined, 10_000),
+    documents: {
+      listInWorkspace: async () => artifacts,
+      getOwnedDocument: async ({ documentId }: { documentId: string }) => {
+        const document = artifacts.find((item) => item.id === documentId);
+        if (!document) throw new Error("missing document");
+        return document;
+      },
+      readExactVersionBytes: async () => Buffer.alloc(0),
+      appendDocumentVersion: async () => { throw new Error("no append"); },
+      createBlankDocxDocument: async () => { throw new Error("no blank"); },
+      createOfficeDocumentFromBytes: async () => { throw new Error("no create"); },
+    },
+    docxBinding: {
+      getDocxCapabilities: () => ({
+        ok: true,
+        protocolVersion: 1,
+        engineVersion: "test",
+        formats: [{ format: "docx", capabilities: [] }],
+      }),
+      inspectDocx: async () => ({
+        ok: true,
+        diagnostics: [],
+        bodyBlocks: { page: { total: 0, offset: 0, returned: 0, hasMore: false }, items: [] },
+      }),
+    } as unknown as AgentExecutionServiceDeps["docxBinding"],
+  } satisfies AgentExecutionServiceDeps;
+  const execution = createAgentExecutionService(deps);
+
+  await (await execution.start({
+    userId: "user-1",
+    threadId: "thread-1",
+    instruction: "first",
+    documentIds: ["doc-a", "doc-b"],
+  })).result;
+  assert.deepEqual(new Set(persistence.workingDocumentIds), new Set(["doc-a", "doc-b"]));
+
+  const logs: string[] = [];
+  const original = console.info;
+  console.info = (message?: unknown) => logs.push(String(message));
+  try {
+    await (await execution.start({
+      userId: "user-1",
+      threadId: "thread-1",
+      instruction: "second",
+      documentIds: ["doc-a"],
+    })).result;
+  } finally {
+    console.info = original;
+  }
+  assert.match(String(projected.at(-2)?.content), /WORKING SET\n- A\.docx \(docx\)\n- B\.docx \(docx\)/);
+  assert.equal(projected.at(-1)?.content, "second");
+  assert.ok(logs.some((message) => message.includes('"workingSetArtifactCount": 2')));
+  assert.ok(logs.some((message) => message.includes('"availableEvidenceTokens"')));
 });
 
 test("completed runs persist narration at tool boundaries without duplicating the final answer", async () => {

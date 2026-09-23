@@ -4,6 +4,8 @@ import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import { test } from "node:test";
 
+import { eq } from "drizzle-orm";
+
 import { createDbClient, schema } from "@opensuite/db";
 
 import {
@@ -73,6 +75,7 @@ test(
       const aliceWorkspaceId = await seedWorkspace(db, aliceId, "Alice WS");
       const bobWorkspaceId = await seedWorkspace(db, bobId, "Bob WS");
       const aliceDocId = await seedDocument(db, aliceWorkspaceId);
+      const aliceSourceDocId = await seedDocument(db, aliceWorkspaceId, "source.docx");
       const bobDocId = await seedDocument(db, bobWorkspaceId, "bob.docx");
 
       // --- THREADS ---
@@ -114,6 +117,46 @@ test(
           ownerUserId: bobId,
         }),
         null,
+      );
+
+      // --- DURABLE WORKING SET ---
+      await agents.addWorkingDocuments({
+        threadId: workspaceThread.id,
+        ownerUserId: aliceId,
+        documentIds: [aliceDocId, aliceSourceDocId],
+      });
+      await agents.addWorkingDocuments({
+        threadId: workspaceThread.id,
+        ownerUserId: aliceId,
+        documentIds: [aliceSourceDocId],
+      });
+      assert.deepEqual(
+        new Set(await agents.listWorkingDocumentIds({
+          threadId: workspaceThread.id,
+          ownerUserId: aliceId,
+        })),
+        new Set([aliceDocId, aliceSourceDocId]),
+      );
+      await assert.rejects(
+        () => agents.addWorkingDocuments({
+          threadId: workspaceThread.id,
+          ownerUserId: aliceId,
+          documentIds: [bobDocId],
+        }),
+        (error: unknown) =>
+          error instanceof AgentPersistenceError &&
+          error.code === "DOCUMENT_NOT_FOUND",
+      );
+      await db
+        .update(schema.document)
+        .set({ deletedAt: new Date() })
+        .where(eq(schema.document.id, aliceSourceDocId));
+      assert.deepEqual(
+        await agents.listWorkingDocumentIds({
+          threadId: workspaceThread.id,
+          ownerUserId: aliceId,
+        }),
+        [aliceDocId],
       );
 
       const archived = await agents.archiveThread({

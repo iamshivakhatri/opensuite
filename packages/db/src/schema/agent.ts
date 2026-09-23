@@ -7,6 +7,7 @@ import {
   jsonb,
   pgEnum,
   pgTable,
+  primaryKey,
   text,
   timestamp,
   unique,
@@ -104,6 +105,20 @@ export const agentThread = pgTable(
       table.updatedAt,
     ),
   ],
+);
+
+/** Durable logical membership only; versions resolve at each run. */
+export const agentThreadWorkingDocument = pgTable(
+  "agent_thread_working_document",
+  {
+    threadId: uuid("thread_id")
+      .notNull()
+      .references(() => agentThread.id, { onDelete: "restrict" }),
+    documentId: uuid("document_id")
+      .notNull()
+      .references(() => document.id, { onDelete: "restrict" }),
+  },
+  (table) => [primaryKey({ columns: [table.threadId, table.documentId] })],
 );
 
 /**
@@ -272,9 +287,24 @@ export const agentThreadRelations = relations(agentThread, ({ one, many }) => ({
     references: [user.id],
   }),
   messages: many(agentMessage),
+  workingDocuments: many(agentThreadWorkingDocument),
   contextCheckpoints: many(agentThreadContextCheckpoint),
   runs: many(agentRun),
 }));
+
+export const agentThreadWorkingDocumentRelations = relations(
+  agentThreadWorkingDocument,
+  ({ one }) => ({
+    thread: one(agentThread, {
+      fields: [agentThreadWorkingDocument.threadId],
+      references: [agentThread.id],
+    }),
+    document: one(document, {
+      fields: [agentThreadWorkingDocument.documentId],
+      references: [document.id],
+    }),
+  }),
+);
 
 export const agentMessageRelations = relations(agentMessage, ({ one }) => ({
   thread: one(agentThread, {

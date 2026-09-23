@@ -270,7 +270,21 @@ export function createAgentExecutionService(deps: AgentExecutionServiceDeps) {
         input.userId,
         input.documentIds,
       );
+      const persistedWorkingDocumentIds = await deps.persistence.listWorkingDocumentIds({
+        threadId: thread.id,
+        ownerUserId: input.userId,
+      });
+      const workingDocumentIds = [...new Set([
+        ...persistedWorkingDocumentIds,
+        ...(primaryDocument ? [primaryDocument.documentId] : []),
+        ...(input.documentIds ?? []),
+      ])];
       const started = await deps.persistence.withTransaction(async (tx) => {
+        await deps.persistence.addWorkingDocuments({
+          threadId: thread.id,
+          ownerUserId: input.userId,
+          documentIds: workingDocumentIds,
+        }, tx);
         const userMessage = await deps.persistence.appendMessage(
           { threadId: thread.id, ownerUserId: input.userId, role: "user", content: input.instruction },
           tx,
@@ -302,6 +316,7 @@ export function createAgentExecutionService(deps: AgentExecutionServiceDeps) {
         ownerUserId: input.userId,
         instruction: input.instruction,
         submittedDocumentIds: input.documentIds ?? [],
+        workingDocumentIds,
         ...(continuation ? { continuationContext: continuation.context } : {}),
         signal: input.signal,
         liveEvents: input.liveEvents,
@@ -402,6 +417,7 @@ async function runExecution(input: {
   readonly ownerUserId: string;
   readonly instruction: string;
   readonly submittedDocumentIds: readonly string[];
+  readonly workingDocumentIds: readonly string[];
   readonly continuationContext?: string;
   readonly signal?: AbortSignal;
   readonly liveEvents?: AgentEventSink;
@@ -430,6 +446,7 @@ async function runExecution(input: {
       primaryDocumentId: input.primaryDocumentId,
       primaryVersionId: input.run.baseDocumentVersionId,
       submittedDocumentIds: input.submittedDocumentIds,
+      workingDocumentIds: input.workingDocumentIds,
     });
 
     await input.deps.persistence.updateRunStatus({
@@ -539,11 +556,16 @@ async function runExecution(input: {
         ? { modelContextLength: input.model.contextLength }
         : {}),
       estimatedInputTokens: requiredTokens + evidenceTokens + estimateTokens(projectedCheckpoint) + historical.estimatedHistoricalTokens,
-      ...(availableEvidenceTokens !== undefined
-        ? { availableEvidenceTokens }
-        : {}),
       approximateTokenBudgetApplied: inputBudget !== undefined,
     };
+    const reportRetrieval = retrieval
+      ? {
+          ...retrieval.observation,
+          ...(availableEvidenceTokens !== undefined
+            ? { availableEvidenceTokens }
+            : {}),
+        }
+      : undefined;
     const messages: ModelMessage[] = [
       ...(projectedCheckpoint ? [{ role: "user" as const, content: projectedCheckpoint }] : []),
       ...projectedHistoricalMessages,
@@ -589,7 +611,7 @@ async function runExecution(input: {
         finalVersionId: boundTools?.getActiveVersionId() ?? input.run.baseDocumentVersionId,
         versionAdvances,
         documentTransitions: boundTools?.getTransitions() ?? [],
-        retrieval: retrieval?.observation,
+        retrieval: reportRetrieval,
         context: {
           ...context,
           inRunObservationsCompacted: inRunStats.observationsCompacted,
@@ -615,7 +637,7 @@ async function runExecution(input: {
       finalVersionId: boundTools?.getActiveVersionId() ?? input.run.baseDocumentVersionId,
       versionAdvances,
       documentTransitions: boundTools?.getTransitions() ?? [],
-      retrieval: retrieval?.observation,
+      retrieval: reportRetrieval,
       context: {
         ...context,
         inRunObservationsCompacted: inRunStats.observationsCompacted,
@@ -715,6 +737,7 @@ async function loadRetrievedContext(input: {
   readonly primaryDocumentId: string | null;
   readonly primaryVersionId: string | null;
   readonly submittedDocumentIds: readonly string[];
+  readonly workingDocumentIds: readonly string[];
 }): Promise<{
   readonly message?: string;
   readonly observation: {
@@ -751,6 +774,7 @@ async function loadRetrievedContext(input: {
       instruction: input.instruction,
       primaryDocumentId: input.primaryDocumentId,
       taggedDocumentIds: input.submittedDocumentIds,
+      workingSetDocumentIds: input.workingDocumentIds,
       binding: input.binding,
       cache: input.cache,
       readBytes: async (artifact) => new Uint8Array(await input.documents.readExactVersionBytes({
@@ -865,7 +889,6 @@ function emitRunReport(input: {
     readonly historyWasTrimmed: boolean;
     readonly modelContextLength?: number;
     readonly estimatedInputTokens: number;
-    readonly availableEvidenceTokens?: number;
     readonly approximateTokenBudgetApplied: boolean;
     readonly historyTrimmedByTokenBudget: boolean;
     readonly inRunObservationsCompacted?: number;

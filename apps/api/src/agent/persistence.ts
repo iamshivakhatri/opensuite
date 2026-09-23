@@ -886,6 +886,74 @@ export function createAgentPersistenceService(db: Db) {
       }
     },
 
+    async listWorkingDocumentIds(
+      input: { threadId: string; ownerUserId: string },
+      tx?: AgentPersistenceExecutor,
+    ): Promise<string[]> {
+      const client = executor(tx);
+      const thread = await requireOwnedThread(
+        client,
+        input.threadId,
+        input.ownerUserId,
+      );
+      const rows = await client
+        .select({ documentId: schema.agentThreadWorkingDocument.documentId })
+        .from(schema.agentThreadWorkingDocument)
+        .innerJoin(
+          schema.document,
+          eq(
+            schema.agentThreadWorkingDocument.documentId,
+            schema.document.id,
+          ),
+        )
+        .where(
+          and(
+            eq(schema.agentThreadWorkingDocument.threadId, thread.id),
+            eq(schema.document.workspaceId, thread.workspaceId),
+            isNull(schema.document.deletedAt),
+          ),
+        );
+      return rows.map((row) => row.documentId);
+    },
+
+    async addWorkingDocuments(
+      input: {
+        threadId: string;
+        ownerUserId: string;
+        documentIds: readonly string[];
+      },
+      tx?: AgentPersistenceExecutor,
+    ): Promise<void> {
+      const documentIds = [...new Set(input.documentIds)];
+      if (documentIds.length === 0) return;
+      const client = executor(tx);
+      const thread = await requireOwnedThread(
+        client,
+        input.threadId,
+        input.ownerUserId,
+      );
+      const documents = await client
+        .select({ id: schema.document.id })
+        .from(schema.document)
+        .where(
+          and(
+            inArray(schema.document.id, documentIds),
+            eq(schema.document.workspaceId, thread.workspaceId),
+            isNull(schema.document.deletedAt),
+          ),
+        );
+      if (documents.length !== documentIds.length) {
+        throw new AgentPersistenceError(
+          "DOCUMENT_NOT_FOUND",
+          "Document not found for agent working set",
+        );
+      }
+      await client
+        .insert(schema.agentThreadWorkingDocument)
+        .values(documentIds.map((documentId) => ({ threadId: thread.id, documentId })))
+        .onConflictDoNothing();
+    },
+
     async listThreadsForWorkspace(
       input: {
         workspaceId: string;

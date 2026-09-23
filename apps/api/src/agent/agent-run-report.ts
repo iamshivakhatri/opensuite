@@ -58,6 +58,7 @@ export interface AgentRunReportRetrieval {
   readonly workingSetArtifactCount: number;
   readonly documentMapCharacters: number;
   readonly contextStrategy: "direct" | "hierarchical" | "retrieval";
+  readonly availableEvidenceTokens?: number;
   readonly candidateCount: number;
   readonly evidenceCount: number;
   readonly durationMs: number;
@@ -84,7 +85,6 @@ export interface AgentRunReportContext {
   readonly historyWasTrimmed: boolean;
   readonly modelContextLength?: number;
   readonly estimatedInputTokens: number;
-  readonly availableEvidenceTokens?: number;
   readonly approximateTokenBudgetApplied: boolean;
   readonly historyTrimmedByTokenBudget: boolean;
   /** C7: tool-result parts shrunk across in-run projections this run. */
@@ -474,7 +474,7 @@ export function logAgentRunReport(report: AgentRunReport): void {
   const summary = formatAgentRunSummary(report);
   console.info(`[agent-run-report]\n${summary}`);
   console.info(
-    `[agent-run-report:json] ${JSON.stringify({
+    `[agent-run-report:json]\n${JSON.stringify({
       runId: report.runId,
       outcome: report.outcome,
       stopReason: report.stopReason,
@@ -491,6 +491,6 @@ export function logAgentRunReport(report: AgentRunReport): void {
       retrieval: report.retrieval,
       context: report.context,
       tools: report.tools,
-    })}`,
+    }, null, 2)}`,
   );
 }

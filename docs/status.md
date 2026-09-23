@@ -13,6 +13,7 @@ _Read this before starting any work. Keep it a concise current-state handoff, no
 
 ## Just Completed
 
+* **Phase 2A.2 durable working set** — persisted thread↔document membership restores active/tagged docs across runs; stale soft-deleted members are ignored; retrieval reports include available evidence budget; diagnostic JSON is multiline.
 * **Phase 2A.1 pre-model foundation** — request working set (active + tagged docs), compact heading/table DOCX maps, report-level available-evidence budget, and existing retrieval as the first hierarchical context strategy; no schema or engine change.
 * **Agent activity UX polish** — dropped redundant live `Working…` under Thinking; completed turns keep compact summary with total elapsed (including durable transcript path).
 * **Phase 1 pre-model retrieval** — API-only workspace metadata ranking before model invocation; selected DOCX artifacts are inspected through the existing engine-client path and injected once with exact-version provenance. PPTX/XLSX remain metadata-only; retrieval errors fall back to the previous model path. Run reports now log artifact/evidence counts, duration, context size, and candidates.
@@ -51,7 +52,7 @@ _Read this before starting any work. Keep it a concise current-state handoff, no
 | Check | Status |
 |---|---|
 | agent-core-v3 unit (21) | Pass |
-| API unit (184; 17 skipped) | Pass |
+| API unit (193; 17 skipped) | Pass |
 | Context lifecycle C1–C7 targeted API checks | Pass |
 | Phase 6A API retrieval + lifecycle/report tests (22) | Pass |
 | Phase 1 workspace retrieval API tests | Pass |
