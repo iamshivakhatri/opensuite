@@ -1,4 +1,4 @@
-export { createOpenRouterModel, runModel, streamTurn } from "./model.js";
+export { createOpenRouterModel, openRouterCostUsd, runModel, streamTurn } from "./model.js";
 export { runAgent } from "./run.js";
 export { createFinishTool } from "./finish-tool.js";
 export { createFailureFuse, stableStringify, type FailureFuse } from "./fuse.js";

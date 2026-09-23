@@ -13,6 +13,7 @@ _Read this before starting any work. Keep it a concise current-state handoff, no
 
 ## Just Completed
 
+* **Model/context accounting** — OpenRouter catalog `contextLength`/`maxOutputTokens` attached for managed + BYOK; explicit output/continuation/safety reserves replace blind 60%-of-window budget; `retrieval.availableEvidenceTokens` from real model window; agent-core-v3 preserves OpenRouter `usage.cost` + reasoning tokens; reports show `actualProviderCostUsd` vs estimated.
 * **Phase 2A.2 durable working set** — persisted thread↔document membership restores active/tagged docs across runs; stale soft-deleted members are ignored; retrieval reports include available evidence budget; diagnostic JSON is multiline.
 * **Phase 2A.1 pre-model foundation** — request working set (active + tagged docs), compact heading/table DOCX maps, report-level available-evidence budget, and existing retrieval as the first hierarchical context strategy; no schema or engine change.
 * **Agent activity UX polish** — dropped redundant live `Working…` under Thinking; completed turns keep compact summary with total elapsed (including durable transcript path).
@@ -51,8 +52,9 @@ _Read this before starting any work. Keep it a concise current-state handoff, no
 
 | Check | Status |
 |---|---|
-| agent-core-v3 unit (21) | Pass |
-| API unit (193; 17 skipped) | Pass |
+| agent-core-v3 unit (24) | Pass |
+| API unit (199; 17 skipped) | Pass |
+| Model accounting live OpenRouter E2E | Pass (`availableEvidenceTokens`, ctx=1048576, actual cost) |
 | Context lifecycle C1–C7 targeted API checks | Pass |
 | Phase 6A API retrieval + lifecycle/report tests (22) | Pass |
 | Phase 1 workspace retrieval API tests | Pass |
@@ -68,7 +70,8 @@ _Read this before starting any work. Keep it a concise current-state handoff, no
 * Rename/move/delete/folder tools; multi-document inspect
 * Finish-as-read scheduling redesign
 * AgentRunReport developer dashboard
+* Phase 2A.3 adaptive DIRECT/HIERARCHICAL/RETRIEVAL planning
 
 ## Recommended Next Step
 
-Optional follow-up: source-shape large tool results at execution (`document.find` match cap, slim `inspect(tables)`, omit unused mutation `versionId` from model-facing JSON). Then dogfood a multi-turn inspect/find/mutate run and confirm later-turn projected input stays bounded.
+Phase 2A.3 adaptive context strategy selection using trustworthy `availableEvidenceTokens` + model metadata (still no Gemini/Qdrant/Jev).

@@ -87,11 +87,15 @@ export function normalizeManagedAiModel(
   const pricingRaw = isRecord(raw.pricing) ? raw.pricing : {};
   const slash = id.indexOf("/");
   const author = slash > 0 ? id.slice(0, slash) : null;
+  const topProvider = isRecord(raw.top_provider) ? raw.top_provider : null;
 
   return {
     id,
     name: asString(raw.name) ?? id,
     contextLength: asNonNegNumber(raw.context_length),
+    maxOutputTokens: topProvider
+      ? asNonNegNumber(topProvider.max_completion_tokens)
+      : null,
     supportedParameters,
     pricing: {
       ...(pricingString(pricingRaw, "prompt") !== undefined

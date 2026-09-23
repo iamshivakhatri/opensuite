@@ -29,6 +29,7 @@ export interface ManagedAiModel {
   readonly id: string;
   readonly name: string;
   readonly contextLength: number | null;
+  readonly maxOutputTokens?: number | null;
   readonly supportedParameters: readonly string[];
   readonly pricing: {
     readonly prompt?: string;

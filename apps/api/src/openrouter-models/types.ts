@@ -6,6 +6,8 @@ export interface ManagedAiModel {
   readonly id: string;
   readonly name: string;
   readonly contextLength: number | null;
+  /** From OpenRouter top_provider.max_completion_tokens when present. */
+  readonly maxOutputTokens?: number | null;
   readonly supportedParameters: readonly string[];
   readonly pricing: {
     readonly prompt?: string;
@@ -30,6 +32,10 @@ export interface OpenRouterRawModel {
   readonly pricing?: unknown;
   readonly architecture?: {
     readonly output_modalities?: unknown;
+  };
+  readonly top_provider?: {
+    readonly max_completion_tokens?: unknown;
+    readonly context_length?: unknown;
   };
 }
 

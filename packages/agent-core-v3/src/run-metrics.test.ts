@@ -42,6 +42,7 @@ test("model turns and usage aggregate correctly", () => {
     inputTokens: 300,
     cachedInputTokens: 120,
     outputTokens: 30,
+    reasoningTokens: 0,
   });
   assert.equal(metrics.startedAtMs, 1_000);
   assert.equal(metrics.completedAtMs, 1_015);

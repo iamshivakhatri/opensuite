@@ -6,6 +6,7 @@ import {
   MAX_HISTORY_MESSAGES,
   MAX_SINGLE_HISTORY_MESSAGE_CHARACTERS,
   availableEvidenceTokenBudget,
+  computeInputBudget,
   estimateTokens,
   projectHistoricalMessages,
   safeInputTokenBudget,
@@ -72,10 +73,25 @@ test("uses one conservative deterministic token estimate", () => {
   assert.equal(estimateTokens("abcdef"), 2);
   assert.equal(estimateTokens("abcdef"), estimateTokens("abcdef"));
   assert.ok(estimateTokens("a".repeat(300)) > estimateTokens("a".repeat(30)));
+  // 10k window → output 2500 + cont 1000 + safety 500 = 6000 usable
   assert.equal(safeInputTokenBudget(10_000), 6_000);
   assert.equal(availableEvidenceTokenBudget(10_000, 1_000), 5_000);
   assert.equal(availableEvidenceTokenBudget(10_000, 6_500), 0);
   assert.equal(availableEvidenceTokenBudget(undefined, 1_000), undefined);
+});
+
+test("availableEvidenceTokens clamps at zero and uses model max output when present", () => {
+  assert.equal(availableEvidenceTokenBudget(10_000, 100_000), 0);
+  const withMax = computeInputBudget({
+    contextLength: 1_048_576,
+    maxOutputTokens: 943_718,
+  });
+  assert.equal(withMax.outputReserve, 16_384);
+  assert.equal(withMax.usedOutputReserveFallback, false);
+  assert.ok(withMax.safeInputBudget > 1_000_000);
+  const fallback = computeInputBudget({ contextLength: 1_048_576 });
+  assert.equal(fallback.outputReserve, 8_192);
+  assert.equal(fallback.usedOutputReserveFallback, true);
 });
 
 test("unknown context keeps C1 behavior while a token budget keeps the recent suffix", () => {

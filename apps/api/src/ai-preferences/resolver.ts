@@ -3,6 +3,7 @@ import type { ProviderCredentialService } from "../credentials/service.js";
 import type { ProviderCredentialProvider } from "../credentials/types.js";
 import {
   OpenRouterCatalogError,
+  type ManagedAiModel,
 } from "../openrouter-models/types.js";
 import type { OpenRouterManagedModelCatalog } from "../openrouter-models/catalog.js";
 import type { AiPreferenceService } from "./service.js";
@@ -26,8 +27,10 @@ export interface ResolvedAiModel {
   readonly model: string;
   readonly credentialSource: CredentialSource;
   readonly apiKey: string;
-  /** Known only for managed OpenRouter catalog entries. */
+  /** From OpenRouter catalog when available (managed or soft BYOK lookup). */
   readonly contextLength?: number;
+  /** From OpenRouter top_provider.max_completion_tokens when available. */
+  readonly maxOutputTokens?: number;
 }
 
 function managedKey(
@@ -55,6 +58,18 @@ function managedDefaultModel(
   return config.openrouterModel;
 }
 
+function metadataFromCatalog(model: ManagedAiModel): {
+  contextLength?: number;
+  maxOutputTokens?: number;
+} {
+  return {
+    ...(model.contextLength != null ? { contextLength: model.contextLength } : {}),
+    ...(model.maxOutputTokens != null
+      ? { maxOutputTokens: model.maxOutputTokens }
+      : {}),
+  };
+}
+
 /** Resolves a single user-owned or server-owned credential before model creation. */
 export function createAiModelResolver(input: {
   preferences: AiPreferenceService;
@@ -63,15 +78,31 @@ export function createAiModelResolver(input: {
   /** Required to validate managed OpenRouter model availability at resolve time. */
   catalog?: OpenRouterManagedModelCatalog | null;
 }) {
+  /**
+   * Soft OpenRouter catalog enrichment — never fails resolution.
+   * Used for BYOK (and as a no-op when metadata already attached).
+   */
+  async function softOpenRouterMetadata(
+    modelId: string,
+  ): Promise<{ contextLength?: number; maxOutputTokens?: number }> {
+    if (!input.catalog) return {};
+    try {
+      const model = await input.catalog.getManagedModel(modelId);
+      return model ? metadataFromCatalog(model) : {};
+    } catch {
+      return {};
+    }
+  }
+
   async function resolveManagedOpenRouter(): Promise<ResolvedAiModel | null> {
     const apiKey = managedKey(input.managed, "openrouter");
     const model = input.managed.openrouterModel;
     if (!apiKey || !model) return null;
-    let contextLength: number | undefined;
+    let meta: { contextLength?: number; maxOutputTokens?: number } = {};
     if (input.catalog) {
       try {
         const managedModel = await input.catalog.requireManagedModel(model);
-        contextLength = managedModel.contextLength ?? undefined;
+        meta = metadataFromCatalog(managedModel);
       } catch (error) {
         if (
           error instanceof OpenRouterCatalogError &&
@@ -99,7 +130,7 @@ export function createAiModelResolver(input: {
       model,
       credentialSource: "managed",
       apiKey,
-      ...(contextLength !== undefined ? { contextLength } : {}),
+      ...meta,
     };
   }
 
@@ -138,11 +169,16 @@ export function createAiModelResolver(input: {
             })
           : null;
         if (apiKey) {
+          const meta =
+            preference.provider === "openrouter"
+              ? await softOpenRouterMetadata(preference.model)
+              : {};
           return {
             provider: preference.provider,
             model: preference.model,
             credentialSource: "byok",
             apiKey,
+            ...meta,
           };
         }
         // Key missing/invalid → fall back to managed trial.

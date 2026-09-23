@@ -40,17 +40,30 @@ const IMAGE_ONLY_MODEL = {
 };
 
 test("normalize preserves exact OpenRouter ids and live pricing strings", () => {
-  const model = normalizeManagedAiModel(TOOL_TEXT_MODEL);
+  const model = normalizeManagedAiModel({
+    ...TOOL_TEXT_MODEL,
+    top_provider: {
+      context_length: 128000,
+      max_completion_tokens: 16384,
+    },
+  });
   assert.ok(model);
   assert.equal(model!.id, "openai/gpt-4.1");
   assert.equal(model!.name, "GPT-4.1");
   assert.equal(model!.contextLength, 128000);
+  assert.equal(model!.maxOutputTokens, 16384);
   assert.deepEqual(model!.supportedParameters, ["tools", "temperature"]);
   assert.equal(model!.pricing.prompt, "0.000002");
   assert.equal(model!.pricing.completion, "0.000008");
   assert.equal(model!.pricing.inputCacheRead, "0.0000005");
   assert.equal(model!.author, "openai");
   assert.equal(typeof model!.pricing.prompt, "string");
+});
+
+test("normalize leaves maxOutputTokens null when top_provider is absent", () => {
+  const model = normalizeManagedAiModel(TOOL_TEXT_MODEL);
+  assert.ok(model);
+  assert.equal(model!.maxOutputTokens, null);
 });
 
 test("incompatible models are excluded; tool+text models are included", () => {

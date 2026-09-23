@@ -3,9 +3,10 @@
  * migrate swallows it). Prefer this from Docker entrypoint.
  *
  * Usage (from packages/db): node ./scripts/migrate.mjs
- * Requires DATABASE_URL in the environment.
+ * Requires DATABASE_URL in the environment or a root/packages `.env`
+ * (same loader rules as packages/db/load-env.ts).
  */
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -15,6 +16,45 @@ import pg from "pg";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const migrationsFolder = resolve(here, "../migrations");
+
+/**
+ * Load the first found `.env` without dotenv expansion/URL-decoding so
+ * encoded DATABASE_URL passwords stay intact. Explicit shell env wins.
+ */
+function loadEnvFile() {
+  const envCandidates = [
+    resolve(process.cwd(), ".env"),
+    resolve(process.cwd(), "../../.env"),
+    resolve(here, "../../../.env"),
+  ];
+
+  for (const envPath of envCandidates) {
+    if (!existsSync(envPath)) continue;
+
+    const content = readFileSync(envPath, "utf8");
+    for (const line of content.split("\n")) {
+      const trimmed = line.trim();
+      if (!trimmed || trimmed.startsWith("#")) continue;
+
+      const separatorIndex = trimmed.indexOf("=");
+      if (separatorIndex === -1) continue;
+
+      const key = trimmed.slice(0, separatorIndex).trim();
+      let value = trimmed.slice(separatorIndex + 1).trim();
+
+      if (
+        (value.startsWith('"') && value.endsWith('"')) ||
+        (value.startsWith("'") && value.endsWith("'"))
+      ) {
+        value = value.slice(1, -1);
+      }
+
+      process.env[key] ??= value;
+    }
+
+    return;
+  }
+}
 
 function redactDatabaseUrl(url) {
   try {
@@ -39,6 +79,8 @@ function formatError(error) {
 }
 
 async function main() {
+  loadEnvFile();
+
   const databaseUrl = process.env.DATABASE_URL?.trim();
   if (!databaseUrl) {
     throw new Error("DATABASE_URL is not set");

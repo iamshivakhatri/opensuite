@@ -24,6 +24,8 @@ export interface ModelTurnMetric {
   readonly inputTokens: number;
   readonly cachedInputTokens: number;
   readonly outputTokens: number;
+  readonly reasoningTokens?: number;
+  readonly providerReportedCostUsd?: number;
 }
 
 export interface ToolCallMetric {
@@ -46,6 +48,9 @@ export interface AgentRunUsage {
   readonly inputTokens: number;
   readonly cachedInputTokens: number;
   readonly outputTokens: number;
+  readonly reasoningTokens: number;
+  /** Sum of provider-reported turn costs when at least one turn reported cost. */
+  readonly providerReportedCostUsd?: number;
 }
 
 export interface AgentRunMetrics {
@@ -61,14 +66,27 @@ export interface AgentRunMetrics {
 export type ToolCallMetricInput = Omit<ToolCallMetric, "sequence">;
 
 function zeroUsage(): AgentRunUsage {
-  return { inputTokens: 0, cachedInputTokens: 0, outputTokens: 0 };
+  return {
+    inputTokens: 0,
+    cachedInputTokens: 0,
+    outputTokens: 0,
+    reasoningTokens: 0,
+  };
 }
 
 function addUsage(usage: AgentRunUsage, turn: ModelTurnMetric): AgentRunUsage {
+  const providerReportedCostUsd =
+    turn.providerReportedCostUsd !== undefined
+      ? (usage.providerReportedCostUsd ?? 0) + turn.providerReportedCostUsd
+      : usage.providerReportedCostUsd;
   return {
     inputTokens: usage.inputTokens + turn.inputTokens,
     cachedInputTokens: usage.cachedInputTokens + turn.cachedInputTokens,
     outputTokens: usage.outputTokens + turn.outputTokens,
+    reasoningTokens: usage.reasoningTokens + (turn.reasoningTokens ?? 0),
+    ...(providerReportedCostUsd !== undefined
+      ? { providerReportedCostUsd }
+      : {}),
   };
 }
 

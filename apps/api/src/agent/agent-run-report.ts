@@ -84,6 +84,10 @@ export interface AgentRunReportContext {
   readonly estimatedHistoricalTokens: number;
   readonly historyWasTrimmed: boolean;
   readonly modelContextLength?: number;
+  readonly outputReserveTokens?: number;
+  readonly continuationReserveTokens?: number;
+  readonly safetyMarginTokens?: number;
+  readonly safeInputBudgetTokens?: number;
   readonly estimatedInputTokens: number;
   readonly approximateTokenBudgetApplied: boolean;
   readonly historyTrimmedByTokenBudget: boolean;
@@ -116,7 +120,11 @@ export interface AgentRunReport {
     readonly inputTokens: number;
     readonly cachedInputTokens: number;
     readonly outputTokens: number;
+    readonly reasoningTokens: number;
   };
+  /** Authoritative provider charge when available (e.g. OpenRouter usage.cost). */
+  readonly actualProviderCostUsd?: number;
+  /** Local list-price estimate — never presented as actual. */
   readonly estimatedCostUsd?: number;
   readonly failures: readonly AgentRunReportFailure[];
   readonly fuseEvents: readonly FuseEventMetric[];
@@ -252,6 +260,8 @@ export function composeAgentRunReport(
     input.pricingProvider,
     input.model,
   );
+  const actualProviderCostUsd =
+    input.metrics.usage.providerReportedCostUsd;
 
   const hasDocumentFacts =
     initialDocumentId !== undefined ||
@@ -286,7 +296,15 @@ export function composeAgentRunReport(
         ? { failureCode: call.failureCode }
         : {}),
     })),
-    usage: { ...input.metrics.usage },
+    usage: {
+      inputTokens: input.metrics.usage.inputTokens,
+      cachedInputTokens: input.metrics.usage.cachedInputTokens,
+      outputTokens: input.metrics.usage.outputTokens,
+      reasoningTokens: input.metrics.usage.reasoningTokens,
+    },
+    ...(actualProviderCostUsd !== undefined
+      ? { actualProviderCostUsd }
+      : {}),
     ...(estimatedCostUsd !== undefined ? { estimatedCostUsd } : {}),
     failures,
     fuseEvents: input.metrics.fuseEvents,
@@ -452,14 +470,38 @@ export function formatAgentRunSummary(report: AgentRunReport): string {
   lines.push(
     `${padLabel("output")}${report.usage.outputTokens.toLocaleString("en-US")}`,
   );
-  lines.push("");
   lines.push(
-    `${padLabel("Est. cost")}${
-      report.estimatedCostUsd !== undefined
-        ? formatUsd(report.estimatedCostUsd)
-        : "n/a"
-    }`,
+    `${padLabel("reasoning")}${report.usage.reasoningTokens.toLocaleString("en-US")}`,
   );
+  if (report.context?.estimatedInputTokens !== undefined) {
+    lines.push(
+      `${padLabel("est. input")}${report.context.estimatedInputTokens.toLocaleString("en-US")}`,
+    );
+  }
+  if (report.context?.modelContextLength !== undefined) {
+    lines.push(
+      `${padLabel("ctx window")}${report.context.modelContextLength.toLocaleString("en-US")}`,
+    );
+  }
+  if (report.retrieval?.availableEvidenceTokens !== undefined) {
+    lines.push(
+      `${padLabel("evid. room")}${report.retrieval.availableEvidenceTokens.toLocaleString("en-US")}`,
+    );
+  }
+  lines.push("");
+  if (report.actualProviderCostUsd !== undefined) {
+    lines.push(
+      `${padLabel("Actual cost")}${formatUsd(report.actualProviderCostUsd)}`,
+    );
+  } else {
+    lines.push(
+      `${padLabel("Est. cost")}${
+        report.estimatedCostUsd !== undefined
+          ? formatUsd(report.estimatedCostUsd)
+          : "n/a"
+      }`,
+    );
+  }
   lines.push(`${padLabel("Failures")}${report.failures.length}`);
   lines.push(`${padLabel("Fuse events")}${report.fuseEvents.length}`);
   if (report.stopReason) {
@@ -478,12 +520,15 @@ export function logAgentRunReport(report: AgentRunReport): void {
       runId: report.runId,
       outcome: report.outcome,
       stopReason: report.stopReason,
+      provider: report.provider,
+      model: report.model,
       modelTurns: report.modelTurns,
       toolCalls: report.toolCalls,
       modelTimeMs: report.modelTimeMs,
       toolTimeMs: report.toolTimeMs,
       totalDurationMs: report.totalDurationMs,
       usage: report.usage,
+      actualProviderCostUsd: report.actualProviderCostUsd,
       estimatedCostUsd: report.estimatedCostUsd,
       failures: report.failures,
       fuseEvents: report.fuseEvents,

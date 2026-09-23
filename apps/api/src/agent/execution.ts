@@ -38,9 +38,9 @@ import {
 import {
   estimateTokens,
   availableEvidenceTokenBudget,
+  computeInputBudget,
   MAX_HISTORY_MESSAGES,
   projectHistoricalMessages,
-  safeInputTokenBudget,
   truncateToTokenBudget,
 } from "./context-projection.js";
 import { compactThreadContext, logContextCompaction } from "./context-compaction.js";
@@ -174,6 +174,7 @@ export interface ResolvedV3ExecutionModel {
   readonly model: V3Model;
   readonly usageAttribution?: AgentModelUsageAttribution;
   readonly contextLength?: number;
+  readonly maxOutputTokens?: number;
 }
 
 /** @deprecated Use ResolvedV3ExecutionModel — alias during V3 cutover. */
@@ -520,10 +521,19 @@ async function runExecution(input: {
       estimateTokens(input.instruction) +
       estimateTokens(input.continuationContext ?? "");
     const evidenceTokens = estimateTokens(retrieval?.message ?? "");
-    const inputBudget =
+    const budget =
       input.model.contextLength !== undefined
-        ? safeInputTokenBudget(input.model.contextLength)
+        ? computeInputBudget({
+            contextLength: input.model.contextLength,
+            maxOutputTokens: input.model.maxOutputTokens,
+          })
         : undefined;
+    if (budget?.usedOutputReserveFallback) {
+      console.info(
+        `[agent] output_reserve_fallback run=${runShort} tokens=${budget.outputReserve} model=${input.model.usageAttribution?.model ?? "unknown"}`,
+      );
+    }
+    const inputBudget = budget?.safeInputBudget;
     const checkpointContent = checkpoint
       ? checkpointMessageContent(checkpoint)
       : "";
@@ -543,6 +553,7 @@ async function runExecution(input: {
     const availableEvidenceTokens = availableEvidenceTokenBudget(
       input.model.contextLength,
       requiredTokens + estimateTokens(projectedCheckpoint) + historical.estimatedHistoricalTokens,
+      input.model.maxOutputTokens,
     );
     const context = {
       ...historicalContext,
@@ -552,8 +563,14 @@ async function runExecution(input: {
         ? { checkpointThroughMessageId: checkpoint.throughMessageId }
         : {}),
       historicalMessagesAfterCheckpoint: historicalMessages.length,
-      ...(input.model.contextLength !== undefined
-        ? { modelContextLength: input.model.contextLength }
+      ...(budget !== undefined
+        ? {
+            modelContextLength: budget.contextLength,
+            outputReserveTokens: budget.outputReserve,
+            continuationReserveTokens: budget.continuationReserve,
+            safetyMarginTokens: budget.safetyMargin,
+            safeInputBudgetTokens: budget.safeInputBudget,
+          }
         : {}),
       estimatedInputTokens: requiredTokens + evidenceTokens + estimateTokens(projectedCheckpoint) + historical.estimatedHistoricalTokens,
       approximateTokenBudgetApplied: inputBudget !== undefined,
@@ -668,7 +685,17 @@ async function runExecution(input: {
     if (input.deps.modelUsage && input.model.usageAttribution) {
       const usage = await input.deps.modelUsage.recordFromProviderResponse({
         attribution: { ...input.model.usageAttribution, userId: input.ownerUserId, agentRunId: input.run.id },
-        usage: result,
+        usage: {
+          inputTokens: result.inputTokens,
+          cachedInputTokens: result.cachedInputTokens,
+          outputTokens: result.outputTokens,
+          ...(result.reasoningTokens !== undefined
+            ? { reasoningTokens: result.reasoningTokens }
+            : {}),
+        },
+        ...(result.providerReportedCostUsd !== undefined
+          ? { providerReportedCostUsd: result.providerReportedCostUsd }
+          : {}),
       });
       if (
         input.model.usageAttribution.provider === "openrouter" &&
@@ -694,6 +721,7 @@ async function runExecution(input: {
       threadId: input.thread.id,
       model: input.model.model,
       contextLength: input.model.contextLength,
+      maxOutputTokens: input.model.maxOutputTokens,
       usageAttribution: input.model.usageAttribution,
       modelUsage: input.deps.modelUsage,
       managedTrial: input.deps.managedTrial,
@@ -888,6 +916,10 @@ function emitRunReport(input: {
     readonly estimatedHistoricalTokens: number;
     readonly historyWasTrimmed: boolean;
     readonly modelContextLength?: number;
+    readonly outputReserveTokens?: number;
+    readonly continuationReserveTokens?: number;
+    readonly safetyMarginTokens?: number;
+    readonly safeInputBudgetTokens?: number;
     readonly estimatedInputTokens: number;
     readonly approximateTokenBudgetApplied: boolean;
     readonly historyTrimmedByTokenBudget: boolean;

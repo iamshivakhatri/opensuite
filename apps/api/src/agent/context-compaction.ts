@@ -52,6 +52,7 @@ export async function compactThreadContext(input: {
   readonly threadId: string;
   readonly model: V3Model;
   readonly contextLength?: number;
+  readonly maxOutputTokens?: number;
   readonly usageAttribution?: AgentModelUsageAttribution;
   readonly modelUsage?: ModelUsageService;
   readonly managedTrial?: ManagedTrialService;
@@ -97,7 +98,7 @@ export async function compactThreadContext(input: {
     ),
   });
   const totalBudget = input.contextLength !== undefined
-    ? safeInputTokenBudget(input.contextLength)
+    ? safeInputTokenBudget(input.contextLength, input.maxOutputTokens)
     : estimateTokens("x".repeat(MAX_HISTORY_CHARACTERS));
   const fixedInput = estimateTokens(COMPACTION_SYSTEM_PROMPT) + estimateTokens(compactionInput(null, []));
   const checkpointContent = checkpoint ? truncateToTokenBudget(
@@ -136,7 +137,17 @@ export async function compactThreadContext(input: {
     try {
       const event = await input.modelUsage.recordFromProviderResponse({
         attribution: { ...input.usageAttribution, userId: input.ownerUserId, agentRunId: null },
-        usage,
+        usage: {
+          inputTokens: usage.inputTokens,
+          cachedInputTokens: usage.cachedInputTokens,
+          outputTokens: usage.outputTokens,
+          ...(usage.reasoningTokens !== undefined
+            ? { reasoningTokens: usage.reasoningTokens }
+            : {}),
+        },
+        ...(usage.providerReportedCostUsd !== undefined
+          ? { providerReportedCostUsd: usage.providerReportedCostUsd }
+          : {}),
       });
       if (
         input.usageAttribution.provider === "openrouter" &&

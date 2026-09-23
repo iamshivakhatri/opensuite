@@ -135,6 +135,12 @@ export interface RunModelResult {
   readonly inputTokens: number;
   readonly cachedInputTokens: number;
   readonly outputTokens: number;
+  /** Provider-reported reasoning tokens when available (subset of output). */
+  readonly reasoningTokens?: number;
+  /** Authoritative provider charge in USD when the adapter surfaces it. */
+  readonly providerReportedCostUsd?: number;
+  /** Provider-resolved model id when distinct from the requested slug. */
+  readonly resolvedModelId?: string;
   readonly turns: number;
   readonly toolCalls: number;
 }

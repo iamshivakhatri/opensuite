@@ -8,7 +8,10 @@ export function createOpenRouterModel(input: {
   apiKey: string;
   model: string;
 }): V3Model {
-  return createOpenRouter({ apiKey: input.apiKey })(input.model);
+  // usage.include surfaces OpenRouter cost + token details in providerMetadata.
+  return createOpenRouter({ apiKey: input.apiKey })(input.model, {
+    usage: { include: true },
+  });
 }
 
 export interface StreamTurnResult {
@@ -17,6 +20,10 @@ export interface StreamTurnResult {
   readonly inputTokens: number;
   readonly cachedInputTokens: number;
   readonly outputTokens: number;
+  readonly reasoningTokens: number;
+  /** OpenRouter usage.cost when present — authoritative provider charge in USD. */
+  readonly providerReportedCostUsd?: number;
+  readonly resolvedModelId?: string;
   readonly toolCalls: Awaited<ReturnType<typeof streamText>["toolCalls"]>;
   readonly responseMessages: Awaited<
     ReturnType<typeof streamText>["response"]
@@ -55,13 +62,27 @@ export async function streamTurn(input: {
     await input.onTextDelta?.(delta);
   }
 
-  const [text, finishReason, usage, toolCalls, response_] = await Promise.all([
-    response.text,
-    response.finishReason,
-    response.usage,
-    response.toolCalls,
-    response.response,
-  ]);
+  const [text, finishReason, usage, toolCalls, response_, providerMetadata] =
+    await Promise.all([
+      response.text,
+      response.finishReason,
+      response.usage,
+      response.toolCalls,
+      response.response,
+      response.providerMetadata,
+    ]);
+
+  const providerReportedCostUsd = openRouterCostUsd(providerMetadata);
+  const responseMeta = response_ as unknown as {
+    modelId?: unknown;
+    model?: unknown;
+  };
+  const resolvedModelId =
+    typeof responseMeta.modelId === "string"
+      ? responseMeta.modelId
+      : typeof responseMeta.model === "string"
+        ? responseMeta.model
+        : undefined;
 
   return {
     text,
@@ -69,6 +90,11 @@ export async function streamTurn(input: {
     inputTokens: usage.inputTokens ?? 0,
     cachedInputTokens: usage.inputTokenDetails?.cacheReadTokens ?? 0,
     outputTokens: usage.outputTokens ?? 0,
+    reasoningTokens: usage.outputTokenDetails?.reasoningTokens ?? 0,
+    ...(providerReportedCostUsd !== undefined
+      ? { providerReportedCostUsd }
+      : {}),
+    ...(resolvedModelId !== undefined ? { resolvedModelId } : {}),
     toolCalls,
     responseMessages: response_.messages,
   };
@@ -91,7 +117,33 @@ export async function runModel(input: RunModelInput): Promise<RunModelResult> {
     inputTokens: turn.inputTokens,
     cachedInputTokens: turn.cachedInputTokens,
     outputTokens: turn.outputTokens,
+    reasoningTokens: turn.reasoningTokens,
+    ...(turn.providerReportedCostUsd !== undefined
+      ? { providerReportedCostUsd: turn.providerReportedCostUsd }
+      : {}),
+    ...(turn.resolvedModelId !== undefined
+      ? { resolvedModelId: turn.resolvedModelId }
+      : {}),
     turns: 1,
     toolCalls: 0,
   };
+}
+
+/** Read OpenRouter usage.cost from AI SDK providerMetadata when present. */
+export function openRouterCostUsd(providerMetadata: unknown): number | undefined {
+  if (providerMetadata === null || typeof providerMetadata !== "object") {
+    return undefined;
+  }
+  const openrouter = (providerMetadata as Record<string, unknown>).openrouter;
+  if (openrouter === null || typeof openrouter !== "object") {
+    return undefined;
+  }
+  const usage = (openrouter as Record<string, unknown>).usage;
+  if (usage === null || typeof usage !== "object") {
+    return undefined;
+  }
+  const cost = (usage as Record<string, unknown>).cost;
+  return typeof cost === "number" && Number.isFinite(cost) && cost >= 0
+    ? cost
+    : undefined;
 }

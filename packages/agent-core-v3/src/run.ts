@@ -67,6 +67,9 @@ export async function runAgent(input: RunAgentInput): Promise<RunAgentResult> {
   let inputTokens = 0;
   let cachedInputTokens = 0;
   let outputTokens = 0;
+  let reasoningTokens = 0;
+  let providerReportedCostUsd: number | undefined;
+  let resolvedModelId: string | undefined;
   let lastText = "";
   let lastFinishReason = "stop";
 
@@ -81,6 +84,11 @@ export async function runAgent(input: RunAgentInput): Promise<RunAgentResult> {
       inputTokens,
       cachedInputTokens,
       outputTokens,
+      reasoningTokens,
+      ...(providerReportedCostUsd !== undefined
+        ? { providerReportedCostUsd }
+        : {}),
+      ...(resolvedModelId !== undefined ? { resolvedModelId } : {}),
       turns,
       toolCalls: toolCallCount,
       stopReason,
@@ -133,11 +141,23 @@ export async function runAgent(input: RunAgentInput): Promise<RunAgentResult> {
         inputTokens: turn.inputTokens,
         cachedInputTokens: turn.cachedInputTokens,
         outputTokens: turn.outputTokens,
+        reasoningTokens: turn.reasoningTokens,
+        ...(turn.providerReportedCostUsd !== undefined
+          ? { providerReportedCostUsd: turn.providerReportedCostUsd }
+          : {}),
       });
 
       inputTokens += turn.inputTokens;
       cachedInputTokens += turn.cachedInputTokens;
       outputTokens += turn.outputTokens;
+      reasoningTokens += turn.reasoningTokens;
+      if (turn.providerReportedCostUsd !== undefined) {
+        providerReportedCostUsd =
+          (providerReportedCostUsd ?? 0) + turn.providerReportedCostUsd;
+      }
+      if (turn.resolvedModelId !== undefined) {
+        resolvedModelId = turn.resolvedModelId;
+      }
       lastText = turn.text;
       lastFinishReason = turn.finishReason;
 

@@ -50,6 +50,7 @@ function baseMetrics(
       inputTokens: 100,
       cachedInputTokens: 40,
       outputTokens: 10,
+      reasoningTokens: 0,
     },
     stopReason: "finish_tool",
     ...overrides,
@@ -278,7 +279,7 @@ test("cost estimation: openai_inclusive does not double-count cached tokens", ()
   // cost = 600*$1/M + 400*$0.10/M + 100*$2/M
   //      = 0.0006 + 0.00004 + 0.0002 = 0.00084
   const cost = estimateModelCostUsd(
-    { inputTokens: 1000, cachedInputTokens: 400, outputTokens: 100 },
+    { inputTokens: 1000, cachedInputTokens: 400, outputTokens: 100, reasoningTokens: 0 },
     openrouterInclusivePricing,
     "openrouter",
     "test/model",
@@ -286,7 +287,7 @@ test("cost estimation: openai_inclusive does not double-count cached tokens", ()
   assert.equal(cost, 0.00084);
 
   const uncachedOnly = estimateModelCostUsd(
-    { inputTokens: 1000, cachedInputTokens: 0, outputTokens: 0 },
+    { inputTokens: 1000, cachedInputTokens: 0, outputTokens: 0, reasoningTokens: 0 },
     openrouterInclusivePricing,
     "openrouter",
     "test/model",
@@ -295,13 +296,88 @@ test("cost estimation: openai_inclusive does not double-count cached tokens", ()
 
   assert.equal(
     estimateModelCostUsd(
-      { inputTokens: 100, cachedInputTokens: 0, outputTokens: 10 },
+      { inputTokens: 100, cachedInputTokens: 0, outputTokens: 10, reasoningTokens: 0 },
       null,
       "openrouter",
       "test/model",
     ),
     undefined,
   );
+});
+
+test("composeAgentRunReport prefers actual provider cost over list-price estimate", () => {
+  const report = composeAgentRunReport({
+    runId: "run-cost",
+    instruction: "test",
+    provider: "openrouter",
+    model: "test/model",
+    metrics: baseMetrics({
+      usage: {
+        inputTokens: 100,
+        cachedInputTokens: 40,
+        outputTokens: 10,
+        reasoningTokens: 4,
+        providerReportedCostUsd: 0.000013244,
+      },
+    }),
+    pricing: openrouterInclusivePricing,
+    pricingProvider: "openrouter",
+  });
+  assert.equal(report.actualProviderCostUsd, 0.000013244);
+  assert.equal(report.usage.reasoningTokens, 4);
+  assert.ok(typeof report.estimatedCostUsd === "number");
+  assert.notEqual(report.actualProviderCostUsd, report.estimatedCostUsd);
+  const summary = formatAgentRunSummary(report);
+  assert.match(summary, /Actual cost/);
+  assert.doesNotMatch(summary, /Est\. cost/);
+});
+
+test("estimated and actual token fields remain distinct in report JSON", () => {
+  const report = composeAgentRunReport({
+    runId: "run-tokens",
+    instruction: "test",
+    metrics: baseMetrics({
+      usage: {
+        inputTokens: 88,
+        cachedInputTokens: 0,
+        outputTokens: 18,
+        reasoningTokens: 16,
+      },
+    }),
+    context: {
+      checkpointUsed: false,
+      historyQueryMode: "recent",
+      historicalMessagesLoaded: 0,
+      historicalMessagesAfterCheckpoint: 0,
+      historicalMessagesProjected: 0,
+      historicalCharactersLoaded: 0,
+      historicalCharactersProjected: 0,
+      estimatedHistoricalTokens: 0,
+      historyWasTrimmed: false,
+      modelContextLength: 1_048_576,
+      outputReserveTokens: 16_384,
+      safeInputBudgetTokens: 1_027_072,
+      estimatedInputTokens: 12_000,
+      approximateTokenBudgetApplied: true,
+      historyTrimmedByTokenBudget: false,
+    },
+    retrieval: {
+      workspaceArtifactCount: 1,
+      workingSetArtifactCount: 1,
+      documentMapCharacters: 10,
+      contextStrategy: "hierarchical",
+      availableEvidenceTokens: 900_000,
+      candidateCount: 1,
+      evidenceCount: 0,
+      durationMs: 1,
+      contextCharacters: 10,
+      candidates: [],
+    },
+  });
+  assert.equal(report.usage.inputTokens, 88);
+  assert.equal(report.context?.estimatedInputTokens, 12_000);
+  assert.notEqual(report.usage.inputTokens, report.context?.estimatedInputTokens);
+  assert.equal(report.retrieval?.availableEvidenceTokens, 900_000);
 });
 
 test("formatAgentRunSummary is compact and deterministic", () => {

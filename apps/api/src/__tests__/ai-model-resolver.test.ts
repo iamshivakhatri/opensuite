@@ -77,6 +77,60 @@ test("OpenRouter BYOK works without a managed OpenRouter environment key", async
   });
 });
 
+test("OpenRouter BYOK soft-attaches catalog context metadata when available", async () => {
+  const resolver = createAiModelResolver({
+    preferences: {
+      get: async () => ({
+        provider: "openrouter",
+        model: "openai/gpt-4.1",
+        credentialSource: "byok",
+        createdAt: "",
+        updatedAt: "",
+      }),
+    } as never,
+    credentials: { getSecret: async () => "stored-user-key" } as never,
+    managed: { ...managed, openrouterApiKey: null, openrouterModel: null },
+    catalog,
+  });
+
+  assert.deepEqual(await resolver.resolve("user-a"), {
+    provider: "openrouter",
+    model: "openai/gpt-4.1",
+    credentialSource: "byok",
+    apiKey: "stored-user-key",
+    contextLength: 128000,
+  });
+});
+
+test("OpenRouter BYOK continues without metadata when catalog lookup fails", async () => {
+  const failingCatalog = createOpenRouterManagedModelCatalog({
+    fetchImpl: async () => {
+      throw new Error("network down");
+    },
+  });
+  const resolver = createAiModelResolver({
+    preferences: {
+      get: async () => ({
+        provider: "openrouter",
+        model: "openai/gpt-4.1",
+        credentialSource: "byok",
+        createdAt: "",
+        updatedAt: "",
+      }),
+    } as never,
+    credentials: { getSecret: async () => "stored-user-key" } as never,
+    managed: { ...managed, openrouterApiKey: null, openrouterModel: null },
+    catalog: failingCatalog,
+  });
+
+  assert.deepEqual(await resolver.resolve("user-a"), {
+    provider: "openrouter",
+    model: "openai/gpt-4.1",
+    credentialSource: "byok",
+    apiKey: "stored-user-key",
+  });
+});
+
 test("managed resolution does not read a user's BYOK credential", async () => {
   let readCredential = false;
   const resolver = createAiModelResolver({

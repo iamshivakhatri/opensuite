@@ -284,6 +284,9 @@ export async function buildApp(
           ...(resolved.contextLength !== undefined
             ? { contextLength: resolved.contextLength }
             : {}),
+          ...(resolved.maxOutputTokens !== undefined
+            ? { maxOutputTokens: resolved.maxOutputTokens }
+            : {}),
         };
       },
       modelUsage,
