@@ -3,6 +3,7 @@
 import * as React from "react";
 import { useRouter } from "next/navigation";
 
+import { LandingPage } from "@/components/marketing/landing-page";
 import { useSession } from "@/lib/auth-client";
 
 export default function RootPage() {
@@ -13,19 +14,17 @@ export default function RootPage() {
     if (isPending) return;
     if (session) {
       router.replace("/app");
-      return;
     }
-    // Debounce unauthenticated redirect so a slow session hydrate does not
-    // flash the sign-in page for logged-in users.
-    const timer = window.setTimeout(() => {
-      router.replace("/sign-in");
-    }, 250);
-    return () => window.clearTimeout(timer);
+    // No unauthenticated redirect — `/` is the public landing page.
   }, [isPending, session, router]);
 
-  return (
-    <div className="grid h-screen place-items-center text-[13px] text-ink-soft">
-      Loading OpenSuite…
-    </div>
-  );
+  if (isPending || session) {
+    return (
+      <div className="grid h-screen place-items-center text-[13px] text-ink-soft">
+        Loading OpenSuite…
+      </div>
+    );
+  }
+
+  return <LandingPage />;
 }
