@@ -15,7 +15,7 @@ import {
 } from "../user-rate-limit.js";
 import { multipartFilePayload, testS3Env } from "./support/test-env.js";
 
-function testConfig() {
+function testConfig(overrides: Record<string, string | undefined> = {}) {
   return loadConfig({
     NODE_ENV: "test",
     LOG_LEVEL: "silent",
@@ -29,6 +29,7 @@ function testConfig() {
     OPENROUTER_API_KEY: "sk-or-test",
     OPENROUTER_MODEL: "openai/gpt-4.1",
     ...testS3Env,
+    ...overrides,
   });
 }
 
@@ -277,6 +278,71 @@ test("GET /api/auth/get-session forwards to the Better Auth handler", async () =
   assert.equal(response.statusCode, 200);
   assert.deepEqual(response.json(), { ok: true });
 
+  await app.close();
+});
+
+test("auth handler receives the configured public HTTPS URL behind a proxy", async () => {
+  let requestUrl: string | undefined;
+  const app = await buildApp(
+    testConfig({ BETTER_AUTH_URL: "https://api.opensuite.test" }),
+    {
+      auth: {
+        handler: async (request) => {
+          requestUrl = request.url;
+          return new Response("null", {
+            status: 200,
+            headers: { "Content-Type": "application/json" },
+          });
+        },
+        api: { getSession: async () => null },
+      },
+      db: stubDb(),
+      storage: createMemoryObjectStorage(),
+    },
+  );
+
+  const response = await app.inject({
+    method: "GET",
+    url: "/api/auth/get-session",
+    headers: { host: "api-internal:3000" },
+  });
+
+  assert.equal(response.statusCode, 200);
+  assert.equal(requestUrl, "https://api.opensuite.test/api/auth/get-session");
+  await app.close();
+});
+
+test("auth callback preserves its session cookie and app destination", async () => {
+  const app = await buildApp(testConfig(), {
+    auth: {
+      handler: async () => {
+        const headers = new Headers({ Location: "https://www.opensuite.test/app" });
+        headers.append(
+          "Set-Cookie",
+          "__Secure-better-auth.session_token=session-token; Path=/; HttpOnly; Secure; SameSite=Lax",
+        );
+        headers.append(
+          "Set-Cookie",
+          "__Secure-better-auth.state=; Max-Age=0; Path=/; HttpOnly; Secure; SameSite=Lax",
+        );
+        return new Response(null, { status: 302, headers });
+      },
+      api: { getSession: async () => null },
+    },
+    db: stubDb(),
+    storage: createMemoryObjectStorage(),
+  });
+
+  const response = await app.inject({
+    method: "GET",
+    url: "/api/auth/callback/google?state=test&code=test",
+  });
+
+  assert.equal(response.statusCode, 302);
+  assert.equal(response.headers.location, "https://www.opensuite.test/app");
+  const cookies = response.headers["set-cookie"];
+  assert.ok(cookies);
+  assert.match(Array.isArray(cookies) ? cookies.join("\n") : cookies, /session_token=/);
   await app.close();
 });
 

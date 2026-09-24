@@ -318,7 +318,10 @@ export async function buildApp(
     });
 
   registerHealthRoutes(app, { db: deps.db });
-  registerAuthRoutes(app, deps.auth, { db: deps.db });
+  registerAuthRoutes(app, deps.auth, {
+    db: deps.db,
+    authUrl: config.betterAuthUrl,
+  });
   registerMeRoutes(app, deps.auth);
   registerAiModelRoutes(app, deps.auth, managedModelCatalog);
   registerAiTrialRoutes(app, deps.auth, managedTrial);

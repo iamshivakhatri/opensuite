@@ -9,6 +9,22 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 
+function GoogleMark() {
+  return (
+    <svg
+      aria-hidden="true"
+      className="size-5"
+      viewBox="0 0 48 48"
+      xmlns="http://www.w3.org/2000/svg"
+    >
+      <path fill="#EA4335" d="M24 9.5c3.54 0 6.72 1.22 9.22 3.61l6.88-6.88C35.93 2.36 30.35 0 24 0 14.62 0 6.51 5.38 2.56 13.22l8.01 6.22C12.48 13.47 17.77 9.5 24 9.5Z" />
+      <path fill="#4285F4" d="M46.1 24.55c0-1.64-.15-3.22-.42-4.73H24v9.03h12.39c-.53 2.87-2.15 5.3-4.58 6.93l7.42 5.76C43.57 37.54 46.1 31.57 46.1 24.55Z" />
+      <path fill="#FBBC05" d="M10.57 28.56A14.42 14.42 0 0 1 9.8 24c0-1.58.27-3.12.77-4.56l-8.01-6.22A24 24 0 0 0 0 24c0 3.87.93 7.53 2.56 10.78l8.01-6.22Z" />
+      <path fill="#34A853" d="M24 48c6.35 0 11.68-2.1 15.57-5.7l-7.42-5.76c-2.1 1.41-4.78 2.25-8.15 2.25-6.23 0-11.52-3.97-13.43-9.57l-8.01 6.22C6.51 42.62 14.62 48 24 48Z" />
+    </svg>
+  );
+}
+
 export function SignInForm() {
   const router = useRouter();
   const [email, setEmail] = React.useState("");
@@ -154,6 +170,7 @@ export function SignInForm() {
         onClick={() => void handleGoogleSignIn()}
         disabled={isSubmitting || isGoogleSubmitting}
       >
+        <GoogleMark />
         {isGoogleSubmitting ? "Opening Google…" : "Continue with Google"}
       </Button>
     </form>

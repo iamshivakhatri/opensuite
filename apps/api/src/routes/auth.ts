@@ -7,6 +7,7 @@ import {
   databaseUnavailableBody,
   shouldTreatAsDatabaseUnavailable,
 } from "../database-availability.js";
+import type { AppConfig } from "../config/index.js";
 
 export interface AuthHandler {
   handler(request: Request): Promise<Response>;
@@ -20,14 +21,17 @@ export interface AuthHandler {
 export function registerAuthRoutes(
   app: FastifyInstance,
   auth: AuthHandler,
-  deps: { readonly db: Db },
+  deps: { readonly db: Db; readonly authUrl: AppConfig["betterAuthUrl"] },
 ): void {
   app.route({
     method: ["GET", "POST"],
     url: "/api/auth/*",
     async handler(request, reply) {
       try {
-        const url = new URL(request.url, configBaseUrl(request));
+        // The tunnel terminates HTTPS before Fastify. Use the validated public
+        // URL instead of its internal HTTP connection when handing the request
+        // to Better Auth, so callback cookies retain the public HTTPS context.
+        const url = new URL(request.url, deps.authUrl);
         const headers = fromNodeHeaders(request.headers);
 
         const req = new Request(url.toString(), {
@@ -72,14 +76,4 @@ export function registerAuthRoutes(
       }
     },
   });
-}
-
-function configBaseUrl(request: {
-  headers: { host?: string };
-}): string {
-  const host = request.headers.host;
-  if (!host) {
-    throw new Error("Missing Host header");
-  }
-  return `http://${host}`;
 }
