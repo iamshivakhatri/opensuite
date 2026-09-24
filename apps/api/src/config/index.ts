@@ -85,6 +85,8 @@ const EnvSchema = z
       .enum(["true", "false"])
       .default("false")
       .transform((value) => value === "true"),
+    GOOGLE_CLIENT_ID: z.string().optional(),
+    GOOGLE_CLIENT_SECRET: z.string().optional(),
   })
   .superRefine((data, ctx) => {
     if (data.NODE_ENV === "production") {
@@ -100,6 +102,17 @@ const EnvSchema = z
           });
         }
       }
+    }
+
+    const hasGoogleClientId = Boolean(data.GOOGLE_CLIENT_ID?.trim());
+    const hasGoogleClientSecret = Boolean(data.GOOGLE_CLIENT_SECRET?.trim());
+    if (hasGoogleClientId !== hasGoogleClientSecret) {
+      ctx.addIssue({
+        code: "custom",
+        path: [hasGoogleClientId ? "GOOGLE_CLIENT_SECRET" : "GOOGLE_CLIENT_ID"],
+        message:
+          "GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET must be set together to enable Google sign-in",
+      });
     }
 
     if (data.AGENT_MODEL_PROVIDER === "fake" && data.NODE_ENV === "production") {
@@ -174,6 +187,11 @@ export interface AgentModelConfig {
   readonly openrouterModel: string | null;
 }
 
+export interface GoogleAuthConfig {
+  readonly clientId: string;
+  readonly clientSecret: string;
+}
+
 export interface AppConfig {
   readonly nodeEnv: "development" | "production" | "test";
   readonly host: string;
@@ -200,6 +218,7 @@ export interface AppConfig {
   readonly userStorageQuotaBytes: number;
   readonly allowSignup: boolean;
   readonly authCrossOrigin: boolean;
+  readonly google: GoogleAuthConfig | null;
   readonly agent: AgentModelConfig;
 }
 
@@ -279,6 +298,8 @@ export function loadConfig(
   const openaiKey = result.data.OPENAI_API_KEY?.trim() || null;
   const openrouterKey = result.data.OPENROUTER_API_KEY?.trim() || null;
   const openrouterModel = result.data.OPENROUTER_MODEL?.trim() || null;
+  const googleClientId = result.data.GOOGLE_CLIENT_ID?.trim() || null;
+  const googleClientSecret = result.data.GOOGLE_CLIENT_SECRET?.trim() || null;
 
   return {
     nodeEnv: result.data.NODE_ENV,
@@ -307,6 +328,10 @@ export function loadConfig(
     userStorageQuotaBytes: result.data.USER_STORAGE_QUOTA_BYTES,
     allowSignup: result.data.ALLOW_SIGNUP,
     authCrossOrigin: result.data.AUTH_CROSS_ORIGIN,
+    google:
+      googleClientId && googleClientSecret
+        ? { clientId: googleClientId, clientSecret: googleClientSecret }
+        : null,
     agent: {
       provider,
       anthropicApiKey: provider === "anthropic" ? anthropicKey : null,

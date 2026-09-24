@@ -13,6 +13,8 @@ _Read this before starting any work. Keep it a concise current-state handoff, no
 
 ## Just Completed
 
+* **External-alpha Google sign-in** — Better Auth 1.7.2 native Google provider uses only OpenID identity scopes and the existing account/session tables; normal sessions remain unchanged. A verified local email may be linked only to Google's verified identity for the same email. `GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET` must be supplied together; Google creation follows `ALLOW_SIGNUP` and Vercel's `NEXT_PUBLIC_ALLOW_SIGNUP` must match it.
+
 * API integration stability — unrelated integration apps use shared non-network test model config; production validation is unchanged. Lease tests no longer clear shared rows, and checkpoint-tail queries retain PostgreSQL timestamp precision. DB integration suite: 217/217 pass.
 
 * External-alpha public boundary — production public URLs require HTTPS; same-site auth defaults to `AUTH_CROSS_ORIGIN=false`; authenticated process-local write limits and fixed API security headers added. Cloudflare anonymous auth limits are documented for tunnel setup.

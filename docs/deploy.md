@@ -5,7 +5,7 @@
 1. Root Directory: `apps/web`
 2. Env:
    - `NEXT_PUBLIC_API_URL` = public **API** URL (same as `BETTER_AUTH_URL`)
-   - `NEXT_PUBLIC_ALLOW_SIGNUP=false`
+   - `NEXT_PUBLIC_ALLOW_SIGNUP=false` (match backend `ALLOW_SIGNUP`)
 3. **Do not** set `NEXT_PUBLIC_API_URL` to the Vercel web host (`https://opensuite.tech` / `www`). That host 308-redirects apex→www and is not the Fastify API. No trailing slash.
 
 ## Two URLs
@@ -24,7 +24,7 @@ Browser check (after API is routed): open `https://api.opensuite.tech/` → plai
 * Image: `node:22-bookworm-slim` (glibc). Native `@opensuitehq/engine@0.1.1` — **not** Alpine/musl.
 * Soft-boot: API starts even if the native binding fails to load (auth etc. work; DOCX disabled)
 
-1. Set `BETTER_AUTH_URL=https://api.opensuite.tech`, `WEB_ORIGIN=https://www.opensuite.tech`, `ALLOW_SIGNUP=false` (unless actively admitting testers), and `AUTH_CROSS_ORIGIN=false`. Production refuses HTTP for the two public URLs. Private S3/MinIO endpoints may remain HTTP.
+1. Set `BETTER_AUTH_URL=https://api.opensuite.tech`, `WEB_ORIGIN=https://www.opensuite.tech`, `ALLOW_SIGNUP=false` (unless actively admitting testers), and `AUTH_CROSS_ORIGIN=false`. Set Vercel `NEXT_PUBLIC_ALLOW_SIGNUP` to the same value. Production refuses HTTP for the two public URLs. Private S3/MinIO endpoints may remain HTTP.
 2. Configure Cloudflare Tunnel so `api.opensuite.tech` reaches container port **3000**. Do not publish the API port directly; DNS for `api.opensuite.tech` must not point to Vercel.
 3. Engine comes from npm via `packages/engine-client` → `@opensuitehq/engine@0.1.1` (no sibling repo, no vendor stub)
 
@@ -37,6 +37,14 @@ The API has process-local authenticated limits keyed by OpenSuite user ID: agent
 At Cloudflare, add anonymous limits before traffic reaches the tunnel: sign-up 5/IP/hour, sign-in 10/IP/15 minutes, password reset 5/IP/hour, and verification resend 5/IP/hour. Do not pass Cloudflare client-IP headers to Fastify or use them for API authorization/rate limits.
 
 No generic CSRF middleware is needed for the current `www.opensuite.tech` + `api.opensuite.tech` same-site cookie setup. Keep CORS restricted to `WEB_ORIGIN`; reassess if the frontend/API become cross-site.
+
+## Google sign-in
+
+1. In Google Cloud Console, configure the OAuth consent screen with the app name, support email, developer contact, and the OpenSuite domain. Add alpha testers while the app is in testing.
+2. Create an **OAuth client ID** for a **Web application**. Add this authorized redirect URI exactly: `https://api.opensuite.tech/api/auth/callback/google`.
+3. Set `GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET` on the API deployment, then redeploy it. Do not put the secret in Vercel.
+
+OpenSuite requests only `openid`, `email`, and `profile`. No Drive, Gmail, or offline-access permission is requested. With sign-up open, a verified Google identity creates the normal Better Auth user, account, and session. A verified password user with the same verified Google email gets a Google account linked to that user; unverified local accounts are not implicitly linked.
 
 ## Not Edge
 

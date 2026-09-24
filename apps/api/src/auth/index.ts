@@ -55,6 +55,30 @@ export function createAuth(config: AppConfig, db: Db, emailSender: EmailSender) 
         });
       },
     },
+    ...(config.google
+      ? {
+          socialProviders: {
+            google: {
+              clientId: config.google.clientId,
+              clientSecret: config.google.clientSecret,
+              // Keep the request to basic OpenID identity only.
+              disableDefaultScope: true,
+              scope: ["openid", "email", "profile"],
+              accessType: "online",
+              includeGrantedScopes: false,
+              // Match the existing server-side invitation gate for new users.
+              disableSignUp: !config.allowSignup,
+            },
+          },
+          account: {
+            accountLinking: {
+              // Better Auth still requires the local email to be verified.
+              // This trusts only Google's verified identity response.
+              trustedProviders: ["google"],
+            },
+          },
+        }
+      : {}),
     ...(config.authCrossOrigin
       ? {
           advanced: {

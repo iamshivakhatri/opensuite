@@ -1,6 +1,9 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
+import type { Db } from "@opensuite/db";
+
+import { createAuth } from "../auth/index.js";
 import { loadConfig } from "../config/index.js";
 import { testS3Env } from "./support/test-env.js";
 
@@ -41,6 +44,7 @@ test("loadConfig applies defaults when auth/database env vars are provided", () 
   assert.equal(config.agent.openrouterModel, null);
   assert.equal(config.allowSignup, true);
   assert.equal(config.authCrossOrigin, false);
+  assert.equal(config.google, null);
 });
 
 test("loadConfig parses ALLOW_SIGNUP and AUTH_CROSS_ORIGIN", () => {
@@ -51,6 +55,39 @@ test("loadConfig parses ALLOW_SIGNUP and AUTH_CROSS_ORIGIN", () => {
   });
   assert.equal(config.allowSignup, false);
   assert.equal(config.authCrossOrigin, true);
+});
+
+test("Google sign-in needs both credentials", () => {
+  assert.throws(
+    () => loadConfig({ ...baseEnv, GOOGLE_CLIENT_ID: "google-client-id" }),
+    /GOOGLE_CLIENT_SECRET/,
+  );
+  assert.throws(
+    () => loadConfig({ ...baseEnv, GOOGLE_CLIENT_SECRET: "google-client-secret" }),
+    /GOOGLE_CLIENT_ID/,
+  );
+});
+
+test("Google provider uses identity scopes and the existing session system", () => {
+  const config = loadConfig({
+    ...baseEnv,
+    GOOGLE_CLIENT_ID: "google-client-id",
+    GOOGLE_CLIENT_SECRET: "google-client-secret",
+  });
+  const auth = createAuth(config, {} as Db, { send: async () => {} });
+  const google = auth.options.socialProviders?.google;
+
+  assert.deepEqual(google, {
+    clientId: "google-client-id",
+    clientSecret: "google-client-secret",
+    disableDefaultScope: true,
+    scope: ["openid", "email", "profile"],
+    accessType: "online",
+    includeGrantedScopes: false,
+    disableSignUp: false,
+  });
+  assert.deepEqual(auth.options.account?.accountLinking?.trustedProviders, ["google"]);
+  assert.equal("session" in auth.options, false);
 });
 
 test("loadConfig accepts legacy MINIO_* aliases for S3 settings", () => {

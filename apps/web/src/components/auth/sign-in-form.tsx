@@ -16,6 +16,7 @@ export function SignInForm() {
   const [error, setError] = React.useState<string | null>(null);
   const [isUnverified, setIsUnverified] = React.useState(false);
   const [isSubmitting, setIsSubmitting] = React.useState(false);
+  const [isGoogleSubmitting, setIsGoogleSubmitting] = React.useState(false);
   const [resendState, setResendState] = React.useState<
     "idle" | "sending" | "sent" | "error"
   >("idle");
@@ -59,6 +60,21 @@ export function SignInForm() {
       setResendState(error ? "error" : "sent");
     } catch {
       setResendState("error");
+    }
+  }
+
+  async function handleGoogleSignIn() {
+    setError(null);
+    setIsGoogleSubmitting(true);
+
+    try {
+      await signIn.social({
+        provider: "google",
+        callbackURL: `${window.location.origin}/app`,
+      });
+    } catch {
+      setError("Could not start Google sign-in. Try again in a moment.");
+      setIsGoogleSubmitting(false);
     }
   }
 
@@ -126,6 +142,19 @@ export function SignInForm() {
       ) : null}
       <Button type="submit" variant="accent" disabled={isSubmitting}>
         {isSubmitting ? "Signing in…" : "Sign in"}
+      </Button>
+      <div className="flex items-center gap-3 text-[11.5px] text-ink-faint">
+        <span className="h-px flex-1 bg-line" />
+        <span>or</span>
+        <span className="h-px flex-1 bg-line" />
+      </div>
+      <Button
+        type="button"
+        variant="outline"
+        onClick={() => void handleGoogleSignIn()}
+        disabled={isSubmitting || isGoogleSubmitting}
+      >
+        {isGoogleSubmitting ? "Opening Google…" : "Continue with Google"}
       </Button>
     </form>
   );
