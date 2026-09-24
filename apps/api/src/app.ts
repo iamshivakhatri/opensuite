@@ -63,6 +63,10 @@ import { createOpenRouterManagedModelCatalog } from "./openrouter-models/catalog
 import type { ObjectStorage } from "./storage/types.js";
 import { createWorkspaceService } from "./workspaces/service.js";
 import { isDevConsole, requestPath } from "./dev-log.js";
+import {
+  createUserRateLimiter,
+  type UserRateLimiter,
+} from "./user-rate-limit.js";
 
 /**
  * Optional product-shell overrides for tests.
@@ -90,6 +94,8 @@ export interface AppDependencies {
   >;
   /** Test/override: blank DOCX bytes without loading N-API. */
   readonly createBlankDocxBytes?: () => Uint8Array | Promise<Uint8Array>;
+  /** Test/override: process-local authenticated write limiter. */
+  readonly rateLimiter?: UserRateLimiter;
 }
 
 /**
@@ -123,8 +129,17 @@ export async function buildApp(
     done();
   });
 
+  app.addHook("onSend", (_request, reply, payload, done) => {
+    reply.header("X-Content-Type-Options", "nosniff");
+    reply.header("X-Frame-Options", "DENY");
+    reply.header("Referrer-Policy", "strict-origin-when-cross-origin");
+    done(null, payload);
+  });
+
   await app.register(cors, {
-    origin: config.webOrigin,
+    origin: (origin, callback) => {
+      callback(null, origin === config.webOrigin);
+    },
     methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
     allowedHeaders: ["Content-Type", "Authorization", "X-Requested-With"],
     credentials: true,
@@ -178,6 +193,7 @@ export async function buildApp(
           createCredentialCipher(config.aiCredentialEncryptionKey),
         )
       : null);
+  const rateLimiter = deps.rateLimiter ?? createUserRateLimiter();
   const providerProbe =
     deps.providerProbe ?? createProviderCredentialProbe();
   const aiPreferences = createAiPreferenceService(deps.db);
@@ -311,14 +327,21 @@ export async function buildApp(
     credentials,
     probe: providerProbe,
   });
-  registerWorkspaceRoutes(app, deps.auth, workspaces);
+  registerWorkspaceRoutes(app, deps.auth, workspaces, rateLimiter);
   registerProviderCredentialRoutes(
     app,
     deps.auth,
     credentials,
     providerProbe,
   );
-  registerDocumentRoutes(app, deps.auth, workspaces, documents, preferences);
+  registerDocumentRoutes(
+    app,
+    deps.auth,
+    workspaces,
+    documents,
+    preferences,
+    rateLimiter,
+  );
   registerTrashRoutes(app, deps.auth, workspaces, documents);
   registerStorageRoutes(app, deps.auth, storageAccounting);
   registerSearchRoutes(app, deps.auth, search);
@@ -328,6 +351,7 @@ export async function buildApp(
     runManager: agentRunManager,
     lease: agentExecutionLease,
     webOrigin: config.webOrigin,
+    rateLimiter,
   });
 
   return app;

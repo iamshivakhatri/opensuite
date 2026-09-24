@@ -104,14 +104,14 @@ test("loadConfig joins MINIO_ENDPOINT + MINIO_PORT when port is separate", () =>
   assert.equal(config.s3.endpoint, "http://100.85.0.1:9002");
 });
 
-test("loadConfig parses provided env vars", () => {
+test("loadConfig accepts HTTPS public origins in production", () => {
   const config = loadConfig({
     ...baseEnv,
     NODE_ENV: "production",
     HOST: "127.0.0.1",
     PORT: "4000",
     LOG_LEVEL: "warn",
-    BETTER_AUTH_URL: "http://127.0.0.1:4000",
+    BETTER_AUTH_URL: "https://api.example.com",
     WEB_ORIGIN: "https://app.example.com",
   });
 
@@ -119,8 +119,22 @@ test("loadConfig parses provided env vars", () => {
   assert.equal(config.host, "127.0.0.1");
   assert.equal(config.port, 4000);
   assert.equal(config.logLevel, "warn");
-  assert.equal(config.betterAuthUrl, "http://127.0.0.1:4000");
+  assert.equal(config.betterAuthUrl, "https://api.example.com");
   assert.equal(config.webOrigin, "https://app.example.com");
+});
+
+test("loadConfig rejects an HTTP Better Auth URL in production", () => {
+  assert.throws(
+    () => loadConfig({ ...baseEnv, NODE_ENV: "production", BETTER_AUTH_URL: "http://api.example.com" }),
+    /BETTER_AUTH_URL must use https in production/,
+  );
+});
+
+test("loadConfig rejects an HTTP web origin in production", () => {
+  assert.throws(
+    () => loadConfig({ ...baseEnv, NODE_ENV: "production", WEB_ORIGIN: "http://www.example.com" }),
+    /WEB_ORIGIN must use https in production/,
+  );
 });
 
 test("loadConfig keeps the server-only credential encryption key", () => {

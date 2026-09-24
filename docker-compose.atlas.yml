@@ -1,8 +1,8 @@
 # Atlas (home server) — API only.
 # Uses your existing Postgres + MinIO via the same .env as local/dev.
-# Dokploy: select this compose file; inject env from your .env (or Dokploy UI).
+# Cloudflare Tunnel should route api.opensuite.tech to this container port.
 #
-# Container listens on 3000; point Dokploy's domain/proxy at that port.
+# Container listens on 3000; keep it private behind the tunnel.
 # Engine: @opensuitehq/engine@0.1.1 from npm (bookworm/glibc image).
 #
 # First user: ALLOW_SIGNUP=true (+ web NEXT_PUBLIC_ALLOW_SIGNUP=true), then lock.
@@ -23,4 +23,5 @@ services:
       HOST: 0.0.0.0
       PORT: 3000
       ALLOW_SIGNUP: ${ALLOW_SIGNUP:-false}
-      AUTH_CROSS_ORIGIN: ${AUTH_CROSS_ORIGIN:-true}
+      # www.opensuite.tech and api.opensuite.tech are same-site.
+      AUTH_CROSS_ORIGIN: ${AUTH_CROSS_ORIGIN:-false}

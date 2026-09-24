@@ -13,6 +13,8 @@ _Read this before starting any work. Keep it a concise current-state handoff, no
 
 ## Just Completed
 
+* External-alpha public boundary — production public URLs require HTTPS; same-site auth defaults to `AUTH_CROSS_ORIGIN=false`; authenticated process-local write limits and fixed API security headers added. Cloudflare anonymous auth limits are documented for tunnel setup.
+
 * **Semantic agent-thread titles** — existing nullable `agent_thread.title` is filled by a separate short title request from the current instruction plus existing working-set names/maps; it is not awaited by the V3 stream. Conditional persistence preserves manual renames; active title is the Agent Panel header, and Previous chats supports Rename while excluding the active session.
 * **Agent response follow** — panel follows live text while already at the bottom, without pulling a reader away from earlier messages; leading quote markers in agent text are no longer displayed.
 * **Agent transcript finish duplication** — one-turn `finish` no longer persists final answer as narration; panel omits narration immediately before `finish` when `message.content` is shown. Live answer streams, then reconciles to one persisted assistant message (reload-safe).

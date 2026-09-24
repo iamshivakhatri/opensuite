@@ -18,17 +18,25 @@
 
 Browser check (after API is routed): open `https://api.opensuite.tech/` → plain text `OpenSuite API`. Structured: `/health`.
 
-## Backend — Atlas (Dokploy)
+## Backend — home server behind Cloudflare Tunnel
 
-* Compose: `docker-compose.atlas.yml` (API only; your Postgres + MinIO)
+* Compose: `docker-compose.atlas.yml` (API only; your private Postgres + MinIO)
 * Image: `node:22-bookworm-slim` (glibc). Native `@opensuitehq/engine@0.1.1` — **not** Alpine/musl.
 * Soft-boot: API starts even if the native binding fails to load (auth etc. work; DOCX disabled)
 
-1. Import compose; paste `.env`; set production `BETTER_AUTH_URL` / `WEB_ORIGIN` / `ALLOW_SIGNUP=false` / `AUTH_CROSS_ORIGIN=true`
-2. Proxy Dokploy domain → container port **3000** (DNS for `api.opensuite.tech` must hit this service, not Vercel)
+1. Set `BETTER_AUTH_URL=https://api.opensuite.tech`, `WEB_ORIGIN=https://www.opensuite.tech`, `ALLOW_SIGNUP=false` (unless actively admitting testers), and `AUTH_CROSS_ORIGIN=false`. Production refuses HTTP for the two public URLs. Private S3/MinIO endpoints may remain HTTP.
+2. Configure Cloudflare Tunnel so `api.opensuite.tech` reaches container port **3000**. Do not publish the API port directly; DNS for `api.opensuite.tech` must not point to Vercel.
 3. Engine comes from npm via `packages/engine-client` → `@opensuitehq/engine@0.1.1` (no sibling repo, no vendor stub)
 
 Entrypoint: migrate (programmatic, prints pg errors) then start. Rebuild after committing migration SQL — `0013`/`0014` must be in the image.
+
+## Alpha abuse limits
+
+The API has process-local authenticated limits keyed by OpenSuite user ID: agent runs 10/hour and 40/day; document or version uploads 20/hour; workspace creation 10/day. They reset when the API restarts and are appropriate only while this is one API instance.
+
+At Cloudflare, add anonymous limits before traffic reaches the tunnel: sign-up 5/IP/hour, sign-in 10/IP/15 minutes, password reset 5/IP/hour, and verification resend 5/IP/hour. Do not pass Cloudflare client-IP headers to Fastify or use them for API authorization/rate limits.
+
+No generic CSRF middleware is needed for the current `www.opensuite.tech` + `api.opensuite.tech` same-site cookie setup. Keep CORS restricted to `WEB_ORIGIN`; reassess if the frontend/API become cross-site.
 
 ## Not Edge
 

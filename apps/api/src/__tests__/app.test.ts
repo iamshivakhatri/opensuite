@@ -9,6 +9,10 @@ import type { AuthenticatedUser } from "../auth/session.js";
 import { buildApp } from "../app.js";
 import { loadConfig } from "../config/index.js";
 import { createMemoryObjectStorage } from "../storage/index.js";
+import {
+  createUserRateLimiter,
+  type UserRateLimitPolicy,
+} from "../user-rate-limit.js";
 import { multipartFilePayload, testS3Env } from "./support/test-env.js";
 
 function testConfig() {
@@ -89,6 +93,82 @@ test("GET / returns plain OpenSuite API text", async () => {
   assert.equal(response.statusCode, 200);
   assert.match(response.headers["content-type"] ?? "", /text\/plain/);
   assert.equal(response.body, "OpenSuite API\n");
+
+  await app.close();
+});
+
+test("API sends fixed security headers and only allows the web origin", async () => {
+  const app = await testApp();
+
+  const response = await app.inject({ method: "GET", url: "/" });
+  assert.equal(response.headers["x-content-type-options"], "nosniff");
+  assert.equal(response.headers["x-frame-options"], "DENY");
+  assert.equal(response.headers["referrer-policy"], "strict-origin-when-cross-origin");
+
+  const allowed = await app.inject({
+    method: "OPTIONS",
+    url: "/api/me",
+    headers: {
+      origin: "http://localhost:3001",
+      "access-control-request-method": "GET",
+    },
+  });
+  assert.equal(allowed.headers["access-control-allow-origin"], "http://localhost:3001");
+
+  const denied = await app.inject({
+    method: "OPTIONS",
+    url: "/api/me",
+    headers: {
+      origin: "https://not-opensuite.example",
+      "access-control-request-method": "GET",
+    },
+  });
+  assert.equal(denied.headers["access-control-allow-origin"], undefined);
+
+  await app.close();
+});
+
+test("authenticated write limits return 429 with Retry-After", async () => {
+  const policy: UserRateLimitPolicy = {
+    agentRun: [{ limit: 1, windowMs: 60_000 }],
+    documentWrite: [{ limit: 1, windowMs: 60_000 }],
+    workspaceCreate: [{ limit: 1, windowMs: 60_000 }],
+  };
+  const limiter = createUserRateLimiter(policy);
+  const user = { id: "user-1", name: "Ada", email: "ada@example.com" };
+  limiter.consume(user.id, "agentRun");
+  limiter.consume(user.id, "documentWrite");
+  limiter.consume(user.id, "workspaceCreate");
+  const app = await buildApp(testConfig(), {
+    auth: mockAuth(user),
+    db: stubDb(),
+    storage: createMemoryObjectStorage(),
+    rateLimiter: limiter,
+  });
+
+  const workspace = await app.inject({
+    method: "POST",
+    url: "/api/workspaces",
+    payload: { name: "Limited" },
+  });
+  assert.equal(workspace.statusCode, 429);
+  assert.ok(workspace.headers["retry-after"]);
+
+  const upload = await app.inject({
+    method: "POST",
+    url: `/api/workspaces/${randomUUID()}/documents`,
+    ...multipartFilePayload("limited.docx", "test"),
+  });
+  assert.equal(upload.statusCode, 429);
+  assert.ok(upload.headers["retry-after"]);
+
+  const run = await app.inject({
+    method: "POST",
+    url: `/api/agent/threads/${randomUUID()}/runs`,
+    payload: { instruction: "Summarize this document" },
+  });
+  assert.equal(run.statusCode, 429);
+  assert.ok(run.headers["retry-after"]);
 
   await app.close();
 });

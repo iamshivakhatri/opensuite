@@ -8,6 +8,10 @@ import {
   type DocumentService,
 } from "../documents/service.js";
 import type { DocumentPreferenceService } from "../documents/preferences.js";
+import {
+  sendRateLimit,
+  type UserRateLimiter,
+} from "../user-rate-limit.js";
 import type { WorkspaceService } from "../workspaces/service.js";
 
 const WorkspaceIdParams = z.object({
@@ -68,6 +72,7 @@ export function registerDocumentRoutes(
   workspaces: WorkspaceService,
   documents: DocumentService,
   preferences: DocumentPreferenceService,
+  rateLimiter: UserRateLimiter,
 ): void {
   // Static library routes before parametric /:documentId.
   app.get("/api/documents/recent", async (request, reply) => {
@@ -234,6 +239,9 @@ export function registerDocumentRoutes(
           },
         });
       }
+
+      const rateLimit = rateLimiter.consume(user.id, "documentWrite");
+      if (!rateLimit.allowed) return sendRateLimit(reply, rateLimit);
 
       const workspace = await workspaces.getOwned(
         params.data.workspaceId,
@@ -642,6 +650,9 @@ export function registerDocumentRoutes(
         },
       });
     }
+
+    const rateLimit = rateLimiter.consume(user.id, "documentWrite");
+    if (!rateLimit.allowed) return sendRateLimit(reply, rateLimit);
 
     let baseVersionId: string | undefined;
     let bytes: Buffer | undefined;

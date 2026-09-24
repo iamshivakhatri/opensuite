@@ -58,7 +58,7 @@ export function createAuth(config: AppConfig, db: Db, emailSender: EmailSender) 
     ...(config.authCrossOrigin
       ? {
           advanced: {
-            // Vercel (or any different-site origin) needs SameSite=None; Secure.
+            // A genuinely different-site frontend needs SameSite=None; Secure.
             // API must be served over HTTPS for browsers to accept the cookie.
             useSecureCookies: true,
             defaultCookieAttributes: {

@@ -2,6 +2,10 @@ import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 
 import { getRequestUser, type SessionAuth } from "../auth/session.js";
+import {
+  sendRateLimit,
+  type UserRateLimiter,
+} from "../user-rate-limit.js";
 import type { WorkspaceService } from "../workspaces/service.js";
 
 const WorkspaceNameBody = z.object({
@@ -45,6 +49,7 @@ export function registerWorkspaceRoutes(
   app: FastifyInstance,
   auth: SessionAuth,
   workspaces: WorkspaceService,
+  rateLimiter: UserRateLimiter,
 ): void {
   app.get("/api/workspaces", async (request, reply) => {
     const user = await getRequestUser(auth, request);
@@ -74,6 +79,9 @@ export function registerWorkspaceRoutes(
         },
       });
     }
+
+    const rateLimit = rateLimiter.consume(user.id, "workspaceCreate");
+    if (!rateLimit.allowed) return sendRateLimit(reply, rateLimit);
 
     const workspace = await workspaces.create({
       ownerUserId: user.id,

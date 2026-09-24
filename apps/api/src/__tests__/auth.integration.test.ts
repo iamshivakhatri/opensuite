@@ -19,6 +19,23 @@ import { testS3Env } from "./support/test-env.js";
 const runDbIntegrationTests = process.env.RUN_DB_INTEGRATION_TESTS === "true";
 const databaseUrl = process.env.DATABASE_URL;
 
+function productionSameSiteConfig() {
+  return loadConfig({
+    NODE_ENV: "production",
+    LOG_LEVEL: "silent",
+    DATABASE_URL: databaseUrl,
+    BETTER_AUTH_SECRET:
+      process.env.BETTER_AUTH_SECRET ??
+      "test-secret-that-is-at-least-32-characters-long",
+    BETTER_AUTH_URL: "https://api.opensuite.test",
+    WEB_ORIGIN: "https://www.opensuite.test",
+    AUTH_CROSS_ORIGIN: "false",
+    RESEND_API_KEY: "re_test_key_unused_stub_sender_is_injected_instead",
+    EMAIL_FROM: "OpenSuite <noreply@example.com>",
+    ...testS3Env,
+  });
+}
+
 function testConfig() {
   return loadConfig({
     NODE_ENV: "test",
@@ -350,6 +367,66 @@ test(
         headers: { cookie: cookieHeader, origin: config.webOrigin },
       });
       assert.equal(meAfterSignOut.statusCode, 401, meAfterSignOut.body);
+    } finally {
+      await app.close();
+      await dbClient.close();
+    }
+  },
+);
+
+test(
+  "production same-site sessions use Secure, HttpOnly, SameSite=Lax cookies",
+  { skip: !runDbIntegrationTests || databaseUrl === undefined },
+  async () => {
+    const config = productionSameSiteConfig();
+    const dbClient = createDbClient({ databaseUrl: config.databaseUrl });
+    const emailSender = createStubEmailSender();
+    const auth = createAuth(config, dbClient.db, emailSender);
+    const app = await buildApp(config, {
+      auth,
+      db: dbClient.db,
+      storage: createMemoryObjectStorage(),
+    });
+    const email = `cookie-test-${randomUUID()}@example.com`;
+    const password = "password1234";
+
+    try {
+      const signUp = await app.inject({
+        method: "POST",
+        url: "/api/auth/sign-up/email",
+        headers: { "content-type": "application/json", origin: config.webOrigin },
+        payload: {
+          name: "Cookie Test User",
+          email,
+          password,
+          callbackURL: `${config.webOrigin}/sign-in`,
+        },
+      });
+      assert.equal(signUp.statusCode, 200, signUp.body);
+
+      const verificationUrl = extractEmailActionUrl(emailSender.sent[0]!);
+      const verify = new URL(verificationUrl);
+      const verified = await app.inject({
+        method: "GET",
+        url: `${verify.pathname}${verify.search}`,
+        headers: { origin: config.webOrigin },
+      });
+      assert.equal(verified.statusCode, 302, verified.body);
+
+      const signIn = await app.inject({
+        method: "POST",
+        url: "/api/auth/sign-in/email",
+        headers: { "content-type": "application/json", origin: config.webOrigin },
+        payload: { email, password },
+      });
+      assert.equal(signIn.statusCode, 200, signIn.body);
+      const cookie = Array.isArray(signIn.headers["set-cookie"])
+        ? signIn.headers["set-cookie"].join("; ")
+        : signIn.headers["set-cookie"];
+      assert.ok(cookie);
+      assert.match(cookie, /; Secure/i);
+      assert.match(cookie, /; HttpOnly/i);
+      assert.match(cookie, /; SameSite=Lax/i);
     } finally {
       await app.close();
       await dbClient.close();

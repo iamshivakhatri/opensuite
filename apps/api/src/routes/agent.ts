@@ -21,6 +21,10 @@ import {
 import type { AgentExecutionLeaseService } from "../agent/execution-lease.js";
 import { MAX_THREAD_TITLE_LENGTH } from "../agent/thread-title.js";
 import { getRequestUser, type SessionAuth } from "../auth/session.js";
+import {
+  sendRateLimit,
+  type UserRateLimiter,
+} from "../user-rate-limit.js";
 const WorkspaceIdParams = z.object({
   workspaceId: z.uuid("workspaceId must be a UUID"),
 });
@@ -105,6 +109,7 @@ export interface AgentRouteDeps {
   readonly lease?: AgentExecutionLeaseService;
   /** Required on hijacked SSE — reply.hijack bypasses @fastify/cors. */
   readonly webOrigin: string;
+  readonly rateLimiter: UserRateLimiter;
 }
 
 const TERMINAL_RUN_STATUSES = new Set([
@@ -120,7 +125,7 @@ export function registerAgentRoutes(
   app: FastifyInstance,
   deps: AgentRouteDeps,
 ): void {
-  const { auth, persistence, runManager, lease, webOrigin } = deps;
+  const { auth, persistence, runManager, lease, webOrigin, rateLimiter } = deps;
 
   app.get(
     "/api/workspaces/:workspaceId/agent/threads",
@@ -348,6 +353,9 @@ export function registerAgentRoutes(
         },
       });
     }
+
+    const rateLimit = rateLimiter.consume(user.id, "agentRun");
+    if (!rateLimit.allowed) return sendRateLimit(reply, rateLimit);
 
     try {
       const started = await runManager.startRun({

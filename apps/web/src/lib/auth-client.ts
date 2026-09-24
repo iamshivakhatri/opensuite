@@ -8,7 +8,7 @@ import { resolveApiBaseUrl } from "./api-base-url";
  * the API's Better Auth handler at `${NEXT_PUBLIC_API_URL}/api/auth/*`.
  * Better Auth's client automatically sends `credentials: "include"`, and the
  * API's CORS + `trustedOrigins` config (see apps/api/src/app.ts) is what
- * allows the session cookie to flow across origins.
+ * permits the web origin; production's two subdomains remain same-site.
  */
 const apiBaseUrl = resolveApiBaseUrl();
 

@@ -78,8 +78,8 @@ const EnvSchema = z
       .default("true")
       .transform((value) => value === "true"),
     /**
-     * When true, session cookies use SameSite=None; Secure (required for
-     * Vercel frontend ↔ separate API origin). Keep false for localhost.
+     * When true, session cookies use SameSite=None; Secure for a genuinely
+     * cross-site frontend and API. Keep false for same-site deployments.
      */
     AUTH_CROSS_ORIGIN: z
       .enum(["true", "false"])
@@ -87,6 +87,21 @@ const EnvSchema = z
       .transform((value) => value === "true"),
   })
   .superRefine((data, ctx) => {
+    if (data.NODE_ENV === "production") {
+      for (const [name, value] of [
+        ["BETTER_AUTH_URL", data.BETTER_AUTH_URL],
+        ["WEB_ORIGIN", data.WEB_ORIGIN],
+      ] as const) {
+        if (new URL(value).protocol !== "https:") {
+          ctx.addIssue({
+            code: "custom",
+            path: [name],
+            message: `${name} must use https in production`,
+          });
+        }
+      }
+    }
+
     if (data.AGENT_MODEL_PROVIDER === "fake" && data.NODE_ENV === "production") {
       ctx.addIssue({
         code: "custom",
