@@ -61,9 +61,9 @@ test(
       assert.ok(await leases.acquire(userId));
       assert.equal(await leases.releaseUser(userId), true);
       assert.equal(await leases.releaseUser(userId), false);
-      assert.ok(await leases.acquire(userId));
-      assert.equal(await leases.clearAll(), 1);
-      assert.equal(await leases.clearAll(), 0);
+      const finalLease = await leases.acquire(userId);
+      assert.ok(finalLease);
+      assert.equal(await leases.release(finalLease), true);
     } finally {
       await client.db.delete(schema.user).where(eq(schema.user.id, userId));
       await client.db.delete(schema.user).where(eq(schema.user.id, otherUserId));

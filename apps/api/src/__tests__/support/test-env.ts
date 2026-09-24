@@ -8,6 +8,16 @@ export const testS3Env = {
   S3_FORCE_PATH_STYLE: "true",
 } as const;
 
+/**
+ * Lets API integration tests build the full route tree without contacting a
+ * model provider. Tests that exercise agent execution inject their own model.
+ */
+export const testAgentEnv = {
+  AGENT_MODEL_PROVIDER: "openrouter",
+  OPENROUTER_API_KEY: "test-openrouter-key-not-used-for-network-calls",
+  OPENROUTER_MODEL: "openrouter/test-model",
+} as const;
+
 export function multipartFilePayload(
   filename: string,
   content: Buffer | string,

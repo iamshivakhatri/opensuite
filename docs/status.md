@@ -13,6 +13,8 @@ _Read this before starting any work. Keep it a concise current-state handoff, no
 
 ## Just Completed
 
+* API integration stability — unrelated integration apps use shared non-network test model config; production validation is unchanged. Lease tests no longer clear shared rows, and checkpoint-tail queries retain PostgreSQL timestamp precision. DB integration suite: 217/217 pass.
+
 * External-alpha public boundary — production public URLs require HTTPS; same-site auth defaults to `AUTH_CROSS_ORIGIN=false`; authenticated process-local write limits and fixed API security headers added. Cloudflare anonymous auth limits are documented for tunnel setup.
 
 * **Semantic agent-thread titles** — existing nullable `agent_thread.title` is filled by a separate short title request from the current instruction plus existing working-set names/maps; it is not awaited by the V3 stream. Conditional persistence preserves manual renames; active title is the Agent Panel header, and Previous chats supports Rename while excluding the active session.

@@ -36,6 +36,14 @@ export type AgentStepStatus =
 export const THREAD_CONTEXT_CHECKPOINT_CONTENT_VERSION = 1;
 export const MAX_CHECKPOINT_CHARACTERS = 16_000;
 
+function messagesAfterCheckpoint(checkpoint: AgentThreadContextCheckpoint) {
+  return sql`(${schema.agentMessage.createdAt}, ${schema.agentMessage.id}) > (
+    select "checkpoint_message"."created_at", "checkpoint_message"."id"
+    from "agent_message" as "checkpoint_message"
+    where "checkpoint_message"."id" = ${checkpoint.throughMessageId}
+  )`;
+}
+
 export interface AgentThread {
   readonly id: string;
   readonly workspaceId: string;
@@ -1314,9 +1322,6 @@ export function createAgentPersistenceService(db: Db) {
       }
       const client = executor(tx);
       await requireOwnedThread(client, input.threadId, input.ownerUserId);
-      const boundary = input.checkpoint
-        ? new Date(input.checkpoint.throughMessageCreatedAt)
-        : null;
       const rows = await client
         .select(messageSelect)
         .from(schema.agentMessage)
@@ -1325,14 +1330,8 @@ export function createAgentPersistenceService(db: Db) {
           ...(input.excludeMessageId
             ? [ne(schema.agentMessage.id, input.excludeMessageId)]
             : []),
-          ...(input.checkpoint && boundary
-            ? [or(
-                gt(schema.agentMessage.createdAt, boundary),
-                and(
-                  eq(schema.agentMessage.createdAt, boundary),
-                  gt(schema.agentMessage.id, input.checkpoint.throughMessageId),
-                ),
-              )]
+          ...(input.checkpoint
+            ? [messagesAfterCheckpoint(input.checkpoint)]
             : []),
         ))
         .orderBy(desc(schema.agentMessage.createdAt), desc(schema.agentMessage.id))
@@ -1356,9 +1355,6 @@ export function createAgentPersistenceService(db: Db) {
       }
       const client = executor(tx);
       await requireOwnedThread(client, input.threadId, input.ownerUserId);
-      const boundary = input.checkpoint
-        ? new Date(input.checkpoint.throughMessageCreatedAt)
-        : null;
       const [row] = await client
         .select({
           messageCount: sql<number>`count(*)::int`,
@@ -1367,14 +1363,8 @@ export function createAgentPersistenceService(db: Db) {
         .from(schema.agentMessage)
         .where(and(
           eq(schema.agentMessage.threadId, input.threadId),
-          ...(input.checkpoint && boundary
-            ? [or(
-                gt(schema.agentMessage.createdAt, boundary),
-                and(
-                  eq(schema.agentMessage.createdAt, boundary),
-                  gt(schema.agentMessage.id, input.checkpoint.throughMessageId),
-                ),
-              )]
+          ...(input.checkpoint
+            ? [messagesAfterCheckpoint(input.checkpoint)]
             : []),
         ));
       return { messageCount: row?.messageCount ?? 0, characterCount: row?.characterCount ?? 0 };
@@ -1397,22 +1387,13 @@ export function createAgentPersistenceService(db: Db) {
       }
       const client = executor(tx);
       await requireOwnedThread(client, input.threadId, input.ownerUserId);
-      const boundary = input.checkpoint
-        ? new Date(input.checkpoint.throughMessageCreatedAt)
-        : null;
       const rows = await client
         .select(messageSelect)
         .from(schema.agentMessage)
         .where(and(
           eq(schema.agentMessage.threadId, input.threadId),
-          ...(input.checkpoint && boundary
-            ? [or(
-                gt(schema.agentMessage.createdAt, boundary),
-                and(
-                  eq(schema.agentMessage.createdAt, boundary),
-                  gt(schema.agentMessage.id, input.checkpoint.throughMessageId),
-                ),
-              )]
+          ...(input.checkpoint
+            ? [messagesAfterCheckpoint(input.checkpoint)]
             : []),
         ))
         .orderBy(asc(schema.agentMessage.createdAt), asc(schema.agentMessage.id))
