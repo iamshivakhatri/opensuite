@@ -13,6 +13,8 @@ _Read this before starting any work. Keep it a concise current-state handoff, no
 
 ## Just Completed
 
+* **Google account lifecycle** — Better Auth native OAuth signup, verified-email linking, and returning-account sign-in are covered against PostgreSQL. A matching unverified password account remains unlinked; OAuth failures return to web sign-in with a safe instruction.
+
 * **Google OAuth HTTPS request bridge** — Better Auth now receives the validated public `BETTER_AUTH_URL`, not Fastify's internal HTTP tunnel URL, when serving `/api/auth/*`; this preserves the public HTTPS context for OAuth callback session cookies. Regression test covers an internal proxy host. Google button has a local multicolor G SVG; no dependency added.
 
 * **External-alpha Google sign-in** — Better Auth 1.7.2 native Google provider uses only OpenID identity scopes and the existing account/session tables; normal sessions remain unchanged. A verified local email may be linked only to Google's verified identity for the same email. `GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET` must be supplied together; Google creation follows `ALLOW_SIGNUP` and Vercel's `NEXT_PUBLIC_ALLOW_SIGNUP` must match it.

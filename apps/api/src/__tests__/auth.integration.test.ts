@@ -5,6 +5,8 @@ import { randomUUID } from "node:crypto";
 import { test } from "node:test";
 
 import { createDbClient } from "@opensuite/db";
+import * as schema from "@opensuite/db/schema";
+import { eq } from "drizzle-orm";
 
 import { createAuth } from "../auth/index.js";
 import { buildApp } from "../app.js";
@@ -37,7 +39,7 @@ function productionSameSiteConfig() {
   });
 }
 
-function testConfig() {
+function testConfig(overrides: Record<string, string | undefined> = {}) {
   return loadConfig({
     NODE_ENV: "test",
     LOG_LEVEL: "silent",
@@ -51,7 +53,77 @@ function testConfig() {
     EMAIL_FROM: "OpenSuite <noreply@example.com>",
     ...testAgentEnv,
     ...testS3Env,
+    ...overrides,
   });
+}
+
+type GoogleProfile = {
+  readonly email: string;
+  readonly sub: string;
+  readonly email_verified: boolean;
+  readonly name?: string;
+};
+
+function googleIdToken(profile: GoogleProfile) {
+  const header = Buffer.from(JSON.stringify({ alg: "none" })).toString("base64url");
+  const payload = Buffer.from(JSON.stringify(profile)).toString("base64url");
+  return `${header}.${payload}.test-signature`;
+}
+
+function cookieHeader(setCookie: string | string[] | undefined) {
+  const values = Array.isArray(setCookie) ? setCookie : setCookie ? [setCookie] : [];
+  return values.map((value) => value.split(";", 1)[0]).join("; ");
+}
+
+async function runGoogleCallback(
+  app: Awaited<ReturnType<typeof buildApp>>,
+  config: ReturnType<typeof testConfig>,
+  profile: GoogleProfile,
+  errorCallbackURL?: string,
+) {
+  const started = await app.inject({
+    method: "POST",
+    url: "/api/auth/sign-in/social",
+    headers: { "content-type": "application/json", origin: config.webOrigin },
+    payload: {
+      provider: "google",
+      callbackURL: `${config.webOrigin}/app`,
+      errorCallbackURL,
+      disableRedirect: true,
+    },
+  });
+  assert.equal(started.statusCode, 200, started.body);
+  const authorizationUrl = new URL((started.json() as { url: string }).url);
+  const state = authorizationUrl.searchParams.get("state");
+  assert.ok(state);
+
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = (async (input, init) => {
+    if (String(input) === "https://oauth2.googleapis.com/token") {
+      return new Response(
+        JSON.stringify({
+          access_token: "test-access-token",
+          token_type: "Bearer",
+          id_token: googleIdToken(profile),
+        }),
+        { headers: { "content-type": "application/json" } },
+      );
+    }
+    return originalFetch(input, init);
+  }) as typeof fetch;
+
+  try {
+    return await app.inject({
+      method: "GET",
+      url: `/api/auth/callback/google?code=test-code&state=${encodeURIComponent(state)}`,
+      headers: {
+        cookie: cookieHeader(started.headers["set-cookie"]),
+        origin: config.webOrigin,
+      },
+    });
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
 }
 
 test(
@@ -369,6 +441,144 @@ test(
         headers: { cookie: cookieHeader, origin: config.webOrigin },
       });
       assert.equal(meAfterSignOut.statusCode, 401, meAfterSignOut.body);
+    } finally {
+      await app.close();
+      await dbClient.close();
+    }
+  },
+);
+
+test(
+  "Google OAuth creates, links, returns, and safely rejects account states",
+  { skip: !runDbIntegrationTests || databaseUrl === undefined },
+  async () => {
+    const config = testConfig({
+      GOOGLE_CLIENT_ID: "google-test-client-id",
+      GOOGLE_CLIENT_SECRET: "google-test-client-secret",
+    });
+    const dbClient = createDbClient({ databaseUrl: config.databaseUrl });
+    const emailSender = createStubEmailSender();
+    const auth = createAuth(config, dbClient.db, emailSender);
+    const app = await buildApp(config, {
+      auth,
+      db: dbClient.db,
+      storage: createMemoryObjectStorage(),
+    });
+    const newEmail = `new-google-${randomUUID()}@example.com`;
+    const existingEmail = `existing-google-${randomUUID()}@example.com`;
+    const unverifiedEmail = `unverified-google-${randomUUID()}@example.com`;
+
+    try {
+      const newGoogle = await runGoogleCallback(app, config, {
+        email: newEmail.toUpperCase(),
+        sub: `google-${randomUUID()}`,
+        email_verified: true,
+        name: "New Google User",
+      });
+      assert.equal(newGoogle.statusCode, 302, newGoogle.body);
+      assert.equal(newGoogle.headers.location, `${config.webOrigin}/app`);
+      assert.match(cookieHeader(newGoogle.headers["set-cookie"]), /session_token=/);
+
+      const [newUser] = await dbClient.db
+        .select()
+        .from(schema.user)
+        .where(eq(schema.user.email, newEmail));
+      assert.ok(newUser);
+      assert.equal(newUser.emailVerified, true);
+      const newAccounts = await dbClient.db
+        .select()
+        .from(schema.account)
+        .where(eq(schema.account.userId, newUser.id));
+      assert.equal(newAccounts.length, 1);
+      assert.equal(newAccounts[0]?.providerId, "google");
+
+      const existingPassword = "password1234";
+      const existingSignUp = await app.inject({
+        method: "POST",
+        url: "/api/auth/sign-up/email",
+        headers: { "content-type": "application/json", origin: config.webOrigin },
+        payload: {
+          name: "Existing Password User",
+          email: existingEmail,
+          password: existingPassword,
+          callbackURL: `${config.webOrigin}/sign-in`,
+        },
+      });
+      assert.equal(existingSignUp.statusCode, 200, existingSignUp.body);
+      const verificationUrl = new URL(extractEmailActionUrl(emailSender.sent.at(-1)!));
+      const verified = await app.inject({
+        method: "GET",
+        url: `${verificationUrl.pathname}${verificationUrl.search}`,
+        headers: { origin: config.webOrigin },
+      });
+      assert.equal(verified.statusCode, 302, verified.body);
+
+      const existingGoogle = {
+        email: existingEmail.toUpperCase(),
+        sub: `google-${randomUUID()}`,
+        email_verified: true,
+      };
+      const linked = await runGoogleCallback(app, config, existingGoogle);
+      assert.equal(linked.statusCode, 302, linked.body);
+      assert.equal(linked.headers.location, `${config.webOrigin}/app`);
+      const [linkedUser] = await dbClient.db
+        .select()
+        .from(schema.user)
+        .where(eq(schema.user.email, existingEmail));
+      assert.ok(linkedUser);
+      const linkedAccounts = await dbClient.db
+        .select()
+        .from(schema.account)
+        .where(eq(schema.account.userId, linkedUser.id));
+      assert.equal(linkedAccounts.filter((account) => account.providerId === "google").length, 1);
+
+      const returning = await runGoogleCallback(app, config, existingGoogle);
+      assert.equal(returning.statusCode, 302, returning.body);
+      assert.equal(returning.headers.location, `${config.webOrigin}/app`);
+      const usersWithExistingEmail = await dbClient.db
+        .select()
+        .from(schema.user)
+        .where(eq(schema.user.email, existingEmail));
+      assert.equal(usersWithExistingEmail.length, 1);
+
+      const unverifiedSignUp = await app.inject({
+        method: "POST",
+        url: "/api/auth/sign-up/email",
+        headers: { "content-type": "application/json", origin: config.webOrigin },
+        payload: {
+          name: "Unverified Password User",
+          email: unverifiedEmail,
+          password: "password1234",
+          callbackURL: `${config.webOrigin}/sign-in`,
+        },
+      });
+      assert.equal(unverifiedSignUp.statusCode, 200, unverifiedSignUp.body);
+
+      const rejected = await runGoogleCallback(
+        app,
+        config,
+        {
+          email: unverifiedEmail.toUpperCase(),
+          sub: `google-${randomUUID()}`,
+          email_verified: true,
+        },
+        `${config.webOrigin}/sign-in`,
+      );
+      assert.equal(rejected.statusCode, 302, rejected.body);
+      assert.equal(
+        rejected.headers.location,
+        `${config.webOrigin}/sign-in?error=account_not_linked`,
+      );
+      const [unverifiedUser] = await dbClient.db
+        .select()
+        .from(schema.user)
+        .where(eq(schema.user.email, unverifiedEmail));
+      assert.ok(unverifiedUser);
+      const unverifiedAccounts = await dbClient.db
+        .select()
+        .from(schema.account)
+        .where(eq(schema.account.userId, unverifiedUser.id));
+      assert.equal(unverifiedAccounts.some((account) => account.providerId === "google"), false);
     } finally {
       await app.close();
       await dbClient.close();

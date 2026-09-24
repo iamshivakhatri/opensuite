@@ -87,6 +87,7 @@ export function SignInForm() {
       await signIn.social({
         provider: "google",
         callbackURL: `${window.location.origin}/app`,
+        errorCallbackURL: `${window.location.origin}/sign-in`,
       });
     } catch {
       setError("Could not start Google sign-in. Try again in a moment.");

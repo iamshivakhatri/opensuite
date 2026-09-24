@@ -7,10 +7,12 @@ import { useSearchParams } from "next/navigation";
 import { SignInForm } from "@/components/auth/sign-in-form";
 import { isSignupAllowed } from "@/lib/signup";
 
-const VERIFICATION_ERROR_MESSAGES: Record<string, string> = {
+const AUTH_ERROR_MESSAGES: Record<string, string> = {
   INVALID_TOKEN: "That verification link is invalid. Request a new one below.",
   TOKEN_EXPIRED: "That verification link has expired. Request a new one below.",
   USER_NOT_FOUND: "We couldn't find an account for that verification link.",
+  account_not_linked:
+    "This email already has an unverified OpenSuite account. Verify it first, then continue with Google.",
 };
 
 function AuthBanner() {
@@ -38,7 +40,7 @@ function AuthBanner() {
   if (errorCode) {
     return (
       <p className="rounded-[var(--radius-sm)] bg-danger-soft px-3 py-2 text-[12px] text-danger">
-        {VERIFICATION_ERROR_MESSAGES[errorCode] ??
+        {AUTH_ERROR_MESSAGES[errorCode] ??
           "That verification link could not be used. Request a new one below."}
       </p>
     );
