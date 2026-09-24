@@ -45,7 +45,11 @@ export function SignInForm() {
     setIsSubmitting(true);
 
     try {
-      const { error: signInError } = await signIn.email({ email, password });
+      const { error: signInError } = await signIn.email({
+        email,
+        password,
+        callbackURL: `${window.location.origin}/sign-in?verified=true`,
+      });
 
       if (signInError) {
         if (signInError.code === "EMAIL_NOT_VERIFIED") {

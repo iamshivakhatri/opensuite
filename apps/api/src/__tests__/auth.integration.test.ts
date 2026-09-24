@@ -188,12 +188,23 @@ test(
           "content-type": "application/json",
           origin: config.webOrigin,
         },
-        payload: { email, password },
+        payload: {
+          email,
+          password,
+          callbackURL: `${config.webOrigin}/sign-in?verified=true`,
+        },
       });
 
       assert.equal(unverifiedSignIn.statusCode, 403, unverifiedSignIn.body);
       const unverifiedBody = unverifiedSignIn.json() as { code?: string };
       assert.equal(unverifiedBody.code, "EMAIL_NOT_VERIFIED");
+      const signInVerificationUrl = new URL(
+        extractEmailActionUrl(emailSender.sent.at(-1)!),
+      );
+      assert.equal(
+        signInVerificationUrl.searchParams.get("callbackURL"),
+        `${config.webOrigin}/sign-in?verified=true`,
+      );
 
       // 3. Follow the emailed verification link.
       const verifyUrl = new URL(verificationUrl);
