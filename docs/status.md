@@ -10,6 +10,7 @@ _Read this before starting any work. Keep it a concise current-state handoff, no
 * **V3 lifecycle tools** — `workspace.create_blank_document` + `workspace.duplicate_current_document` with same-run active rebind; `document.created` SSE; report `transitions[]`.
 * **Phase 3.5 Live Agent Activity UX** — progressive `AgentActivityGroup` / `ActivityRow` from existing SSE (`tool.*`, model-wait Thinking, lifecycle); read grouping; compact completion with total elapsed; no stacked Working… beside Thinking; no new progress protocol.
 * V2 retained off-path. `pnpm dev:api` builds deps then `tsc -w` + `tsx watch`.
+* **API composition seam** — `@opensuite/api` now exports `createOpenSuiteRuntime`, `createOpenSuiteApp`, and config loading. The self-host server remains a thin wrapper; a future Cloud API can register routes on the same Fastify app, Better Auth instance, and DB client.
 
 ## Just Completed
 

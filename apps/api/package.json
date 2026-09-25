@@ -5,6 +5,12 @@
   "description": "OpenSuite backend API — Fastify HTTP service. Long-running Node process, not a Vercel/edge function.",
   "type": "module",
   "main": "./dist/server.js",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "dev": "tsx watch src/server.ts",

@@ -1,58 +1,18 @@
 import "./load-env.js";
 
-import {
-  createDbClient,
-  type DbClient,
-} from "@opensuite/db";
-
-import { createAuth } from "./auth/index.js";
-import { buildApp } from "./app.js";
-import { createAgentExecutionLeaseService } from "./agent/execution-lease.js";
 import { loadConfig } from "./config/index.js";
-import { createResendEmailSender } from "./email/index.js";
-import { createS3ObjectStorage } from "./storage/index.js";
+import { createOpenSuiteRuntime } from "./runtime.js";
 
 async function main(): Promise<void> {
   const config = loadConfig();
-  console.info("[agent] runtime=v3");
-  const dbClient = createDbClient(
-    { databaseUrl: config.databaseUrl },
-    {
-      onPoolError: (error) => {
-        // Idle client errors must be handled; log and let later checkouts retry.
-        console.error("[db] idle pool client error", error.message);
-      },
-    },
-  );
-  // Live runs are in-process only; a prior crash/force-kill leaves durable leases
-  // that would falsely block new runs until expiry. Do not crash boot if Postgres
-  // is briefly unreachable — /health will report degraded and routes return 503.
-  try {
-    const cleared = await createAgentExecutionLeaseService(dbClient.db).clearAll();
-    if (cleared > 0) {
-      console.info(`[agent] cleared ${cleared} orphaned execution lease(s) on boot`);
-    }
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    console.warn(`[agent] skipped lease clear on boot (database unreachable): ${message}`);
-  }
-  const emailSender = createResendEmailSender({
-    apiKey: config.resendApiKey,
-    from: config.emailFrom,
-  });
-  const auth = createAuth(config, dbClient.db, emailSender);
-  const storage = createS3ObjectStorage(config.s3);
-  const app = await buildApp(config, {
-    auth,
-    db: dbClient.db,
-    storage,
-  });
+  const runtime = await createOpenSuiteRuntime(config);
+  const { app } = runtime;
 
   try {
     await app.listen({ host: config.host, port: config.port });
   } catch (error) {
     app.log.error(error, "failed to start server");
-    await shutdown(dbClient, app, 1);
+    await shutdown(runtime, 1);
     return;
   }
 
@@ -64,7 +24,7 @@ async function main(): Promise<void> {
     shuttingDown = true;
 
     app.log.info({ signal }, "shutting down");
-    await shutdown(dbClient, app, 0);
+    await shutdown(runtime, 0);
   };
 
   process.on("SIGTERM", () => void shutdownHandler("SIGTERM"));
@@ -72,16 +32,14 @@ async function main(): Promise<void> {
 }
 
 async function shutdown(
-  dbClient: DbClient,
-  app: Awaited<ReturnType<typeof buildApp>>,
+  runtime: Awaited<ReturnType<typeof createOpenSuiteRuntime>>,
   exitCode: number,
 ): Promise<void> {
   try {
-    await app.close();
-    await dbClient.close();
+    await runtime.close();
     process.exit(exitCode);
   } catch (error) {
-    app.log.error(error, "error during shutdown");
+    runtime.app.log.error(error, "error during shutdown");
     process.exit(1);
   }
 }
