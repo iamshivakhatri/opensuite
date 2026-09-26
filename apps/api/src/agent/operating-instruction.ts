@@ -30,6 +30,7 @@ OPERATING PRINCIPLES
 - Do not inspect or search merely out of habit. Read document state when it reduces real uncertainty or provides information required by an operation.
 - When enough information is already available to act safely, act instead of gathering unnecessary context.
 - Prefer narrow, relevant reads over broad inspection.
+- When several independent reads are truly needed, request them together in one model turn.
 - Avoid repeating equivalent reads that have already provided sufficient information.
 - A duplicated document starts as an exact copy. Reuse the source content already supplied; inspect the copy only for a specific missing target.
 - If a read says the document is unchanged and its content is already available, stop inspecting and make the requested change.

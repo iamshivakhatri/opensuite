@@ -559,16 +559,15 @@ test("read guard permits exact targets and resets on version advance", async () 
   const guard = guardRepeatedReads(tools, () => version, true);
   const inspect = (tools as Record<string, { execute: (args: unknown, context: unknown) => Promise<unknown> }>)["document.inspect"]!.execute;
   await inspect({ kind: "overview" }, {});
-  await inspect({ kind: "overview" }, {});
   assert.deepEqual(await inspect({ kind: "overview" }, {}), {
     ok: true, redundantReadSuppressed: true, versionId: "v1",
-    message: "Document unchanged. The requested content is already available. Proceed with the remaining task or finish; use a targeted read only for a missing exact target.",
+    message: "Read skipped: the unchanged document content is already in your context. Do not inspect again until the document changes. Make the requested edit or finish.",
   });
   await inspect({ kind: "context", text: "exact target" }, {});
-  assert.equal(calls, 3);
+  assert.equal(calls, 2);
   version = "v2";
   await inspect({ kind: "overview" }, {});
-  assert.equal(calls, 4);
+  assert.equal(calls, 3);
   assert.equal(guard.suppressedCount(), 1);
 });
 
@@ -578,8 +577,8 @@ test("read guard stops distinct DIRECT find loops but permits normal targeted re
   const guard = guardRepeatedReads(tools, () => "v1", true);
   const find = (tools as Record<string, { execute: (args: unknown, context: unknown) => Promise<unknown> }>)["document.find"]!.execute;
   for (let i = 0; i < 8; i += 1) await find({ text: `target ${i}` }, {});
-  assert.equal(calls, 6);
-  assert.equal(guard.suppressedCount(), 2);
+  assert.equal(calls, 3);
+  assert.equal(guard.suppressedCount(), 5);
 });
 
 test("read guard resets after a working mutation without a persisted version advance", async () => {
@@ -591,10 +590,35 @@ test("read guard resets after a working mutation without a persisted version adv
   await inspect({ kind: "overview" }, {});
   await inspect({ kind: "overview" }, {});
   await inspect({ kind: "overview" }, {});
-  assert.equal(reads, 2);
+  assert.equal(reads, 1);
   revision++;
   await inspect({ kind: "overview" }, {});
-  assert.equal(reads, 3);
+  assert.equal(reads, 2);
+});
+
+test("DIRECT read budget covers distinct targeted inspections and prompts action", async () => {
+  let engineReads = 0;
+  const tools = { "document.inspect": { kind: "read", execute: async () => { engineReads++; return { ok: true }; } } } as never;
+  const guard = guardRepeatedReads(tools, () => "v1", true);
+  const inspect = (tools as Record<string, { execute: (args: unknown, context: unknown) => Promise<unknown> }>)["document.inspect"]!.execute;
+  for (let i = 0; i < 8; i++) await inspect({ kind: "context", text: `target ${i}` }, {});
+  assert.equal(engineReads, 4);
+  assert.equal(guard.suppressedCount(), 4);
+
+  let changed = false;
+  const project = composeProjectMessages({
+    retrievalMessage: "COMPLETE DOCUMENT CONTENT",
+    directVersionId: "v1",
+    currentVersionId: () => changed ? null : "v1",
+    suppressedReadCount: () => guard.suppressedCount(),
+    tools,
+    stats: createInRunObservationStats(),
+  });
+  const messages: ModelMessage[] = [{ role: "user", content: "Rewrite the document" }];
+  const projected = project(messages);
+  assert.match(JSON.stringify(projected), /Stop inspecting and perform the requested document changes/);
+  changed = true;
+  assert.doesNotMatch(JSON.stringify(project(messages)), /Stop inspecting and perform the requested document changes/);
 });
 
 test("failed reads remain retryable", async () => {

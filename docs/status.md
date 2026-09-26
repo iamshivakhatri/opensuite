@@ -14,6 +14,8 @@ _Read this before starting any work. Keep it a concise current-state handoff, no
 
 ## Just Completed
 
+* **Direct-context read efficiency** — a complete small DOCX is still inspected by the engine before the first model call. On unchanged DIRECT state, the API now allows one broad read and at most four total inspect/find reads, then gives the model an explicit act-on-context reminder; independent necessary reads are requested together. A mutation resets the read state. This bounds engine reads, though model turn count still depends on model behavior and requires a live run to verify.
+
 * **Duplicate/Continue repair** — an exact document copy retains DIRECT source content and its read guard until edited, so the model need not rediscover the copy. Max-turn/deadline runs now save a linked assistant status message, keeping their tool transcript in paginated conversation history after Continue; migration 0018 links older bounded runs at their original completion times. Continue appears as a compact conversation entry. The 20-turn limit already counted model calls only; tool calls are separate. The reported Cincinnati runs used 20 model calls each, with 39 then 20 tool calls and no edits to the copied document.
 
 * **Agent activity and speed** — three animated dots follow the latest live transcript entry; the elapsed timer stays by Stop. Existing SSE heartbeats surface a stale connection. A successful DeepSeek V4.1 Flash run took 191.61s: 191.39s model, 220ms tools; turn 3 alone took 154.57s and 10,496 output tokens. The run used 11,311 reasoning tokens total. Agent calls request throughput routing and log provider plus reasoning tokens per turn; this model now requests low reasoning (OpenRouter default: high). The old run's provider is unknown.
@@ -90,6 +92,7 @@ _Read this before starting any work. Keep it a concise current-state handoff, no
 | web typecheck | Pass |
 | web production build (`next build --webpack`) | Pass |
 | Duplicate/Continue/retrieval focused API tests (81) | Pass |
+| Direct-context read efficiency focused API tests (61) | Pass |
 | full web test command | 17 existing import-resolution failures under Node type stripping; focused message/progress tests pass |
 | API isolation one-turn finish transcript | Pass |
 | Run-local DOCX and terminal flush tests | Pass |
@@ -106,4 +109,4 @@ _Read this before starting any work. Keep it a concise current-state handoff, no
 
 ## Recommended Next Step
 
-Apply migration 0018, deploy the updated API and web, then repeat the Cincinnati duplicate-and-rewrite flow once; check that the run report includes `redundantReadSuppressedCount` and that Continue retains both transcripts.
+Apply migration 0018, deploy the updated API and web, then repeat the Cincinnati duplicate-and-rewrite flow once; check model turns, actual edits, `redundantReadSuppressedCount`, and preserved Continue history.

@@ -699,6 +699,7 @@ async function runExecution(input: {
       safeToolResultNames: input.model.usageAttribution?.provider === "openrouter",
       directVersionId: () => directVersionId,
       currentVersionId: () => boundTools?.getWorkingRevision() ? null : boundTools?.getActiveVersionId() ?? null,
+      suppressedReadCount: () => readGuard.suppressedCount(),
       tools,
       stats: inRunStats,
     });
@@ -999,12 +1000,18 @@ export function guardRepeatedReads(
         const key = `${state}:${name}:${JSON.stringify(args)}`;
         const repeated = attempts.get(key) ?? 0;
         const broadInspect = name === "document.inspect" && (args as { kind?: string }).kind !== "context";
-        const directReads = [...attempts].reduce((sum, [item, count]) =>
+        const readsOfThisKind = [...attempts].reduce((sum, [item, count]) =>
           item.startsWith(`${state}:${name}:`) ? sum + count : sum, 0);
-        if (repeated >= 2 || (direct && state === directVersion && (broadInspect || name === "document.find") && directReads >= (name === "document.find" ? 6 : 2))) {
+        const allReadsForState = [...attempts].reduce((sum, [item, count]) =>
+          item.startsWith(`${state}:document.inspect:`) || item.startsWith(`${state}:document.find:`) ? sum + count : sum, 0);
+        // DIRECT already supplied the whole document before the model call.
+        const completeAndUnchanged = direct && state === directVersion;
+        const tooManyBroadReads = (broadInspect || name === "document.find") &&
+          readsOfThisKind >= (name === "document.find" ? 3 : 1);
+        if (repeated >= 2 || (completeAndUnchanged && (allReadsForState >= 4 || tooManyBroadReads))) {
           suppressed += 1;
           return { ok: true, redundantReadSuppressed: true, versionId: version,
-            message: "Document unchanged. The requested content is already available. Proceed with the remaining task or finish; use a targeted read only for a missing exact target." };
+            message: "Read skipped: the unchanged document content is already in your context. Do not inspect again until the document changes. Make the requested edit or finish." };
         }
         attempts.set(key, repeated + 1);
         try {
@@ -1034,6 +1041,7 @@ export function composeProjectMessages(input: {
   readonly safeToolResultNames?: boolean;
   readonly directVersionId?: string | null | (() => string | null);
   readonly currentVersionId?: () => string | null;
+  readonly suppressedReadCount?: () => number;
   readonly tools: AgentToolSet;
   readonly stats: ReturnType<typeof createInRunObservationStats>;
 }): (messages: readonly ModelMessage[]) => readonly ModelMessage[] {
@@ -1055,8 +1063,11 @@ export function composeProjectMessages(input: {
       : firstTurn(messages);
     const projected = projectInRunObservations(afterFirstTurn, { isMutateTool });
     accumulateInRunObservationStats(input.stats, projected);
-    if (!input.safeToolResultNames) return projected.messages;
-    return projected.messages.map((message) => message.role === "tool" && Array.isArray(message.content)
+    const withReadReminder = directCurrent && input.suppressedReadCount?.()
+      ? [...projected.messages, { role: "user" as const, content: "The complete unchanged document is already above. Repeated reads were skipped. Stop inspecting and perform the requested document changes using the available mutation tools." }]
+      : projected.messages;
+    if (!input.safeToolResultNames) return withReadReminder;
+    return withReadReminder.map((message) => message.role === "tool" && Array.isArray(message.content)
       ? { ...message, content: message.content.map((part) => part.type === "tool-result"
         ? { ...part, toolName: part.toolName.replace(/[^a-zA-Z0-9_-]/g, "_") }
         : part) } as ModelMessage
