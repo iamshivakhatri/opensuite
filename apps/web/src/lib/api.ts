@@ -842,6 +842,8 @@ export async function cancelAgentRun(runId: string): Promise<{
 
 export interface SubscribeAgentRunEventsOptions {
   readonly onEvent: (event: AgentLiveEvent) => void;
+  /** Server comments confirm the live stream is still connected during long model calls. */
+  readonly onHeartbeat?: () => void;
   /** Fired when the SSE stream ends without a handled terminal event. */
   readonly onDisconnect?: () => void;
   readonly onError?: (error: unknown) => void;
@@ -885,6 +887,10 @@ export function subscribeAgentRunEvents(
         const parts = buffer.split("\n\n");
         buffer = parts.pop() ?? "";
         for (const block of parts) {
+          if (block.startsWith(":")) {
+            try { options.onHeartbeat?.(); } catch { /* Keep the stream alive. */ }
+            continue;
+          }
           const event = parseSseBlock(block);
           if (!event) continue;
           // Keep the stream alive if a UI handler throws.

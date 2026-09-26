@@ -163,7 +163,7 @@ export async function runAgent(input: RunAgentInput): Promise<RunAgentResult> {
 
       const calls = turn.toolCalls as readonly ToolCall[];
       console.info(
-        `[agent-v3] turn run=${run} turn=${turns} elapsedMs=${now() - turnStarted} inputTokens=${turn.inputTokens} cachedInputTokens=${turn.cachedInputTokens} outputTokens=${turn.outputTokens} toolCalls=${calls.length}`,
+        `[agent-v3] turn run=${run} turn=${turns} elapsedMs=${now() - turnStarted} provider=${turn.routedProvider ?? "unknown"} inputTokens=${turn.inputTokens} cachedInputTokens=${turn.cachedInputTokens} outputTokens=${turn.outputTokens} reasoningTokens=${turn.reasoningTokens} toolCalls=${calls.length}`,
       );
 
       if (calls.length === 0) {

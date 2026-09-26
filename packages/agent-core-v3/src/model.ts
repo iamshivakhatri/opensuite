@@ -11,6 +11,10 @@ export function createOpenRouterModel(input: {
   // usage.include surfaces OpenRouter cost + token details in providerMetadata.
   return createOpenRouter({ apiKey: input.apiKey })(input.model, {
     usage: { include: true },
+    provider: { sort: "throughput" },
+    ...(input.model === "deepseek/deepseek-v4.1-flash"
+      ? { reasoning: { effort: "low" as const } }
+      : {}),
   });
 }
 
@@ -24,6 +28,7 @@ export interface StreamTurnResult {
   /** OpenRouter usage.cost when present — authoritative provider charge in USD. */
   readonly providerReportedCostUsd?: number;
   readonly resolvedModelId?: string;
+  readonly routedProvider?: string;
   readonly toolCalls: Awaited<ReturnType<typeof streamText>["toolCalls"]>;
   readonly responseMessages: Awaited<
     ReturnType<typeof streamText>["response"]
@@ -73,6 +78,7 @@ export async function streamTurn(input: {
     ]);
 
   const providerReportedCostUsd = openRouterCostUsd(providerMetadata);
+  const routedProvider = openRouterProvider(providerMetadata);
   const responseMeta = response_ as unknown as {
     modelId?: unknown;
     model?: unknown;
@@ -95,6 +101,7 @@ export async function streamTurn(input: {
       ? { providerReportedCostUsd }
       : {}),
     ...(resolvedModelId !== undefined ? { resolvedModelId } : {}),
+    ...(routedProvider !== undefined ? { routedProvider } : {}),
     toolCalls,
     responseMessages: response_.messages,
   };
@@ -146,4 +153,13 @@ export function openRouterCostUsd(providerMetadata: unknown): number | undefined
   return typeof cost === "number" && Number.isFinite(cost) && cost >= 0
     ? cost
     : undefined;
+}
+
+/** Read the OpenRouter provider that actually served this turn. */
+export function openRouterProvider(providerMetadata: unknown): string | undefined {
+  if (providerMetadata === null || typeof providerMetadata !== "object") return undefined;
+  const openrouter = (providerMetadata as Record<string, unknown>).openrouter;
+  if (openrouter === null || typeof openrouter !== "object") return undefined;
+  const provider = (openrouter as Record<string, unknown>).provider;
+  return typeof provider === "string" && provider.length > 0 ? provider : undefined;
 }

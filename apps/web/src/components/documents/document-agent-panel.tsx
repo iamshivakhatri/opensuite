@@ -144,6 +144,19 @@ function RunTranscript({
   return <div className="flex flex-col gap-2">{parts}</div>;
 }
 
+function WorkingDots({ connectionStale, stopping }: { connectionStale: boolean; stopping: boolean }) {
+  if (connectionStale || stopping) {
+    return <p role="status" className="pl-1 text-[length:var(--text-2xs)] text-ink-faint">{stopping ? "Stopping…" : "Checking connection…"}</p>;
+  }
+  return (
+    <div role="status" aria-label="Agent working" className="flex items-center gap-1.5 py-1 pl-1">
+      <span aria-hidden className="h-1.5 w-1.5 rounded-full bg-accent motion-safe:animate-pulse [animation-delay:-800ms]" />
+      <span aria-hidden className="h-1.5 w-1.5 rounded-full bg-accent motion-safe:animate-pulse [animation-delay:-400ms]" />
+      <span aria-hidden className="h-1.5 w-1.5 rounded-full bg-accent motion-safe:animate-pulse" />
+    </div>
+  );
+}
+
 function CompletedRunTranscript({
   steps,
   summary,
@@ -275,6 +288,7 @@ export function DocumentAgentPanel({
   const runStartedAtRef = React.useRef<number | null>(null);
   const stickToBottomRef = React.useRef(true);
   const [nowTick, setNowTick] = React.useState(() => Date.now());
+  const [lastHeartbeatAt, setLastHeartbeatAt] = React.useState<number | null>(null);
   const [runTotalMs, setRunTotalMs] = React.useState<number | null>(null);
   /** Last finished turn (timeline + total) — replaced each new run. */
   const [lastTurn, setLastTurn] = React.useState<AgentTurnProgress | null>(null);
@@ -370,7 +384,7 @@ export function DocumentAgentPanel({
 
   progressRef.current = progress;
 
-  // Wall-clock for stop button — ~1s; Thinking elapsed is local to ActivityRow.
+  // Wall-clock beside the stop button; server heartbeat confirms long model waits.
   React.useEffect(() => {
     const live =
       busy ||
@@ -497,6 +511,7 @@ export function DocumentAgentPanel({
         });
       }
       runIdRef.current = null;
+      setLastHeartbeatAt(null);
       reconnectAttemptsRef.current = 0;
       runStartedAtRef.current = null;
       // Keep lastTurn for expandable details; collapse primary execution UX.
@@ -580,6 +595,7 @@ export function DocumentAgentPanel({
       stopSse();
       const generation = sseGenerationRef.current;
       runIdRef.current = run.id;
+      setLastHeartbeatAt(null);
       setActiveRun(run);
       setRunError(null);
       setRunNotice(null);
@@ -614,8 +630,12 @@ export function DocumentAgentPanel({
         sseGenerationRef.current === generation && runIdRef.current === run.id;
 
       const sub = subscribeAgentRunEvents(run.id, {
+        onHeartbeat: () => {
+          if (isCurrent()) setLastHeartbeatAt(Date.now());
+        },
         onEvent: (event) => {
           if (!isCurrent()) return;
+          setLastHeartbeatAt(Date.now());
           const nextProgress = reduceAgentProgress(progressRef.current, event);
           progressRef.current = nextProgress;
           setProgress(nextProgress);
@@ -675,6 +695,7 @@ export function DocumentAgentPanel({
         },
         onDisconnect: () => {
           if (!isCurrent()) return;
+          setLastHeartbeatAt(Date.now() - 36_000);
           void (async () => {
             try {
               const snapshot = await getAgentRun(run.id);
@@ -715,6 +736,7 @@ export function DocumentAgentPanel({
         },
         onError: () => {
           if (!isCurrent()) return;
+          setLastHeartbeatAt(Date.now() - 36_000);
           void (async () => {
             try {
               const snapshot = await getAgentRun(run.id);
@@ -1347,6 +1369,8 @@ export function DocumentAgentPanel({
     (cancelling ||
       submitting ||
       (activeRun !== null && isActiveAgentRunStatus(activeRun.status)));
+  const lastServerSignalAt = lastHeartbeatAt ?? runStartedAtRef.current;
+  const connectionStale = lastServerSignalAt !== null && nowTick - lastServerSignalAt > 35_000;
   const showRunProgressOnLastAssistant =
     !isLiveTurn &&
     lastTurn !== null &&
@@ -1592,18 +1616,8 @@ export function DocumentAgentPanel({
               {/* Live narration and tool rows keep their observed order. */}
               {isLiveTurn ? (
                 <div className="flex flex-col gap-2">
-                  {liveTranscript.length > 0 ? (
-                    <RunTranscript entries={liveTranscript} streaming />
-                  ) : (
-                    <AgentRunProgress
-                      presentation={presentAgentRun(visibleProgress, { live: true })}
-                      status="active"
-                      totalElapsed={wallClockMs !== null ? formatProgressElapsed(wallClockMs) : null}
-                      expanded={timelineOpen}
-                      onToggle={() => setTimelineOpen((open) => !open)}
-                      live
-                    />
-                  )}
+                  {liveTranscript.length > 0 ? <RunTranscript entries={liveTranscript} streaming /> : null}
+                  <WorkingDots connectionStale={connectionStale} stopping={cancelling} />
                 </div>
               ) : null}
 
@@ -1812,9 +1826,7 @@ export function DocumentAgentPanel({
           </div>
           <div className="mt-1 flex items-center justify-between gap-2">
             <div className="min-w-0 truncate text-[length:var(--text-2xs)] tabular-nums text-ink-faint">
-              {canStop && wallClockMs !== null
-                ? formatProgressElapsed(wallClockMs)
-                : null}
+              {canStop && wallClockMs !== null ? formatProgressElapsed(wallClockMs) : null}
             </div>
             {canStop ? (
               <Button

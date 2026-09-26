@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { openRouterCostUsd } from "./model.js";
+import { createOpenRouterModel, openRouterCostUsd, openRouterProvider } from "./model.js";
 import { RunMetricsCollector } from "./run-metrics.js";
 
 test("openRouterCostUsd reads OpenRouter usage.cost and ignores invalid values", () => {
@@ -15,6 +15,18 @@ test("openRouterCostUsd reads OpenRouter usage.cost and ignores invalid values",
   assert.equal(openRouterCostUsd({ openrouter: { usage: {} } }), undefined);
   assert.equal(openRouterCostUsd(undefined), undefined);
   assert.equal(openRouterCostUsd(null), undefined);
+});
+
+test("openRouterProvider reads the routed provider from stream metadata", () => {
+  assert.equal(openRouterProvider({ openrouter: { provider: "Together" } }), "Together");
+  assert.equal(openRouterProvider({ openrouter: { provider: "" } }), undefined);
+  assert.equal(openRouterProvider(undefined), undefined);
+});
+
+test("DeepSeek V4.1 Flash uses low reasoning without changing other models", () => {
+  const settings = (model: string) => (createOpenRouterModel({ apiKey: "test", model }) as unknown as { settings: { reasoning?: { effort: string } } }).settings;
+  assert.equal(settings("deepseek/deepseek-v4.1-flash").reasoning?.effort, "low");
+  assert.equal(settings("other/model").reasoning, undefined);
 });
 
 test("usage aggregates reasoning tokens and provider cost across turns", () => {

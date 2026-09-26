@@ -14,6 +14,8 @@ _Read this before starting any work. Keep it a concise current-state handoff, no
 
 ## Just Completed
 
+* **Agent activity and speed** — three animated dots follow the latest live transcript entry; the elapsed timer stays by Stop. Existing SSE heartbeats surface a stale connection. A successful DeepSeek V4.1 Flash run took 191.61s: 191.39s model, 220ms tools; turn 3 alone took 154.57s and 10,496 output tokens. The run used 11,311 reasoning tokens total. Agent calls request throughput routing and log provider plus reasoning tokens per turn; this model now requests low reasoning (OpenRouter default: high). The old run's provider is unknown.
+
 * **One persisted version per agent run** — successful DOCX tools update run-local bytes; success, max turns, cancellation, deadline, or failure flushes the latest valid state once. Read-only runs add no version. Inspect handles and read guards follow the working revision. Final `document.version.advanced` refreshes the editor; live tool activity still streams. Creation keeps its seed version. Agent-core-v3 and Rust unchanged.
 
 * **Public launch docs** — root README now describes the connected DOCX path, real self-host requirements, BYOK, Cloud boundary, and alpha limits; concise contribution, security, license, roadmap, architecture, and real-media capture guidance added.
@@ -74,8 +76,8 @@ _Read this before starting any work. Keep it a concise current-state handoff, no
 
 | Check | Status |
 |---|---|
-| agent-core-v3 unit (24) | Pass |
-| API unit (199; 17 skipped) | Pass |
+| agent-core-v3 unit (26) | Pass |
+| API unit (221; 20 skipped) | Pass |
 | Model accounting live OpenRouter E2E | Pass (`availableEvidenceTokens`, ctx=1048576, actual cost) |
 | Context lifecycle C1–C7 targeted API checks | Pass |
 | Phase 6A API retrieval + lifecycle/report tests (22) | Pass |
@@ -84,11 +86,12 @@ _Read this before starting any work. Keep it a concise current-state handoff, no
 | web agent-progress unit (26) | Pass |
 | web agent-messages + reconciliation (A–F) | Pass |
 | web typecheck | Pass |
+| web production build (`next build --webpack`) | Pass; Turbopack blocked by local port permissions |
 | API isolation one-turn finish transcript | Pass |
 | Run-local DOCX and terminal flush tests | Pass |
 | Browser Agent panel (Hello world) | Pass — answer once; reload once; screenshots `.tmp/transcript-dup-fix/09|10` |
 | Fixture screenshots A–G (`/.tmp/phase35-screenshots`) | Inspected |
-| Manual live OpenRouter dogfood | Pending — configured database host did not respond locally |
+| Manual live OpenRouter dogfood | User run succeeded in 191.61s before low-reasoning change: 10 turns, 13 tools, 1 saved version |
 
 ## Intentionally Deferred
 
@@ -99,4 +102,4 @@ _Read this before starting any work. Keep it a concise current-state handoff, no
 
 ## Recommended Next Step
 
-Mutation batching after live OpenRouter dogfood of the one-version run path.
+Repeat the document edit flow once and compare per-turn provider and elapsed time in the server log.

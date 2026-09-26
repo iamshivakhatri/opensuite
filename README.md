@@ -2,7 +2,7 @@
 
 **An open-source AI workspace for editing real Word documents.**
 
-OpenSuite helps an AI agent work on an existing `.docx` file instead of treating it as plain text. It inspects the document, uses typed document operations for targeted changes, and saves each change as a new version.
+OpenSuite helps an AI agent work on an existing `.docx` file instead of treating it as plain text. It inspects the document, uses typed document operations for targeted changes, and saves the result as a new version when the run ends.
 
 > **Alpha:** DOCX is the current focus. PPTX and XLSX files can be stored, but their editing surfaces are not connected yet.
 
