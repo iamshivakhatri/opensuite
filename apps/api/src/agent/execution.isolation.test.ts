@@ -991,8 +991,9 @@ test("max_turns settles as a bounded stop and persists its existing transcript",
     ).result;
     assert.equal(result.run.status, "failed");
     assert.equal(result.run.errorCode, "AGENT_MAX_TURNS");
-    assert.equal(result.run.errorMessage, "Stopped before completing the task.");
-    assert.equal(result.assistantMessage, null);
+    assert.equal(result.run.errorMessage, "Reached the 20 AI-turn limit before completing the task.");
+    assert.equal(result.assistantMessage?.content, result.run.errorMessage);
+    assert.equal(result.run.resultMessageId, result.assistantMessage?.id);
   });
 
   assert.equal(unhandled.length, 0);
@@ -1007,6 +1008,21 @@ test("max_turns settles as a bounded stop and persists its existing transcript",
       ["tool", "completed", "document.delete_paragraph", "Completed"],
     ],
   );
+
+  const firstResultId = [...persistence.runs.values()][0]?.resultMessageId;
+  const continued = await (await execution.start({
+    userId: "user-1",
+    threadId: "thread-1",
+    instruction: "Continue",
+    continueFromRunId: [...persistence.runs.values()][0]!.id,
+  })).result;
+  assert.notEqual(continued.run.resultMessageId, firstResultId);
+  assert.deepEqual(persistence.messages.map((message) => message.content), [
+    "edit the doc",
+    "Reached the 20 AI-turn limit before completing the task.",
+    "Continue",
+    "Reached the 20 AI-turn limit before completing the task.",
+  ]);
 });
 
 test("terminal runs flush valid working changes once, including partial and cancelled runs", async () => {
@@ -1069,9 +1085,9 @@ test("terminal runs flush valid working changes once, including partial and canc
 test("max_turns reports preserved changes only after a version advance", () => {
   assert.equal(
     boundedStopMessage("max_turns", true),
-    "Stopped before completing the task. Changes made so far were preserved.",
+    "Reached the 20 AI-turn limit before completing the task. Changes made so far were preserved.",
   );
-  assert.equal(boundedStopMessage("max_turns", false), "Stopped before completing the task.");
+  assert.equal(boundedStopMessage("max_turns", false), "Reached the 20 AI-turn limit before completing the task.");
 });
 
 test("continuation creates a fresh 20-turn run from the original task", async () => {

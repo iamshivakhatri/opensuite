@@ -14,6 +14,8 @@ _Read this before starting any work. Keep it a concise current-state handoff, no
 
 ## Just Completed
 
+* **Duplicate/Continue repair** — an exact document copy retains DIRECT source content and its read guard until edited, so the model need not rediscover the copy. Max-turn/deadline runs now save a linked assistant status message, keeping their tool transcript in paginated conversation history after Continue; migration 0018 links older bounded runs at their original completion times. Continue appears as a compact conversation entry. The 20-turn limit already counted model calls only; tool calls are separate. The reported Cincinnati runs used 20 model calls each, with 39 then 20 tool calls and no edits to the copied document.
+
 * **Agent activity and speed** — three animated dots follow the latest live transcript entry; the elapsed timer stays by Stop. Existing SSE heartbeats surface a stale connection. A successful DeepSeek V4.1 Flash run took 191.61s: 191.39s model, 220ms tools; turn 3 alone took 154.57s and 10,496 output tokens. The run used 11,311 reasoning tokens total. Agent calls request throughput routing and log provider plus reasoning tokens per turn; this model now requests low reasoning (OpenRouter default: high). The old run's provider is unknown.
 
 * **One persisted version per agent run** — successful DOCX tools update run-local bytes; success, max turns, cancellation, deadline, or failure flushes the latest valid state once. Read-only runs add no version. Inspect handles and read guards follow the working revision. Final `document.version.advanced` refreshes the editor; live tool activity still streams. Creation keeps its seed version. Agent-core-v3 and Rust unchanged.
@@ -45,7 +47,7 @@ _Read this before starting any work. Keep it a concise current-state handoff, no
 * **Engine npm cutover** — `@opensuite/engine-client` depends on `@opensuitehq/engine@0.1.1` from npm (not sibling `link:` / vendor stub). Docker `node:22-bookworm-slim` (glibc) validated: installs `engine-linux-arm64-gnu@0.1.1`, raw + engine-client smoke, API soft-boots without sibling/vendor. Alpine/musl unsupported.
 * **Live transcript ordering** — SSE narration now appends within ordered live segments beside tool activities; the existing completed-step renderer is shared, then durable steps replace live entries at terminalization.
 * **Live waiting + final response** — Thinking marks initial and post-tool model waits; the final model turn streams normal assistant text before an empty terminal `finish` call, keeping one model turn and one durable final message.
-* **Max-turn terminalization** — `max_turns` remains a failed run status but is settled as an expected bounded stop, with a deterministic incomplete/preserved-changes message and run-owned durable transcript shown without a final assistant message.
+* **Max-turn terminalization** — `max_turns` remains a failed run status with a deterministic incomplete/preserved-changes message and a linked assistant history entry for its durable transcript.
 * **Continue after max turns** — only `AGENT_MAX_TURNS` runs expose Continue; it starts a fresh API-owned 20-turn run from the original task and current document state, preserving the partial transcript.
 * **Persistent completed-run transcript v1** — durable, presentation-safe narration/tool steps in `agent_step`; final answer remains the linked `agent_message`; completed latest run rehydrates after reopen.
 * **Phase 6B** — bounded Rust `table_rows` inspection and request-local last-three-row context for high-confidence table continuation.
@@ -56,7 +58,7 @@ _Read this before starting any work. Keep it a concise current-state handoff, no
 * **Context Lifecycle C5** — bounded SQL history reads: execution loads at most 40 recent rows, while compaction uses scalar tail stats and a bounded oldest source batch.
 * **Context Lifecycle C6** — `GET /messages` is now cursor-paginated (`(createdAt, id)`, default 50 / max 100, newest page or `before` cursor, `{ messages, page: { hasMore, oldestCursor } }`); Agent Panel loads only the latest page on open, merges pages by id (dedupes optimistic/live entries), and offers an explicit "Load earlier messages" affordance that prepends older pages while preserving scroll position. Full history remains in Postgres and reachable via pagination; model/runtime context (C1–C5) untouched.
 * **Context Lifecycle C7** — API-owned deterministic in-run observation projection via composed `projectMessages`: keeps last 2 tool turns verbatim; shrinks older successful `document.inspect` / `document.find` JSON in place (pairing-safe); does not compact mutation failures; Phase 6 first-turn retrieval composition preserved; raw V3 transcript unchanged; no agent-core-v3 / source-shaping / C1–C6 changes.
-* **Phase 2A efficiency hardening** — verified DIRECT content remains model-facing until its version changes; version-aware read guard suppresses repeated or excessive unchanged reads while retaining targeted access. Older duplicate observations collapse; Continue uses persisted tool steps, original goal, and current document/version. Reports count suppressed reads. Live dogfood awaits database access.
+* **Phase 2A efficiency hardening** — verified DIRECT content remains model-facing until its version changes, including across an exact duplicate; version-aware read guard suppresses repeated or excessive unchanged reads while retaining targeted access. Older duplicate observations collapse; Continue uses persisted tool steps, original goal, and current document/version. Reports count suppressed reads. Live dogfood awaits database access.
 * **Agent failure clarity** — known managed-AI and no-active-document failures persist safe, actionable reasons for the panel; managed failures link to AI settings. OpenRouter tool-result names are normalized in model-facing context, and no-document creation runs instruct the model to create before editing.
 * **V3 run lifecycle hardening** — pre-model/setup throws (e.g. missing checkpoint table) terminalize via `settleTerminalRunFailure`; run-manager safety net for escaped background rejects; cancel route + UI cancel lock idempotent; progress reducer dedupes terminal `cancelled`/`failed`/`completed`. Local DB must apply migrations through `0014_slimy_mystique` (`pnpm db:migrate`) for C2 checkpoint table.
 * **Phase 6A** — API-only, version-keyed slim structure cache plus conservative first-turn retrieval; no V3/engine prompt or protocol changes.
@@ -83,10 +85,12 @@ _Read this before starting any work. Keep it a concise current-state handoff, no
 | Phase 6A API retrieval + lifecycle/report tests (22) | Pass |
 | Phase 1 workspace retrieval API tests | Pass |
 | engine-client tests (13) | Pass (npm `@opensuitehq/engine@0.1.1` + darwin-arm64) |
-| web agent-progress unit (26) | Pass |
+| web agent-progress + message unit (41) | Pass |
 | web agent-messages + reconciliation (A–F) | Pass |
 | web typecheck | Pass |
-| web production build (`next build --webpack`) | Pass; Turbopack blocked by local port permissions |
+| web production build (`next build --webpack`) | Pass |
+| Duplicate/Continue/retrieval focused API tests (81) | Pass |
+| full web test command | 17 existing import-resolution failures under Node type stripping; focused message/progress tests pass |
 | API isolation one-turn finish transcript | Pass |
 | Run-local DOCX and terminal flush tests | Pass |
 | Browser Agent panel (Hello world) | Pass — answer once; reload once; screenshots `.tmp/transcript-dup-fix/09|10` |
@@ -102,4 +106,4 @@ _Read this before starting any work. Keep it a concise current-state handoff, no
 
 ## Recommended Next Step
 
-Repeat the document edit flow once and compare per-turn provider and elapsed time in the server log.
+Apply migration 0018, deploy the updated API and web, then repeat the Cincinnati duplicate-and-rewrite flow once; check that the run report includes `redundantReadSuppressedCount` and that Continue retains both transcripts.

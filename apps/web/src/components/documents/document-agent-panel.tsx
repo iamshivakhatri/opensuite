@@ -1558,12 +1558,18 @@ export function DocumentAgentPanel({
                 const transcriptSteps = runStepsByMessageId[message.id];
                 if (message.role === "user") {
                   const messageTags = messageTaggedDocuments(message, workspaceFiles);
+                  const isContinue = message.content.trim() === "Continue";
                   return (
                     <div
                       key={message.id}
-                      className="rounded-[var(--radius-md)] bg-secondary-soft px-2.5 py-2 text-[length:var(--text-panel)] leading-[1.55] text-ink"
+                      className={cn(
+                        "text-ink",
+                        isContinue
+                          ? "self-start rounded-[var(--radius-sm)] border border-stroke px-2 py-0.5 text-[length:var(--text-xs)] font-medium"
+                          : "rounded-[var(--radius-md)] bg-secondary-soft px-2.5 py-2 text-[length:var(--text-panel)] leading-[1.55]",
+                      )}
                     >
-                      {messageTags.length > 0 ? (
+                      {!isContinue && messageTags.length > 0 ? (
                         <div className="mb-1.5 flex flex-wrap gap-1">
                           {messageTags.map((file) => (
                             <span
@@ -1608,7 +1614,9 @@ export function DocumentAgentPanel({
                         showCompletedSummary
                       />
                     ) : null}
-                    <AgentMarkdown text={message.content} />
+                    {!(isLast && activeRun?.resultMessageId === message.id && runError === message.content) ? (
+                      <AgentMarkdown text={message.content} />
+                    ) : null}
                   </div>
                 );
               })}

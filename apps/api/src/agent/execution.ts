@@ -498,6 +498,8 @@ async function runExecution(input: {
 
     const versionAdvances: DocumentVersionAdvance[] = [];
     const initialDocumentId = input.primaryDocumentId;
+    let directVersionId: string | null = null;
+    let updateDirectReadGuard = (_complete: boolean) => {};
     boundTools = await createPrimaryDocxTools({
       binding: input.deps.docxBinding,
       documents: input.deps.documents,
@@ -520,6 +522,14 @@ async function runExecution(input: {
         });
       },
       onDocumentCreated: async (created) => {
+        // Duplication preserves DIRECT context only when the source was unchanged.
+        if (created.kind === "duplicated" && directVersionId && boundTools?.getWorkingMutationCount() === 0) {
+          directVersionId = created.versionId;
+          updateDirectReadGuard(true);
+        } else {
+          directVersionId = null;
+          updateDirectReadGuard(false);
+        }
         await input.liveEvents?.emit({
           type: "document.created",
           runId: input.run.id,
@@ -606,6 +616,10 @@ async function runExecution(input: {
       availableEvidenceTokens: planningAvailableEvidenceTokens,
     });
     readGuard.setCompleteDirect(retrieval?.observation.contextStrategy === "direct");
+    if (retrieval?.observation.contextStrategy === "direct") {
+      directVersionId = input.run.baseDocumentVersionId;
+      updateDirectReadGuard = (complete) => readGuard.setCompleteDirect(complete);
+    }
     if (!input.thread.title?.trim()) {
       const titleStartedAt = Date.now();
       void generateThreadTitle({
@@ -683,7 +697,7 @@ async function runExecution(input: {
     const projectMessages = composeProjectMessages({
       retrievalMessage: retrieval?.message,
       safeToolResultNames: input.model.usageAttribution?.provider === "openrouter",
-      directVersionId: retrieval?.observation.contextStrategy === "direct" ? input.run.baseDocumentVersionId : undefined,
+      directVersionId: () => directVersionId,
       currentVersionId: () => boundTools?.getWorkingRevision() ? null : boundTools?.getActiveVersionId() ?? null,
       tools,
       stats: inRunStats,
@@ -1018,7 +1032,7 @@ export function guardRepeatedReads(
 export function composeProjectMessages(input: {
   readonly retrievalMessage?: string;
   readonly safeToolResultNames?: boolean;
-  readonly directVersionId?: string | null;
+  readonly directVersionId?: string | null | (() => string | null);
   readonly currentVersionId?: () => string | null;
   readonly tools: AgentToolSet;
   readonly stats: ReturnType<typeof createInRunObservationStats>;
@@ -1034,7 +1048,8 @@ export function composeProjectMessages(input: {
     const first = !projectedOnce;
     projectedOnce = true;
     const currentVersion = input.currentVersionId?.();
-    const directCurrent = input.directVersionId && currentVersion === input.directVersionId;
+    const directVersionId = typeof input.directVersionId === "function" ? input.directVersionId() : input.directVersionId;
+    const directCurrent = directVersionId && currentVersion === directVersionId;
     const afterFirstTurn = !first && directCurrent && input.retrievalMessage
       ? [...messages, { role: "user" as const, content: input.retrievalMessage }]
       : firstTurn(messages);
@@ -1065,7 +1080,7 @@ export function boundedStopMessage(
   hasVersionAdvance: boolean,
 ): string {
   const stopped = stopReason === "max_turns"
-    ? "Stopped before completing the task."
+    ? `Reached the ${MAX_MODEL_TURNS} AI-turn limit before completing the task.`
     : "Stopped before the task could be completed.";
   return hasVersionAdvance ? `${stopped} Changes made so far were preserved.` : stopped;
 }
@@ -1283,6 +1298,7 @@ async function settleTerminalRunFailure(input: {
   // Idempotent: if already terminal (e.g. outer safety net after settle),
   // do not attempt another status transition or duplicate terminal SSE.
   let alreadyTerminal = false;
+  let assistantMessage: AgentMessage | null = null;
   try {
     const current = await input.persistence.getRun({
       runId: input.run.id,
@@ -1302,14 +1318,34 @@ async function settleTerminalRunFailure(input: {
 
   if (!alreadyTerminal) {
     try {
-      await updateRunAfterError(
-        input.persistence,
-        input.ownerUserId,
-        input.run.id,
-        input.cancelled,
-        failureCode,
-        failureMessage,
-      );
+      if (input.expectedStop && !input.cancelled) {
+        assistantMessage = await input.persistence.withTransaction(async (tx) => {
+          const message = await input.persistence.appendMessage({
+            threadId: input.thread.id,
+            ownerUserId: input.ownerUserId,
+            role: "assistant",
+            content: failureMessage,
+          }, tx);
+          await input.persistence.updateRunStatus({
+            runId: input.run.id,
+            ownerUserId: input.ownerUserId,
+            status: "failed",
+            errorCode: failureCode,
+            errorMessage: failureMessage,
+            resultMessageId: message.id,
+          }, tx);
+          return message;
+        });
+      } else {
+        await updateRunAfterError(
+          input.persistence,
+          input.ownerUserId,
+          input.run.id,
+          input.cancelled,
+          failureCode,
+          failureMessage,
+        );
+      }
     } catch (finalizeError) {
       console.error(
         `[agent] run=${runShort} terminal_finalize_failed reason=${summarizeError(finalizeError)}`,
@@ -1356,7 +1392,7 @@ async function settleTerminalRunFailure(input: {
       failureCode,
       failureMessage,
     ),
-    assistantMessage: null,
+    assistantMessage,
   };
 }
 

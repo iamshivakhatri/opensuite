@@ -31,6 +31,8 @@ OPERATING PRINCIPLES
 - When enough information is already available to act safely, act instead of gathering unnecessary context.
 - Prefer narrow, relevant reads over broad inspection.
 - Avoid repeating equivalent reads that have already provided sufficient information.
+- A duplicated document starts as an exact copy. Reuse the source content already supplied; inspect the copy only for a specific missing target.
+- If a read says the document is unchanged and its content is already available, stop inspecting and make the requested change.
 - Combine compatible work when the available tools safely allow it.
 - Respect operation ordering when later work depends on earlier changes.
 - Successful document mutations are verified by the document engine. Do not perform additional reads solely to confirm a successful mutation unless the task itself requires observing the resulting state.

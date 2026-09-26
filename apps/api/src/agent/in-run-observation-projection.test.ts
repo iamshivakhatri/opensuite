@@ -529,6 +529,26 @@ test("DIRECT content stays available while its version is current", () => {
   assert.doesNotMatch(JSON.stringify(project(afterRead)), /COMPLETE CURRENT DOCUMENT CONTENT/);
 });
 
+test("DIRECT content follows an exact document copy, then expires after editing", () => {
+  let version = "source";
+  let directVersion = "source";
+  let workingRevision = 0;
+  const project = composeProjectMessages({
+    retrievalMessage: "COMPLETE DOCUMENT CONTENT",
+    directVersionId: () => directVersion,
+    currentVersionId: () => workingRevision ? null : version,
+    tools: {} as never,
+    stats: createInRunObservationStats(),
+  });
+  const messages: ModelMessage[] = [{ role: "user", content: "Rewrite the copy" }];
+  project(messages);
+  version = "copy";
+  directVersion = "copy";
+  assert.match(JSON.stringify(project(messages)), /COMPLETE DOCUMENT CONTENT/);
+  workingRevision = 1;
+  assert.doesNotMatch(JSON.stringify(project(messages)), /COMPLETE DOCUMENT CONTENT/);
+});
+
 test("read guard permits exact targets and resets on version advance", async () => {
   let version = "v1";
   let calls = 0;
