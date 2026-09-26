@@ -245,6 +245,9 @@ function memoryPersistence(ownerUserId: string): AgentPersistenceService & {
       steps.push(...input.steps.map((step) => ({ ...step, runId: input.runId })));
       return [];
     },
+    async listStepsForRun(input: { runId: string }) {
+      return steps.filter((step) => step.runId === input.runId);
+    },
   };
 
   return api as unknown as AgentPersistenceService & {
@@ -999,13 +1002,19 @@ test("continuation creates a fresh 20-turn run from the original task", async ()
     status: "failed",
     errorCode: "AGENT_MAX_TURNS",
   });
+  persistence.steps.push(
+    { runId: partial.id, sequence: 0, kind: "tool", status: "completed", name: "document.insert_paragraph", summary: "Completed" },
+    { runId: partial.id, sequence: 1, kind: "tool", status: "failed", name: "document.set_style", summary: "Failed: STYLE_NOT_FOUND" },
+  );
 
   let observedMaxTurns: number | undefined;
   let observedModelText = "";
+  let repeatedMutation = false;
   const execution = createAgentExecutionService(
     baseDeps(persistence, async (input) => {
       observedMaxTurns = input.maxTurns;
       observedModelText = input.messages.map((message) => String(message.content)).join("\n");
+      repeatedMutation = !observedModelText.includes("document.insert_paragraph ×1");
       return softResult("completed", "Done.");
     }),
   );
@@ -1025,6 +1034,10 @@ test("continuation creates a fresh 20-turn run from the original task", async ()
   assert.equal(observedMaxTurns, 20);
   assert.match(observedModelText, /Original task:\nRewrite the Risks section/);
   assert.match(observedModelText, /CURRENT bound document state/);
+  assert.match(observedModelText, /document.insert_paragraph ×1/);
+  assert.equal(repeatedMutation, false);
+  assert.match(observedModelText, /STYLE_NOT_FOUND/);
+  assert.match(observedModelText, /Current document ID: none; current version: none/);
   assert.equal(observedModelText.includes("STALE_TOOL_OUTPUT"), false);
 });
 

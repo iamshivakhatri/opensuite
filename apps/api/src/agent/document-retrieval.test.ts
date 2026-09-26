@@ -224,7 +224,8 @@ test("small single DOCX uses complete direct context, including every table row"
   });
   assert.equal(retrieved.contextStrategy, "direct");
   assert.equal(retrieved.plannerEvidenceBudgetTokens, 24_000);
-  assert.match(retrieved.message ?? "", /COMPLETE WORKING DOCUMENT CONTENT/);
+  assert.match(retrieved.message ?? "", /COMPLETE CURRENT DOCUMENT CONTENT/);
+  assert.match(retrieved.message ?? "", /version v-direct/);
   assert.match(retrieved.message ?? "", /Milestone 11/);
   assert.doesNotMatch(retrieved.message ?? "", /DOCUMENT MAPS/);
 });
@@ -276,8 +277,8 @@ test("ten tiny working documents use one shared direct budget", async () => {
   });
   assert.equal(retrieved.contextStrategy, "direct");
   assert.ok(retrieved.fullDocumentEstimatedTokens! < 12_000);
-  assert.match(retrieved.message ?? "", /=== Document: Tiny 0\.docx ===/);
-  assert.match(retrieved.message ?? "", /=== Document: Tiny 9\.docx ===/);
+  assert.match(retrieved.message ?? "", /=== Document: Tiny 0\.docx \(version v-0\) ===/);
+  assert.match(retrieved.message ?? "", /=== Document: Tiny 9\.docx \(version v-9\) ===/);
   assert.match(retrieved.message ?? "", /bound to the active artifact only/);
 });
 

@@ -101,6 +101,8 @@ export interface AgentRunReportContext {
   readonly estimatedInRunTokensAfter?: number;
   /** C7: peak estimated tokens of the full projected model input. */
   readonly maxProjectedInputTokens?: number;
+  readonly redundantReadSuppressedCount?: number;
+  readonly continuationPreviousRunId?: string;
 }
 
 export interface AgentRunReport {
@@ -414,6 +416,7 @@ export function formatAgentRunSummary(report: AgentRunReport): string {
   lines.push(`${padLabel("Model")}${modelLabel}`);
   lines.push(`${padLabel("Turns")}${report.modelTurns}`);
   lines.push(`${padLabel("Tool calls")}${report.toolCalls}`);
+  if (report.context?.redundantReadSuppressedCount) lines.push(`${padLabel("Reads saved")}${report.context.redundantReadSuppressedCount}`);
 
   if (report.document) {
     const initialDoc = report.document.initialDocumentId;

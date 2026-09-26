@@ -275,8 +275,8 @@ async function formatCompleteDocument(
 
 function formatCompleteWorkingDocuments(documents: readonly { artifact: WorkspaceArtifact; content: string }[]): string {
   return [
-    "COMPLETE WORKING DOCUMENT CONTENT",
-    ...documents.map((document) => `=== Document: ${document.artifact.name} ===\n${document.content}`),
+    "COMPLETE CURRENT DOCUMENT CONTENT. Each document below is complete at its stated version. Do not inspect or find merely to rediscover this content; read only for missing exact mutation targets, unsupported structure, changes after this snapshot, or targeted verification.",
+    ...documents.map((document) => `=== Document: ${document.artifact.name} (version ${document.artifact.versionId}) ===\n${document.content}`),
   ].join("\n\n");
 }
 

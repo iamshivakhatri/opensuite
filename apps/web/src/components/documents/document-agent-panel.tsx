@@ -457,7 +457,7 @@ export function DocumentAgentPanel({
     const ms = fromServer ?? fromClient;
 
     if (run.status === "failed") {
-      const canContinue = run.errorCode === "AGENT_MAX_TURNS";
+      const canContinue = run.errorCode === "AGENT_MAX_TURNS" || run.errorCode === "AGENT_DEADLINE";
       setRunError(
         canContinue
           ? run.errorMessage || "Stopped before completing the task."

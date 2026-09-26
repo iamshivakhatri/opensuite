@@ -4,7 +4,7 @@ import { test } from "node:test";
 import type { ModelMessage } from "@opensuite/agent-core-v3";
 
 import { estimateTokens } from "./context-projection.js";
-import { composeProjectMessages, firstTurnContextProjection } from "./execution.js";
+import { composeProjectMessages, firstTurnContextProjection, guardRepeatedReads } from "./execution.js";
 import {
   createInRunObservationStats,
   projectInRunObservations,
@@ -495,6 +495,68 @@ test("firstTurnContextProjection still injects once", () => {
   assert.deepEqual(project(messages), messages);
 });
 
+test("DIRECT content stays available while its version is current", () => {
+  let version = "v1";
+  const project = composeProjectMessages({
+    retrievalMessage: "COMPLETE CURRENT DOCUMENT CONTENT (v1)",
+    directVersionId: "v1",
+    currentVersionId: () => version,
+    tools: {} as never,
+    stats: createInRunObservationStats(),
+  });
+  const messages: ModelMessage[] = [{ role: "user", content: "Continue" }];
+  assert.match(JSON.stringify(project(messages)), /COMPLETE CURRENT DOCUMENT CONTENT/);
+  const afterRead = [...messages, assistantTurn(toolCall("r", "document.find", { text: "x" })), toolTurn(toolResult("r", "document.find", { ok: true }))];
+  const second = project(afterRead);
+  assert.equal(second[1]?.role, "assistant");
+  assert.equal(second[2]?.role, "tool");
+  assert.match(JSON.stringify(second.at(-1)), /COMPLETE CURRENT DOCUMENT CONTENT/);
+  version = "v2";
+  assert.doesNotMatch(JSON.stringify(project(afterRead)), /COMPLETE CURRENT DOCUMENT CONTENT/);
+});
+
+test("read guard permits exact targets and resets on version advance", async () => {
+  let version = "v1";
+  let calls = 0;
+  const tools = {
+    "document.inspect": { kind: "read", execute: async () => { calls += 1; return { ok: true }; } },
+    "document.find": { kind: "read", execute: async () => { calls += 1; return { ok: true }; } },
+  } as never;
+  const guard = guardRepeatedReads(tools, () => version, true);
+  const inspect = (tools as Record<string, { execute: (args: unknown, context: unknown) => Promise<unknown> }>)["document.inspect"]!.execute;
+  await inspect({ kind: "overview" }, {});
+  await inspect({ kind: "overview" }, {});
+  assert.deepEqual(await inspect({ kind: "overview" }, {}), {
+    ok: true, redundantReadSuppressed: true, versionId: "v1",
+    message: "Document unchanged. The requested content is already available. Proceed with the remaining task or finish; use a targeted read only for a missing exact target.",
+  });
+  await inspect({ kind: "context", text: "exact target" }, {});
+  assert.equal(calls, 3);
+  version = "v2";
+  await inspect({ kind: "overview" }, {});
+  assert.equal(calls, 4);
+  assert.equal(guard.suppressedCount(), 1);
+});
+
+test("read guard stops distinct DIRECT find loops but permits normal targeted reads", async () => {
+  let calls = 0;
+  const tools = { "document.find": { kind: "read", execute: async () => { calls += 1; return { ok: true }; } } } as never;
+  const guard = guardRepeatedReads(tools, () => "v1", true);
+  const find = (tools as Record<string, { execute: (args: unknown, context: unknown) => Promise<unknown> }>)["document.find"]!.execute;
+  for (let i = 0; i < 8; i += 1) await find({ text: `target ${i}` }, {});
+  assert.equal(calls, 6);
+  assert.equal(guard.suppressedCount(), 2);
+});
+
+test("failed reads remain retryable", async () => {
+  let calls = 0;
+  const tools = { "document.find": { kind: "read", execute: async () => { calls += 1; return { ok: false }; } } } as never;
+  guardRepeatedReads(tools, () => "v1", true);
+  const find = (tools as Record<string, { execute: (args: unknown, context: unknown) => Promise<unknown> }>)["document.find"]!.execute;
+  for (let i = 0; i < 3; i += 1) await find({ text: "missing" }, {});
+  assert.equal(calls, 3);
+});
+
 // --- Token effect / pathological ---
 
 test("C7 tokens: projected in-run tokens after < before for large inspect/find", () => {
@@ -561,4 +623,17 @@ test("C7 tokens: 8–10 tool-turn fixture does not retain every full raw payload
 test("C7: estimateTokens helper is reused (smoke)", () => {
   assert.equal(estimateTokens(""), 0);
   assert.ok(estimateTokens("abc") > 0);
+});
+
+test("older equivalent reads collapse while mutation results stay visible", () => {
+  const messages: ModelMessage[] = [{ role: "user", content: "u" }];
+  for (let i = 0; i < 4; i += 1) {
+    messages.push(assistantTurn(toolCall(`r${i}`, "document.find", { text: "same" })));
+    messages.push(toolTurn(toolResult(`r${i}`, "document.find", largeFindPayload("same", 5))));
+  }
+  messages.push(assistantTurn(toolCall("m", "document.replace_text")));
+  messages.push(toolTurn(toolResult("m", "document.replace_text", { ok: true, versionId: "v2" })));
+  const projected = projectInRunObservations(messages);
+  assert.equal(resultValue(projected.messages[2]!).superseded, true);
+  assert.equal(resultValue(projected.messages.at(-1)!).versionId, "v2");
 });

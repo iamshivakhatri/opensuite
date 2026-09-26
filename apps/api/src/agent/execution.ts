@@ -97,12 +97,12 @@ function createTranscriptCollector() {
       if (toolName === "finish") return;
       flushNarration();
     },
-    toolFinished(toolName: string, status: AgentStepStatus, skipped = false) {
+    toolFinished(toolName: string, status: AgentStepStatus, skipped = false, error?: string) {
       entries.push({
         kind: toolName === "document.inspect" ? "inspect" : "tool",
         status,
         name: toolName,
-        summary: skipped ? "Skipped" : status === "completed" ? "Completed" : "Failed",
+        summary: skipped ? "Skipped" : status === "completed" ? "Completed" : `Failed${error ? `: ${error.slice(0, 120)}` : ""}`,
       });
     },
     finish(finalText?: string) {
@@ -334,7 +334,7 @@ export function createAgentExecutionService(deps: AgentExecutionServiceDeps) {
         instruction: input.instruction,
         submittedDocumentIds: input.documentIds ?? [],
         workingDocumentIds,
-        ...(continuation ? { continuationContext: continuation.context } : {}),
+        ...(continuation ? { continuationContext: continuation.context, continuationPreviousRunId: input.continueFromRunId } : {}),
         signal: input.signal,
         liveEvents: input.liveEvents,
       });
@@ -383,7 +383,7 @@ async function resolveContinuation(
     !prior ||
     prior.threadId !== thread.id ||
     prior.status !== "failed" ||
-    prior.errorCode !== "AGENT_MAX_TURNS" ||
+    (prior.errorCode !== "AGENT_MAX_TURNS" && prior.errorCode !== "AGENT_DEADLINE") ||
     !prior.triggeringMessageId
   ) {
     throw new AgentExecutionError("INVALID_CONTINUATION", "This run cannot be continued.");
@@ -396,9 +396,22 @@ async function resolveContinuation(
   if (!original || original.role !== "user") {
     throw new AgentExecutionError("INVALID_CONTINUATION", "This run cannot be continued.");
   }
+  const steps = await persistence.listStepsForRun({ runId: prior.id, ownerUserId: input.userId });
+  const completed = new Map<string, number>();
+  const failures = new Map<string, number>();
+  for (const step of steps) {
+    if (step.kind !== "tool" && step.kind !== "inspect") continue;
+    const counts = step.status === "completed" ? completed : step.status === "failed" ? failures : null;
+    if (counts) counts.set(step.name, (counts.get(step.name) ?? 0) + 1);
+  }
+  const formatCounts = (counts: Map<string, number>) => [...counts]
+    .map(([name, count]) => `${name} ×${count}`).join(", ") || "none";
+  const failureReasons = [...new Set(steps.filter((step) => step.status === "failed")
+    .map((step) => step.summary).filter((summary): summary is string => !!summary && summary !== "Failed"))]
+    .slice(0, 4).join("; ");
   return {
     triggeringMessageId: original.id,
-    context: `Application continuation context:\nThis run continues a previous run that reached its model-turn limit.\n\nOriginal task:\n${original.content}\n\nVerified changes from the previous run were preserved. Continue from the CURRENT bound document state. Do not assume old handles or locations are valid. Do not repeat completed work unnecessarily. Inspect current state only as needed and complete the remaining task.`,
+    context: `PREVIOUS RUN PROGRESS (run ${prior.id}; stopped: ${prior.errorCode === "AGENT_DEADLINE" ? "deadline" : "max_turns"})\nOriginal task:\n${original.content}\nCompleted tools: ${formatCounts(completed)}\nFailed tools: ${formatCounts(failures)}${failureReasons ? `\nFailure details: ${failureReasons}` : ""}\nBase document version: ${prior.baseDocumentVersionId ?? "none"}. Resume from the CURRENT bound document state. Do not repeat completed work. Read only where current context lacks an exact target or required structure.`,
   };
 }
 
@@ -436,6 +449,7 @@ async function runExecution(input: {
   readonly submittedDocumentIds: readonly string[];
   readonly workingDocumentIds: readonly string[];
   readonly continuationContext?: string;
+  readonly continuationPreviousRunId?: string;
   readonly signal?: AbortSignal;
   readonly liveEvents?: AgentEventSink;
 }): Promise<AgentExecutionResult> {
@@ -513,6 +527,11 @@ async function runExecution(input: {
       ...(boundTools?.tools ?? {}),
       [finish.name]: finish.tool,
     };
+    const readGuard = guardRepeatedReads(
+      tools,
+      () => boundTools?.getActiveVersionId() ?? null,
+      false,
+    );
     const system = buildAgentOperatingInstruction(Object.keys(tools));
     const historicalMessages = priorMessages.map((message) => ({
       role: message.role,
@@ -569,6 +588,7 @@ async function runExecution(input: {
       workingDocumentIds: input.workingDocumentIds,
       availableEvidenceTokens: planningAvailableEvidenceTokens,
     });
+    readGuard.setCompleteDirect(retrieval?.observation.contextStrategy === "direct");
     if (!input.thread.title?.trim()) {
       const titleStartedAt = Date.now();
       void generateThreadTitle({
@@ -637,7 +657,7 @@ async function runExecution(input: {
       ...(finalProjectedCheckpoint ? [{ role: "user" as const, content: finalProjectedCheckpoint }] : []),
       ...finalProjectedHistoricalMessages,
       ...(input.continuationContext
-        ? [{ role: "user" as const, content: input.continuationContext }]
+        ? [{ role: "user" as const, content: `${input.continuationContext}\nCurrent document ID: ${boundTools?.getActiveDocumentId() ?? "none"}; current version: ${boundTools?.getActiveVersionId() ?? "none"}.` }]
         : []),
       { role: "user", content: input.instruction },
     ];
@@ -645,6 +665,8 @@ async function runExecution(input: {
     const inRunStats = createInRunObservationStats();
     const projectMessages = composeProjectMessages({
       retrievalMessage: retrieval?.message,
+      directVersionId: retrieval?.observation.contextStrategy === "direct" ? input.run.baseDocumentVersionId : undefined,
+      currentVersionId: () => boundTools?.getActiveVersionId() ?? null,
       tools,
       stats: inRunStats,
     });
@@ -685,6 +707,8 @@ async function runExecution(input: {
           estimatedInRunTokensBefore: inRunStats.estimatedInRunTokensBefore,
           estimatedInRunTokensAfter: inRunStats.estimatedInRunTokensAfter,
           maxProjectedInputTokens: inRunStats.maxProjectedInputTokens,
+          redundantReadSuppressedCount: readGuard.suppressedCount(),
+          continuationPreviousRunId: input.continuationPreviousRunId,
         },
         sink: input.deps.agentRunReportSink,
       });
@@ -712,6 +736,8 @@ async function runExecution(input: {
         estimatedInRunTokensBefore: inRunStats.estimatedInRunTokensBefore,
         estimatedInRunTokensAfter: inRunStats.estimatedInRunTokensAfter,
         maxProjectedInputTokens: inRunStats.maxProjectedInputTokens,
+        redundantReadSuppressedCount: readGuard.suppressedCount(),
+        continuationPreviousRunId: input.continuationPreviousRunId,
       },
       sink: input.deps.agentRunReportSink,
     });
@@ -907,12 +933,61 @@ export function firstTurnContextProjection(context: string): (messages: readonly
   };
 }
 
+/** Version identity resets the read budget automatically after a mutation. */
+export function guardRepeatedReads(
+  tools: AgentToolSet,
+  currentVersionId: () => string | null,
+  completeDirect: boolean,
+) {
+  let direct = completeDirect;
+  let directVersion = completeDirect ? currentVersionId() : null;
+  let suppressed = 0;
+  const attempts = new Map<string, number>();
+  for (const name of ["document.inspect", "document.find"] as const) {
+    const original = tools[name];
+    if (!original?.execute) continue;
+    const execute = original.execute;
+    tools[name] = {
+      ...original,
+      execute: async (args: any, context: any) => {
+        const version = currentVersionId() ?? "unbound";
+        const key = `${version}:${name}:${JSON.stringify(args)}`;
+        const repeated = attempts.get(key) ?? 0;
+        const broadInspect = name === "document.inspect" && (args as { kind?: string }).kind !== "context";
+        const directReads = [...attempts].reduce((sum, [item, count]) =>
+          item.startsWith(`${version}:${name}:`) ? sum + count : sum, 0);
+        if (repeated >= 2 || (direct && version === directVersion && (broadInspect || name === "document.find") && directReads >= (name === "document.find" ? 6 : 2))) {
+          suppressed += 1;
+          return { ok: true, redundantReadSuppressed: true, versionId: version,
+            message: "Document unchanged. The requested content is already available. Proceed with the remaining task or finish; use a targeted read only for a missing exact target." };
+        }
+        attempts.set(key, repeated + 1);
+        try {
+          const result = await execute(args, context);
+          if (result && typeof result === "object" && "ok" in result && result.ok === false) {
+            if (repeated) attempts.set(key, repeated);
+            else attempts.delete(key);
+          }
+          return result;
+        } catch (error) {
+          if (repeated) attempts.set(key, repeated);
+          else attempts.delete(key);
+          throw error;
+        }
+      },
+    };
+  }
+  return { setCompleteDirect(value: boolean) { direct = value; directVersion = value ? currentVersionId() : null; }, suppressedCount() { return suppressed; } };
+}
+
 /**
  * Compose Phase 6 first-turn retrieval with C7 in-run observation projection.
  * Retrieval injects once; C7 runs every turn on the model-facing view only.
  */
 export function composeProjectMessages(input: {
   readonly retrievalMessage?: string;
+  readonly directVersionId?: string | null;
+  readonly currentVersionId?: () => string | null;
   readonly tools: AgentToolSet;
   readonly stats: ReturnType<typeof createInRunObservationStats>;
 }): (messages: readonly ModelMessage[]) => readonly ModelMessage[] {
@@ -921,9 +996,16 @@ export function composeProjectMessages(input: {
     : (messages: readonly ModelMessage[]) => messages;
   const isMutateTool = (toolName: string) =>
     input.tools[toolName]?.kind === "mutate";
+  let projectedOnce = false;
 
   return (messages) => {
-    const afterFirstTurn = firstTurn(messages);
+    const first = !projectedOnce;
+    projectedOnce = true;
+    const currentVersion = input.currentVersionId?.();
+    const directCurrent = input.directVersionId && currentVersion === input.directVersionId;
+    const afterFirstTurn = !first && directCurrent && input.retrievalMessage
+      ? [...messages, { role: "user" as const, content: input.retrievalMessage }]
+      : firstTurn(messages);
     const projected = projectInRunObservations(afterFirstTurn, { isMutateTool });
     accumulateInRunObservationStats(input.stats, projected);
     return projected.messages;
@@ -989,6 +1071,8 @@ async function emitRunReport(input: {
     readonly estimatedInRunTokensBefore?: number;
     readonly estimatedInRunTokensAfter?: number;
     readonly maxProjectedInputTokens?: number;
+    readonly redundantReadSuppressedCount?: number;
+    readonly continuationPreviousRunId?: string;
   };
   readonly sink?: AgentRunReportSink;
 }): Promise<void> {
@@ -1064,7 +1148,7 @@ async function relayEvent(
   if (event.type === "text_delta") transcript.text(event.delta);
   if (event.type === "tool_started") transcript.toolStarted(event.toolName);
   if (event.type === "tool_completed") transcript.toolFinished(event.toolName, "completed");
-  if (event.type === "tool_failed") transcript.toolFinished(event.toolName, "failed");
+  if (event.type === "tool_failed") transcript.toolFinished(event.toolName, "failed", false, event.error);
   if (event.type === "tool_skipped") transcript.toolFinished(event.toolName, "cancelled", true);
   if (!sink) return;
   const at = new Date().toISOString();

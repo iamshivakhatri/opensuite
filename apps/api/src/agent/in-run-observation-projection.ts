@@ -137,6 +137,19 @@ export function projectInRunObservations(
   const recentRegionIndexes = new Set(
     toolTurnIndexes.slice(recentStart),
   );
+  const superseded = new Set<string>();
+  const seenReads = new Set<string>();
+  for (const idx of [...toolTurnIndexes].reverse()) {
+    const region = regions[idx]!;
+    if (region.kind !== "tool_turn") continue;
+    if (toolTurnHasSuccessfulMutation(region, isMutateTool)) seenReads.clear();
+    for (const part of region.assistant.content as readonly unknown[]) {
+      if (!isToolCallPart(part) || !COMPACTABLE_READ_TOOLS.has(part.toolName)) continue;
+      const key = `${part.toolName}:${JSON.stringify(part.input)}`;
+      if (seenReads.has(key)) superseded.add(part.toolCallId);
+      seenReads.add(key);
+    }
+  }
 
   // First successful mutation turn (by region index) — older reads before it
   // are stale-handle candidates once outside the verbatim window.
@@ -162,6 +175,7 @@ export function projectInRunObservations(
     const compacted = compactToolTurn(region, {
       isMutateTool,
       aggressiveReadCompaction: preMutationStale,
+      superseded,
     });
     observationsCompacted += compacted.compactedCount;
     return compacted.region;
@@ -262,6 +276,7 @@ function compactToolTurn(
   options: {
     readonly isMutateTool: (name: string) => boolean;
     readonly aggressiveReadCompaction: boolean;
+    readonly superseded: ReadonlySet<string>;
   },
 ): {
   readonly region: Extract<Region, { kind: "tool_turn" }>;
@@ -300,6 +315,7 @@ function maybeCompactResult(
   options: {
     readonly isMutateTool: (name: string) => boolean;
     readonly aggressiveReadCompaction: boolean;
+    readonly superseded: ReadonlySet<string>;
   },
 ): ToolResultPartLike {
   const toolName = part.toolName;
@@ -322,6 +338,10 @@ function maybeCompactResult(
     const stub = compactFailedReadStub(toolName, payload);
     if (!stub) return part;
     return replaceJsonOutput(part, stub);
+  }
+
+  if (options.superseded.has(part.toolCallId)) {
+    return replaceJsonOutput(part, { ok: true, compacted: true, superseded: true });
   }
 
   // Successful compactable reads — always eligible outside the verbatim window.
