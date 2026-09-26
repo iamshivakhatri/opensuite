@@ -435,8 +435,10 @@ export function registerAgentRoutes(
       const run = await persistence.getRun({ runId: params.data.runId, ownerUserId: user.id });
       const working = run && runManager.getWorkingDocument({ runId: run.id, ownerUserId: user.id });
       if (!working) return reply.status(404).send({ error: { statusCode: 404, code: "WORKING_DOCUMENT_NOT_FOUND", message: "Working document not available" } });
-      return reply.header("Cache-Control", "no-store").header("X-Working-Revision", String(working.revision))
-        .header("X-Document-Id", working.documentId).header("X-Base-Version-Id", working.baseVersionId)
+      return reply.header("Cache-Control", "no-store")
+        .header("Access-Control-Expose-Headers", "X-Working-Revision, X-Base-Version-Id")
+        .header("X-Working-Revision", String(working.revision))
+        .header("X-Base-Version-Id", working.baseVersionId)
         .type("application/vnd.openxmlformats-officedocument.wordprocessingml.document")
         .send(Buffer.from(working.bytes));
     } catch (error) {

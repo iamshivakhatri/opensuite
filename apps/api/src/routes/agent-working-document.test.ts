@@ -31,6 +31,7 @@ test("working document bytes are available only to the run owner while active", 
     assert.equal(owner.statusCode, 200);
     assert.equal(owner.body, "preview");
     assert.equal(owner.headers["x-working-revision"], "2");
+    assert.equal(owner.headers["access-control-expose-headers"], "X-Working-Revision, X-Base-Version-Id");
     assert.equal(owner.headers["cache-control"], "no-store");
     active = false;
     const finished = await app.inject({ url, headers: { "x-test-user": "owner" } });

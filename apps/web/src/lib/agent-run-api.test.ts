@@ -50,3 +50,10 @@ test("agent stream reports server heartbeats during a model wait", async () => {
   }));
   assert.equal(heartbeats, 2);
 });
+
+test("working preview rejects responses without readable metadata", async () => {
+  process.env.NEXT_PUBLIC_API_URL = "http://api.test";
+  globalThis.fetch = (async () => new Response("bytes", { status: 200 })) as typeof fetch;
+  const api = await import(`${new URL("./api.ts", import.meta.url).href}?t=${Date.now()}`);
+  await assert.rejects(api.fetchWorkingDocument("run-1"), /missing preview metadata/);
+});

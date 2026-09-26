@@ -275,6 +275,7 @@ export function DocxSurface({
     previewBusyRef.current = true;
     void (async () => {
       try {
+        let lastFetchedRevision = 0;
         while (previewTargetRef.current) {
           const target = previewTargetRef.current;
           if (!target || documentIdRef.current !== target.documentId ||
@@ -285,7 +286,13 @@ export function DocxSurface({
           if (applied?.runId === target.runId && applied.revision >= target.revision) break;
           const preview = await fetchWorkingDocument(target.runId);
           const latest = previewTargetRef.current;
-          if (!latest || latest.runId !== target.runId || !canApplyWorkingPreview({
+          if (!latest || latest.runId !== target.runId) break;
+          if (latest.revision > preview.revision) {
+            if (preview.revision <= lastFetchedRevision) break;
+            lastFetchedRevision = preview.revision;
+            continue;
+          }
+          if (!canApplyWorkingPreview({
             requestedRevision: latest.revision,
             fetchedRevision: preview.revision,
             dirty: dirtyRef.current,
@@ -294,9 +301,9 @@ export function DocxSurface({
             baseVersionId: preview.baseVersionId,
             loadedVersionId: loadedVersionIdRef.current,
             latestVersionId: latestVersionIdRef.current,
-          })) continue;
+          })) break;
           while (reloadingRef.current) await new Promise((resolve) => window.setTimeout(resolve, 50));
-          if (dirtyRef.current || !previewTargetRef.current || latestVersionIdRef.current !== preview.baseVersionId) continue;
+          if (dirtyRef.current || !previewTargetRef.current || latestVersionIdRef.current !== preview.baseVersionId) break;
           const api = editorRef.current;
           if (!api?.loadDocumentBuffer) break;
           reloadingRef.current = true;

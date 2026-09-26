@@ -558,10 +558,15 @@ export async function fetchDocumentVersionContent(
 export async function fetchWorkingDocument(runId: string): Promise<{ bytes: ArrayBuffer; revision: number; baseVersionId: string }> {
   const response = await apiFetch(`/api/agent/runs/${runId}/working-document`);
   if (!response.ok) throw await parseError(response);
+  const revision = Number(response.headers.get("X-Working-Revision"));
+  const baseVersionId = response.headers.get("X-Base-Version-Id");
+  if (!Number.isSafeInteger(revision) || revision < 1 || !baseVersionId) {
+    throw new Error("Working document response is missing preview metadata");
+  }
   return {
     bytes: await response.arrayBuffer(),
-    revision: Number(response.headers.get("X-Working-Revision")),
-    baseVersionId: response.headers.get("X-Base-Version-Id") ?? "",
+    revision,
+    baseVersionId,
   };
 }
 

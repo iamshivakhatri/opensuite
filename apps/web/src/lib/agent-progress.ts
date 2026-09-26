@@ -335,7 +335,7 @@ function humanizeToolName(toolName: string): string {
   return words.charAt(0).toUpperCase() + words.slice(1);
 }
 
-function toolLabels(toolName: string): { active: string; done: string } {
+export function toolLabels(toolName: string): { active: string; done: string } {
   const mapped = TOOL_LABELS[toolName];
   if (mapped) return mapped;
   const base = humanizeToolName(toolName);

@@ -12,6 +12,7 @@ import {
   presentAgentRun,
   reduceAgentProgress,
   reduceLiveTranscript,
+  toolLabels,
   visibleAgentProgress,
   type AgentProgressLine,
   type AgentTurnProgress,
@@ -77,7 +78,7 @@ function stepProgressLine(step: AgentStep): AgentProgressLine | null {
   if (step.kind === "narration" || step.status === "cancelled") return null;
   return {
     id: `step:${step.id}`,
-    label: step.summary ?? step.name,
+    label: step.summary === "Completed" ? toolLabels(step.name).done : step.summary ?? step.name,
     status: step.status === "failed" ? "error" : "done",
     toolName: step.name,
   };
