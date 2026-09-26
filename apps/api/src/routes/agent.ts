@@ -108,7 +108,7 @@ export interface AgentRouteDeps {
   readonly runManager: AgentRunManager;
   readonly lease?: AgentExecutionLeaseService;
   /** Required on hijacked SSE — reply.hijack bypasses @fastify/cors. */
-  readonly webOrigin: string;
+  readonly webOrigins: readonly string[];
   readonly rateLimiter: UserRateLimiter;
 }
 
@@ -125,7 +125,7 @@ export function registerAgentRoutes(
   app: FastifyInstance,
   deps: AgentRouteDeps,
 ): void {
-  const { auth, persistence, runManager, lease, webOrigin, rateLimiter } = deps;
+  const { auth, persistence, runManager, lease, webOrigins, rateLimiter } = deps;
 
   app.get(
     "/api/workspaces/:workspaceId/agent/threads",
@@ -528,9 +528,9 @@ export function registerAgentRoutes(
     // blocks reading the stream (CORS) while the server still holds the socket.
     const requestOrigin = request.headers.origin;
     const allowOrigin =
-      typeof requestOrigin === "string" && requestOrigin === webOrigin
+      typeof requestOrigin === "string" && webOrigins.includes(requestOrigin)
         ? requestOrigin
-        : webOrigin;
+        : webOrigins[0]!;
 
     reply.hijack();
     reply.raw.writeHead(200, {

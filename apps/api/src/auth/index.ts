@@ -23,7 +23,7 @@ export function createAuth(config: AppConfig, db: Db, emailSender: EmailSender) 
   return betterAuth({
     secret: config.betterAuthSecret,
     baseURL: config.betterAuthUrl,
-    trustedOrigins: [config.webOrigin],
+    trustedOrigins: [...config.webOrigins],
     database: drizzleAdapter(db, {
       provider: "pg",
       schema,

@@ -28,6 +28,7 @@ test("loadConfig applies defaults when auth/database env vars are provided", () 
   assert.equal(config.betterAuthSecret, baseEnv.BETTER_AUTH_SECRET);
   assert.equal(config.betterAuthUrl, baseEnv.BETTER_AUTH_URL);
   assert.equal(config.webOrigin, baseEnv.WEB_ORIGIN);
+  assert.deepEqual(config.webOrigins, [baseEnv.WEB_ORIGIN]);
   assert.equal(config.resendApiKey, baseEnv.RESEND_API_KEY);
   assert.equal(config.emailFrom, baseEnv.EMAIL_FROM);
   assert.equal(config.s3.endpoint, testS3Env.S3_ENDPOINT);
@@ -55,6 +56,11 @@ test("loadConfig parses ALLOW_SIGNUP and AUTH_CROSS_ORIGIN", () => {
   });
   assert.equal(config.allowSignup, false);
   assert.equal(config.authCrossOrigin, true);
+});
+
+test("loadConfig allows exact additional web origins", () => {
+  const config = loadConfig({ ...baseEnv, WEB_ORIGINS: "http://localhost:5173, http://localhost:3001" });
+  assert.deepEqual(config.webOrigins, ["http://localhost:3001", "http://localhost:5173"]);
 });
 
 test("Google sign-in needs both credentials", () => {

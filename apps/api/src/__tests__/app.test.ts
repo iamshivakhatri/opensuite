@@ -98,8 +98,10 @@ test("GET / returns plain OpenSuite API text", async () => {
   await app.close();
 });
 
-test("API sends fixed security headers and only allows the web origin", async () => {
-  const app = await testApp();
+test("API sends fixed security headers and only allows configured web origins", async () => {
+  const app = await buildApp(testConfig({ WEB_ORIGINS: "http://localhost:5173" }), {
+    auth: mockAuth(), db: stubDb(), storage: createMemoryObjectStorage(),
+  });
 
   const response = await app.inject({ method: "GET", url: "/" });
   assert.equal(response.headers["x-content-type-options"], "nosniff");
@@ -115,6 +117,9 @@ test("API sends fixed security headers and only allows the web origin", async ()
     },
   });
   assert.equal(allowed.headers["access-control-allow-origin"], "http://localhost:3001");
+
+  const secondAllowed = await app.inject({ method: "OPTIONS", url: "/api/me", headers: { origin: "http://localhost:5173", "access-control-request-method": "GET" } });
+  assert.equal(secondAllowed.headers["access-control-allow-origin"], "http://localhost:5173");
 
   const denied = await app.inject({
     method: "OPTIONS",

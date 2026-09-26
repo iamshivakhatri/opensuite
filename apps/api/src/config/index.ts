@@ -31,6 +31,7 @@ const EnvSchema = z
       .min(32, "BETTER_AUTH_SECRET must be at least 32 characters"),
     BETTER_AUTH_URL: z.url("BETTER_AUTH_URL must be a valid URL"),
     WEB_ORIGIN: z.url("WEB_ORIGIN must be a valid URL"),
+    WEB_ORIGINS: z.string().optional(),
     RESEND_API_KEY: z.string().min(1, "RESEND_API_KEY must not be empty"),
     EMAIL_FROM: z
       .string()
@@ -92,7 +93,7 @@ const EnvSchema = z
     if (data.NODE_ENV === "production") {
       for (const [name, value] of [
         ["BETTER_AUTH_URL", data.BETTER_AUTH_URL],
-        ["WEB_ORIGIN", data.WEB_ORIGIN],
+        ...webOrigins(data.WEB_ORIGIN, data.WEB_ORIGINS).map((origin) => ["WEB_ORIGINS", origin] as const),
       ] as const) {
         if (new URL(value).protocol !== "https:") {
           ctx.addIssue({
@@ -208,6 +209,7 @@ export interface AppConfig {
   readonly betterAuthSecret: string;
   readonly betterAuthUrl: string;
   readonly webOrigin: string;
+  readonly webOrigins: readonly string[];
   readonly resendApiKey: string;
   readonly emailFrom: string;
   readonly s3: S3Config;
@@ -220,6 +222,12 @@ export interface AppConfig {
   readonly authCrossOrigin: boolean;
   readonly google: GoogleAuthConfig | null;
   readonly agent: AgentModelConfig;
+}
+
+function webOrigins(primary: string, additional: string | undefined): string[] {
+  const origins = [primary, ...(additional?.split(",") ?? []).map((origin) => origin.trim()).filter(Boolean)];
+  for (const origin of origins) new URL(origin);
+  return [...new Set(origins)];
 }
 
 /**
@@ -300,6 +308,7 @@ export function loadConfig(
   const openrouterModel = result.data.OPENROUTER_MODEL?.trim() || null;
   const googleClientId = result.data.GOOGLE_CLIENT_ID?.trim() || null;
   const googleClientSecret = result.data.GOOGLE_CLIENT_SECRET?.trim() || null;
+  const origins = webOrigins(result.data.WEB_ORIGIN, result.data.WEB_ORIGINS);
 
   return {
     nodeEnv: result.data.NODE_ENV,
@@ -310,6 +319,7 @@ export function loadConfig(
     betterAuthSecret: result.data.BETTER_AUTH_SECRET,
     betterAuthUrl: result.data.BETTER_AUTH_URL,
     webOrigin: result.data.WEB_ORIGIN,
+    webOrigins: origins,
     resendApiKey: result.data.RESEND_API_KEY,
     emailFrom: result.data.EMAIL_FROM,
     s3: {

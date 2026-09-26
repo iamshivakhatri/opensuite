@@ -143,7 +143,7 @@ export async function buildApp(
 
   await app.register(cors, {
     origin: (origin, callback) => {
-      callback(null, origin === config.webOrigin);
+      callback(null, Boolean(origin && config.webOrigins.includes(origin)));
     },
     methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
     allowedHeaders: ["Content-Type", "Authorization", "X-Requested-With"],
@@ -361,7 +361,7 @@ export async function buildApp(
     persistence: agentPersistence,
     runManager: agentRunManager,
     lease: agentExecutionLease,
-    webOrigin: config.webOrigin,
+    webOrigins: config.webOrigins,
     rateLimiter,
   });
 
