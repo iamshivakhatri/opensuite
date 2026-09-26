@@ -11,6 +11,7 @@ import { createAuth, type Auth } from "./auth/index.js";
 import { loadConfig, type AppConfig } from "./config/index.js";
 import { createResendEmailSender } from "./email/index.js";
 import { createS3ObjectStorage } from "./storage/index.js";
+import type { AgentRunReportSink } from "./agent/agent-run-report.js";
 
 /** The shared OpenSuite API process, before a caller starts listening. */
 export interface OpenSuiteRuntime {
@@ -20,12 +21,17 @@ export interface OpenSuiteRuntime {
   close(): Promise<void>;
 }
 
+export interface OpenSuiteRuntimeOptions {
+  readonly agentRunReportSink?: AgentRunReportSink;
+}
+
 /**
  * Creates one complete OpenSuite API runtime. Callers may register additional
  * routes on `app` before listening; auth and DB stay shared with core routes.
  */
 export async function createOpenSuiteRuntime(
   config: AppConfig = loadConfig(),
+  options: OpenSuiteRuntimeOptions = {},
 ): Promise<OpenSuiteRuntime> {
   console.info("[agent] runtime=v3");
   const dbClient = createDbClient(
@@ -60,6 +66,9 @@ export async function createOpenSuiteRuntime(
     auth,
     db: dbClient.db,
     storage: createS3ObjectStorage(config.s3),
+    ...(options.agentRunReportSink
+      ? { agent: { agentRunReportSink: options.agentRunReportSink } }
+      : {}),
   });
 
   return {

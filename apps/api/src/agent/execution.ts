@@ -25,6 +25,8 @@ import type { ModelUsageService } from "../model-usage/service.js";
 import {
   composeAgentRunReport,
   logAgentRunReport,
+  type AgentRunReport,
+  type AgentRunReportSink,
   type AgentRunReportRetrieval,
   type DocumentTransition,
   type DocumentVersionAdvance,
@@ -242,6 +244,7 @@ export interface AgentExecutionServiceDeps {
   readonly docxBinding?: DocxEngineBinding;
   readonly modelUsage?: ModelUsageService;
   readonly managedTrial?: ManagedTrialService;
+  readonly agentRunReportSink?: AgentRunReportSink;
   readonly lease?: AgentExecutionLeaseService;
   /** Test seam — production uses agent-core-v3 `runAgent`. */
   readonly runAgent?: typeof runAgent;
@@ -662,7 +665,7 @@ async function runExecution(input: {
         onEvent: (event) => relayEvent(event, input.liveEvents, input.run.id, messageId, transcript),
       });
     } catch (error) {
-      emitRunReport({
+      await emitRunReport({
         runId: input.run.id,
         instruction: input.instruction,
         model: input.model,
@@ -683,11 +686,12 @@ async function runExecution(input: {
           estimatedInRunTokensAfter: inRunStats.estimatedInRunTokensAfter,
           maxProjectedInputTokens: inRunStats.maxProjectedInputTokens,
         },
+        sink: input.deps.agentRunReportSink,
       });
       throw error;
     }
 
-    emitRunReport({
+    await emitRunReport({
       runId: input.run.id,
       instruction: input.instruction,
       model: input.model,
@@ -709,6 +713,7 @@ async function runExecution(input: {
         estimatedInRunTokensAfter: inRunStats.estimatedInRunTokensAfter,
         maxProjectedInputTokens: inRunStats.maxProjectedInputTokens,
       },
+      sink: input.deps.agentRunReportSink,
     });
 
     if (!isSuccessfulStop(result.stopReason)) {
@@ -946,7 +951,7 @@ export function boundedStopMessage(
   return hasVersionAdvance ? `${stopped} Changes made so far were preserved.` : stopped;
 }
 
-function emitRunReport(input: {
+async function emitRunReport(input: {
   readonly runId: string;
   readonly instruction: string;
   readonly model: ResolvedV3ExecutionModel;
@@ -985,8 +990,10 @@ function emitRunReport(input: {
     readonly estimatedInRunTokensAfter?: number;
     readonly maxProjectedInputTokens?: number;
   };
-}): void {
+  readonly sink?: AgentRunReportSink;
+}): Promise<void> {
   if (!input.metrics) return;
+  let report: AgentRunReport;
   try {
     const attribution = input.model.usageAttribution;
     const pricing =
@@ -996,7 +1003,7 @@ function emitRunReport(input: {
             attribution.model,
           )
         : null;
-    const report = composeAgentRunReport({
+    report = composeAgentRunReport({
       runId: input.runId,
       instruction: input.instruction,
       ...(attribution !== undefined
@@ -1021,10 +1028,28 @@ function emitRunReport(input: {
         ? { pricingProvider: attribution.provider }
         : {}),
     });
-    logAgentRunReport(report);
   } catch (error) {
     console.error(
       `[agent] run=${input.runId.slice(0, 8)} run_report_failed reason=${summarizeError(error)}`,
+    );
+    return;
+  }
+  try {
+    logAgentRunReport(report);
+  } catch (error) {
+    console.error(
+      `[agent] run=${input.runId.slice(0, 8)} run_report_log_failed reason=${summarizeError(error)}`,
+    );
+  }
+  try {
+    void Promise.resolve(input.sink?.(report)).catch((error: unknown) => {
+      console.error(
+        `[agent] run=${input.runId.slice(0, 8)} run_report_sink_failed reason=${summarizeError(error)}`,
+      );
+    });
+  } catch (error) {
+    console.error(
+      `[agent] run=${input.runId.slice(0, 8)} run_report_sink_failed reason=${summarizeError(error)}`,
     );
   }
 }

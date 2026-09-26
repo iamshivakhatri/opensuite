@@ -383,6 +383,7 @@ test("successful V3 finish_tool settles completed + agent.completed", async () =
     })
   ).result;
 
+  await new Promise((resolve) => setImmediate(resolve));
   assert.equal(result.run.status, "completed");
   assert.equal(result.assistantMessage?.content, "All done");
   assert.equal(result.run.resultMessageId, result.assistantMessage?.id);
@@ -411,6 +412,54 @@ test("successful V3 completed (no tools) settles completed", async () => {
     })
   ).result;
   assert.equal(result.run.status, "completed");
+});
+
+test("agent run report sink receives one composed report", async () => {
+  const persistence = memoryPersistence("user-1");
+  const reports: { runId: string; outcome: string; stopReason?: string }[] = [];
+  const execution = createAgentExecutionService({
+    ...baseDeps(persistence, async () => softResult("completed", "Hello")),
+    agentRunReportSink: async (report) => {
+      reports.push(report);
+    },
+  });
+
+  const result = await (
+    await execution.start({
+      userId: "user-1",
+      threadId: "thread-1",
+      instruction: "hi",
+    })
+  ).result;
+
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(result.run.status, "completed");
+  assert.equal(reports.length, 1);
+  assert.equal(reports[0]?.runId, result.run.id);
+  assert.equal(reports[0]?.outcome, "success");
+  assert.equal(reports[0]?.stopReason, "completed");
+});
+
+test("agent run report sink failure does not alter the run", async () => {
+  const persistence = memoryPersistence("user-1");
+  const execution = createAgentExecutionService({
+    ...baseDeps(persistence, async () => softResult("completed", "Hello")),
+    agentRunReportSink: async () => {
+      throw new Error("telemetry unavailable");
+    },
+  });
+
+  const result = await (
+    await execution.start({
+      userId: "user-1",
+      threadId: "thread-1",
+      instruction: "hi",
+    })
+  ).result;
+
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(result.run.status, "completed");
+  assert.equal(result.assistantMessage?.content, "Hello");
 });
 
 test("later runs restore durable working documents into model context", async () => {

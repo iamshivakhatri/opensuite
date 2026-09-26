@@ -135,6 +135,11 @@ export interface AgentRunReport {
   readonly context?: AgentRunReportContext;
 }
 
+/** Optional host-owned delivery of one completed structured agent report. */
+export type AgentRunReportSink = (
+  report: AgentRunReport,
+) => void | Promise<void>;
+
 export interface ComposeAgentRunReportInput {
   readonly runId: string;
   readonly instruction: string;

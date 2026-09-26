@@ -14,6 +14,7 @@ import {
   createAgentExecutionService,
   type AgentExecutionService,
 } from "./agent/execution.js";
+import type { AgentRunReportSink } from "./agent/agent-run-report.js";
 import {
   createAgentPersistenceService,
   type AgentPersistenceService,
@@ -77,6 +78,7 @@ export interface AgentAppDependencies {
   readonly runManager?: AgentRunManager;
   /** Shorter grace for SSE tests. */
   readonly liveGraceMs?: number;
+  readonly agentRunReportSink?: AgentRunReportSink;
 }
 
 export interface AppDependencies {
@@ -308,6 +310,9 @@ export async function buildApp(
       modelUsage,
       lease: agentExecutionLease,
       managedTrial,
+      ...(deps.agent?.agentRunReportSink
+        ? { agentRunReportSink: deps.agent.agentRunReportSink }
+        : {}),
     });
   const agentRunManager =
     deps.agent?.runManager ??
