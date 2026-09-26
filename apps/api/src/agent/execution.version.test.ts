@@ -120,6 +120,86 @@ test("run-local mutations persist and emit one version at flush", async () => {
   assert.equal(tools.tools["document.insert_paragraph"]?.kind, "mutate");
 });
 
+test("format and text batches keep partial work, one preview per batch, and one saved version", async () => {
+  const binding = await createNapiDocxEngineBinding();
+  let stored = Buffer.from(buildMinimalDocx(["Alpha", "Beta", "Gamma"]));
+  let appends = 0;
+  const revisions: number[] = [];
+  const tools = await createPrimaryDocxTools({
+    binding, ownerUserId: "user-1", workspaceId: "ws-1", documentId: "doc-1", versionId: "v1",
+    documents: {
+      getOwnedDocument: async () => ({ format: "docx" }) as never,
+      readExactVersionBytes: async () => stored,
+      appendDocumentVersion: async ({ bytes, baseVersionId }) => {
+        assert.equal(baseVersionId, "v1");
+        stored = Buffer.from(bytes);
+        appends++;
+        return { version: { id: "v2", versionNumber: 2 } } as never;
+      },
+      createBlankDocxDocument: async () => { throw new Error("unused"); },
+      createOfficeDocumentFromBytes: async () => { throw new Error("unused"); },
+    },
+    onWorkingUpdated: ({ revision }) => { revisions.push(revision); },
+  });
+  assert.ok(tools);
+  const call = { toolCallId: "batch", messages: [], context: undefined as never };
+  const run = (name: string, operations: Record<string, unknown>[]) =>
+    tools.tools[name]!.execute!({ operations }, call) as Promise<{
+      ok: boolean; applied: number; failedIndex?: number; reasonCode?: string; diagnostics?: unknown[];
+    }>;
+
+  await tools.tools["document.inspect"]!.execute!({ kind: "body_blocks" }, call);
+  assert.deepEqual(await run("document.batch_paragraph_styles", [
+    { target: { text: "Alpha" }, style: "Heading 1" },
+    { target: { text: "Beta" }, style: "Heading 2" },
+  ]), { ok: true, capability: "set_paragraph_style", applied: 2, workingRevision: 1 });
+  assert.deepEqual(revisions, [1]);
+  const headings = JSON.stringify(await tools.tools["document.inspect"]!.execute!({ kind: "headings" }, call));
+  assert.match(headings, /"styleName":"Heading 1"/);
+  assert.match(headings, /"styleName":"Heading 2"/);
+  assert.equal((await tools.tools["document.insert_paragraph"]!.execute!(
+    { text: "Stale", placement: { kind: "before", handle: "b0" } }, call,
+  ) as { reasonCode: string }).reasonCode, "STALE_HANDLE");
+
+  const partial = await run("document.batch_replace_text", [
+    { target: { text: "Alpha" }, expectedCurrentText: "Alpha", replacement: "First" },
+    { target: { text: "Missing" }, expectedCurrentText: "Missing", replacement: "Wrong" },
+    { target: { text: "Gamma" }, expectedCurrentText: "Gamma", replacement: "Skipped" },
+  ]);
+  assert.equal(partial.ok, false);
+  assert.equal(partial.applied, 1);
+  assert.equal(partial.failedIndex, 1);
+  assert.ok(partial.reasonCode);
+  assert.ok(partial.diagnostics?.length);
+  assert.deepEqual(revisions, [1, 2]);
+  assert.equal(tools.getWorkingDocument()?.revision, 2);
+
+  assert.equal((await run("document.batch_replace_text", [
+    { target: { text: "Beta" }, expectedCurrentText: "Beta", replacement: "Second" },
+    { target: { text: "Gamma" }, expectedCurrentText: "Gamma", replacement: "Third" },
+  ])).applied, 2);
+  const current = JSON.stringify(await tools.tools["document.inspect"]!.execute!({ kind: "body_blocks" }, call));
+  assert.match(current, /First/);
+  assert.match(current, /Second/);
+  assert.match(current, /Third/);
+  assert.doesNotMatch(current, /Skipped/);
+  assert.deepEqual(revisions, [1, 2, 3]);
+  assert.equal((await run("document.batch_paragraph_formatting", [
+    { target: { text: "First" }, alignment: "center" },
+    { target: { text: "Second" }, alignment: "right" },
+  ])).applied, 2);
+  assert.equal((await run("document.batch_text_formatting", [
+    { target: { text: "First" }, bold: true },
+    { target: { text: "Second" }, italic: true },
+  ])).applied, 2);
+  assert.deepEqual(revisions, [1, 2, 3, 4, 5]);
+  assert.equal(tools.getWorkingMutationCount(), 9);
+  await tools.flush();
+  assert.equal(appends, 1);
+  assert.equal(tools.getWorkingDocument(), null);
+  assert.match(JSON.stringify(await binding.inspectDocx(stored, { focus: { kind: "body_blocks" } })), /Third/);
+});
+
 test("working reads, failed writes, and stale handles keep the last valid state", async () => {
   const binding = await createNapiDocxEngineBinding();
   let stored = Buffer.from(buildMinimalDocx(["Start"]));

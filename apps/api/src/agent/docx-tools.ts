@@ -148,6 +148,21 @@ function createActiveDocxSession(input: {
     return host;
   }
 
+  function advanceWorkingState(applied: number): void {
+    if (!applied) return;
+    dirty = true;
+    workingRevision += 1;
+    workingMutationCount += applied;
+    currentHandles.clear();
+    if (documentId && versionId) {
+      try {
+        input.onWorkingUpdated?.({ documentId, baseVersionId: versionId, revision: workingRevision });
+      } catch (error) {
+        console.error("[agent] working document event failed", error);
+      }
+    }
+  }
+
   const redirectingHost: BoundDocumentHost = {
     capabilities: () => input.binding.getDocxCapabilities(),
     inspect: async (request) => {
@@ -173,20 +188,27 @@ function createActiveDocxSession(input: {
           diagnostics: [{ code: "STALE_HANDLE", severity: "error", message: "Inspect the current document again before using this handle." }] };
       }
       const result = await host.mutate(capability, operation);
-      if (result.ok) {
-        dirty = true;
-        workingRevision += 1;
-        workingMutationCount += 1;
-        currentHandles.clear();
-        if (documentId && versionId) {
-          try {
-            input.onWorkingUpdated?.({ documentId, baseVersionId: versionId, revision: workingRevision });
-          } catch (error) {
-            console.error("[agent] working document event failed", error);
-          }
+      if (result.ok) advanceWorkingState(1);
+      return result;
+    },
+    mutateBatch: async (capability, operations) => {
+      if (!host) return { ok: false, capability, reasonCode: "NO_ACTIVE_DOCUMENT", applied: 0 };
+      if (operations.length < 1 || operations.length > 100) {
+        return { ok: false, capability, reasonCode: "VALIDATION_FAILED", applied: 0 };
+      }
+      for (let index = 0; index < operations.length; index++) {
+        const result = await host.mutate(capability, operations[index]!);
+        if (!result.ok) {
+          advanceWorkingState(index);
+          return {
+            ok: false, capability, applied: index, failedIndex: index,
+            reasonCode: result.reasonCode, diagnostics: result.diagnostics,
+            workingRevision,
+          };
         }
       }
-      return result;
+      advanceWorkingState(operations.length);
+      return { ok: true, capability, applied: operations.length, workingRevision };
     },
   };
 

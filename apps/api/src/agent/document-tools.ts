@@ -17,6 +17,10 @@ export interface BoundDocumentHost {
     capability: string,
     operation: Record<string, unknown>,
   ): Promise<unknown>;
+  mutateBatch?(
+    capability: string,
+    operations: readonly Record<string, unknown>[],
+  ): Promise<unknown>;
 }
 
 export type InspectFocus =
@@ -495,6 +499,13 @@ const MUTATION_DEFS: Record<string, MutDef> = {
   },
 };
 
+const BATCH_TOOLS = {
+  replace_text: "batch_replace_text",
+  set_paragraph_style: "batch_paragraph_styles",
+  set_paragraph_formatting: "batch_paragraph_formatting",
+  set_text_formatting: "batch_text_formatting",
+} as const;
+
 /** Capabilities with a real model schema + dispatcher path. Sorted. */
 export const MODEL_MUTATION_CAPABILITIES = Object.freeze(
   Object.keys(MUTATION_DEFS).sort(),
@@ -564,6 +575,31 @@ export function createDocumentTools(document: BoundDocumentHost): AgentToolSet {
         inputSchema: def.inputSchema,
         execute: async (input) =>
           mutate(capability, (input ?? {}) as Record<string, unknown>),
+      });
+    }
+  }
+
+  if (document.mutateBatch) {
+    const mutateBatch = document.mutateBatch.bind(document);
+    for (const [capability, name] of Object.entries(BATCH_TOOLS)) {
+      if (!caps.has(capability)) continue;
+      tools[`document.${name}`] = defineTool({
+        kind: "mutate",
+        description: `Apply several independent ${capability} operations in order. Stops on the first failure; earlier successful edits remain. Use known text targets only.`,
+        inputSchema: jsonSchema<{ operations: Record<string, unknown>[] }>({
+          type: "object",
+          properties: {
+            operations: {
+              type: "array",
+              minItems: 1,
+              maxItems: 100,
+              items: MUTATION_DEFS[capability]!.inputSchema.jsonSchema,
+            },
+          },
+          required: ["operations"],
+          additionalProperties: false,
+        }),
+        execute: async ({ operations }) => mutateBatch(capability, operations),
       });
     }
   }

@@ -14,6 +14,8 @@ _Read this before starting any work. Keep it a concise current-state handoff, no
 
 ## Just Completed
 
+* **Mutation batching** — API exposes four focused DOCX batch tools for text replacement, paragraph styles, paragraph formatting, and text formatting. Items run in order on run-local bytes, stop on first failure with compact item diagnostics, and keep earlier edits. One successful batch advances one working preview revision; final flush still saves one version. Existing Rust operations and agent-core-v3 scheduling are unchanged. Tool guidance now favors coherent batches and multiple safe mutation calls per model turn.
+
 * **Concise run logs** — completed agent runs now print one metrics line plus failed-tool lines; full report JSON is opt-in with `AGENT_RUN_REPORT_VERBOSE=1` (Cloud still stores the full report). Dev request logs no longer add blank lines. Better Auth errors omit exception objects that can contain session tokens.
 
 * **Direct-context read efficiency** — a complete small DOCX is inspected by the engine before the first model call. On unchanged DIRECT state, the API allows one broad read and at most four total inspect/find reads, then asks the model to act on context; a mutation resets the read state. The live Cincinnati rewrite finished in 13 model turns with 3 inspections, 13 finds, and 58 successful text edits.
@@ -100,6 +102,7 @@ _Read this before starting any work. Keep it a concise current-state handoff, no
 | API isolation one-turn finish transcript | Pass |
 | Run-local DOCX and terminal flush tests | Pass |
 | Working preview API/editor focused checks | Pass (39 API, 37 web; API/web typechecks and web build) |
+| Mutation batch DOCX, engine-client, agent-core-v3, lifecycle/read-loop focused checks | Pass (API focused 11; batch/version 5; engine-client 13; core 26; lifecycle/read-loop 63 with verbose report flag) |
 | Browser Agent panel (Hello world) | Pass — answer once; reload once; screenshots `.tmp/transcript-dup-fix/09|10` |
 | Fixture screenshots A–G (`/.tmp/phase35-screenshots`) | Inspected |
 | Manual live OpenRouter dogfood | User run succeeded in 191.61s before low-reasoning change: 10 turns, 13 tools, 1 saved version |
@@ -113,4 +116,4 @@ _Read this before starting any work. Keep it a concise current-state handoff, no
 
 ## Recommended Next Step
 
-Visually inspect the completed Cincinnati brief for table spacing, page numbers, and consistent formatting before using it as a style template.
+Recoverable-error UX: show a terminal failure only when the agent cannot repair it during the run.
