@@ -93,7 +93,8 @@ const EnvSchema = z
     if (data.NODE_ENV === "production") {
       for (const [name, value] of [
         ["BETTER_AUTH_URL", data.BETTER_AUTH_URL],
-        ...webOrigins(data.WEB_ORIGIN, data.WEB_ORIGINS).map((origin) => ["WEB_ORIGINS", origin] as const),
+        ["WEB_ORIGIN", data.WEB_ORIGIN],
+        ...webOrigins(data.WEB_ORIGIN, data.WEB_ORIGINS).slice(1).map((origin) => ["WEB_ORIGINS", origin] as const),
       ] as const) {
         if (new URL(value).protocol !== "https:") {
           ctx.addIssue({

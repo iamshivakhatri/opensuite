@@ -175,8 +175,15 @@ test("loadConfig rejects an HTTP Better Auth URL in production", () => {
 
 test("loadConfig rejects an HTTP web origin in production", () => {
   assert.throws(
-    () => loadConfig({ ...baseEnv, NODE_ENV: "production", WEB_ORIGIN: "http://www.example.com" }),
+    () => loadConfig({ ...baseEnv, NODE_ENV: "production", BETTER_AUTH_URL: "https://api.example.com", WEB_ORIGIN: "http://www.example.com" }),
     /WEB_ORIGIN must use https in production/,
+  );
+});
+
+test("loadConfig rejects an HTTP additional web origin in production", () => {
+  assert.throws(
+    () => loadConfig({ ...baseEnv, NODE_ENV: "production", BETTER_AUTH_URL: "https://api.example.com", WEB_ORIGIN: "https://www.example.com", WEB_ORIGINS: "http://admin.example.com" }),
+    /WEB_ORIGINS must use https in production/,
   );
 });
 
