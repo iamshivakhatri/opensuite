@@ -54,6 +54,7 @@ test("run-local mutations persist and emit one version at flush", async () => {
   let versionId = "ver-1";
   let versionNumber = 1;
   const advanced: Array<{ versionId: string; versionNumber: number }> = [];
+  const working: number[] = [];
 
   const tools = await createPrimaryDocxTools({
     binding,
@@ -94,6 +95,7 @@ test("run-local mutations persist and emit one version at flush", async () => {
       });
       assert.equal(event.fromVersionId, "ver-1");
     },
+    onWorkingUpdated: ({ revision }) => { working.push(revision); },
   });
 
   assert.ok(tools);
@@ -106,10 +108,14 @@ test("run-local mutations persist and emit one version at flush", async () => {
   );
 
   assert.equal(advanced.length, 0);
+  assert.deepEqual(working, [1]);
+  assert.equal(tools.getWorkingDocument()?.revision, 1);
+  assert.match(JSON.stringify(await binding.inspectDocx(tools.getWorkingDocument()!.bytes, { focus: { kind: "body_blocks" } })), /Inserted/);
   assert.equal(versionId, "ver-1");
   await tools.flush();
   assert.equal(advanced.length, 1);
   assert.equal(advanced[0]!.versionNumber, 2);
+  assert.equal(tools.getWorkingDocument(), null);
   assert.equal(tools.tools["document.inspect"]?.kind, "read");
   assert.equal(tools.tools["document.insert_paragraph"]?.kind, "mutate");
 });
@@ -118,6 +124,7 @@ test("working reads, failed writes, and stale handles keep the last valid state"
   const binding = await createNapiDocxEngineBinding();
   let stored = Buffer.from(buildMinimalDocx(["Start"]));
   let appends = 0;
+  const revisions: number[] = [];
   const tools = await createPrimaryDocxTools({
     binding,
     ownerUserId: "user-1", workspaceId: "ws-1", documentId: "doc-1", versionId: "v1",
@@ -133,6 +140,7 @@ test("working reads, failed writes, and stale handles keep the last valid state"
       createBlankDocxDocument: async () => { throw new Error("unused"); },
       createOfficeDocumentFromBytes: async () => { throw new Error("unused"); },
     },
+    onWorkingUpdated: ({ revision }) => { revisions.push(revision); },
   });
   assert.ok(tools);
   const call = { toolCallId: "test", messages: [], context: undefined as never };
@@ -152,13 +160,17 @@ test("working reads, failed writes, and stale handles keep the last valid state"
     target: { text: "Missing" }, expectedCurrentText: "Missing", replacement: "Wrong",
   }, call);
   assert.equal((failed as { ok: boolean }).ok, false);
+  assert.deepEqual(revisions, [1, 2, 3, 4, 5, 6]);
   assert.equal((await insert.execute!({ text: "Bad", placement: { kind: "before", handle: "b999" } }, call) as { reasonCode: string }).reasonCode, "STALE_HANDLE");
   assert.equal((await insert.execute!({ text: "No target", placement: { kind: "before", handle: "b0" } }, call) as { ok: boolean }).ok, true);
   assert.equal((await insert.execute!({ text: "Stale", placement: { kind: "before", handle: "b0" } }, call) as { reasonCode: string }).reasonCode, "STALE_HANDLE");
   assert.equal(appends, 0);
+  const previewBytes = Buffer.from(tools.getWorkingDocument()!.bytes);
+  assert.equal(tools.getWorkingDocument()!.revision, 7);
   await tools.flush();
   await tools.flush();
   assert.equal(appends, 1);
+  assert.deepEqual(stored, previewBytes);
   assert.equal(tools.getWorkingMutationCount(), 7);
   assert.match(JSON.stringify(await binding.inspectDocx(stored, { focus: { kind: "body_blocks" } })), /Step 4/);
 

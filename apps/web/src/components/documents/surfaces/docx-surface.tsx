@@ -7,12 +7,13 @@ import type { DocxEditorRef } from "@casualoffice/docs";
 import {
   ApiError,
   fetchDocumentVersionContent,
+  fetchWorkingDocument,
   getDocument,
   saveDocumentVersion,
   type ListedDocument,
 } from "@/lib/api";
 import { clearCasualLocalAutosave } from "@/lib/casual-autosave";
-import { decideEditorVersionRefresh } from "@/lib/editor-version-refresh";
+import { canApplyWorkingPreview, decideEditorVersionRefresh } from "@/lib/editor-version-refresh";
 import { userFacingError } from "@/components/files/format";
 import { ConfirmDialog } from "@/components/ui/context-menu";
 import { useTheme } from "@/lib/theme";
@@ -56,12 +57,14 @@ export function DocxSurface({
   onStatusChange,
   onDocumentUpdated,
   saveRequestId = 0,
+  workingPreview = null,
 }: {
   readonly document: ListedDocument;
   readonly onStatusChange?: (status: DocxSurfaceStatus) => void;
   readonly onDocumentUpdated?: (document: ListedDocument) => void;
   /** Bump to request an explicit save (header Save / Cmd+S from parent). */
   readonly saveRequestId?: number;
+  readonly workingPreview?: { runId: string; documentId: string; baseVersionId: string; revision: number } | null;
 }) {
   const { toast } = useToast();
   const { resolvedTheme } = useTheme();
@@ -69,6 +72,9 @@ export function DocxSurface({
   const selectionRef = React.useRef<unknown>(null);
   const savingRef = React.useRef(false);
   const reloadingRef = React.useRef(false);
+  const previewBusyRef = React.useRef(false);
+  const previewTargetRef = React.useRef(workingPreview);
+  const appliedPreviewRef = React.useRef<{ runId: string; revision: number } | null>(null);
   const lastSaveRequestId = React.useRef(0);
   /** Ignore Casual dirty=true churn right after remount/agent reload. */
   const suppressDirtyRef = React.useRef(false);
@@ -95,6 +101,7 @@ export function DocxSurface({
   const [saving, setSaving] = React.useState(false);
   const [conflict, setConflict] = React.useState(false);
   const [reloadOpen, setReloadOpen] = React.useState(false);
+  const [previewTick, setPreviewTick] = React.useState(0);
 
   dirtyRef.current = dirty;
   conflictRef.current = conflict;
@@ -190,7 +197,7 @@ export function DocxSurface({
    */
   const reloadVersionInPlace = React.useCallback(
     async (versionId: string) => {
-      if (reloadingRef.current) return;
+      while (reloadingRef.current) await new Promise((resolve) => window.setTimeout(resolve, 50));
       reloadingRef.current = true;
       beginSuppressDirty();
 
@@ -261,6 +268,74 @@ export function DocxSurface({
     },
     [beginSuppressDirty, document.id, toast],
   );
+
+  React.useEffect(() => {
+    previewTargetRef.current = workingPreview;
+    if (!workingPreview || previewBusyRef.current) return;
+    previewBusyRef.current = true;
+    void (async () => {
+      try {
+        while (previewTargetRef.current) {
+          const target = previewTargetRef.current;
+          if (!target || documentIdRef.current !== target.documentId ||
+              loadedVersionIdRef.current !== target.baseVersionId ||
+              latestVersionIdRef.current !== target.baseVersionId ||
+              phaseRef.current !== "ready" || dirtyRef.current || savingRef.current || conflictRef.current) break;
+          const applied = appliedPreviewRef.current;
+          if (applied?.runId === target.runId && applied.revision >= target.revision) break;
+          const preview = await fetchWorkingDocument(target.runId);
+          const latest = previewTargetRef.current;
+          if (!latest || latest.runId !== target.runId || !canApplyWorkingPreview({
+            requestedRevision: latest.revision,
+            fetchedRevision: preview.revision,
+            dirty: dirtyRef.current,
+            saving: savingRef.current,
+            conflict: conflictRef.current,
+            baseVersionId: preview.baseVersionId,
+            loadedVersionId: loadedVersionIdRef.current,
+            latestVersionId: latestVersionIdRef.current,
+          })) continue;
+          while (reloadingRef.current) await new Promise((resolve) => window.setTimeout(resolve, 50));
+          if (dirtyRef.current || !previewTargetRef.current || latestVersionIdRef.current !== preview.baseVersionId) continue;
+          const api = editorRef.current;
+          if (!api?.loadDocumentBuffer) break;
+          reloadingRef.current = true;
+          beginSuppressDirty();
+          try {
+            let page: number | undefined;
+            let zoom: number | undefined;
+            try {
+              page = api.getCurrentPage();
+              zoom = api.getZoom();
+            } catch { /* Viewport capture is best effort. */ }
+            await clearCasualLocalAutosave();
+            if (dirtyRef.current) break;
+            await api.loadDocumentBuffer(preview.bytes.slice(0));
+            try {
+              if (typeof zoom === "number") api.setZoom(zoom);
+              if (typeof page === "number" && page >= 1) api.scrollToPage(page);
+            } catch { /* Viewport restore is best effort. */ }
+            appliedPreviewRef.current = { runId: target.runId, revision: preview.revision };
+            setBuffer(preview.bytes);
+            setDirty(false);
+            beginSuppressDirty();
+          } finally {
+            reloadingRef.current = false;
+          }
+        }
+      } catch {
+        // A run may finish while its last preview is in flight; the persisted version will load.
+      } finally {
+        previewBusyRef.current = false;
+        const latest = previewTargetRef.current;
+        const applied = appliedPreviewRef.current;
+        if (latest && latest !== workingPreview &&
+            (!applied || latest.runId !== applied.runId || latest.revision > applied.revision)) {
+          setPreviewTick((value) => value + 1);
+        }
+      }
+    })();
+  }, [beginSuppressDirty, phase, previewTick, workingPreview]);
 
   // Load exact version when opening a document (not on every latestVersion bump).
   React.useEffect(() => {
@@ -559,7 +634,12 @@ export function DocxSurface({
         </div>
       ) : null}
 
-      <div className="min-h-0 flex-1 overflow-hidden">
+      <div className="min-h-0 flex-1 overflow-hidden" onInputCapture={() => {
+        if (phaseRef.current === "ready") {
+          dirtyRef.current = true;
+          setDirty(true);
+        }
+      }}>
         <DocxEditorHost
           // Key by document identity (+ remount fallback counter). Version
           // advances must NOT force a React remount when in-place load works.
@@ -572,6 +652,7 @@ export function DocxSurface({
             if (suppressDirtyRef.current && next) {
               return;
             }
+            dirtyRef.current = next;
             setDirty(next);
           }}
           onError={(error) => {

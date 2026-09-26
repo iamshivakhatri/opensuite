@@ -149,15 +149,14 @@ function toLiveAgentEvent(
         },
       };
     case "document.version.advanced":
+    case "document.working.updated":
       return {
         runId: event.runId,
         type: event.type,
         at: event.at,
-        data: {
-          documentId: event.documentId,
-          versionId: event.versionId,
-          versionNumber: event.versionNumber,
-        },
+        data: event.type === "document.working.updated"
+          ? { documentId: event.documentId, baseVersionId: event.baseVersionId, workingRevision: event.workingRevision }
+          : { documentId: event.documentId, versionId: event.versionId, versionNumber: event.versionNumber },
       };
     case "document.created":
       return {
@@ -191,6 +190,8 @@ interface ActiveRun {
   readonly hub: EventHub;
   readonly abort: AbortController;
   readonly result: Promise<AgentExecutionResult>;
+  readonly getWorkingDocument: () => { documentId: string; baseVersionId: string; revision: number; bytes: Uint8Array } | null;
+  finished: boolean;
 }
 
 export interface LiveOwnerRun {
@@ -259,6 +260,8 @@ export function createAgentRunManager(deps: AgentRunManagerDeps) {
       hub,
       abort,
       result: handle.result,
+      getWorkingDocument: handle.getWorkingDocument,
+      finished: false,
     };
     active.set(handle.run.id, entry);
 
@@ -270,6 +273,7 @@ export function createAgentRunManager(deps: AgentRunManagerDeps) {
     // and emit agent.failed so the UI cannot stay in Thinking forever.
     void handle.result
       .finally(() => {
+        entry.finished = true;
         const timer = setTimeout(() => {
           const current = active.get(handle.run.id);
           if (current === entry) {
@@ -318,6 +322,13 @@ export function createAgentRunManager(deps: AgentRunManagerDeps) {
 
   function isLive(runId: string): boolean {
     return active.has(runId);
+  }
+
+  function getWorkingDocument(input: { runId: string; ownerUserId: string }) {
+    const entry = active.get(input.runId);
+    return entry && !entry.finished && entry.ownerUserId === input.ownerUserId
+      ? entry.getWorkingDocument()
+      : null;
   }
 
   function hasLiveForOwner(ownerUserId: string): boolean {
@@ -374,6 +385,7 @@ export function createAgentRunManager(deps: AgentRunManagerDeps) {
     startRun,
     subscribeEvents,
     isLive,
+    getWorkingDocument,
     hasLiveForOwner,
     getLiveForOwner,
     cancel,

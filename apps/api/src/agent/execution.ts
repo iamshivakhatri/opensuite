@@ -146,6 +146,7 @@ export type AgentEvent =
   | { readonly type: "tool.started"; readonly runId: string; readonly at: string; readonly toolCallId: string; readonly toolName: string }
   | { readonly type: "tool.completed"; readonly runId: string; readonly at: string; readonly toolCallId: string; readonly toolName: string }
   | { readonly type: "tool.failed"; readonly runId: string; readonly at: string; readonly toolCallId: string; readonly toolName: string; readonly error: string }
+  | { readonly type: "document.working.updated"; readonly runId: string; readonly at: string; readonly documentId: string; readonly baseVersionId: string; readonly workingRevision: number }
   | {
       readonly type: "document.version.advanced";
       readonly runId: string;
@@ -227,6 +228,7 @@ export interface AgentExecutionHandle {
   readonly userMessage: AgentMessage;
   readonly run: AgentRun;
   readonly result: Promise<AgentExecutionResult>;
+  readonly getWorkingDocument: () => { documentId: string; baseVersionId: string; revision: number; bytes: Uint8Array } | null;
 }
 
 export interface AgentExecutionServiceDeps {
@@ -321,6 +323,7 @@ export function createAgentExecutionService(deps: AgentExecutionServiceDeps) {
       });
 
       console.info(`[agent] runtime=v3 run=${started.run.id.slice(0, 8)}`);
+      let getWorkingDocument = () => null as ReturnType<AgentExecutionHandle["getWorkingDocument"]>;
       const result = runExecution({
         deps,
         model,
@@ -337,12 +340,13 @@ export function createAgentExecutionService(deps: AgentExecutionServiceDeps) {
         ...(continuation ? { continuationContext: continuation.context, continuationPreviousRunId: input.continueFromRunId } : {}),
         signal: input.signal,
         liveEvents: input.liveEvents,
+        setWorkingDocumentGetter: (getter) => { getWorkingDocument = getter; },
       });
       // Background observation/ownership lives in run-manager (not here).
       const protectedResult = lease
         ? keepLeaseUntilFinished(deps.lease!, lease, result)
         : result;
-      return { thread, userMessage: started.userMessage, run: started.run, result: protectedResult };
+      return { thread, userMessage: started.userMessage, run: started.run, result: protectedResult, getWorkingDocument: () => getWorkingDocument() };
     } catch (error) {
       if (lease) await releaseLease(deps.lease!, lease);
       throw error;
@@ -452,6 +456,7 @@ async function runExecution(input: {
   readonly continuationPreviousRunId?: string;
   readonly signal?: AbortSignal;
   readonly liveEvents?: AgentEventSink;
+  readonly setWorkingDocumentGetter: (getter: AgentExecutionHandle["getWorkingDocument"]) => void;
 }): Promise<AgentExecutionResult> {
   const transcript = createTranscriptCollector();
   let boundTools: Awaited<ReturnType<typeof createPrimaryDocxTools>>;
@@ -507,6 +512,16 @@ async function runExecution(input: {
       workspaceId: input.thread.workspaceId,
       documentId: input.primaryDocumentId,
       versionId: input.run.baseDocumentVersionId,
+      onWorkingUpdated: (working) => {
+        void input.liveEvents?.emit({
+          type: "document.working.updated",
+          runId: input.run.id,
+          at: new Date().toISOString(),
+          documentId: working.documentId,
+          baseVersionId: working.baseVersionId,
+          workingRevision: working.revision,
+        });
+      },
       onVersionAdvanced: async (advanced) => {
         versionAdvances.push({
           fromVersionId: advanced.fromVersionId,
@@ -542,6 +557,7 @@ async function runExecution(input: {
         });
       },
     });
+    input.setWorkingDocumentGetter(() => boundTools?.getWorkingDocument() ?? null);
 
     const finish = createFinishTool({
       description: "After your concise final response to the user, call this to end the run.",

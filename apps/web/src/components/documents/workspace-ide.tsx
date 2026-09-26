@@ -98,6 +98,7 @@ export function WorkspaceIde({
     latestVersionId: null,
   });
   const [saveRequestId, setSaveRequestId] = React.useState(0);
+  const [workingPreview, setWorkingPreview] = React.useState<{ runId: string; documentId: string; baseVersionId: string; revision: number } | null>(null);
   const dragDepth = React.useRef(0);
   const fileInputRef = React.useRef<HTMLInputElement>(null);
 
@@ -459,6 +460,7 @@ export function WorkspaceIde({
               key={activeDocument.id}
               document={activeDocument}
               saveRequestId={saveRequestId}
+              workingPreview={workingPreview?.documentId === activeDocument.id ? workingPreview : null}
               onStatusChange={setEditorStatus}
               onDocumentUpdated={(updated) => {
                 setActiveDocument(updated);
@@ -516,6 +518,7 @@ export function WorkspaceIde({
             setRefreshKey((value) => value + 1);
             setActiveDocument(created);
           }}
+          onWorkingDocumentUpdated={setWorkingPreview}
         />
       </div>
 

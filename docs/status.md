@@ -23,6 +23,7 @@ _Read this before starting any work. Keep it a concise current-state handoff, no
 * **Agent activity and speed** — three animated dots follow the latest live transcript entry; the elapsed timer stays by Stop. Existing SSE heartbeats surface a stale connection. A successful DeepSeek V4.1 Flash run took 191.61s: 191.39s model, 220ms tools; turn 3 alone took 154.57s and 10,496 output tokens. The run used 11,311 reasoning tokens total. Agent calls request throughput routing and log provider plus reasoning tokens per turn; this model now requests low reasoning (OpenRouter default: high). The old run's provider is unknown.
 
 * **One persisted version per agent run** — successful DOCX tools update run-local bytes; success, max turns, cancellation, deadline, or failure flushes the latest valid state once. Read-only runs add no version. Inspect handles and read guards follow the working revision. Final `document.version.advanced` refreshes the editor; live tool activity still streams. Creation keeps its seed version. Agent-core-v3 and Rust unchanged.
+* **Live working DOCX preview** — successful run-local mutations emit `document.working.updated`; an authenticated active-run route serves current bytes without persistence. The editor coalesces revisions and loads clean previews in place while keeping the saved version ID. Dirty human edits block preview; final `document.version.advanced` loads the canonical version. No engine or agent-core-v3 change.
 
 * **Public launch docs** — root README now describes the connected DOCX path, real self-host requirements, BYOK, Cloud boundary, and alpha limits; concise contribution, security, license, roadmap, architecture, and real-media capture guidance added.
 
@@ -98,6 +99,7 @@ _Read this before starting any work. Keep it a concise current-state handoff, no
 | full web test command | 17 existing import-resolution failures under Node type stripping; focused message/progress tests pass |
 | API isolation one-turn finish transcript | Pass |
 | Run-local DOCX and terminal flush tests | Pass |
+| Working preview API/editor focused checks | Pass (39 API, 37 web; API/web typechecks and web build) |
 | Browser Agent panel (Hello world) | Pass — answer once; reload once; screenshots `.tmp/transcript-dup-fix/09|10` |
 | Fixture screenshots A–G (`/.tmp/phase35-screenshots`) | Inspected |
 | Manual live OpenRouter dogfood | User run succeeded in 191.61s before low-reasoning change: 10 turns, 13 tools, 1 saved version |

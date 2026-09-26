@@ -64,3 +64,20 @@ export function decideEditorVersionRefresh(
 
   return "reload_inplace";
 }
+
+/** A fetched preview may be older than an SSE update received during the fetch. */
+export function canApplyWorkingPreview(input: {
+  requestedRevision: number;
+  fetchedRevision: number;
+  dirty: boolean;
+  saving: boolean;
+  conflict: boolean;
+  baseVersionId: string;
+  loadedVersionId: string | null;
+  latestVersionId: string | null;
+}): boolean {
+  return input.fetchedRevision >= input.requestedRevision &&
+    !input.dirty && !input.saving && !input.conflict &&
+    input.baseVersionId === input.loadedVersionId &&
+    input.baseVersionId === input.latestVersionId;
+}

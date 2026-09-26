@@ -555,6 +555,16 @@ export async function fetchDocumentVersionContent(
   return response.arrayBuffer();
 }
 
+export async function fetchWorkingDocument(runId: string): Promise<{ bytes: ArrayBuffer; revision: number; baseVersionId: string }> {
+  const response = await apiFetch(`/api/agent/runs/${runId}/working-document`);
+  if (!response.ok) throw await parseError(response);
+  return {
+    bytes: await response.arrayBuffer(),
+    revision: Number(response.headers.get("X-Working-Revision")),
+    baseVersionId: response.headers.get("X-Base-Version-Id") ?? "",
+  };
+}
+
 /**
  * Explicit human save: append exported Office bytes as a new user version.
  * One request = one immutable version. Client must pass the exact baseVersionId

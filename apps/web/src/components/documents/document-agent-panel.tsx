@@ -209,6 +209,7 @@ export function DocumentAgentPanel({
   width = 320,
   onDocumentUpdated,
   onDocumentCreated,
+  onWorkingDocumentUpdated,
 }: {
   workspaceId: string;
   documentId: string | null;
@@ -220,6 +221,7 @@ export function DocumentAgentPanel({
   onDocumentUpdated?: (document: ListedDocument) => void;
   /** Fired when the agent creates a new workspace document (blank DOCX). */
   onDocumentCreated?: (document: ListedDocument) => void;
+  onWorkingDocumentUpdated?: (preview: { runId: string; documentId: string; baseVersionId: string; revision: number } | null) => void;
 }) {
   const router = useRouter();
   const [phase, setPhase] = React.useState<PanelPhase>({ kind: "loading" });
@@ -530,6 +532,7 @@ export function DocumentAgentPanel({
         return null;
       }
       setActiveRun(snapshot.run);
+      if (!isActiveAgentRunStatus(snapshot.run.status)) onWorkingDocumentUpdated?.(null);
       saveRunTranscript(snapshot);
       const refreshed = await refreshMessages(thread);
       void listWorkspaceAgentThreads(workspaceId)
@@ -550,7 +553,7 @@ export function DocumentAgentPanel({
       applyTerminalRunStatus(snapshot.run);
       return snapshot.run;
     },
-    [applyTerminalRunStatus, refreshMessages, saveRunTranscript, workspaceId],
+    [applyTerminalRunStatus, onWorkingDocumentUpdated, refreshMessages, saveRunTranscript, workspaceId],
   );
 
   /** Clear busy UI when SSE dies and the run is no longer live (abandoned). */
@@ -573,6 +576,7 @@ export function DocumentAgentPanel({
       setRunNotice(null);
       setCanRetryRun(true);
       setActiveRun(null);
+      onWorkingDocumentUpdated?.(null);
       runIdRef.current = null;
       reconnectAttemptsRef.current = 0;
       runStartedAtRef.current = null;
@@ -581,7 +585,7 @@ export function DocumentAgentPanel({
       setTimelineOpen(false);
       await refreshMessages(thread).catch(() => undefined);
     },
-    [refreshMessages, stopSse],
+    [onWorkingDocumentUpdated, refreshMessages, stopSse],
   );
 
   const attachRunRef = React.useRef<(
@@ -593,6 +597,7 @@ export function DocumentAgentPanel({
   const attachRun = React.useCallback(
     (run: AgentRun, thread: string, options?: { preserveDraft?: boolean }) => {
       stopSse();
+      if (!options?.preserveDraft) onWorkingDocumentUpdated?.(null);
       const generation = sseGenerationRef.current;
       runIdRef.current = run.id;
       setLastHeartbeatAt(null);
@@ -641,7 +646,15 @@ export function DocumentAgentPanel({
           setProgress(nextProgress);
           setLiveTranscript((entries) => reduceLiveTranscript(entries, event, nextProgress));
 
-          if (event.type === "document.version.advanced") {
+          if (event.type === "document.working.updated") {
+            const revision = Number(event.data.workingRevision);
+            if (Number.isSafeInteger(revision) && revision > 0) onWorkingDocumentUpdated?.({
+              runId: run.id,
+              documentId: String(event.data.documentId ?? ""),
+              baseVersionId: String(event.data.baseVersionId ?? ""),
+              revision,
+            });
+          } else if (event.type === "document.version.advanced") {
             const advancedDocumentId = String(event.data.documentId ?? "");
             if (advancedDocumentId) {
               scheduleDocumentVersionRefresh(advancedDocumentId);
@@ -688,6 +701,7 @@ export function DocumentAgentPanel({
             event.type === "agent.failed" ||
             event.type === "agent.cancelled"
           ) {
+            onWorkingDocumentUpdated?.(null);
             flushDocumentVersionRefresh();
             stopSse();
             void finalizeFromSnapshot(run.id, thread);
@@ -781,6 +795,7 @@ export function DocumentAgentPanel({
       finalizeFromSnapshot,
       flushDocumentVersionRefresh,
       onDocumentCreated,
+      onWorkingDocumentUpdated,
       onDocumentUpdated,
       refreshMessages,
       router,

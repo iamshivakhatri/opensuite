@@ -16,11 +16,13 @@ export function DocumentSurface({
   onStatusChange,
   onDocumentUpdated,
   saveRequestId,
+  workingPreview,
 }: {
   readonly document: ListedDocument;
   readonly onStatusChange?: (status: DocxSurfaceStatus) => void;
   readonly onDocumentUpdated?: (document: ListedDocument) => void;
   readonly saveRequestId?: number;
+  readonly workingPreview?: { runId: string; documentId: string; baseVersionId: string; revision: number } | null;
 }) {
   switch (document.format) {
     case "docx":
@@ -30,6 +32,7 @@ export function DocumentSurface({
           onStatusChange={onStatusChange}
           onDocumentUpdated={onDocumentUpdated}
           saveRequestId={saveRequestId}
+          workingPreview={workingPreview}
         />
       );
     case "pptx":

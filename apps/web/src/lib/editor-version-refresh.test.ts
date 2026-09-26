@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { decideEditorVersionRefresh } from "./editor-version-refresh.ts";
+import { canApplyWorkingPreview, decideEditorVersionRefresh } from "./editor-version-refresh.ts";
 
 const base = {
   documentChanged: false,
@@ -73,4 +73,21 @@ test("missing target skips", () => {
     decideEditorVersionRefresh({ ...base, targetVersionId: null }),
     "skip",
   );
+});
+
+test("working preview skips stale fetches and dirty human edits", () => {
+  const preview = {
+    requestedRevision: 13,
+    fetchedRevision: 13,
+    dirty: false,
+    saving: false,
+    conflict: false,
+    baseVersionId: "v10",
+    loadedVersionId: "v10",
+    latestVersionId: "v10",
+  };
+  assert.equal(canApplyWorkingPreview(preview), true);
+  assert.equal(canApplyWorkingPreview({ ...preview, fetchedRevision: 10 }), false);
+  assert.equal(canApplyWorkingPreview({ ...preview, dirty: true }), false);
+  assert.equal(canApplyWorkingPreview({ ...preview, latestVersionId: "v11" }), false);
 });

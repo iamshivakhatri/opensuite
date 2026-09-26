@@ -1071,6 +1071,8 @@ test("terminal runs flush valid working changes once, including partial and canc
     const result = await (await execution.start({ userId: "user-1", threadId: "thread-1", activeDocumentId: "doc-1", instruction: "edit", signal: controller.signal, liveEvents: { emit: (event) => { events.push(event); } } })).result;
     assert.equal(appends, mode === "read_only" || mode === "fail_before" ? 0 : 1, mode);
     assert.equal(events.filter((event) => event.type === "document.version.advanced").length, mode === "append_fail" ? 0 : appends, mode);
+    assert.equal(events.filter((event) => event.type === "document.working.updated").length,
+      mode === "read_only" || mode === "fail_before" ? 0 : 3, mode);
     assert.equal(result.run.status, mode === "completed" || mode === "read_only" ? "completed" : mode === "cancelled" ? "cancelled" : "failed", mode);
     if (mode === "append_fail") assert.equal(result.run.errorCode, "AGENT_PERSISTENCE_FAILED");
     if (mode !== "throw" && mode !== "cancelled" && mode !== "fail_before") {

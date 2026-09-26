@@ -30,6 +30,7 @@ export interface PrimaryDocxToolsResult {
   readonly getActiveDocumentId: () => string | null;
   readonly getActiveVersionId: () => string | null;
   readonly getWorkingRevision: () => number;
+  readonly getWorkingDocument: () => { documentId: string; baseVersionId: string; revision: number; bytes: Uint8Array } | null;
   readonly getWorkingMutationCount: () => number;
   readonly flush: () => Promise<void>;
   readonly getTransitions: () => readonly DocumentTransition[];
@@ -79,6 +80,7 @@ function createActiveDocxSession(input: {
     readonly name: string;
     readonly kind: "created" | "duplicated";
   }) => void | Promise<void>;
+  readonly onWorkingUpdated?: (event: { documentId: string; baseVersionId: string; revision: number }) => void;
 }) {
   let documentId: string | null = null;
   let versionId: string | null = null;
@@ -176,6 +178,13 @@ function createActiveDocxSession(input: {
         workingRevision += 1;
         workingMutationCount += 1;
         currentHandles.clear();
+        if (documentId && versionId) {
+          try {
+            input.onWorkingUpdated?.({ documentId, baseVersionId: versionId, revision: workingRevision });
+          } catch (error) {
+            console.error("[agent] working document event failed", error);
+          }
+        }
       }
       return result;
     },
@@ -219,6 +228,9 @@ function createActiveDocxSession(input: {
     getActiveDocumentId: () => documentId,
     getActiveVersionId: () => versionId,
     getWorkingRevision: () => workingRevision,
+    getWorkingDocument: () => dirty && host && documentId && versionId
+      ? { documentId, baseVersionId: versionId, revision: workingRevision, bytes: host.currentBytes() }
+      : null,
     getWorkingMutationCount: () => workingMutationCount,
     flush,
     getTransitions: () => transitions,
@@ -377,6 +389,7 @@ export async function createPrimaryDocxTools(input: {
     readonly name: string;
     readonly kind: "created" | "duplicated";
   }) => void | Promise<void>;
+  readonly onWorkingUpdated?: (event: { documentId: string; baseVersionId: string; revision: number }) => void;
 }): Promise<PrimaryDocxToolsResult | undefined> {
   if (!input.binding) {
     return undefined;
@@ -393,6 +406,7 @@ export async function createPrimaryDocxTools(input: {
     ...(input.onDocumentCreated
       ? { onDocumentCreated: input.onDocumentCreated }
       : {}),
+    ...(input.onWorkingUpdated ? { onWorkingUpdated: input.onWorkingUpdated } : {}),
   });
 
   if (input.documentId && input.versionId) {
@@ -423,6 +437,7 @@ export async function createPrimaryDocxTools(input: {
     getActiveDocumentId: session.getActiveDocumentId,
     getActiveVersionId: session.getActiveVersionId,
     getWorkingRevision: session.getWorkingRevision,
+    getWorkingDocument: session.getWorkingDocument,
     getWorkingMutationCount: session.getWorkingMutationCount,
     flush: session.flush,
     getTransitions: session.getTransitions,
