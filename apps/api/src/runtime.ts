@@ -12,6 +12,7 @@ import { loadConfig, type AppConfig } from "./config/index.js";
 import { createResendEmailSender } from "./email/index.js";
 import { createS3ObjectStorage } from "./storage/index.js";
 import type { AgentRunReportSink } from "./agent/agent-run-report.js";
+import type { ManagedUsagePolicy } from "./managed-usage-policy.js";
 
 /** The shared OpenSuite API process, before a caller starts listening. */
 export interface OpenSuiteRuntime {
@@ -23,6 +24,7 @@ export interface OpenSuiteRuntime {
 
 export interface OpenSuiteRuntimeOptions {
   readonly agentRunReportSink?: AgentRunReportSink;
+  readonly managedUsagePolicy?: ManagedUsagePolicy;
 }
 
 /**
@@ -69,6 +71,7 @@ export async function createOpenSuiteRuntime(
     ...(options.agentRunReportSink
       ? { agent: { agentRunReportSink: options.agentRunReportSink } }
       : {}),
+    ...(options.managedUsagePolicy ? { managedUsagePolicy: options.managedUsagePolicy } : {}),
   });
 
   return {

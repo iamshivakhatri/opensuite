@@ -2,6 +2,7 @@ import { OPENROUTER_USAGE_COST_SOURCE } from "../openrouter-models/cost.js";
 import type { ModelUsageEvent } from "../model-usage/types.js";
 import type { ManagedTrialRepository } from "./repository.js";
 import { ManagedTrialError, type ManagedTrialAccount } from "./types.js";
+import type { ManagedUsagePolicy } from "../managed-usage-policy.js";
 
 export function createManagedTrialService(
   repository: ManagedTrialRepository,
@@ -17,7 +18,7 @@ export function createManagedTrialService(
       const value = await ensure(userId);
       if (value.blockedAt || value.balanceMicros <= 0) throw new ManagedTrialError(value.blockedAt ? "MANAGED_TRIAL_ACCOUNTING_FAILED" : "MANAGED_TRIAL_EXHAUSTED", "Managed AI trial is unavailable.");
     },
-    async applyManagedUsage(event: ModelUsageEvent): Promise<void> {
+    async afterUsageRecorded(event: ModelUsageEvent): Promise<void> {
       if (event.credentialSource !== "managed") return;
       if (event.costMicros === null || event.costSource !== OPENROUTER_USAGE_COST_SOURCE) {
         await ensure(event.userId);
@@ -43,4 +44,4 @@ export function createManagedTrialService(
     },
   };
 }
-export type ManagedTrialService = ReturnType<typeof createManagedTrialService>;
+export type ManagedTrialService = ReturnType<typeof createManagedTrialService> & ManagedUsagePolicy;

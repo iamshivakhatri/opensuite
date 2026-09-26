@@ -17,7 +17,7 @@ import type { DocxEngineBinding } from "@opensuite/engine-client";
 import type { CredentialSource } from "../ai-preferences/types.js";
 import type { ProviderCredentialProvider } from "../credentials/types.js";
 import type { DocumentService } from "../documents/service.js";
-import type { ManagedTrialService } from "../managed-trial/service.js";
+import type { ManagedUsagePolicy } from "../managed-usage-policy.js";
 import {
   productionModelPricingRegistry,
 } from "../model-usage/pricing.js";
@@ -243,7 +243,7 @@ export interface AgentExecutionServiceDeps {
   readonly resolveModel: (userId: string) => Promise<ResolvedV3ExecutionModel>;
   readonly docxBinding?: DocxEngineBinding;
   readonly modelUsage?: ModelUsageService;
-  readonly managedTrial?: ManagedTrialService;
+  readonly managedUsagePolicy?: ManagedUsagePolicy;
   readonly agentRunReportSink?: AgentRunReportSink;
   readonly lease?: AgentExecutionLeaseService;
   /** Test seam — production uses agent-core-v3 `runAgent`. */
@@ -466,7 +466,7 @@ async function runExecution(input: {
       input.model.usageAttribution?.provider === "openrouter" &&
       input.model.usageAttribution.credentialSource === "managed"
     ) {
-      await input.deps.managedTrial?.beforeManagedCall(input.ownerUserId);
+      await input.deps.managedUsagePolicy?.beforeManagedCall(input.ownerUserId);
     }
 
     const versionAdvances: DocumentVersionAdvance[] = [];
@@ -753,7 +753,7 @@ async function runExecution(input: {
         input.model.usageAttribution.provider === "openrouter" &&
         input.model.usageAttribution.credentialSource === "managed"
       ) {
-        await input.deps.managedTrial?.applyManagedUsage(usage);
+        await input.deps.managedUsagePolicy?.afterUsageRecorded(usage);
       }
     }
 
@@ -776,7 +776,7 @@ async function runExecution(input: {
       maxOutputTokens: input.model.maxOutputTokens,
       usageAttribution: input.model.usageAttribution,
       modelUsage: input.deps.modelUsage,
-      managedTrial: input.deps.managedTrial,
+      managedUsagePolicy: input.deps.managedUsagePolicy,
       runModel: input.deps.runModel,
     })
       .then(logContextCompaction)

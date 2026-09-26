@@ -5,3 +5,4 @@ export type { AppConfig } from "./config/index.js";
 export { createOpenSuiteRuntime } from "./runtime.js";
 export type { OpenSuiteRuntime, OpenSuiteRuntimeOptions } from "./runtime.js";
 export type { AgentRunReport, AgentRunReportSink } from "./agent/agent-run-report.js";
+export type { ManagedUsagePolicy, ManagedUsageStatus } from "./managed-usage-policy.js";

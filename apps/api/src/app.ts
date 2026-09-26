@@ -26,6 +26,7 @@ import {
 import { createAgentExecutionLeaseService } from "./agent/execution-lease.js";
 import { createManagedTrialRepository } from "./managed-trial/repository.js";
 import { createManagedTrialService } from "./managed-trial/service.js";
+import type { ManagedUsagePolicy } from "./managed-usage-policy.js";
 import { createStorageAccountingService } from "./storage-accounting/service.js";
 import { createAiModelResolver } from "./ai-preferences/resolver.js";
 import { createAiPreferenceService } from "./ai-preferences/service.js";
@@ -98,6 +99,8 @@ export interface AppDependencies {
   readonly createBlankDocxBytes?: () => Uint8Array | Promise<Uint8Array>;
   /** Test/override: process-local authenticated write limiter. */
   readonly rateLimiter?: UserRateLimiter;
+  /** Hosted deployments may replace the default server-paid usage policy. */
+  readonly managedUsagePolicy?: ManagedUsagePolicy;
 }
 
 /**
@@ -268,7 +271,7 @@ export async function buildApp(
     },
   });
   const preferences = createDocumentPreferenceService(deps.db);
-  const managedTrial = createManagedTrialService(
+  const managedUsagePolicy = deps.managedUsagePolicy ?? createManagedTrialService(
     createManagedTrialRepository(deps.db),
     config.managedAiTrialCreditMicros,
     config.managedAiTrialDisplayCredits,
@@ -309,7 +312,7 @@ export async function buildApp(
       },
       modelUsage,
       lease: agentExecutionLease,
-      managedTrial,
+      managedUsagePolicy,
       ...(deps.agent?.agentRunReportSink
         ? { agentRunReportSink: deps.agent.agentRunReportSink }
         : {}),
@@ -329,7 +332,7 @@ export async function buildApp(
   });
   registerMeRoutes(app, deps.auth);
   registerAiModelRoutes(app, deps.auth, managedModelCatalog);
-  registerAiTrialRoutes(app, deps.auth, managedTrial);
+  registerAiTrialRoutes(app, deps.auth, managedUsagePolicy);
   registerAiPreferenceRoutes(app, deps.auth, aiPreferences, managedModelCatalog, {
     managedModel: config.agent.openrouterModel,
     credentials,

@@ -1,6 +1,6 @@
 import { runModel, type V3Model } from "@opensuite/agent-core-v3";
 
-import type { ManagedTrialService } from "../managed-trial/service.js";
+import type { ManagedUsagePolicy } from "../managed-usage-policy.js";
 import type { ModelUsageService } from "../model-usage/service.js";
 import type { AgentModelUsageAttribution } from "./execution.js";
 import {
@@ -55,7 +55,7 @@ export async function compactThreadContext(input: {
   readonly maxOutputTokens?: number;
   readonly usageAttribution?: AgentModelUsageAttribution;
   readonly modelUsage?: ModelUsageService;
-  readonly managedTrial?: ManagedTrialService;
+  readonly managedUsagePolicy?: ManagedUsagePolicy;
   readonly runModel?: typeof runModel;
 }): Promise<ContextCompactionResult> {
   const startedAt = Date.now();
@@ -120,6 +120,9 @@ export async function compactThreadContext(input: {
   let output: string;
   let usage: Awaited<ReturnType<typeof runModel>>;
   try {
+    if (input.usageAttribution?.credentialSource === "managed") {
+      await input.managedUsagePolicy?.beforeManagedCall(input.ownerUserId);
+    }
     usage = await (input.runModel ?? runModel)({
       model: input.model,
       system: COMPACTION_SYSTEM_PROMPT,
@@ -153,7 +156,7 @@ export async function compactThreadContext(input: {
         input.usageAttribution.provider === "openrouter" &&
         input.usageAttribution.credentialSource === "managed"
       ) {
-        await input.managedTrial?.applyManagedUsage(event);
+        await input.managedUsagePolicy?.afterUsageRecorded(event);
       }
     } catch {
       console.warn("[context-compaction] usage accounting failed");

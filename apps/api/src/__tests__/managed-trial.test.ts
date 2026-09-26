@@ -36,10 +36,10 @@ test("managed trial grants once, debits actual cost, and blocks the next call af
   const repository = memoryRepository();
   const trial = createManagedTrialService(repository, 500);
   await trial.beforeManagedCall("user-1");
-  await trial.applyManagedUsage({ id: "usage-1", userId: "user-1", provider: "openrouter", model: "test", credentialSource: "managed", inputTokens: null, outputTokens: null, cachedInputTokens: null, reasoningTokens: null, costMicros: 700, costCurrency: "USD", costSource: "openrouter_usage_cost", agentRunId: null, createdAt: new Date().toISOString() });
+  await trial.afterUsageRecorded({ id: "usage-1", userId: "user-1", provider: "openrouter", model: "test", credentialSource: "managed", inputTokens: null, outputTokens: null, cachedInputTokens: null, reasoningTokens: null, costMicros: 700, costCurrency: "USD", costSource: "openrouter_usage_cost", agentRunId: null, createdAt: new Date().toISOString() });
   assert.equal((await trial.status("user-1")).balanceMicros, -200);
   await assert.rejects(() => trial.beforeManagedCall("user-1"), ManagedTrialError);
-  await trial.applyManagedUsage({ id: "usage-1", userId: "user-1", provider: "openrouter", model: "test", credentialSource: "managed", inputTokens: null, outputTokens: null, cachedInputTokens: null, reasoningTokens: null, costMicros: 700, costCurrency: "USD", costSource: "openrouter_usage_cost", agentRunId: null, createdAt: new Date().toISOString() });
+  await trial.afterUsageRecorded({ id: "usage-1", userId: "user-1", provider: "openrouter", model: "test", credentialSource: "managed", inputTokens: null, outputTokens: null, cachedInputTokens: null, reasoningTokens: null, costMicros: 700, costCurrency: "USD", costSource: "openrouter_usage_cost", agentRunId: null, createdAt: new Date().toISOString() });
   assert.equal((await trial.status("user-1")).balanceMicros, -200);
 });
 
@@ -47,7 +47,7 @@ test("missing managed cost blocks future managed calls without treating it as fr
   const trial = createManagedTrialService(memoryRepository(), 500);
   await trial.beforeManagedCall("user-2");
   await assert.rejects(
-    () => trial.applyManagedUsage({ id: "usage-2", userId: "user-2", provider: "openrouter", model: "test", credentialSource: "managed", inputTokens: null, outputTokens: null, cachedInputTokens: null, reasoningTokens: null, costMicros: null, costCurrency: null, costSource: null, agentRunId: null, createdAt: new Date().toISOString() }),
+    () => trial.afterUsageRecorded({ id: "usage-2", userId: "user-2", provider: "openrouter", model: "test", credentialSource: "managed", inputTokens: null, outputTokens: null, cachedInputTokens: null, reasoningTokens: null, costMicros: null, costCurrency: null, costSource: null, agentRunId: null, createdAt: new Date().toISOString() }),
     ManagedTrialError,
   );
   await assert.rejects(() => trial.beforeManagedCall("user-2"), ManagedTrialError);
@@ -56,7 +56,7 @@ test("missing managed cost blocks future managed calls without treating it as fr
 test("BYOK usage never creates or debits a trial account", async () => {
   const repository = memoryRepository();
   const trial = createManagedTrialService(repository, 500);
-  await trial.applyManagedUsage({ id: "usage-byok", userId: "user-3", provider: "openrouter", model: "test", credentialSource: "byok", inputTokens: null, outputTokens: null, cachedInputTokens: null, reasoningTokens: null, costMicros: 400, costCurrency: "USD", costSource: "openrouter_usage_cost", agentRunId: null, createdAt: new Date().toISOString() });
+  await trial.afterUsageRecorded({ id: "usage-byok", userId: "user-3", provider: "openrouter", model: "test", credentialSource: "byok", inputTokens: null, outputTokens: null, cachedInputTokens: null, reasoningTokens: null, costMicros: 400, costCurrency: "USD", costSource: "openrouter_usage_cost", agentRunId: null, createdAt: new Date().toISOString() });
   assert.equal(repository.accounts.size, 0);
 });
 
