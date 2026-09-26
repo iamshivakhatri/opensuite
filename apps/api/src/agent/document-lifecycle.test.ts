@@ -214,6 +214,8 @@ test("duplicate switches active binding; subsequent mutate targets only the copy
   assert.equal(mem.store.get("doc-1")!.latestVersionId, "ver-1");
 
   // Copy advanced
+  assert.equal(tools.getActiveVersionId(), copyVersionId);
+  await tools.flush();
   assert.notEqual(tools.getActiveVersionId(), copyVersionId);
   assert.equal(tools.getActiveDocumentId(), copyId);
 });
@@ -259,12 +261,18 @@ test("create blank becomes active; subsequent mutation targets the blank", async
     { text: "Weekly Plan", placement: { kind: "end" } },
     { toolCallId: "m1", messages: [], context: undefined as never },
   );
+  await insert.execute(
+    { text: "Next step", placement: { kind: "end" } },
+    { toolCallId: "m2", messages: [], context: undefined as never },
+  );
 
   assert.equal(mem.store.get("doc-1")!.latestVersionId, "ver-1");
   assert.equal(tools.getActiveDocumentId(), blankId);
+  assert.equal(mem.store.get(blankId!)!.versions.size, 1);
+  await tools.flush();
   assert.ok(
-    mem.store.get(blankId!)!.versions.size >= 2,
-    "blank received a mutation version",
+    mem.store.get(blankId!)!.versions.size === 2,
+    "blank received one final mutation version",
   );
 });
 
@@ -367,6 +375,7 @@ test("finish-as-read before mutations: duplicate then mutate still targets copy"
   );
 
   assert.equal(mem.store.get("doc-1")!.latestVersionId, "ver-1");
+  await tools.flush();
   assert.ok(mem.store.get(copyId!)!.versions.size >= 2);
 });
 

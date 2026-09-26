@@ -29,6 +29,9 @@ export interface PrimaryDocxToolsResult {
   readonly documentId: string | null;
   readonly getActiveDocumentId: () => string | null;
   readonly getActiveVersionId: () => string | null;
+  readonly getWorkingRevision: () => number;
+  readonly getWorkingMutationCount: () => number;
+  readonly flush: () => Promise<void>;
   readonly getTransitions: () => readonly DocumentTransition[];
 }
 
@@ -40,6 +43,18 @@ type SessionDocuments = Pick<
   | "createBlankDocxDocument"
   | "createOfficeDocumentFromBytes"
 >;
+
+function collectHandles(value: unknown, handles: Set<string>): void {
+  if (!value || typeof value !== "object") return;
+  if (Array.isArray(value)) {
+    for (const item of value) collectHandles(item, handles);
+    return;
+  }
+  for (const [key, item] of Object.entries(value)) {
+    if (/(^handle$|Handle$)/.test(key) && typeof item === "string") handles.add(item);
+    else collectHandles(item, handles);
+  }
+}
 
 /**
  * Mutable active DOCX binding for one agent run.
@@ -67,40 +82,47 @@ function createActiveDocxSession(input: {
 }) {
   let documentId: string | null = null;
   let versionId: string | null = null;
-  let host: BoundDocumentHost | null = null;
+  let host: ReturnType<typeof bindDocxDocument> | null = null;
+  let dirty = false;
+  let workingRevision = 0;
+  let workingMutationCount = 0;
+  const currentHandles = new Set<string>();
   const transitions: DocumentTransition[] = [];
 
   function bindHost(next: {
     readonly documentId: string;
     readonly versionId: string;
     readonly bytes: Uint8Array;
-  }): BoundDocumentHost {
-    const boundDocumentId = next.documentId;
+  }) {
     return bindDocxDocument({
       binding: input.binding,
       bytes: next.bytes,
       versionId: next.versionId,
-      persist: async ({ bytes: nextBytes, baseVersionId }) => {
-        const appended = await input.documents.appendDocumentVersion({
-          documentId: boundDocumentId,
-          ownerUserId: input.ownerUserId,
-          baseVersionId,
-          source: "agent",
-          bytes: Buffer.from(nextBytes),
-        });
-        versionId = appended.version.id;
-        await input.onVersionAdvanced?.({
-          documentId: boundDocumentId,
-          fromVersionId: baseVersionId,
-          versionId: appended.version.id,
-          versionNumber: appended.version.versionNumber,
-        });
-        return {
-          versionId: appended.version.id,
-          versionNumber: appended.version.versionNumber,
-        };
-      },
     });
+  }
+
+  async function flush(): Promise<void> {
+    if (!dirty || !host || !documentId || !versionId) return;
+    const fromVersionId = versionId;
+    const appended = await input.documents.appendDocumentVersion({
+      documentId,
+      ownerUserId: input.ownerUserId,
+      baseVersionId: fromVersionId,
+      source: "agent",
+      bytes: Buffer.from(host.currentBytes()),
+    });
+    dirty = false;
+    versionId = appended.version.id;
+    try {
+      await input.onVersionAdvanced?.({
+        documentId,
+        fromVersionId,
+        versionId,
+        versionNumber: appended.version.versionNumber,
+      });
+    } catch (error) {
+      console.error("[agent] document version event failed", error);
+    }
   }
 
   function rebind(next: {
@@ -112,6 +134,9 @@ function createActiveDocxSession(input: {
     documentId = next.documentId;
     versionId = next.versionId;
     host = bindHost(next);
+    dirty = false;
+    workingRevision = 0;
+    currentHandles.clear();
   }
 
   function requireHost(): BoundDocumentHost {
@@ -123,7 +148,11 @@ function createActiveDocxSession(input: {
 
   const redirectingHost: BoundDocumentHost = {
     capabilities: () => input.binding.getDocxCapabilities(),
-    inspect: (request) => requireHost().inspect(request),
+    inspect: async (request) => {
+      const result = await requireHost().inspect(request);
+      collectHandles(result, currentHandles);
+      return result;
+    },
     find: (request) => requireHost().find(request),
     mutate: async (capability, operation) => {
       if (!host?.mutate) {
@@ -135,7 +164,20 @@ function createActiveDocxSession(input: {
           diagnostics: [],
         };
       }
-      return host.mutate(capability, operation);
+      const handles = new Set<string>();
+      collectHandles(operation, handles);
+      if ([...handles].some((handle) => !currentHandles.has(handle))) {
+        return { ok: false, reasonCode: "STALE_HANDLE", status: "error", capability,
+          diagnostics: [{ code: "STALE_HANDLE", severity: "error", message: "Inspect the current document again before using this handle." }] };
+      }
+      const result = await host.mutate(capability, operation);
+      if (result.ok) {
+        dirty = true;
+        workingRevision += 1;
+        workingMutationCount += 1;
+        currentHandles.clear();
+      }
+      return result;
     },
   };
 
@@ -176,11 +218,15 @@ function createActiveDocxSession(input: {
     redirectingHost,
     getActiveDocumentId: () => documentId,
     getActiveVersionId: () => versionId,
+    getWorkingRevision: () => workingRevision,
+    getWorkingMutationCount: () => workingMutationCount,
+    flush,
     getTransitions: () => transitions,
     rebind,
     async createBlank(title?: string) {
       const fromDocumentId = documentId;
       try {
+        await flush();
         const created = await input.documents.createBlankDocxDocument({
           workspaceId: input.workspaceId,
           ownerUserId: input.ownerUserId,
@@ -220,9 +266,9 @@ function createActiveDocxSession(input: {
         };
       }
       const fromDocumentId = documentId;
-      const fromVersionId = versionId;
-
       try {
+        await flush();
+        const fromVersionId = versionId!;
         const source = await input.documents.getOwnedDocument({
           documentId: fromDocumentId,
           ownerUserId: input.ownerUserId,
@@ -376,6 +422,9 @@ export async function createPrimaryDocxTools(input: {
     documentId: session.getActiveDocumentId(),
     getActiveDocumentId: session.getActiveDocumentId,
     getActiveVersionId: session.getActiveVersionId,
+    getWorkingRevision: session.getWorkingRevision,
+    getWorkingMutationCount: session.getWorkingMutationCount,
+    flush: session.flush,
     getTransitions: session.getTransitions,
   };
 }

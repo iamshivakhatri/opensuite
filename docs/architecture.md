@@ -18,7 +18,7 @@ opensuite-engine
 
 This repository owns the Next.js web app, Fastify API, authentication, PostgreSQL data, object storage, workspaces, documents, immutable document versions, agent threads, and agent runs.
 
-The API binds a user’s current DOCX version to the agent. When the agent requests a supported document operation, the API calls `packages/engine-client`, persists the returned bytes as the next immutable version, and updates the workspace view. The application does not parse or edit Office XML itself.
+The API binds a user’s current DOCX version to the agent. During a run, supported operations update run-local bytes through `packages/engine-client`. At the run boundary, the API saves the latest valid bytes as one immutable version and updates the workspace view. The application does not parse or edit Office XML itself.
 
 ```text
 workspace

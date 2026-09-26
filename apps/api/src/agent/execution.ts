@@ -454,6 +454,19 @@ async function runExecution(input: {
   readonly liveEvents?: AgentEventSink;
 }): Promise<AgentExecutionResult> {
   const transcript = createTranscriptCollector();
+  let boundTools: Awaited<ReturnType<typeof createPrimaryDocxTools>>;
+  let flushAttempted = false;
+  let persistenceFailure = false;
+  const flushWorking = async () => {
+    if (flushAttempted) return;
+    flushAttempted = true;
+    try {
+      await boundTools?.flush();
+    } catch {
+      persistenceFailure = true;
+      throw new AgentExecutionError("AGENT_PERSISTENCE_FAILED", "Could not save agent document changes. The previous version is unchanged.");
+    }
+  };
   try {
     const checkpoint = await input.deps.persistence.getLatestThreadContextCheckpoint({
       threadId: input.thread.id,
@@ -485,7 +498,7 @@ async function runExecution(input: {
 
     const versionAdvances: DocumentVersionAdvance[] = [];
     const initialDocumentId = input.primaryDocumentId;
-    const boundTools = await createPrimaryDocxTools({
+    boundTools = await createPrimaryDocxTools({
       binding: input.deps.docxBinding,
       documents: input.deps.documents,
       ownerUserId: input.ownerUserId,
@@ -531,6 +544,7 @@ async function runExecution(input: {
       tools,
       () => boundTools?.getActiveVersionId() ?? null,
       false,
+      () => boundTools?.getWorkingRevision() ?? 0,
     );
     const system = buildAgentOperatingInstruction(Object.keys(tools)) +
       (!boundTools?.getActiveDocumentId() && tools["workspace.create_blank_document"]
@@ -670,7 +684,7 @@ async function runExecution(input: {
       retrievalMessage: retrieval?.message,
       safeToolResultNames: input.model.usageAttribution?.provider === "openrouter",
       directVersionId: retrieval?.observation.contextStrategy === "direct" ? input.run.baseDocumentVersionId : undefined,
-      currentVersionId: () => boundTools?.getActiveVersionId() ?? null,
+      currentVersionId: () => boundTools?.getWorkingRevision() ? null : boundTools?.getActiveVersionId() ?? null,
       tools,
       stats: inRunStats,
     });
@@ -690,19 +704,24 @@ async function runExecution(input: {
         maxTurns: MAX_MODEL_TURNS,
         onEvent: (event) => relayEvent(event, input.liveEvents, input.run.id, messageId, transcript),
       });
+      await flushWorking();
     } catch (error) {
+      let terminalError = error;
+      try { await flushWorking(); } catch (flushError) { terminalError = flushError; }
       await emitRunReport({
         runId: input.run.id,
         instruction: input.instruction,
         model: input.model,
-        metrics: getRunMetricsFromError(error),
-        cancelled: input.signal?.aborted === true,
+        metrics: result?.metrics ?? getRunMetricsFromError(error),
+        ...(result ? { stopReason: result.stopReason } : {}),
+        cancelled: input.signal?.aborted === true && !persistenceFailure,
         thrown: true,
         initialDocumentId,
         initialVersionId: input.run.baseDocumentVersionId,
         finalDocumentId: boundTools?.getActiveDocumentId() ?? initialDocumentId,
         finalVersionId: boundTools?.getActiveVersionId() ?? input.run.baseDocumentVersionId,
         versionAdvances,
+        workingMutationCount: boundTools?.getWorkingMutationCount() ?? 0,
         documentTransitions: boundTools?.getTransitions() ?? [],
         retrieval: reportRetrieval,
         context: {
@@ -716,7 +735,7 @@ async function runExecution(input: {
         },
         sink: input.deps.agentRunReportSink,
       });
-      throw error;
+      throw terminalError;
     }
 
     await emitRunReport({
@@ -732,6 +751,7 @@ async function runExecution(input: {
       finalDocumentId: boundTools?.getActiveDocumentId() ?? initialDocumentId,
       finalVersionId: boundTools?.getActiveVersionId() ?? input.run.baseDocumentVersionId,
       versionAdvances,
+      workingMutationCount: boundTools?.getWorkingMutationCount() ?? 0,
       documentTransitions: boundTools?.getTransitions() ?? [],
       retrieval: reportRetrieval,
       context: {
@@ -817,9 +837,13 @@ async function runExecution(input: {
     // Includes pre-model setup (checkpoint/history load). Re-throwing here used
     // to reject the background promise and leave the run non-terminal forever.
     transcript.finish();
+    let terminalError = error;
+    if (!flushAttempted) {
+      try { await flushWorking(); } catch (flushError) { terminalError = flushError; }
+    }
     return settleTerminalRunFailure({
-      error,
-      cancelled: input.signal?.aborted === true,
+      error: terminalError,
+      cancelled: input.signal?.aborted === true && !persistenceFailure,
       persistence: input.deps.persistence,
       ownerUserId: input.ownerUserId,
       thread: input.thread,
@@ -942,9 +966,11 @@ export function guardRepeatedReads(
   tools: AgentToolSet,
   currentVersionId: () => string | null,
   completeDirect: boolean,
+  currentWorkingRevision: () => number = () => 0,
 ) {
   let direct = completeDirect;
-  let directVersion = completeDirect ? currentVersionId() : null;
+  const currentState = () => `${currentVersionId() ?? "unbound"}:${currentWorkingRevision()}`;
+  let directVersion = completeDirect ? currentState() : null;
   let suppressed = 0;
   const attempts = new Map<string, number>();
   for (const name of ["document.inspect", "document.find"] as const) {
@@ -955,12 +981,13 @@ export function guardRepeatedReads(
       ...original,
       execute: async (args: any, context: any) => {
         const version = currentVersionId() ?? "unbound";
-        const key = `${version}:${name}:${JSON.stringify(args)}`;
+        const state = currentState();
+        const key = `${state}:${name}:${JSON.stringify(args)}`;
         const repeated = attempts.get(key) ?? 0;
         const broadInspect = name === "document.inspect" && (args as { kind?: string }).kind !== "context";
         const directReads = [...attempts].reduce((sum, [item, count]) =>
-          item.startsWith(`${version}:${name}:`) ? sum + count : sum, 0);
-        if (repeated >= 2 || (direct && version === directVersion && (broadInspect || name === "document.find") && directReads >= (name === "document.find" ? 6 : 2))) {
+          item.startsWith(`${state}:${name}:`) ? sum + count : sum, 0);
+        if (repeated >= 2 || (direct && state === directVersion && (broadInspect || name === "document.find") && directReads >= (name === "document.find" ? 6 : 2))) {
           suppressed += 1;
           return { ok: true, redundantReadSuppressed: true, versionId: version,
             message: "Document unchanged. The requested content is already available. Proceed with the remaining task or finish; use a targeted read only for a missing exact target." };
@@ -981,7 +1008,7 @@ export function guardRepeatedReads(
       },
     };
   }
-  return { setCompleteDirect(value: boolean) { direct = value; directVersion = value ? currentVersionId() : null; }, suppressedCount() { return suppressed; } };
+  return { setCompleteDirect(value: boolean) { direct = value; directVersion = value ? currentState() : null; }, suppressedCount() { return suppressed; } };
 }
 
 /**
@@ -1055,6 +1082,7 @@ async function emitRunReport(input: {
   readonly finalDocumentId?: string | null;
   readonly initialVersionId: string | null;
   readonly finalVersionId?: string | null;
+  readonly workingMutationCount?: number;
   readonly versionAdvances: readonly DocumentVersionAdvance[];
   readonly documentTransitions?: readonly DocumentTransition[];
   readonly retrieval?: AgentRunReportRetrieval;
@@ -1113,6 +1141,7 @@ async function emitRunReport(input: {
       finalDocumentId: input.finalDocumentId,
       initialVersionId: input.initialVersionId,
       finalVersionId: input.finalVersionId,
+      workingMutationCount: input.workingMutationCount,
       versionAdvances: input.versionAdvances,
       documentTransitions: input.documentTransitions ?? [],
       ...(input.retrieval !== undefined ? { retrieval: input.retrieval } : {}),
@@ -1334,6 +1363,9 @@ async function settleTerminalRunFailure(input: {
 /** Only known, safe reasons reach persisted run status and the Agent Panel. */
 export function describeRunFailure(error: unknown, transcript: readonly TranscriptEntry[]): { code: string; message: string } | null {
   const code = error && typeof error === "object" && "code" in error ? error.code : undefined;
+  if (code === "AGENT_PERSISTENCE_FAILED") {
+    return { code, message: "Could not save agent document changes. The previous version is unchanged." };
+  }
   if (code === "MANAGED_USAGE_DISABLED" || code === "MANAGED_TRIAL_DISABLED") {
     return { code: String(code), message: "Managed AI is unavailable. Add your own API key in AI & Models settings." };
   }

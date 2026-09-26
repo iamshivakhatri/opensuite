@@ -102,6 +102,7 @@ test("composeAgentRunReport merges runtime metrics + document facts", () => {
     metrics: baseMetrics(),
     stopReason: "finish_tool",
     initialVersionId: "ver-1",
+    workingMutationCount: 5,
     versionAdvances: [
       { fromVersionId: "ver-1", toVersionId: "ver-2" },
     ],
@@ -118,6 +119,7 @@ test("composeAgentRunReport merges runtime metrics + document facts", () => {
   assert.equal(report.document?.initialVersionId, "ver-1");
   assert.equal(report.document?.finalVersionId, "ver-2");
   assert.equal(report.document?.versionAdvances.length, 1);
+  assert.equal(report.document?.workingMutationCount, 5);
   assert.equal(report.tools[0]!.name, "document.find");
   assert.ok(typeof report.estimatedCostUsd === "number");
 });

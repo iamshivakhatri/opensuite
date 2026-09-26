@@ -562,6 +562,21 @@ test("read guard stops distinct DIRECT find loops but permits normal targeted re
   assert.equal(guard.suppressedCount(), 2);
 });
 
+test("read guard resets after a working mutation without a persisted version advance", async () => {
+  let revision = 0;
+  let reads = 0;
+  const tools = { "document.inspect": { kind: "read", execute: async () => { reads++; return { ok: true }; } } } as never;
+  guardRepeatedReads(tools, () => "v1", true, () => revision);
+  const inspect = (tools as Record<string, { execute: (args: unknown, context: unknown) => Promise<unknown> }>)["document.inspect"]!.execute;
+  await inspect({ kind: "overview" }, {});
+  await inspect({ kind: "overview" }, {});
+  await inspect({ kind: "overview" }, {});
+  assert.equal(reads, 2);
+  revision++;
+  await inspect({ kind: "overview" }, {});
+  assert.equal(reads, 3);
+});
+
 test("failed reads remain retryable", async () => {
   let calls = 0;
   const tools = { "document.find": { kind: "read", execute: async () => { calls += 1; return { ok: false }; } } } as never;

@@ -33,6 +33,7 @@ export interface AgentRunReportDocument {
   readonly finalDocumentId?: string;
   readonly initialVersionId?: string;
   readonly finalVersionId?: string;
+  readonly workingMutationCount: number;
   readonly versionAdvances: readonly DocumentVersionAdvance[];
   readonly transitions: readonly DocumentTransition[];
 }
@@ -157,6 +158,7 @@ export interface ComposeAgentRunReportInput {
   readonly finalDocumentId?: string | null;
   readonly initialVersionId?: string | null;
   readonly finalVersionId?: string | null;
+  readonly workingMutationCount?: number;
   readonly versionAdvances?: readonly DocumentVersionAdvance[];
   readonly documentTransitions?: readonly DocumentTransition[];
   readonly retrieval?: AgentRunReportRetrieval;
@@ -328,6 +330,7 @@ export function composeAgentRunReport(
               ? { initialVersionId }
               : {}),
             ...(finalVersionId !== undefined ? { finalVersionId } : {}),
+            workingMutationCount: input.workingMutationCount ?? 0,
             versionAdvances: advances,
             transitions,
           },
@@ -419,6 +422,8 @@ export function formatAgentRunSummary(report: AgentRunReport): string {
   if (report.context?.redundantReadSuppressedCount) lines.push(`${padLabel("Reads saved")}${report.context.redundantReadSuppressedCount}`);
 
   if (report.document) {
+    lines.push(`${padLabel("Mutations")}${report.document.workingMutationCount}`);
+    lines.push(`${padLabel("Version advances")}${report.document.versionAdvances.length}`);
     const initialDoc = report.document.initialDocumentId;
     const finalDoc = report.document.finalDocumentId;
     if (initialDoc && finalDoc && initialDoc !== finalDoc) {

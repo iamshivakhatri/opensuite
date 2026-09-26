@@ -2,6 +2,8 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 
 import type { RunAgentResult, RunModelResult, V3Model } from "@opensuite/agent-core-v3";
+import { buildMinimalDocx, createNapiDocxEngineBinding } from "@opensuite/engine-client";
+import type { AgentRunReport } from "./agent-run-report.js";
 
 import {
   boundedStopMessage,
@@ -1005,6 +1007,63 @@ test("max_turns settles as a bounded stop and persists its existing transcript",
       ["tool", "completed", "document.delete_paragraph", "Completed"],
     ],
   );
+});
+
+test("terminal runs flush valid working changes once, including partial and cancelled runs", async () => {
+  const binding = await createNapiDocxEngineBinding();
+  for (const mode of ["completed", "max_turns", "cancelled", "throw", "read_only", "fail_before", "append_fail"] as const) {
+    const persistence = memoryPersistence("user-1");
+    let bytes = Buffer.from(buildMinimalDocx(["Start"]));
+    let versionId = "v1";
+    let appends = 0;
+    const events: AgentEvent[] = [];
+    const reports: AgentRunReport[] = [];
+    const controller = new AbortController();
+    const deps = baseDeps(persistence, async (input) => {
+      if (mode === "fail_before") throw new Error("model failed");
+      const call = { toolCallId: "test", messages: [], context: undefined as never };
+      if (mode === "read_only") {
+        await input.tools!["document.inspect"]!.execute!({ kind: "body_blocks" }, call);
+      } else {
+        for (let i = 0; i < 3; i++) {
+          const result = await input.tools!["document.insert_paragraph"]!.execute!({ text: `Edit ${i}`, placement: { kind: "end" } }, call);
+          assert.equal((result as { ok: boolean }).ok, true);
+        }
+      }
+      if (mode === "throw") throw new Error("model failed after edits");
+      if (mode === "cancelled") { controller.abort(); throw new Error("cancelled"); }
+      return softResult(mode === "max_turns" ? "max_turns" : "completed");
+    });
+    const execution = createAgentExecutionService({
+      ...deps,
+      docxBinding: binding,
+      agentRunReportSink: (report) => { reports.push(report); },
+      documents: {
+        ...deps.documents,
+        getOwnedDocument: async () => ({ id: "doc-1", workspaceId: "ws-1", format: "docx", latestVersion: { id: versionId } }) as never,
+        readExactVersionBytes: async () => bytes,
+        appendDocumentVersion: async (input) => {
+          assert.equal(input.baseVersionId, "v1");
+          appends++;
+          if (mode === "append_fail") throw new Error("storage unavailable");
+          bytes = Buffer.from(input.bytes);
+          versionId = "v2";
+          return { version: { id: "v2", versionNumber: 2 } } as never;
+        },
+      },
+    });
+    const result = await (await execution.start({ userId: "user-1", threadId: "thread-1", activeDocumentId: "doc-1", instruction: "edit", signal: controller.signal, liveEvents: { emit: (event) => { events.push(event); } } })).result;
+    assert.equal(appends, mode === "read_only" || mode === "fail_before" ? 0 : 1, mode);
+    assert.equal(events.filter((event) => event.type === "document.version.advanced").length, mode === "append_fail" ? 0 : appends, mode);
+    assert.equal(result.run.status, mode === "completed" || mode === "read_only" ? "completed" : mode === "cancelled" ? "cancelled" : "failed", mode);
+    if (mode === "append_fail") assert.equal(result.run.errorCode, "AGENT_PERSISTENCE_FAILED");
+    if (mode !== "throw" && mode !== "cancelled" && mode !== "fail_before") {
+      assert.equal(reports[0]?.document?.workingMutationCount, mode === "read_only" ? 0 : 3, mode);
+      assert.equal(reports[0]?.document?.versionAdvances.length, mode === "read_only" || mode === "append_fail" ? 0 : 1, mode);
+      assert.equal(reports[0]?.document?.finalVersionId, mode === "read_only" || mode === "append_fail" ? "v1" : "v2", mode);
+    }
+    if (appends && mode !== "append_fail") assert.match(JSON.stringify(await binding.inspectDocx(bytes, { focus: { kind: "body_blocks" } })), /Edit 2/);
+  }
 });
 
 test("max_turns reports preserved changes only after a version advance", () => {

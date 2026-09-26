@@ -72,6 +72,9 @@ export function bindDocxDocument(input: {
     currentVersionId(): string | undefined {
       return versionId;
     },
+    currentBytes(): Uint8Array {
+      return bytes;
+    },
     async mutate(
       capability: string,
       operation: Record<string, unknown>,

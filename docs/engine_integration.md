@@ -16,7 +16,7 @@ Phase 2B read/write tools
   → DocxEngineBinding getDocxCapabilities / inspectDocx / findDocxText / executeDocx*
   → Node N-API (@opensuitehq/engine)
   → Rust opensuite-engine
-  → persist → appendDocumentVersion → host advances bytes/version
+  → host advances run-local bytes → one appendDocumentVersion at run end
 ```
 ### Blank DOCX create (not a DocumentRuntime mutation)
 
@@ -33,19 +33,17 @@ No DocumentRef / runtime / Base64 / static template / TS OOXML.
 ```text
 Agent run starts at Version N
   → real find/inspect N
-  → typed mutation tool
-       → bound host mutate(capability, op)
-       → Rust verify → appendDocumentVersion(source: agent)
-       → immutable Version N+1
-  → host advances bytes/version for later tools in the same run
-  → SSE document.version.advanced → UI reloads persisted version
+  → typed mutation tools → Rust verify → run-local bytes/revision advance
+  → later tools read the latest run-local bytes
+  → terminal run flush → appendDocumentVersion(source: agent) once if changed
+  → immutable Version N+1 → SSE document.version.advanced → UI reload
 ```
 
-* Raw engine `artifactBytes` success is **not** tool success — persistence must complete.
+* Successful engine output advances working bytes; final persistence failure fails the run and leaves Version N current.
 * agent-core-v2 never imports apps/api; application persistence stays in the API.
 * No engine source identities cross the tool boundary.
-* VERSION_CONFLICT / TARGET_NOT_FOUND / PRECONDITION_FAILED / UNSUPPORTED_OPERATION / persistence failure → tool failed; host version unchanged.
-* Multi-cell / multi-row updates are atomic **inside one engine operation**; separate tool calls remain separate versions.
+* VERSION_CONFLICT / persistence failure → run failed; TARGET_NOT_FOUND / PRECONDITION_FAILED / UNSUPPORTED_OPERATION → tool failed; previous working bytes remain valid.
+* Multi-cell / multi-row updates are atomic **inside one engine operation**; separate tool calls share the run's working version.
 * After a write failure in a sibling batch, later writes in that batch are skipped (`PRIOR_WRITE_FAILED`).
 
 ### Real DOCX read+write flow (service layer)
@@ -71,8 +69,8 @@ exact immutable version N
     | executeDocxDeleteTableColumn
     | executeDocxSetTableFormatting
   → verified artifactBytes
-  → appendDocumentVersion → N+1
-  → find/inspect N+1 independently
+  → run-local bytes → final appendDocumentVersion → N+1
+  → find/inspect latest working bytes during the run
 ```
 * Rust is capability / semantic source of truth.
 * Inspect focuses: overview, headings, paragraphs, tables, body_blocks, context — paged collections use offset/limit (default 20, max 100).
@@ -85,7 +83,7 @@ exact immutable version N
   handles alongside semantic selectors. Prefer handles for blank/duplicate targets; re-inspect after N→N+1.
 * Table/cell inspect may include format-neutral `affordances[]` from Rust (capability + supported + optional reason).
   Adapter transport only — TypeScript does not recompute editability. Absence ≠ supported/unsupported.
-* Application enforces version-bound structural handles (run-local registry). Stale/unknown handles never reach Rust.
+* Application records handles from the latest run-local inspect. A successful mutation clears them; stale/unknown handles never reach Rust.
 * Engine diagnostics may include optional `reasonCode` / `operation` / `targetHandle` (transport-only).
   Same reason id can appear on affordance `reason` and mutation `reasonCode`. Never parse `message` for control flow.
 * Proven blank-row path: inspect(tables) → cell handles → one atomic `set_table_cells_text` → persist N+1.
