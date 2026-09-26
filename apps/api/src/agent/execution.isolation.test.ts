@@ -6,6 +6,7 @@ import type { RunAgentResult, RunModelResult, V3Model } from "@opensuite/agent-c
 import {
   boundedStopMessage,
   createAgentExecutionService,
+  describeRunFailure,
   type AgentEvent,
   type AgentExecutionServiceDeps,
 } from "./execution.js";
@@ -400,6 +401,39 @@ test("successful V3 finish_tool settles completed + agent.completed", async () =
   assert.match(sawSystem!, /- finish/);
   assert.equal(sawSystem!.includes("document."), false);
   assert.equal(sawSystem!.includes("document.capabilities"), false);
+});
+
+test("managed AI failure keeps a safe, actionable reason on the run", async () => {
+  const persistence = memoryPersistence("user-1");
+  const execution = createAgentExecutionService({
+    ...baseDeps(persistence, async () => { throw new Error("model should not run"); }),
+    resolveModel: async () => ({ model: { provider: "test", modelId: "test" } as unknown as V3Model,
+      usageAttribution: { provider: "openrouter", model: "test", credentialSource: "managed" } }),
+    managedUsagePolicy: { beforeManagedCall: async () => { throw Object.assign(new Error("Managed AI is not available."), { code: "MANAGED_USAGE_DISABLED" }); },
+      afterUsageRecorded: async () => {}, status: async () => ({ enabled: false, originalGrantMicros: 0, balanceMicros: 0, displayGrantCredits: 0, exhausted: true }) },
+  });
+  const result = await (await execution.start({ userId: "user-1", threadId: "thread-1", instruction: "Make a document" })).result;
+  assert.equal(result.run.errorCode, "MANAGED_USAGE_DISABLED");
+  assert.equal(result.run.errorMessage, "Managed AI is unavailable. Add your own API key in AI & Models settings.");
+});
+
+test("known document and provider failures have specific safe explanations", () => {
+  assert.deepEqual(describeRunFailure(new Error("No output generated"), [
+    { kind: "tool", status: "failed", name: "document.insert_paragraphs", summary: "Failed: NO_ACTIVE_DOCUMENT" },
+  ]), { code: "NO_ACTIVE_DOCUMENT", message: "No document was active, and the agent tried to edit before creating one. Retry the request or open a document first." });
+  assert.equal(describeRunFailure(new Error("Invalid 'input[3].name': bad"), [])?.code, "MODEL_TOOL_NAME_REJECTED");
+  assert.equal(describeRunFailure(new Error("database password is secret"), []), null);
+});
+
+test("a document creation run tells the model to create before editing", async () => {
+  const persistence = memoryPersistence("user-1");
+  let system = "";
+  const execution = createAgentExecutionService({
+    ...baseDeps(persistence, async (input) => { system = input.system ?? ""; return softResult("completed", "Done"); }),
+    docxBinding: { getDocxCapabilities: () => ({ ok: true, formats: [] }) } as unknown as AgentExecutionServiceDeps["docxBinding"],
+  });
+  await (await execution.start({ userId: "user-1", threadId: "thread-1", instruction: "Create a research document" })).result;
+  assert.match(system, /No document is active.*create it before calling any document tool/);
 });
 
 test("successful V3 completed (no tools) settles completed", async () => {

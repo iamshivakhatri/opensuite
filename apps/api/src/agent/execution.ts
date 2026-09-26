@@ -532,7 +532,10 @@ async function runExecution(input: {
       () => boundTools?.getActiveVersionId() ?? null,
       false,
     );
-    const system = buildAgentOperatingInstruction(Object.keys(tools));
+    const system = buildAgentOperatingInstruction(Object.keys(tools)) +
+      (!boundTools?.getActiveDocumentId() && tools["workspace.create_blank_document"]
+        ? "\n\nNo document is active. If the user requests a new document, create it before calling any document tool."
+        : "");
     const historicalMessages = priorMessages.map((message) => ({
       role: message.role,
       content: message.content,
@@ -665,6 +668,7 @@ async function runExecution(input: {
     const inRunStats = createInRunObservationStats();
     const projectMessages = composeProjectMessages({
       retrievalMessage: retrieval?.message,
+      safeToolResultNames: input.model.usageAttribution?.provider === "openrouter",
       directVersionId: retrieval?.observation.contextStrategy === "direct" ? input.run.baseDocumentVersionId : undefined,
       currentVersionId: () => boundTools?.getActiveVersionId() ?? null,
       tools,
@@ -986,6 +990,7 @@ export function guardRepeatedReads(
  */
 export function composeProjectMessages(input: {
   readonly retrievalMessage?: string;
+  readonly safeToolResultNames?: boolean;
   readonly directVersionId?: string | null;
   readonly currentVersionId?: () => string | null;
   readonly tools: AgentToolSet;
@@ -1008,7 +1013,12 @@ export function composeProjectMessages(input: {
       : firstTurn(messages);
     const projected = projectInRunObservations(afterFirstTurn, { isMutateTool });
     accumulateInRunObservationStats(input.stats, projected);
-    return projected.messages;
+    if (!input.safeToolResultNames) return projected.messages;
+    return projected.messages.map((message) => message.role === "tool" && Array.isArray(message.content)
+      ? { ...message, content: message.content.map((part) => part.type === "tool-result"
+        ? { ...part, toolName: part.toolName.replace(/[^a-zA-Z0-9_-]/g, "_") }
+        : part) } as ModelMessage
+      : message);
   };
 }
 
@@ -1237,8 +1247,9 @@ async function settleTerminalRunFailure(input: {
   readonly transcript?: readonly TranscriptEntry[];
 }): Promise<AgentExecutionResult> {
   const runShort = input.run.id.slice(0, 8);
-  const failureCode = input.failureCode ?? "AGENT_EXECUTION_FAILED";
-  const failureMessage = input.failureMessage ?? "Agent execution failed";
+  const knownFailure = describeRunFailure(input.error, input.transcript ?? []);
+  const failureCode = input.failureCode ?? knownFailure?.code ?? "AGENT_EXECUTION_FAILED";
+  const failureMessage = input.failureMessage ?? knownFailure?.message ?? "Agent execution failed. Please try again.";
 
   // Idempotent: if already terminal (e.g. outer safety net after settle),
   // do not attempt another status transition or duplicate terminal SSE.
@@ -1318,6 +1329,27 @@ async function settleTerminalRunFailure(input: {
     ),
     assistantMessage: null,
   };
+}
+
+/** Only known, safe reasons reach persisted run status and the Agent Panel. */
+export function describeRunFailure(error: unknown, transcript: readonly TranscriptEntry[]): { code: string; message: string } | null {
+  const code = error && typeof error === "object" && "code" in error ? error.code : undefined;
+  if (code === "MANAGED_USAGE_DISABLED" || code === "MANAGED_TRIAL_DISABLED") {
+    return { code: String(code), message: "Managed AI is unavailable. Add your own API key in AI & Models settings." };
+  }
+  if (code === "MANAGED_USAGE_EXHAUSTED" || code === "MANAGED_TRIAL_EXHAUSTED") {
+    return { code: String(code), message: "Managed AI credits are exhausted. Add your own API key in AI & Models settings." };
+  }
+  if (code === "MANAGED_USAGE_ACCOUNTING_FAILED" || code === "MANAGED_TRIAL_ACCOUNTING_FAILED") {
+    return { code: String(code), message: "Managed AI is temporarily unavailable. Use your own API key or try again later." };
+  }
+  if (transcript.some((entry) => entry.status === "failed" && entry.summary.includes("NO_ACTIVE_DOCUMENT"))) {
+    return { code: "NO_ACTIVE_DOCUMENT", message: "No document was active, and the agent tried to edit before creating one. Retry the request or open a document first." };
+  }
+  if (error instanceof Error && /Invalid 'input\[\d+\]\.name'/.test(error.message)) {
+    return { code: "MODEL_TOOL_NAME_REJECTED", message: "The AI provider rejected a document tool response. Please try another model or contact support." };
+  }
+  return null;
 }
 
 function summarizeError(error: unknown): string {

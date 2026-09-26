@@ -458,13 +458,10 @@ export function DocumentAgentPanel({
 
     if (run.status === "failed") {
       const canContinue = run.errorCode === "AGENT_MAX_TURNS" || run.errorCode === "AGENT_DEADLINE";
-      setRunError(
-        canContinue
-          ? run.errorMessage || "Stopped before completing the task."
-          : "The agent run failed. You can try again.",
-      );
+      const needsAiSettings = run.errorCode?.startsWith("MANAGED_USAGE_") || run.errorCode?.startsWith("MANAGED_TRIAL_");
+      setRunError(run.errorMessage || "The agent run failed. You can try again.");
       setRunNotice(null);
-      setCanRetryRun(!canContinue);
+      setCanRetryRun(!canContinue && !needsAiSettings);
       setContinueRunId(canContinue ? run.id : null);
     } else if (run.status === "cancelled") {
       setRunError(null);
@@ -1369,6 +1366,8 @@ export function DocumentAgentPanel({
     !runNotice &&
     !versionNotice &&
     !canRetryRun;
+  const needsAiSettings = activeRun?.status === "failed" &&
+    (activeRun.errorCode?.startsWith("MANAGED_USAGE_") || activeRun.errorCode?.startsWith("MANAGED_TRIAL_"));
 
   return (
     <>
@@ -1660,7 +1659,12 @@ export function DocumentAgentPanel({
               {runError ? (
                 <div className="flex items-start gap-2 border-l-2 border-danger bg-danger-soft/50 px-2.5 py-2 text-[length:var(--text-panel)] text-danger">
                   <p className="min-w-0 flex-1 leading-snug">{runError}</p>
-                  {continueRunId ? (
+                  {needsAiSettings ? (
+                    <Button type="button" variant="outline" size="sm" onClick={() => router.push("/app/settings#ai")}
+                      className="h-6 shrink-0 border-danger/30 px-2 text-[length:var(--text-xs)] text-danger hover:bg-danger-soft">
+                      AI settings
+                    </Button>
+                  ) : continueRunId ? (
                     <Button
                       type="button"
                       variant="outline"

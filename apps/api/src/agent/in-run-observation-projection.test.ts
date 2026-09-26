@@ -488,6 +488,20 @@ test("C7 + Phase 6: first-turn retrieval appears once; later turns only apply C7
   assert.ok(stats.observationsCompacted >= 1);
 });
 
+test("OpenRouter tool responses use provider-safe names without changing the raw transcript", () => {
+  const messages: ModelMessage[] = [
+    { role: "user", content: "Create a document" },
+    assistantTurn(toolCall("c1", "document.insert_paragraphs")),
+    toolTurn(toolResult("c1", "document.insert_paragraphs", { ok: false, reasonCode: "NO_ACTIVE_DOCUMENT" })),
+  ];
+  const project = composeProjectMessages({ tools: {} as never, stats: createInRunObservationStats(), safeToolResultNames: true });
+  const projected = project(messages);
+  const result = (projected[2]!.content as { toolName: string }[])[0]!;
+  assert.equal(result.toolName, "document_insert_paragraphs");
+  assert.equal((messages[2]!.content as { toolName: string }[])[0]!.toolName, "document.insert_paragraphs");
+  assert.equal((projected[1]!.content as { toolName: string }[])[0]!.toolName, "document.insert_paragraphs");
+});
+
 test("firstTurnContextProjection still injects once", () => {
   const project = firstTurnContextProjection("Relevant document structure:\n- Table t0");
   const messages = [{ role: "user" as const, content: "Add milestones" }];
