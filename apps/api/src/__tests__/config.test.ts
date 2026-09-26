@@ -96,6 +96,19 @@ test("Google provider uses identity scopes and the existing session system", () 
   assert.equal("session" in auth.options, false);
 });
 
+test("auth errors do not print database query parameters", () => {
+  const auth = createAuth(loadConfig(baseEnv), {} as Db, { send: async () => {} });
+  const messages: string[] = [];
+  const original = console.error;
+  console.error = (...args: unknown[]) => messages.push(args.map(String).join(" "));
+  try {
+    auth.options.logger?.log?.("error", "INTERNAL_SERVER_ERROR", new Error("params: secret-session-token"));
+  } finally {
+    console.error = original;
+  }
+  assert.deepEqual(messages, ["[auth] error INTERNAL_SERVER_ERROR"]);
+});
+
 test("loadConfig accepts legacy MINIO_* aliases for S3 settings", () => {
   const {
     S3_ENDPOINT: _e,

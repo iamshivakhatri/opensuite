@@ -14,7 +14,9 @@ _Read this before starting any work. Keep it a concise current-state handoff, no
 
 ## Just Completed
 
-* **Direct-context read efficiency** — a complete small DOCX is still inspected by the engine before the first model call. On unchanged DIRECT state, the API now allows one broad read and at most four total inspect/find reads, then gives the model an explicit act-on-context reminder; independent necessary reads are requested together. A mutation resets the read state. This bounds engine reads, though model turn count still depends on model behavior and requires a live run to verify.
+* **Concise run logs** — completed agent runs now print one metrics line plus failed-tool lines; full report JSON is opt-in with `AGENT_RUN_REPORT_VERBOSE=1` (Cloud still stores the full report). Dev request logs no longer add blank lines. Better Auth errors omit exception objects that can contain session tokens.
+
+* **Direct-context read efficiency** — a complete small DOCX is inspected by the engine before the first model call. On unchanged DIRECT state, the API allows one broad read and at most four total inspect/find reads, then asks the model to act on context; a mutation resets the read state. The live Cincinnati rewrite finished in 13 model turns with 3 inspections, 13 finds, and 58 successful text edits.
 
 * **Duplicate/Continue repair** — an exact document copy retains DIRECT source content and its read guard until edited, so the model need not rediscover the copy. Max-turn/deadline runs now save a linked assistant status message, keeping their tool transcript in paginated conversation history after Continue; migration 0018 links older bounded runs at their original completion times. Continue appears as a compact conversation entry. The 20-turn limit already counted model calls only; tool calls are separate. The reported Cincinnati runs used 20 model calls each, with 39 then 20 tool calls and no edits to the copied document.
 
@@ -40,7 +42,7 @@ _Read this before starting any work. Keep it a concise current-state handoff, no
 * **Agent context correctness** — run requests keep `activeDocumentId` (tool-bound primary) separate from submitted `documentIds` (additional tags); durable working set unions persisted members + active + tags. DIRECT uses verified complete DOCX content for the whole working set only when its combined token cost fits one shared limit; unsupported/incomplete documents fall back. Submitted tag IDs persist on the user message and render in its historical transcript entry.
 * **Phase 2A.3 adaptive context planning** — single, unambiguous small active DOCX can enter first turn as compact complete content (including full tables); a 24k planner evidence cap separates practical context policy from physical model capacity. Larger, competing, or failed direct reads retain map + Phase 1 evidence fallback. Reports show planner budget and evaluated full-document cost.
 * **Model/context accounting** — OpenRouter catalog `contextLength`/`maxOutputTokens` attached for managed + BYOK; explicit output/continuation/safety reserves replace blind 60%-of-window budget; `retrieval.availableEvidenceTokens` from real model window; agent-core-v3 preserves OpenRouter `usage.cost` + reasoning tokens; reports show `actualProviderCostUsd` vs estimated.
-* **Phase 2A.2 durable working set** — persisted thread↔document membership restores active/tagged docs across runs; stale soft-deleted members are ignored; retrieval reports include available evidence budget; diagnostic JSON is multiline.
+* **Phase 2A.2 durable working set** — persisted thread↔document membership restores active/tagged docs across runs; stale soft-deleted members are ignored; retrieval reports include available evidence budget; full diagnostic JSON is opt-in.
 * **Phase 2A.1 pre-model foundation** — request working set (active + tagged docs), compact heading/table DOCX maps, report-level available-evidence budget, and existing retrieval as the first hierarchical context strategy; no schema or engine change.
 * **Agent activity UX polish** — dropped redundant live `Working…` under Thinking; completed turns keep compact summary with total elapsed (including durable transcript path).
 * **Phase 1 pre-model retrieval** — API-only workspace metadata ranking before model invocation; selected DOCX artifacts are inspected through the existing engine-client path and injected once with exact-version provenance. PPTX/XLSX remain metadata-only; retrieval errors fall back to the previous model path. Run reports now log artifact/evidence counts, duration, context size, and candidates.
@@ -109,4 +111,4 @@ _Read this before starting any work. Keep it a concise current-state handoff, no
 
 ## Recommended Next Step
 
-Apply migration 0018, deploy the updated API and web, then repeat the Cincinnati duplicate-and-rewrite flow once; check model turns, actual edits, `redundantReadSuppressedCount`, and preserved Continue history.
+Visually inspect the completed Cincinnati brief for table spacing, page numbers, and consistent formatting before using it as a style template.

@@ -24,6 +24,13 @@ export function createAuth(config: AppConfig, db: Db, emailSender: EmailSender) 
     secret: config.betterAuthSecret,
     baseURL: config.betterAuthUrl,
     trustedOrigins: [...config.webOrigins],
+    logger: {
+      level: "error",
+      // Database errors can include the session token as a query parameter.
+      log(level, message, ..._details) {
+        console.error(`[auth] ${level} ${message}`);
+      },
+    },
     database: drizzleAdapter(db, {
       provider: "pg",
       schema,

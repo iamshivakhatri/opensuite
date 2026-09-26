@@ -127,7 +127,6 @@ export async function buildApp(
     if (isDevConsole()) {
       // Plain one-liner — no pino level/time/pid/hostname/reqId wrapper.
       console.log(line);
-      console.log();
     } else {
       request.log.info(line);
     }

@@ -536,10 +536,32 @@ export function formatAgentRunSummary(report: AgentRunReport): string {
   return lines.join("\n");
 }
 
-/** Log structured report + compact summary via existing console logger. */
+/** Keep routine logs short; opt in to the full report when debugging. */
 export function logAgentRunReport(report: AgentRunReport): void {
-  const summary = formatAgentRunSummary(report);
-  console.info(`[agent-run-report]\n${summary}`);
+  const cost = report.actualProviderCostUsd ?? report.estimatedCostUsd;
+  console.info(
+    `[agent-run-report] run=${shortId(report.runId)} outcome=${report.outcome}` +
+      ` stop=${report.stopReason ?? "unknown"} model=${report.model ?? "unknown"}` +
+      ` turns=${report.modelTurns}` +
+      ` tools=${report.toolCalls} edits=${report.document?.workingMutationCount ?? 0}` +
+      ` versions=${report.document?.versionAdvances.length ?? 0}` +
+      ` total=${formatMs(report.totalDurationMs)} modelTime=${formatMs(report.modelTimeMs)}` +
+      ` toolTime=${formatMs(report.toolTimeMs)} cost=${cost === undefined ? "n/a" : formatUsd(cost)}` +
+      ` input=${report.usage.inputTokens} cached=${report.usage.cachedInputTokens}` +
+      ` output=${report.usage.outputTokens}` +
+      ` failures=${report.failures.length}`,
+  );
+  for (const tool of report.tools) {
+    if (tool.outcome !== "success") {
+      console.info(
+        `[agent-run-failure] run=${shortId(report.runId)} tool=${tool.sequence}` +
+          ` name=${tool.name} code=${tool.failureCode ?? "TOOL_FAILED"}`,
+      );
+    }
+  }
+  if (process.env.AGENT_RUN_REPORT_VERBOSE !== "1") return;
+
+  console.info(`[agent-run-report:detail]\n${formatAgentRunSummary(report)}`);
   console.info(
     `[agent-run-report:json]\n${JSON.stringify({
       runId: report.runId,

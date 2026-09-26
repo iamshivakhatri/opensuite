@@ -156,7 +156,7 @@ test("composeAgentRunReport includes workspace retrieval trace without model con
   });
 });
 
-test("run report JSON is multiline and includes the evidence budget", () => {
+test("run report logs one short line by default and keeps full JSON opt-in", () => {
   const report = composeAgentRunReport({
     runId: "run-log",
     instruction: "test",
@@ -176,14 +176,23 @@ test("run report JSON is multiline and includes the evidence budget", () => {
   });
   const messages: string[] = [];
   const original = console.info;
+  const previousVerbose = process.env.AGENT_RUN_REPORT_VERBOSE;
   console.info = (message?: unknown) => messages.push(String(message));
   try {
+    process.env.AGENT_RUN_REPORT_VERBOSE = "0";
+    logAgentRunReport(report);
+    assert.equal(messages.length, 1);
+    assert.match(messages[0] ?? "", /^\[agent-run-report\] run=run-log outcome=success/);
+    assert.doesNotMatch(messages[0] ?? "", /\n/);
+    process.env.AGENT_RUN_REPORT_VERBOSE = "1";
     logAgentRunReport(report);
   } finally {
+    if (previousVerbose === undefined) delete process.env.AGENT_RUN_REPORT_VERBOSE;
+    else process.env.AGENT_RUN_REPORT_VERBOSE = previousVerbose;
     console.info = original;
   }
-  assert.match(messages[1] ?? "", /^\[agent-run-report:json\]\n\{/);
-  assert.match(messages[1] ?? "", /\n    "availableEvidenceTokens": 18000/);
+  assert.match(messages[3] ?? "", /^\[agent-run-report:json\]\n\{/);
+  assert.match(messages[3] ?? "", /\n    "availableEvidenceTokens": 18000/);
 });
 
 test("composeAgentRunReport includes history diagnostics without message content", () => {
