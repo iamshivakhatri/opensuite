@@ -9,11 +9,11 @@ import { GITHUB_URL } from "@/lib/site";
 const values = [
   {
     title: "Works with the real document",
-    body: "The agent reads and edits your actual DOCX through a native document engine — not a copy pasted into a chat window.",
+    body: "The agent inspects and edits your actual DOCX through a document engine — not a copy pasted into a chat window.",
   },
   {
     title: "Preservation-first editing",
-    body: "Structure, formatting, and history are kept intact across every change, version, and agent run.",
+    body: "Supported edits use typed operations, and each saved change becomes a new document version.",
   },
   {
     title: "Open source",
@@ -36,16 +36,14 @@ export function LandingPage() {
       <section className="mx-auto max-w-6xl px-5 pt-16 pb-14 sm:px-8 sm:pt-24 sm:pb-20">
         <div className="max-w-2xl">
           <p className="mb-5 text-[13px] font-medium text-primary">
-            Open-source · AI-native Office
+            Open-source AI workspace · DOCX today
           </p>
           <h1 className="text-[34px] font-semibold leading-[1.15] tracking-[-0.02em] text-ink sm:text-[44px]">
-            An open-source Office workspace where an AI agent works directly
-            with your documents.
+            An open-source AI workspace for editing real Word documents.
           </h1>
           <p className="mt-5 max-w-xl text-[15px] leading-relaxed text-ink-soft sm:text-[16px]">
-            Create, open, and edit real Word documents, then ask an agent to
-            inspect and change them in place. Word is available today.
-            Slides and Sheets are coming later.
+            Open a DOCX, then ask an agent to inspect it and make supported,
+            targeted changes. Slides and Sheets are planned, not available yet.
           </p>
           <div className="mt-8 flex flex-wrap items-center gap-3">
             <Link

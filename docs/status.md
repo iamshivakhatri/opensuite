@@ -14,6 +14,8 @@ _Read this before starting any work. Keep it a concise current-state handoff, no
 
 ## Just Completed
 
+* **Public launch docs** — root README now describes the connected DOCX path, real self-host requirements, BYOK, Cloud boundary, and alpha limits; concise contribution, security, license, roadmap, architecture, and real-media capture guidance added.
+
 * **Google account lifecycle** — Better Auth native OAuth signup, verified-email linking, and returning-account sign-in are covered against PostgreSQL. A matching unverified password account remains unlinked; OAuth failures and email verification from a blocked sign-in return to web sign-in with safe instructions.
 
 * **Google OAuth HTTPS request bridge** — Better Auth now receives the validated public `BETTER_AUTH_URL`, not Fastify's internal HTTP tunnel URL, when serving `/api/auth/*`; this preserves the public HTTPS context for OAuth callback session cookies. Regression test covers an internal proxy host. Google button has a local multicolor G SVG; no dependency added.
