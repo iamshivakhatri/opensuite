@@ -1,10 +1,18 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { uploadPromptAttachments, type PromptAttachment } from "./agent-prompt-attachments.ts";
+import { addPromptAttachmentFiles, uploadPromptAttachments, type PromptAttachment } from "./agent-prompt-attachments.ts";
 
 const file = (name: string) => new File([name], name);
 const document = (id: string) => ({ id, name: `${id}.docx` });
+
+test("dropped DOCX files use the same attachment list as picked files", () => {
+  const report = file("August Report.docx");
+  const updates = file("September Updates.DOCX");
+  const selected = addPromptAttachmentFiles([], [report]);
+  const dropped = addPromptAttachmentFiles(selected, [report, updates, file("notes.pdf")]);
+  assert.deepEqual(dropped.map((item) => item.file.name), ["August Report.docx", "September Updates.DOCX"]);
+});
 
 test("uploads each attached DOCX and returns IDs for the agent run", async () => {
   const attachments = [{ file: file("August Report.docx") }, { file: file("September Updates.docx") }];

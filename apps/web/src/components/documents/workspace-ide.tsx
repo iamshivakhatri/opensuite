@@ -332,14 +332,21 @@ export function WorkspaceIde({
 
   function onDragOver(event: React.DragEvent) {
     if (!event.dataTransfer.types.includes("Files")) return;
+    if (event.defaultPrevented) {
+      dragDepth.current = 0;
+      setDraggingOver(false);
+      return;
+    }
     event.preventDefault();
     event.dataTransfer.dropEffect = "copy";
   }
 
   function onDrop(event: React.DragEvent) {
+    const handledByComposer = event.defaultPrevented;
     event.preventDefault();
     dragDepth.current = 0;
     setDraggingOver(false);
+    if (handledByComposer) return;
     const files = Array.from(event.dataTransfer.files ?? []);
     void runUploads(files);
   }

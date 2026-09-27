@@ -28,7 +28,7 @@ import {
   shouldClearLiveTranscript,
 } from "@/lib/agent-messages";
 import { shouldAcceptSubmit } from "@/lib/agent-submit";
-import { uploadPromptAttachments, type PromptAttachment } from "@/lib/agent-prompt-attachments";
+import { addPromptAttachmentFiles, uploadPromptAttachments, type PromptAttachment } from "@/lib/agent-prompt-attachments";
 import {
   ApiError,
   cancelAgentRun,
@@ -260,6 +260,11 @@ export function DocumentAgentPanel({
     [],
   );
   const [dragOverComposer, setDragOverComposer] = React.useState(false);
+
+  function attachFiles(files: File[]) {
+    setAttachmentError(files.some((file) => !/\.docx$/i.test(file.name)) ? "Only DOCX files can be attached." : null);
+    setAttachments((previous) => addPromptAttachmentFiles(previous, files));
+  }
   const [activeRun, setActiveRun] = React.useState<AgentRun | null>(null);
   const [progress, setProgress] = React.useState<AgentProgressLine[]>([]);
   const [runError, setRunError] = React.useState<string | null>(null);
@@ -1790,9 +1795,7 @@ export function DocumentAgentPanel({
             canStop && "opacity-95",
           )}
           onDragOver={(event) => {
-            if (
-              event.dataTransfer.types.includes(OPENSUITE_DOCUMENT_DRAG_MIME)
-            ) {
+            if (event.dataTransfer.types.includes("Files") || event.dataTransfer.types.includes(OPENSUITE_DOCUMENT_DRAG_MIME)) {
               event.preventDefault();
               event.dataTransfer.dropEffect = "copy";
               setDragOverComposer(true);
@@ -1802,6 +1805,10 @@ export function DocumentAgentPanel({
           onDrop={(event) => {
             event.preventDefault();
             setDragOverComposer(false);
+            if (event.dataTransfer.files.length) {
+              if (!busy && phase.kind === "ready") attachFiles(Array.from(event.dataTransfer.files));
+              return;
+            }
             const payload = parseDocumentDragPayload(
               event.dataTransfer.getData(OPENSUITE_DOCUMENT_DRAG_MIME),
             );
@@ -1902,10 +1909,7 @@ export function DocumentAgentPanel({
                 className="sr-only"
                 aria-label="Attach DOCX files"
                 onChange={(event) => {
-                  const files = Array.from(event.target.files ?? []);
-                  const rejected = files.filter((file) => !/\.docx$/i.test(file.name));
-                  setAttachmentError(rejected.length ? "Only DOCX files can be attached." : null);
-                  setAttachments((previous) => [...previous, ...files.filter((file) => /\.docx$/i.test(file.name)).filter((file) => !previous.some((item) => item.file.name === file.name && item.file.size === file.size && item.file.lastModified === file.lastModified)).map((file) => ({ file }))]);
+                  attachFiles(Array.from(event.target.files ?? []));
                   event.target.value = "";
                 }}
               />
