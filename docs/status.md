@@ -14,6 +14,8 @@ _Read this before starting any work. Keep it a concise current-state handoff, no
 
 ## Just Completed
 
+* **Silent recovery / polish discipline** — operating instruction: recover tool failures without narrating reason codes/selectors/stale handles; abandon optional cosmetic polish after repeated failure; keep retrying for explicit user requirements or correctness. Final response mentions unresolved limits only when material. Prompt-only; no agent-core-v3 / engine change. Logs and activity Details unchanged.
+
 * **Recoverable-error UX** — activity rows no longer paint provisional `tool.failed` as terminal red. Live recovery keeps Thinking / success rows; details still show attempts (`Recovered · …` when superseded). Only `agent.failed` / run outcome failed stays red (“Couldn't complete”). SSE `error` maps to reason codes for labels. Frontend-only; no engine / agent-core-v3 / API event changes.
 
 * **Mutation batching** — API exposes four focused DOCX batch tools for text replacement, paragraph styles, paragraph formatting, and text formatting. Items run in order on run-local bytes, stop on first failure with compact item diagnostics, and keep earlier edits. One successful batch advances one working preview revision; final flush still saves one version. Existing Rust operations and agent-core-v3 scheduling are unchanged. Tool guidance now favors coherent batches and multiple safe mutation calls per model turn. User-run guide creation: 6 model turns, 8 executed tools, 17 edits, 1 saved version, 31.08s total (30.89s model, 191ms tools), 82,977 input / 65,536 cached / 6,611 output tokens. One `STYLE_NOT_FOUND` was repaired in-run; first-page screenshot shows headings, subtitle, and bullets. This task differs from the 13-turn/76-tool rewrite baseline, so speed comparison is directional only.
@@ -108,6 +110,7 @@ _Read this before starting any work. Keep it a concise current-state handoff, no
 | Browser Agent panel (Hello world) | Pass — answer once; reload once; screenshots `.tmp/transcript-dup-fix/09|10` |
 | Fixture screenshots A–G (`/.tmp/phase35-screenshots`) | Inspected |
 | Manual live OpenRouter dogfood | User run succeeded in 191.61s before low-reasoning change: 10 turns, 13 tools, 1 saved version |
+| operating-instruction silent recovery / polish | Pass (focused) |
 
 ## Intentionally Deferred
 

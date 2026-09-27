@@ -45,3 +45,43 @@ test("empty toolset lists none under AVAILABLE CAPABILITIES", () => {
   const system = buildAgentOperatingInstruction([]);
   assert.match(system, /AVAILABLE CAPABILITIES\n- \(none\)/);
 });
+
+test("silent recovery: recoverable failures must not be narrated to users", () => {
+  const system = buildAgentOperatingInstruction(["document.replace_text", "finish"]);
+  assert.match(system, /recover silently/i);
+  assert.match(system, /Do not narrate reason codes/i);
+  assert.match(system, /stale handles/i);
+  assert.match(
+    system,
+    /Only mention an unresolved limitation in the final response if it materially prevents/i,
+  );
+});
+
+test("optional cosmetic polish: abandon after repeated failure; keep required work", () => {
+  const system = buildAgentOperatingInstruction([
+    "document.set_table_cell_shading",
+    "document.create_table",
+    "finish",
+  ]);
+  assert.match(system, /optional cosmetic polish/i);
+  assert.match(system, /fails more than once/i);
+  assert.match(system, /skip it and finish/i);
+  assert.match(
+    system,
+    /Keep retrying when the operation is necessary to satisfy an explicit user requirement/i,
+  );
+  // Must not tell the model to abandon required content or explicit asks.
+  assert.equal(/immediately abandon/i.test(system), false);
+  assert.equal(/always skip shading/i.test(system), false);
+  assert.match(system, /preserve document correctness/i);
+});
+
+test("recovered failure guidance does not require narrating internal errors", () => {
+  const system = buildAgentOperatingInstruction([
+    "document.set_paragraph_style",
+    "finish",
+  ]);
+  assert.match(system, /Recover by changing strategy/i);
+  assert.match(system, /keep low-level diagnostics out of user-facing text/i);
+  assert.equal(system.includes("always explain tool failures"), false);
+});
