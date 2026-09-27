@@ -115,6 +115,7 @@ _Read this before starting any work. Keep it a concise current-state handoff, no
 | Fixture screenshots A–G (`/.tmp/phase35-screenshots`) | Inspected |
 | Manual live OpenRouter dogfood | User run succeeded in 191.61s before low-reasoning change: 10 turns, 13 tools, 1 saved version |
 | operating-instruction silent recovery / polish | Pass (focused) |
+| Telemetry terminology (report log + UI headline) | Pass (API report 15; web agent-progress 32) |
 
 ## Intentionally Deferred
 
