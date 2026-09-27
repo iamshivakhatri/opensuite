@@ -181,7 +181,9 @@ test("2–4. tool started/completed/failed update same logical activity", () => 
     ),
   );
   rows = projectActivityRows(lines);
-  assert.ok(rows.some((r) => r.status === "error"));
+  // Provisional tool failure while run continues — not terminal red.
+  assert.equal(rows.some((r) => r.status === "error"), false);
+  assert.ok(rows.some((r) => r.kind === "thinking" && r.status === "active"));
 });
 
 test("5. repeated reads group/collapse after completion", () => {
@@ -522,7 +524,96 @@ test("recovered failure stays muted in details", () => {
   assert.equal(details.some((g) => g.status === "error" && !g.recovered), false);
 });
 
-test("unrecovered failure remains visible in activity rows", () => {
+test("recovered tool failure is not red in activity rows", () => {
+  const lines = reduceAll([
+    {
+      type: "tool.failed",
+      data: {
+        toolCallId: "a",
+        toolName: "document.set_paragraph_style",
+        error: "STYLE_NOT_FOUND",
+      },
+      at: 1,
+    },
+    {
+      type: "tool.completed",
+      data: { toolCallId: "b", toolName: "document.set_paragraph_style" },
+      at: 2,
+    },
+    { type: "agent.completed", at: 3 },
+  ]);
+  const presentation = presentAgentRun(lines, { outcome: "completed" });
+  assert.equal(
+    presentation.activities.some((r) => r.status === "error"),
+    false,
+  );
+  assert.ok(
+    presentation.activities.some(
+      (r) => r.label === "Set paragraph style" && r.status === "done",
+    ),
+  );
+  assert.ok(presentation.details.some((g) => g.recovered));
+  assert.match(presentation.headline, /^Updated document/);
+});
+
+test("UNSUPPORTED_OPERATION recovery stays non-terminal in activity", () => {
+  const lines = reduceAll([
+    {
+      type: "tool.failed",
+      data: {
+        toolCallId: "a",
+        toolName: "document.set_table_cells_text",
+        code: "UNSUPPORTED_OPERATION",
+      },
+      at: 1,
+    },
+    {
+      type: "tool.completed",
+      data: { toolCallId: "b", toolName: "document.replace_text" },
+      at: 2,
+    },
+    { type: "agent.completed", at: 3 },
+  ]);
+  const rows = projectActivityRows(lines);
+  assert.equal(rows.some((r) => r.status === "error"), false);
+  assert.ok(rows.some((r) => r.label === "Replaced text"));
+  // Details retain the unrecovered attempt for observability.
+  const details = presentAgentRun(lines).details;
+  assert.ok(details.some((g) => g.status === "error" && !g.recovered));
+});
+
+test("multiple recoverable failures do not paint a wall of red", () => {
+  const lines = reduceAll([
+    {
+      type: "tool.failed",
+      data: {
+        toolCallId: "a",
+        toolName: "document.set_paragraph_style",
+        error: "STYLE_NOT_FOUND",
+      },
+      at: 1,
+    },
+    {
+      type: "tool.failed",
+      data: {
+        toolCallId: "b",
+        toolName: "document.set_paragraph_formatting",
+        code: "TARGET_NOT_FOUND",
+      },
+      at: 2,
+    },
+    {
+      type: "tool.completed",
+      data: { toolCallId: "c", toolName: "document.set_paragraph_style" },
+      at: 3,
+    },
+    { type: "agent.completed", at: 4 },
+  ]);
+  const rows = projectActivityRows(lines);
+  assert.equal(rows.filter((r) => r.status === "error").length, 0);
+});
+
+test("live unrecovered tool failure stays neutral (Thinking, not red)", () => {
   const lines = reduceAll([
     {
       type: "tool.completed",
@@ -540,8 +631,69 @@ test("unrecovered failure remains visible in activity rows", () => {
     },
   ]);
   const rows = projectActivityRows(lines);
-  assert.ok(rows.some((r) => r.status === "error"));
+  assert.equal(rows.some((r) => r.status === "error"), false);
   assert.ok(rows.some((r) => r.label === "Added content"));
+  assert.ok(rows.some((r) => r.kind === "thinking" && r.status === "active"));
+});
+
+test("terminal agent.failed stays red; prior tool attempts are not", () => {
+  const lines = reduceAll([
+    {
+      type: "tool.failed",
+      data: {
+        toolCallId: "a",
+        toolName: "document.replace_text",
+        code: "TARGET_NOT_FOUND",
+      },
+      at: 1,
+    },
+    { type: "agent.failed", at: 2 },
+  ]);
+  const presentation = presentAgentRun(lines, { outcome: "failed" });
+  assert.equal(
+    presentation.activities.filter((r) => r.status === "error").length,
+    1,
+  );
+  assert.equal(
+    presentation.activities.find((r) => r.status === "error")?.id,
+    "failed",
+  );
+  assert.match(presentation.headline, /Couldn't complete/);
+});
+
+test("tool.failed reads SSE error field as reason code", () => {
+  const lines = reduceAll([
+    {
+      type: "tool.failed",
+      data: {
+        toolCallId: "a",
+        toolName: "document.set_paragraph_style",
+        error: "STYLE_NOT_FOUND",
+      },
+      at: 1,
+    },
+  ]);
+  const failed = lines.find((line) => line.id === "tool:a");
+  assert.equal(failed?.errorCode, "STYLE_NOT_FOUND");
+});
+
+test("cancelled run keeps Stopped presentation without tool-error red wall", () => {
+  const lines = reduceAll([
+    {
+      type: "tool.failed",
+      data: {
+        toolCallId: "a",
+        toolName: "document.replace_text",
+        code: "TARGET_NOT_FOUND",
+      },
+      at: 1,
+    },
+    { type: "agent.cancelled", at: 2 },
+  ]);
+  const presentation = presentAgentRun(lines, { outcome: "cancelled" });
+  assert.equal(presentation.activities.some((r) => r.status === "error"), false);
+  assert.ok(presentation.activities.some((r) => r.id === "cancelled"));
+  assert.match(presentation.headline, /Stopped/);
 });
 
 test("unknown tool humanizes instead of raw snake_case", () => {

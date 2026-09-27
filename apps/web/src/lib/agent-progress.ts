@@ -645,8 +645,13 @@ export function reduceAgentProgress(
     case "tool.failed": {
       const toolCallId = String(event.data.toolCallId ?? "tool");
       const toolName = String(event.data.toolName ?? "tool");
+      // SSE emits `error` (reason code); tests/fixtures may pass `code`.
       const code =
-        typeof event.data.code === "string" ? event.data.code : undefined;
+        typeof event.data.code === "string"
+          ? event.data.code
+          : typeof event.data.error === "string"
+            ? event.data.error
+            : undefined;
       const id = `tool:${toolCallId}`;
       const previous = lines.find((line) => line.id === id);
       const withoutActive = freezeThoughtSegment(lines, nowMs).filter(
@@ -1015,6 +1020,10 @@ function lineToActivity(line: AgentProgressLine): AgentActivity {
  * Project technical progress lines into progressive activity rows.
  * Groups consecutive completed reads; keeps mutations individually visible.
  * Completed Thinking rows are omitted (not chat spam).
+ *
+ * Tool attempt failures are provisional — never paint as terminal red here.
+ * They stay in technical details (with recovery marking). Terminal run
+ * failure (`id: failed`) remains the only activity error row.
  */
 export function projectActivityRows(
   lines: readonly AgentProgressLine[],
@@ -1087,6 +1096,12 @@ export function projectActivityRows(
     }
 
     if (line.status === "pending") continue;
+
+    // Provisional tool attempt failure — details keep diagnostics; activity does not alarm.
+    if (line.status === "error" && !isTerminalLine(line)) {
+      continue;
+    }
+
     rows.push(lineToActivity(line));
   }
   flushReads();
@@ -1190,18 +1205,18 @@ function recoveryDetailLabel(label: string): string {
 }
 
 /**
- * Technical details with consecutive grouping + recovered-error marking.
- * Recovered = error in a family that later succeeds.
+ * Tool attempt failures later superseded by same-tool or same-family success.
+ * Terminal run lines (`failed` / `cancelled`) are never recovered.
  */
-export function buildTechnicalDetails(
+function recoveredErrorIds(
   lines: readonly AgentProgressLine[],
-): ProgressGroup[] {
+): Set<string> {
   const technical = technicalProgressLines(visibleAgentProgress(lines));
   const recoveredIds = new Set<string>();
 
   for (let i = 0; i < technical.length; i += 1) {
     const line = technical[i];
-    if (!line || line.status !== "error") continue;
+    if (!line || line.status !== "error" || isTerminalLine(line)) continue;
     const family = lineFamily(line);
     for (let j = i + 1; j < technical.length; j += 1) {
       const later = technical[j];
@@ -1217,6 +1232,18 @@ export function buildTechnicalDetails(
       }
     }
   }
+  return recoveredIds;
+}
+
+/**
+ * Technical details with consecutive grouping + recovered-error marking.
+ * Recovered = error in a family that later succeeds.
+ */
+export function buildTechnicalDetails(
+  lines: readonly AgentProgressLine[],
+): ProgressGroup[] {
+  const technical = technicalProgressLines(visibleAgentProgress(lines));
+  const recoveredIds = recoveredErrorIds(lines);
 
   const groups: ProgressGroup[] = [];
   for (const line of technical) {

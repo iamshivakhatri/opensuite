@@ -14,6 +14,8 @@ _Read this before starting any work. Keep it a concise current-state handoff, no
 
 ## Just Completed
 
+* **Recoverable-error UX** — activity rows no longer paint provisional `tool.failed` as terminal red. Live recovery keeps Thinking / success rows; details still show attempts (`Recovered · …` when superseded). Only `agent.failed` / run outcome failed stays red (“Couldn't complete”). SSE `error` maps to reason codes for labels. Frontend-only; no engine / agent-core-v3 / API event changes.
+
 * **Mutation batching** — API exposes four focused DOCX batch tools for text replacement, paragraph styles, paragraph formatting, and text formatting. Items run in order on run-local bytes, stop on first failure with compact item diagnostics, and keep earlier edits. One successful batch advances one working preview revision; final flush still saves one version. Existing Rust operations and agent-core-v3 scheduling are unchanged. Tool guidance now favors coherent batches and multiple safe mutation calls per model turn. User-run guide creation: 6 model turns, 8 executed tools, 17 edits, 1 saved version, 31.08s total (30.89s model, 191ms tools), 82,977 input / 65,536 cached / 6,611 output tokens. One `STYLE_NOT_FOUND` was repaired in-run; first-page screenshot shows headings, subtitle, and bullets. This task differs from the 13-turn/76-tool rewrite baseline, so speed comparison is directional only.
 
 * **Concise run logs** — completed agent runs now print one metrics line plus failed-tool lines; full report JSON is opt-in with `AGENT_RUN_REPORT_VERBOSE=1` (Cloud still stores the full report). Dev request logs no longer add blank lines. Better Auth errors omit exception objects that can contain session tokens.
@@ -92,7 +94,7 @@ _Read this before starting any work. Keep it a concise current-state handoff, no
 | Phase 6A API retrieval + lifecycle/report tests (22) | Pass |
 | Phase 1 workspace retrieval API tests | Pass |
 | engine-client tests (13) | Pass (npm `@opensuitehq/engine@0.1.1` + darwin-arm64) |
-| web agent-progress + message unit (41) | Pass |
+| web agent-progress recoverable-error UX | Pass (32) |
 | web agent-messages + reconciliation (A–F) | Pass |
 | web typecheck | Pass |
 | web production build (`next build --webpack`) | Pass |
@@ -116,4 +118,4 @@ _Read this before starting any work. Keep it a concise current-state handoff, no
 
 ## Recommended Next Step
 
-Recoverable-error UX: show a terminal failure only when the agent cannot repair it during the run.
+Telemetry terminology cleanup, then source-backed research capability, then Phase 2B semantic retrieval.
