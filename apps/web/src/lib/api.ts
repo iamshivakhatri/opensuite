@@ -1,4 +1,7 @@
 import { resolveApiBaseUrl } from "./api-base-url";
+import { filenameFromContentDisposition } from "./filename-from-content-disposition";
+
+export { filenameFromContentDisposition } from "./filename-from-content-disposition";
 
 const apiBaseUrl = resolveApiBaseUrl();
 
@@ -994,36 +997,28 @@ function parseSseBlock(block: string): AgentLiveEvent | null {
   }
 }
 
-function filenameFromContentDisposition(
-  header: string | null,
-): string | undefined {
-  if (!header) return undefined;
-  const utf8 = /filename\*=UTF-8''([^;]+)/i.exec(header);
-  if (utf8?.[1]) {
-    try {
-      return decodeURIComponent(utf8[1]);
-    } catch {
-      // fall through
-    }
-  }
-  const plain = /filename="([^"]+)"/i.exec(header);
-  return plain?.[1];
-}
-
 /**
  * Downloads the latest version of a document through the Fastify API
  * (proxied bytes — never a storage URL).
+ *
+ * Prefer the API Content-Disposition name; fall back to the known UI name when
+ * the header is missing (e.g. older proxies) so downloads are never "document.docx".
  */
-export async function downloadDocument(documentId: string): Promise<void> {
+export async function downloadDocument(
+  documentId: string,
+  options?: { readonly filename?: string },
+): Promise<void> {
   const response = await apiFetch(`/api/documents/${documentId}/download`);
   if (!response.ok) {
     throw await parseError(response);
   }
 
   const blob = await response.blob();
-  const filename =
-    filenameFromContentDisposition(response.headers.get("Content-Disposition")) ??
-    "document";
+  const fromHeader = filenameFromContentDisposition(
+    response.headers.get("Content-Disposition"),
+  );
+  const fromUi = options?.filename?.trim();
+  const filename = fromHeader || fromUi || "document.docx";
 
   const objectUrl = URL.createObjectURL(blob);
   try {

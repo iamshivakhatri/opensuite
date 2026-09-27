@@ -117,6 +117,10 @@ test("API sends fixed security headers and only allows configured web origins", 
     },
   });
   assert.equal(allowed.headers["access-control-allow-origin"], "http://localhost:3001");
+  assert.match(
+    String(allowed.headers["access-control-expose-headers"] ?? ""),
+    /content-disposition/i,
+  );
 
   const secondAllowed = await app.inject({ method: "OPTIONS", url: "/api/me", headers: { origin: "http://localhost:5173", "access-control-request-method": "GET" } });
   assert.equal(secondAllowed.headers["access-control-allow-origin"], "http://localhost:5173");

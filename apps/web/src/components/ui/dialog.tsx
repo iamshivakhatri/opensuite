@@ -4,8 +4,9 @@ import * as React from "react";
 import { createPortal } from "react-dom";
 
 import { cn } from "@/lib/utils";
-import { focusRingClass, useFocusScope } from "@/lib/focus-scope";
+import { useFocusScope } from "@/lib/focus-scope";
 import { useModalLayer } from "@/lib/use-modal-layer";
+import { useOverlayDismiss } from "@/lib/use-overlay-dismiss";
 
 /**
  * Shared modal dialog shell — body-portaled overlay + Escape-to-close,
@@ -31,6 +32,7 @@ export function Dialog({
   const panelRef = React.useRef<HTMLDivElement>(null);
   const titleId = React.useId();
   const [mounted, setMounted] = React.useState(false);
+  const overlayDismiss = useOverlayDismiss(onClose, closeOnOverlayClick);
   useFocusScope(true, panelRef);
   useModalLayer(true);
 
@@ -54,7 +56,8 @@ export function Dialog({
         "fixed inset-0 z-[var(--z-modal)] flex items-center justify-center bg-overlay px-4 backdrop-blur-[6px]",
         overlayClassName,
       )}
-      onClick={closeOnOverlayClick ? onClose : undefined}
+      onPointerDown={overlayDismiss.onPointerDown}
+      onClick={overlayDismiss.onClick}
     >
       <div
         ref={panelRef}

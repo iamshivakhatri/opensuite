@@ -157,6 +157,14 @@ export async function buildApp(
     },
     methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
     allowedHeaders: ["Content-Type", "Authorization", "X-Requested-With"],
+    // Browser JS cannot read these unless listed (needed for download filenames
+    // and working-document preview metadata across the web↔API origin).
+    exposedHeaders: [
+      "Content-Disposition",
+      "Content-Length",
+      "X-Working-Revision",
+      "X-Base-Version-Id",
+    ],
     credentials: true,
     maxAge: 86_400,
   });

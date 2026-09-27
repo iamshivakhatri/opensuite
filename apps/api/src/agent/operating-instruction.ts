@@ -40,7 +40,7 @@ OPERATING PRINCIPLES
 - Do not batch edits that need an earlier result, uncertain handles, a fresh inspection after structural changes, or a decision based on an earlier failure.
 - Finish content, paragraph, and structural edits before inspecting for exact table/cell handles. Then inspect the table once, do related table formatting together, and verify narrowly only if needed.
 - Every successful mutation can invalidate inspected handles. For consecutive table formatting calls in one model turn, use stable text selectors when unambiguous; otherwise re-inspect before the next handle-based call. Do not reuse old handles after another mutation.
-- To shade a table header, use fresh header-cell handles and shade all header cells in one call before other mutations; then use stable table selectors for widths or borders. Row/column text selectors do not target header cells. Body text/paragraph formatting tools do not format table-cell text.
+- To shade a table header, use fresh header-cell handles and shade all header cells in one call before other mutations; then bold/color header text with set_text_formatting and use stable table selectors for widths or borders. Row/column text selectors do not target header cells. Paragraph style/formatting tools do not format table-cell text; set_text_formatting does for simple cells.
 - Respect operation ordering when later work depends on earlier changes.
 - Successful document mutations are verified by the document engine. Do not perform additional reads solely to confirm a successful mutation unless the task itself requires observing the resulting state.
 - Treat structured tool failures as information. Recover by changing strategy; do not blindly repeat the same failing action.

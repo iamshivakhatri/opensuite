@@ -21,7 +21,7 @@ export interface AgentTurnProgress {
   readonly runId: string;
   readonly durationMs: number;
   readonly lines: readonly AgentProgressLine[];
-  readonly outcome: "completed" | "completed_with_input_needed" | "cancelled" | "failed";
+  readonly outcome: "completed" | "completed_with_input_needed" | "cancelled" | "failed" | "paused";
 }
 
 /** Semantic activity family — used for details recovery grouping. */
@@ -733,6 +733,9 @@ export function reduceAgentProgress(
       return freezeActive(freezeThoughtSegment(lines, nowMs), nowMs);
     }
     case "agent.failed": {
+      if (event.data.code === "AGENT_MAX_TURNS" || event.data.code === "AGENT_DEADLINE") {
+        return freezeActive(freezeThoughtSegment(lines, nowMs), nowMs);
+      }
       if (lines.some((line) => line.id === "failed" || line.id === "cancelled")) {
         return [...lines];
       }
@@ -1185,6 +1188,9 @@ function completedHeadline(
   }
   if (outcome === "failed") {
     return elapsed ? `Couldn't complete · ${elapsed}` : "Couldn't complete";
+  }
+  if (outcome === "paused") {
+    return elapsed ? `Paused · ${elapsed}` : "Paused";
   }
   if (outcome === "completed_with_input_needed") {
     return elapsed ? `Needs your input · ${elapsed}` : "Needs your input";

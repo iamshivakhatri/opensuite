@@ -240,7 +240,7 @@ const MUTATION_DEFS: Record<string, MutDef> = {
   },
   set_text_formatting: {
     description:
-      "Set bold/italic/size/color/other run formatting on ordinary direct body text. Table-cell text is unsupported. Occurrence is zero-based when ambiguous.",
+      "Set bold/italic/size/color/other run formatting on ordinary direct body text or simple table-cell text. Occurrence is zero-based when ambiguous.",
     inputSchema: op(
       {
         target: textTarget,
@@ -585,7 +585,13 @@ export function createDocumentTools(document: BoundDocumentHost): AgentToolSet {
       if (!caps.has(capability)) continue;
       tools[`document.${name}`] = defineTool({
         kind: "mutate",
-        description: `Apply several independent ${capability} operations in order. Stops on the first failure; earlier successful edits remain. Use known text targets only.${capability !== "replace_text" ? " Formatting targets direct body text, not table cells." : ""}`,
+        description: `Apply several independent ${capability} operations in order. Stops on the first failure; earlier successful edits remain. Use known text targets only.${
+          capability === "set_text_formatting"
+            ? " Supports ordinary body text and simple table-cell text."
+            : capability !== "replace_text"
+              ? " Formatting targets direct body text, not table cells."
+              : ""
+        }`,
         inputSchema: jsonSchema<{ operations: Record<string, unknown>[] }>({
           type: "object",
           properties: {

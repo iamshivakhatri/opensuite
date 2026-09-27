@@ -52,7 +52,7 @@ import {
 } from "@/lib/api";
 import {
   OPENSUITE_DOCUMENT_DRAG_MIME,
-  parseDocumentDragPayload,
+  readComposerDrop,
 } from "@/lib/document-drag";
 import {
   fetchAiPreference,
@@ -84,6 +84,16 @@ function stepProgressLine(step: AgentStep): AgentProgressLine | null {
     status: step.status === "failed" ? "error" : "done",
     toolName: step.name,
   };
+}
+
+function runOutcome(run: AgentRun): AgentTurnProgress["outcome"] {
+  if (run.status === "completed_with_input_needed") return "completed_with_input_needed";
+  if (run.status === "cancelled") return "cancelled";
+  if (run.status === "failed") {
+    return run.errorCode === "AGENT_MAX_TURNS" || run.errorCode === "AGENT_DEADLINE"
+      ? "paused" : "failed";
+  }
+  return "completed";
 }
 
 type TranscriptEntry =
@@ -271,7 +281,35 @@ export function DocumentAgentPanel({
   const [workspaceFiles, setWorkspaceFiles] = React.useState<ListedDocument[]>(
     [],
   );
+  /** Names for tags when a document id is not yet in workspaceFiles. */
+  const [documentNamesById, setDocumentNamesById] = React.useState<
+    Readonly<Record<string, string>>
+  >({});
   const [dragOverComposer, setDragOverComposer] = React.useState(false);
+
+  function rememberDocumentName(id: string, name: string) {
+    setDocumentNamesById((previous) =>
+      previous[id] === name ? previous : { ...previous, [id]: name },
+    );
+  }
+
+  function acceptPanelDrop(event: React.DragEvent) {
+    event.preventDefault();
+    setDragOverComposer(false);
+    if (busy || phase.kind !== "ready") return;
+    const drop = readComposerDrop(event.dataTransfer);
+    if (drop.workspaceDocument) {
+      if (drop.workspaceDocument.workspaceId !== workspaceId) return;
+      rememberDocumentName(drop.workspaceDocument.id, drop.workspaceDocument.name);
+      addTagged({
+        id: drop.workspaceDocument.id,
+        name: drop.workspaceDocument.name,
+        format: drop.workspaceDocument.format,
+      });
+      return;
+    }
+    if (drop.files.length) attachFiles(drop.files);
+  }
 
   function attachFiles(files: File[]) {
     setAttachmentError(files.some((file) => !/\.docx$/i.test(file.name)) ? "Only DOCX files can be attached." : null);
@@ -500,7 +538,7 @@ export function DocumentAgentPanel({
     if (run.status === "failed") {
       const canContinue = run.errorCode === "AGENT_MAX_TURNS" || run.errorCode === "AGENT_DEADLINE";
       const needsAiSettings = run.errorCode?.startsWith("MANAGED_USAGE_") || run.errorCode?.startsWith("MANAGED_TRIAL_");
-      setRunError(run.errorMessage || "The agent run failed. You can try again.");
+      setRunError(canContinue ? null : run.errorMessage || "The agent run failed. You can try again.");
       setRunNotice(null);
       setCanRetryRun(!canContinue && !needsAiSettings);
       setContinueRunId(canContinue ? run.id : null);
@@ -524,19 +562,11 @@ export function DocumentAgentPanel({
     if (!isActiveAgentRunStatus(run.status)) {
       if (ms !== null) {
         setRunTotalMs(ms);
-        const outcome =
-          run.status === "cancelled"
-            ? "cancelled"
-            : run.status === "failed"
-              ? "failed"
-              : run.status === "completed_with_input_needed"
-                ? "completed_with_input_needed"
-                : "completed";
         setLastTurn({
           runId: run.id,
           durationMs: ms,
           lines: progressRef.current,
-          outcome,
+          outcome: runOutcome(run),
         });
       }
       runIdRef.current = null;
@@ -845,6 +875,7 @@ export function DocumentAgentPanel({
     setRunError(null);
     setRunNotice(null);
     setCanRetryRun(false);
+    setContinueRunId(null);
     setVersionNotice(null);
     runIdRef.current = null;
     runStartedAtRef.current = null;
@@ -861,6 +892,11 @@ export function DocumentAgentPanel({
       ]);
       setThreads(listed);
       setWorkspaceFiles(files);
+      setDocumentNamesById((previous) => {
+        const next = { ...previous };
+        for (const file of files) next[file.id] = file.name;
+        return next;
+      });
       const latest = listed[0] ?? null;
       if (!latest) {
         activeThreadRequestRef.current = null;
@@ -886,31 +922,22 @@ export function DocumentAgentPanel({
         attachRunRef.current(latestRun, latest.id);
       } else if (latestRun && !isActiveAgentRunStatus(latestRun.status)) {
         const snapshot = await getAgentRun(latestRun.id);
+        setActiveRun(snapshot.run);
         saveRunTranscript(snapshot);
         applyTerminalRunStatus(snapshot.run);
         const ms = agentRunDurationMs(latestRun.startedAt, latestRun.completedAt);
         if (ms !== null) {
           setRunTotalMs(ms);
-          const outcome =
-            latestRun.status === "cancelled"
-              ? "cancelled"
-              : latestRun.status === "failed"
-                ? "failed"
-                : latestRun.status === "completed_with_input_needed"
-                  ? "completed_with_input_needed"
-                  : "completed";
           setLastTurn({
             runId: latestRun.id,
             durationMs: ms,
             lines: [],
-            outcome,
+            outcome: runOutcome(latestRun),
           });
           if (latestRun.status === "completed" || latestRun.status === "completed_with_input_needed") {
             setRunNotice(null);
           } else if (latestRun.status === "cancelled") {
             setRunNotice(null);
-          } else if (latestRun.status === "failed") {
-            setCanRetryRun(true);
           }
         }
       }
@@ -997,6 +1024,7 @@ export function DocumentAgentPanel({
   }, [draft]);
 
   function addTagged(file: TaggedDocument) {
+    rememberDocumentName(file.id, file.name);
     setTagged((prev) =>
       prev.some((item) => item.id === file.id) ? prev : [...prev, file],
     );
@@ -1082,10 +1110,12 @@ export function DocumentAgentPanel({
     setMentionOpen(false);
 
     const optimisticId = `local-${Date.now()}`;
+    const previousTagged = options?.restoreDraftOnError ? tagged : null;
     let id = threadId;
     try {
       if (options?.attachments?.length) {
         const uploadedIds = await uploadPromptAttachments(workspaceId, options.attachments, uploadDocument, (file, document) => {
+          rememberDocumentName(document.id, document.name);
           setAttachments((previous) => previous.map((item) => item.file === file ? { file, document } : item));
           setWorkspaceFiles((previous) => [...previous, document]);
           onDocumentUploaded?.(document);
@@ -1102,6 +1132,10 @@ export function DocumentAgentPanel({
           createdAt: new Date().toISOString(),
         },
       ]);
+      if (options?.restoreDraftOnError) {
+        setDraft("");
+        setTagged([]);
+      }
       if (!id) {
         const thread = await createWorkspaceAgentThread(workspaceId);
         id = thread.id;
@@ -1117,15 +1151,15 @@ export function DocumentAgentPanel({
           ? { continueFromRunId: options.continueFromRunId }
           : {}),
       });
-      if (options?.restoreDraftOnError) setDraft("");
-      setTagged([]);
       if (options?.attachments) setAttachments([]);
+      if (!options?.restoreDraftOnError) setTagged([]);
       await refreshMessages(id);
       attachRun(run, id);
     } catch (error) {
       setMessages((prev) => prev.filter((m) => m.id !== optimisticId));
       if (options?.restoreDraftOnError) {
         setDraft(instruction);
+        if (previousTagged) setTagged(previousTagged);
       }
       const busyThreadId =
         error instanceof ApiError &&
@@ -1267,6 +1301,7 @@ export function DocumentAgentPanel({
     setRunError(null);
     setRunNotice(null);
     setCanRetryRun(false);
+    setContinueRunId(null);
     setVersionNotice(null);
     setLiveTranscript([]);
     setTerminalRunTranscript(null);
@@ -1291,6 +1326,7 @@ export function DocumentAgentPanel({
         attachRun(latestRun, nextId);
       } else if (latestRun && !isActiveAgentRunStatus(latestRun.status)) {
         const snapshot = await getAgentRun(latestRun.id);
+        setActiveRun(snapshot.run);
         saveRunTranscript(snapshot);
         applyTerminalRunStatus(snapshot.run);
         const ms = agentRunDurationMs(latestRun.startedAt, latestRun.completedAt);
@@ -1300,18 +1336,8 @@ export function DocumentAgentPanel({
             runId: latestRun.id,
             durationMs: ms,
             lines: [],
-            outcome:
-              latestRun.status === "cancelled"
-                ? "cancelled"
-                : latestRun.status === "failed"
-                  ? "failed"
-                  : latestRun.status === "completed_with_input_needed"
-                    ? "completed_with_input_needed"
-                    : "completed",
+            outcome: runOutcome(latestRun),
           });
-          if (latestRun.status === "failed") {
-            setCanRetryRun(true);
-          }
         }
       }
     } catch (error) {
@@ -1363,6 +1389,7 @@ export function DocumentAgentPanel({
       setTimelineOpen(false);
       setRunTotalMs(null);
       setCanRetryRun(false);
+      setContinueRunId(null);
       setVersionNotice(null);
       setLiveTranscript([]);
       setTerminalRunTranscript(null);
@@ -1456,12 +1483,38 @@ export function DocumentAgentPanel({
     !canRetryRun;
   const needsAiSettings = activeRun?.status === "failed" &&
     (activeRun.errorCode?.startsWith("MANAGED_USAGE_") || activeRun.errorCode?.startsWith("MANAGED_TRIAL_"));
+  const documentsForTags = React.useMemo(() => {
+    const byId = new Map<string, { id: string; name: string }>();
+    for (const [id, name] of Object.entries(documentNamesById)) {
+      byId.set(id, { id, name });
+    }
+    for (const file of workspaceFiles) {
+      byId.set(file.id, { id: file.id, name: file.name });
+    }
+    return [...byId.values()];
+  }, [documentNamesById, workspaceFiles]);
 
   return (
     <>
     <aside
       className="flex h-full shrink-0 flex-col border-l border-line bg-sidebar"
       style={{ width }}
+      onDragOver={(event) => {
+        if (
+          event.dataTransfer.types.includes("Files") ||
+          event.dataTransfer.types.includes(OPENSUITE_DOCUMENT_DRAG_MIME)
+        ) {
+          event.preventDefault();
+          event.dataTransfer.dropEffect = "copy";
+          setDragOverComposer(true);
+        }
+      }}
+      onDragLeave={(event) => {
+        if (!event.currentTarget.contains(event.relatedTarget as Node | null)) {
+          setDragOverComposer(false);
+        }
+      }}
+      onDrop={acceptPanelDrop}
     >
       <div className="os-workspace-rail relative flex items-center justify-between gap-2 bg-sidebar px-2.5">
         <div className="min-w-0 truncate text-[length:var(--text-sm)] font-semibold tracking-[-0.01em] text-ink">
@@ -1621,7 +1674,7 @@ export function DocumentAgentPanel({
                 const isLast = index === messages.length - 1;
                 const transcriptSteps = runStepsByMessageId[message.id];
                 if (message.role === "user") {
-                  const messageTags = messageTaggedDocuments(message, workspaceFiles);
+                  const messageTags = messageTaggedDocuments(message, documentsForTags);
                   const isContinue = message.content.trim() === "Continue";
                   return (
                     <div
@@ -1656,7 +1709,7 @@ export function DocumentAgentPanel({
                         steps={transcriptSteps}
                         omitFinishNarration={message.content.length > 0}
                         summary={
-                          isLast && lastTurn
+                          isLast && lastTurn && lastTurn.outcome !== "paused"
                             ? presentAgentRun(lastTurn.lines, {
                                 durationMs: lastTurn.durationMs,
                                 outcome: lastTurn.outcome,
@@ -1680,6 +1733,16 @@ export function DocumentAgentPanel({
                     ) : null}
                     {!(isLast && activeRun?.resultMessageId === message.id && runError === message.content) ? (
                       <AgentMarkdown text={message.content} />
+                    ) : null}
+                    {isLast && continueRunId ? (
+                      <button
+                        type="button"
+                        onClick={() => void handleContinue()}
+                        disabled={busy}
+                        className={cn(focusRingClass, "self-start rounded-[var(--radius-sm)] border border-stroke px-2 py-0.5 text-[length:var(--text-xs)] font-medium text-ink-soft hover:border-primary disabled:opacity-50")}
+                      >
+                        {submitting ? "Starting…" : "Continue"}
+                      </button>
                     ) : null}
                   </div>
                 );
@@ -1750,17 +1813,6 @@ export function DocumentAgentPanel({
                       className="h-6 shrink-0 border-danger/30 px-2 text-[length:var(--text-xs)] text-danger hover:bg-danger-soft">
                       AI settings
                     </Button>
-                  ) : continueRunId ? (
-                    <Button
-                      type="button"
-                      variant="outline"
-                      size="sm"
-                      onClick={() => void handleContinue()}
-                      disabled={busy}
-                      className="h-6 shrink-0 border-danger/30 px-2 text-[length:var(--text-xs)] text-danger hover:bg-danger-soft"
-                    >
-                      {submitting ? "Starting…" : "Continue"}
-                    </Button>
                   ) : canRetryRun ? (
                     <Button
                       type="button"
@@ -1812,31 +1864,6 @@ export function DocumentAgentPanel({
               : "border-line",
             canStop && "opacity-95",
           )}
-          onDragOver={(event) => {
-            if (event.dataTransfer.types.includes("Files") || event.dataTransfer.types.includes(OPENSUITE_DOCUMENT_DRAG_MIME)) {
-              event.preventDefault();
-              event.dataTransfer.dropEffect = "copy";
-              setDragOverComposer(true);
-            }
-          }}
-          onDragLeave={() => setDragOverComposer(false)}
-          onDrop={(event) => {
-            event.preventDefault();
-            setDragOverComposer(false);
-            if (event.dataTransfer.files.length) {
-              if (!busy && phase.kind === "ready") attachFiles(Array.from(event.dataTransfer.files));
-              return;
-            }
-            const payload = parseDocumentDragPayload(
-              event.dataTransfer.getData(OPENSUITE_DOCUMENT_DRAG_MIME),
-            );
-            if (!payload || payload.workspaceId !== workspaceId) return;
-            addTagged({
-              id: payload.id,
-              name: payload.name,
-              format: payload.format,
-            });
-          }}
         >
           {tagged.length > 0 ? (
             <div className="mb-1.5 flex flex-wrap gap-1">

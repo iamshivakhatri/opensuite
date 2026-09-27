@@ -135,6 +135,13 @@ it("keeps submitted document tags on only their historical message", () => {
   assert.deepEqual(messageTaggedDocuments(msg("plain", "2026-01-01T00:00:01.000Z"), documents), []);
 });
 
+it("still shows a chip when the document id is not in the workspace list yet", () => {
+  const tagged = { ...msg("tagged", "2026-01-01T00:00:00.000Z"), documentIds: ["missing"] };
+  assert.deepEqual(messageTaggedDocuments(tagged, []), [
+    { id: "missing", name: "Attached document" },
+  ]);
+});
+
 describe("assistant transcript reconciliation (finish narration vs message)", () => {
   it("A: one-turn final answer renders Hello world exactly once", () => {
     const steps = [

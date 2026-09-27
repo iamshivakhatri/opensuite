@@ -67,11 +67,11 @@ export function prependOlderMessages(
 /** Resolves one historical message's submitted document references. */
 export function messageTaggedDocuments(
   message: AgentMessage,
-  documents: readonly ListedDocument[],
-): ListedDocument[] {
-  const byId = new Map(documents.map((document) => [document.id, document]));
-  return (message.documentIds ?? []).flatMap((documentId) => {
-    const document = byId.get(documentId);
-    return document ? [document] : [];
-  });
+  documents: readonly Pick<ListedDocument, "id" | "name">[],
+): Array<{ id: string; name: string }> {
+  const byId = new Map(documents.map((document) => [document.id, document.name]));
+  return (message.documentIds ?? []).map((documentId) => ({
+    id: documentId,
+    name: byId.get(documentId) ?? "Attached document",
+  }));
 }

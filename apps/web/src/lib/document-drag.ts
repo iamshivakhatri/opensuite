@@ -38,3 +38,20 @@ export function parseDocumentDragPayload(
   }
   return null;
 }
+
+/** Prefer workspace-file tags over OS files when both are present on a drop. */
+export function readComposerDrop(dataTransfer: DataTransfer): {
+  readonly workspaceDocument: OpensuiteDocumentDragPayload | null;
+  readonly files: File[];
+} {
+  const workspaceDocument = parseDocumentDragPayload(
+    dataTransfer.getData(OPENSUITE_DOCUMENT_DRAG_MIME),
+  );
+  if (workspaceDocument) {
+    return { workspaceDocument, files: [] };
+  }
+  return {
+    workspaceDocument: null,
+    files: Array.from(dataTransfer.files ?? []),
+  };
+}

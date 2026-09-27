@@ -259,7 +259,7 @@ export function WorkspaceIde({
     if (!activeDocument || downloading) return;
     setDownloading(true);
     try {
-      await downloadDocument(activeDocument.id);
+      await downloadDocument(activeDocument.id, { filename: activeDocument.name });
     } catch (error) {
       toast({
         tone: "error",

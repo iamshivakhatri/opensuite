@@ -10,6 +10,7 @@ import {
   useFocusScope,
 } from "@/lib/focus-scope";
 import { useModalLayer } from "@/lib/use-modal-layer";
+import { useOverlayDismiss } from "@/lib/use-overlay-dismiss";
 import { cn } from "@/lib/utils";
 
 export type ContextMenuItem = {
@@ -150,6 +151,7 @@ export function ConfirmDialog({
   const titleId = React.useId();
   const cancelRef = React.useRef<HTMLButtonElement>(null);
   const [mounted, setMounted] = React.useState(false);
+  const overlayDismiss = useOverlayDismiss(onCancel);
   useFocusScope(true, panelRef);
   useModalLayer(true);
 
@@ -174,7 +176,8 @@ export function ConfirmDialog({
   return createPortal(
     <div
       className="fixed inset-0 z-[var(--z-modal)] flex items-center justify-center bg-overlay px-4 backdrop-blur-[6px]"
-      onClick={onCancel}
+      onPointerDown={overlayDismiss.onPointerDown}
+      onClick={overlayDismiss.onClick}
     >
       <div
         ref={panelRef}
@@ -252,6 +255,7 @@ export function PromptDialog({
   const titleId = React.useId();
   const inputId = React.useId();
   const [mounted, setMounted] = React.useState(false);
+  const overlayDismiss = useOverlayDismiss(onCancel);
   useFocusScope(true, panelRef);
   useModalLayer(true);
 
@@ -276,7 +280,8 @@ export function PromptDialog({
   return createPortal(
     <div
       className="fixed inset-0 z-[var(--z-modal)] flex items-center justify-center bg-overlay px-4 backdrop-blur-[6px]"
-      onClick={onCancel}
+      onPointerDown={overlayDismiss.onPointerDown}
+      onClick={overlayDismiss.onClick}
     >
       <form
         ref={panelRef}

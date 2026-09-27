@@ -663,6 +663,17 @@ test("terminal agent.failed stays red; prior tool attempts are not", () => {
   assert.match(presentation.headline, /Couldn't complete/);
 });
 
+test("turn-limit stop keeps completed activity and presents a neutral pause", () => {
+  const lines = reduceAll([
+    { type: "tool.completed", data: { toolCallId: "edit", toolName: "document.insert_paragraph" }, at: 1 },
+    { type: "agent.failed", data: { code: "AGENT_MAX_TURNS" }, at: 2 },
+  ]);
+  const presentation = presentAgentRun(lines, { outcome: "paused", durationMs: 27_290 });
+  assert.equal(presentation.activities.some((row) => row.status === "error"), false);
+  assert.equal(presentation.headline, "Paused · 27s");
+  assert.equal(lines.some((line) => line.id === "failed"), false);
+});
+
 test("tool.failed reads SSE error field as reason code", () => {
   const lines = reduceAll([
     {

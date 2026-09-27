@@ -590,7 +590,7 @@ export function DocumentNavigationPanel({
               id: "download",
               label: "Download",
               onSelect: () => {
-                void downloadDocument(menuDoc.id).catch(() => {
+                void downloadDocument(menuDoc.id, { filename: menuDoc.name }).catch(() => {
                   toast({ tone: "error", title: "Download failed" });
                 });
               },
