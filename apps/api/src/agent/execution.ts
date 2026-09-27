@@ -73,6 +73,10 @@ import {
 
 const MAX_MODEL_TURNS = 20;
 
+function logDocumentName(name: string): string {
+  return name.replace(/[\r\n\t\x00-\x1f]/g, " ").slice(0, 80);
+}
+
 type TranscriptEntry = {
   readonly kind: AgentStepKind;
   readonly status: AgentStepStatus;
@@ -515,9 +519,7 @@ async function runExecution(input: {
       status: "running",
     });
     const runShort = input.run.id.slice(0, 8);
-    console.info(
-      `[agent-v3] run_start run=${runShort} provider=openrouter model=${input.model.usageAttribution?.model ?? "unknown"}`,
-    );
+    console.info(`[agent] RUN ${runShort} started model=${input.model.usageAttribution?.model ?? "unknown"}`);
     if (
       input.model.usageAttribution?.provider === "openrouter" &&
       input.model.usageAttribution.credentialSource === "managed"
@@ -530,6 +532,7 @@ async function runExecution(input: {
     const initialDocumentId = input.primaryDocumentId;
     let directVersionId: string | null = null;
     let directWorkingVersions = new Map<string, string>();
+    const documentNames = new Map<string, string>();
     let updateDirectReadGuard = (_complete: boolean) => {};
     boundTools = await createPrimaryDocxTools({
       binding: input.deps.docxBinding,
@@ -541,6 +544,7 @@ async function runExecution(input: {
       workingDocumentIds: input.workingDocumentIds,
       ...(input.editableDocumentId ? { editableDocumentId: input.editableDocumentId } : {}),
       onDocumentSelected: ({ documentId, versionId }) => {
+        console.info(`[agent] TARGET ${logDocumentName(documentNames.get(documentId) ?? documentId.slice(0, 8))}`);
         directVersionId = directWorkingVersions.get(documentId) === versionId ? versionId : null;
         updateDirectReadGuard(directVersionId !== null);
       },
@@ -555,6 +559,7 @@ async function runExecution(input: {
         });
       },
       onVersionAdvanced: async (advanced) => {
+        console.info(`[agent] SAVE target=${logDocumentName(documentNames.get(advanced.documentId) ?? advanced.documentId.slice(0, 8))} version=${advanced.versionNumber}`);
         savedTarget = { documentId: advanced.documentId, fromVersionId: advanced.fromVersionId, versionId: advanced.versionId };
         versionAdvances.push({
           fromVersionId: advanced.fromVersionId,
@@ -665,6 +670,13 @@ async function runExecution(input: {
       workingDocumentIds: input.workingDocumentIds,
       availableEvidenceTokens: planningAvailableEvidenceTokens,
     });
+    for (const document of retrieval?.workingSet ?? []) documentNames.set(document.documentId, document.name);
+    const targetId = boundTools?.getActiveDocumentId();
+    const sources = (retrieval?.workingSet ?? []).filter((document) => document.documentId !== targetId);
+    console.info(`[agent] RETRIEVAL run=${runShort} mode=${retrieval?.observation.contextStrategy.toUpperCase() ?? "SKIPPED"}` +
+      ` documents=${retrieval?.workingSet.length ?? 0} context≈${retrieval ? estimateTokens(retrieval.message ?? "") : 0} tokens` +
+      ` target=${logDocumentName(documentNames.get(targetId ?? "") ?? targetId?.slice(0, 8) ?? "none")}` +
+      ` sources=${sources.length ? sources.slice(0, 3).map((document) => logDocumentName(document.name)).join(", ") + (sources.length > 3 ? ` +${sources.length - 3} more` : "") : "none"}`);
     readGuard.setCompleteDirect(retrieval?.observation.contextStrategy === "direct");
     if (retrieval?.observation.contextStrategy === "direct") {
       directWorkingVersions = new Map(retrieval.workingSet.map((document) => [document.documentId, document.versionId]));
@@ -757,7 +769,7 @@ async function runExecution(input: {
 
     // The one API → agent-core-v3 execution call.
     const executeAgent = input.deps.runAgent ?? runAgent;
-    const verifySavedDocument = async () => {
+    const verifySavedDocument = async (metrics?: AgentRunMetrics) => {
       if (!savedTarget || !boundTools?.getWorkingMutationCount() || !input.deps.docxBinding) return;
       const target = savedTarget as { documentId: string; fromVersionId: string; versionId: string };
       try {
@@ -767,22 +779,27 @@ async function runExecution(input: {
           input.deps.documents.readExactVersionBytes({ documentId: target.documentId, versionId: target.versionId, ownerUserId: input.ownerUserId }),
           ...sources.map((item) => input.deps.documents.getOwnedDocument({ documentId: item.documentId, ownerUserId: input.ownerUserId })),
         ]);
-        transcript.validation(await verifyDocumentUpdate({
+        const checks = await verifyDocumentUpdate({
           binding: input.deps.docxBinding,
           before: new Uint8Array(before), after: new Uint8Array(after), instruction: input.instruction,
+          successfulMutations: metrics?.toolCalls.filter((tool) => tool.kind === "mutate" && tool.outcome === "success").map((tool) => tool.toolName),
           targetAdvanced: target.fromVersionId !== target.versionId,
           sourcesUnchanged: input.workingDocumentIds.every((id) => id === target.documentId)
             ? true
             : retrieval && input.workingDocumentIds.every((id) => id === target.documentId || sources.some((source) => source.documentId === id))
               ? sources.every((item, index) => currentSources[index]?.latestVersion.id === item.versionId)
               : null,
-        }));
+        });
+        transcript.validation(checks);
+        console.info(`[agent] VALIDATION run=${runShort} ${checks.map((check) => `${check.status}:${check.message}`).join(" | ")}`);
       } catch {
         transcript.validation([{ id: "verification", status: "fail", message: "Saved document could not be verified" }]);
+        console.warn(`[agent] VALIDATION run=${runShort} fail: saved document could not be verified`);
       }
     };
     let result;
     try {
+      const toolStartedAt = new Map<string, number>();
       result = await executeAgent({
         model: input.model.model,
         system,
@@ -792,14 +809,24 @@ async function runExecution(input: {
         signal: input.signal,
         runId: runShort,
         maxTurns: MAX_MODEL_TURNS,
-        onEvent: (event) => relayEvent(event, input.liveEvents, input.run.id, messageId, transcript),
+        onEvent: (event) => {
+          if (event.type === "tool_started") toolStartedAt.set(event.toolCallId, Date.now());
+          if (event.type === "tool_completed" || event.type === "tool_failed" || event.type === "tool_skipped") {
+            const elapsed = Date.now() - (toolStartedAt.get(event.toolCallId) ?? Date.now());
+            const code = event.type === "tool_failed" ? event.error : event.type === "tool_skipped" ? event.reason : "";
+            console.info(`[agent] TOOL run=${runShort} ${event.toolName} ${event.type === "tool_completed" ? "✓" : event.type === "tool_skipped" ? "–" : "✗"} ${elapsed}ms` +
+              (code ? ` code=${/^[A-Z][A-Z0-9_]{2,63}$/.test(code) ? code : "TOOL_FAILED"}` : ""));
+            toolStartedAt.delete(event.toolCallId);
+          }
+          return relayEvent(event, input.liveEvents, input.run.id, messageId, transcript);
+        },
       });
       await flushWorking();
-      await verifySavedDocument();
+      await verifySavedDocument(result.metrics);
     } catch (error) {
       let terminalError = error;
       try { await flushWorking(); } catch (flushError) { terminalError = flushError; }
-      await verifySavedDocument();
+      await verifySavedDocument(result?.metrics ?? getRunMetricsFromError(error));
       await emitRunReport({
         runId: input.run.id,
         instruction: input.instruction,

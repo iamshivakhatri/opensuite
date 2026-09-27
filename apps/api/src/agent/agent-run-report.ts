@@ -618,7 +618,8 @@ export function logAgentRunReport(report: AgentRunReport): void {
     if (tool.outcome !== "success") {
       console.info(
         `[agent-run-tool-error] run=${shortId(report.runId)} tool=${tool.sequence}` +
-          ` name=${tool.name} code=${tool.failureCode ?? "TOOL_FAILED"}`,
+          ` name=${tool.name} code=${tool.failureCode ?? "TOOL_FAILED"}` +
+          (report.tools.some((later) => later.sequence > tool.sequence && later.name === tool.name && later.outcome === "success") ? " recovered=true" : ""),
       );
     }
   }

@@ -10,10 +10,54 @@ export interface DocumentCheck {
 const months = "January February March April May June July August September October November December".split(" ");
 
 export function oldPeriodFromInstruction(instruction: string): string | null {
-  const period = `(?:${months.join("|")}|(?:19|20)\\d{2})`;
-  const matches = [...instruction.matchAll(new RegExp(`\\b(${period})\\s+(?:report\\s+)?(?:into|to)\\s+(?:the\\s+)?(${period})\\b`, "gi"))];
-  if (matches.length !== 1 || matches[0]![1]!.toLowerCase() === matches[0]![2]!.toLowerCase()) return null;
-  return matches[0]![1]!;
+  const period = new RegExp(`\\b(?:${months.join("|")}|Q[1-4])(?:\\s+(?:19|20)\\d{2})?\\b|\\b(?:19|20)\\d{2}\\b`, "gi");
+  const transitions = [...instruction.matchAll(/\b(?:into|to)\b|→|->/gi)].map((connector) => {
+    const left = instruction.slice(Math.max(0, connector.index - 160), connector.index).split(/[.!?;\n]/).at(-1) ?? "";
+    const right = (instruction.slice(connector.index + connector[0].length, connector.index + connector[0].length + 160).split(/[.!?;\n]/)[0] ?? "");
+    const old = [...left.matchAll(period)].map((match) => match[0]);
+    const next = [...right.matchAll(period)].map((match) => match[0]);
+    if (old.length !== 1 || next.length !== 1 || old[0]!.toLowerCase() === next[0]!.toLowerCase()) return null;
+    if (/^(?:19|20)\d{2}$/.test(old[0]!) && !/\b(?:update|refresh|revise|convert|change|turn)\b/i.test(left)) return null;
+    return old[0]!;
+  }).filter((value): value is string => value !== null);
+  return transitions.length === 1 ? transitions[0]! : null;
+}
+
+function tableChangeMessage(before: readonly (readonly number[])[], after: readonly (readonly number[])[], operations: readonly string[]) {
+  const count = (name: string) => operations.filter((operation) => operation === `document.${name}`).length;
+  const expected: string[] = [];
+  const unexpected: string[] = [];
+  const tableDifference = after.length - before.length;
+  if (tableDifference) {
+    const supported = tableDifference > 0
+      ? count("create_table") >= tableDifference && !count("delete_table")
+      : count("delete_table") >= -tableDifference && !count("create_table");
+    (supported ? expected : unexpected).push(supported
+      ? `${Math.abs(tableDifference)} ${Math.abs(tableDifference) === 1 ? "table" : "tables"} ${tableDifference > 0 ? "created" : "deleted"} as expected`
+      : `Table count changed unexpectedly: ${before.length} → ${after.length}`);
+  } else {
+    for (const [index, previous] of before.entries()) {
+      const current = after[index]!;
+      for (const [dimension, label, add, remove] of [
+        [0, "row", "insert_table_rows", "delete_table_row"],
+        [1, "column", "insert_table_column", "delete_table_column"],
+      ] as const) {
+        const difference = current[dimension]! - previous[dimension]!;
+        if (!difference) continue;
+        const changes = before.map((table, tableIndex) => after[tableIndex]![dimension]! - table[dimension]!);
+        const totalAdded = changes.reduce((sum, change) => sum + Math.max(change, 0), 0);
+        const totalRemoved = changes.reduce((sum, change) => sum + Math.max(-change, 0), 0);
+        const changedTables = changes.filter((change) => change > 0).length;
+        const supported = difference > 0
+          ? (count(add) >= totalAdded || (label === "row" && count("insert_table_rows") >= changedTables)) && !count(remove)
+          : count(remove) >= totalRemoved && !count(add) && !(label === "row" && count("insert_table_row"));
+        (supported ? expected : unexpected).push(supported
+          ? `${Math.abs(difference)} table ${label}${Math.abs(difference) === 1 ? "" : "s"} ${difference > 0 ? "added" : "removed"} as expected`
+          : `Table ${index + 1} ${label} count changed unexpectedly: ${previous[dimension]} → ${current[dimension]}`);
+      }
+    }
+  }
+  return { expected, unexpected, tableDifference };
 }
 
 async function inspectAll(binding: DocxEngineBinding, bytes: Uint8Array, kind: "headings" | "tables") {
@@ -49,6 +93,7 @@ export async function verifyDocumentUpdate(input: {
   instruction: string;
   targetAdvanced: boolean;
   sourcesUnchanged: boolean | null;
+  successfulMutations?: readonly string[];
 }): Promise<DocumentCheck[]> {
   const checks: DocumentCheck[] = [
     { id: "target", status: input.targetAdvanced ? "pass" : "fail", message: input.targetAdvanced ? "Target updated" : "Target did not advance" },
@@ -64,9 +109,14 @@ export async function verifyDocumentUpdate(input: {
   }
   try {
     const before = await structure(input.binding, input.before);
-    const differences = (Object.keys(after) as (keyof typeof after)[])
-      .filter((key) => JSON.stringify(before[key]) !== JSON.stringify(after[key]));
-    checks.push({ id: "structure", status: differences.length ? "warning" : "pass", message: differences.length ? `Structure changed: ${differences.join(", ")}` : "Structure preserved" });
+    const tables = tableChangeMessage(before.tables, after.tables, input.successfulMutations ?? []);
+    const unexpected = [...tables.unexpected];
+    if (before.sections !== after.sections) unexpected.push(`Section count changed: ${before.sections} → ${after.sections}`);
+    if (JSON.stringify(before.headings) !== JSON.stringify(after.headings)) unexpected.push("Heading structure changed");
+    if (before.bodyBlocks !== after.bodyBlocks && !(tables.tableDifference && tables.expected.length && after.bodyBlocks - before.bodyBlocks === tables.tableDifference)) {
+      unexpected.push(`Body block count changed: ${before.bodyBlocks} → ${after.bodyBlocks}`);
+    }
+    checks.push({ id: "structure", status: unexpected.length ? "warning" : "pass", message: [...tables.expected, ...unexpected].join("; ") || "Structure preserved" });
   } catch {
     checks.push({ id: "structure", status: "skipped", message: "Original structure could not be inspected" });
   }

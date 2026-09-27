@@ -569,8 +569,7 @@ test("later runs restore durable working documents into model context", async ()
   }
   assert.match(String(projected.at(-2)?.content), /WORKING SET\n- B\.docx \(docx; ID doc-b\)\n- A\.docx \(docx; ID doc-a\)/);
   assert.equal(projected.at(-1)?.content, "second");
-  assert.ok(logs.some((message) => message.includes('"workingSetArtifactCount": 2')));
-  assert.ok(logs.some((message) => message.includes('"availableEvidenceTokens"')));
+  assert.ok(logs.some((message) => message.includes("documents=2") && message.includes("target=B.docx") && message.includes("sources=A.docx")));
 });
 
 test("recurring report refresh selects the target, reads the source, and saves one target version", async () => {

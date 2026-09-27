@@ -251,7 +251,7 @@ test("success with recovered tool errors does not imply terminal failure", () =>
         {
           sequence: 3,
           turn: 2,
-          toolName: "document.insert_paragraph",
+          toolName: "document.set_paragraph_style",
           kind: "mutate",
           durationMs: 20,
           outcome: "success",
@@ -293,7 +293,9 @@ test("success with recovered tool errors does not imply terminal failure", () =>
   assert.match(messages[0] ?? "", /persistedVersions=1/);
   assert.doesNotMatch(messages[0] ?? "", /\bfailures=/);
   assert.match(messages[1] ?? "", /^\[agent-run-tool-error\].*STYLE_NOT_FOUND/);
+  assert.match(messages[1] ?? "", /recovered=true/);
   assert.match(messages[2] ?? "", /^\[agent-run-tool-error\].*TABLE_NOT_FOUND/);
+  assert.doesNotMatch(messages[2] ?? "", /recovered=true/);
   assert.equal(messages.some((m) => m.startsWith("[agent-run-failure]")), false);
 });
 
