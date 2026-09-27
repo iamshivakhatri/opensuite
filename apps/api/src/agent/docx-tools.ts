@@ -15,6 +15,7 @@ import {
 import {
   createDocumentTools,
   type BoundDocumentHost,
+  type InspectFocus,
 } from "./document-tools.js";
 
 export interface DocumentTransition {
@@ -84,6 +85,9 @@ function createActiveDocxSession(input: {
     readonly kind: "created" | "duplicated";
   }) => void | Promise<void>;
   readonly onWorkingUpdated?: (event: { documentId: string; baseVersionId: string; revision: number }) => void;
+  readonly onDocumentSelected?: (event: { documentId: string; versionId: string }) => void;
+  readonly workingDocumentIds: readonly string[];
+  readonly editableDocumentId?: string;
 }) {
   let documentId: string | null = null;
   let versionId: string | null = null;
@@ -94,6 +98,7 @@ function createActiveDocxSession(input: {
   const currentHandles = new Set<string>();
   const mutationFailures = new Map<string, number>();
   const transitions: DocumentTransition[] = [];
+  const workingDocumentIds = new Set(input.workingDocumentIds);
 
   function noteMutationFailure(capability: string, result: unknown): unknown {
     if (!result || typeof result !== "object" || (result as { ok?: unknown }).ok !== false) return result;
@@ -279,6 +284,25 @@ function createActiveDocxSession(input: {
     flush,
     getTransitions: () => transitions,
     rebind,
+    async selectDocument(selectedDocumentId: string) {
+      if (!workingDocumentIds.has(selectedDocumentId)) return { ok: false, reasonCode: "DOCUMENT_NOT_IN_WORKING_SET" };
+      if (input.editableDocumentId && selectedDocumentId !== input.editableDocumentId) return { ok: false, reasonCode: "DOCUMENT_IS_REFERENCE" };
+      if (selectedDocumentId === documentId) return { ok: true, documentId, versionId, alreadyActive: true };
+      if (workingMutationCount > 0 || dirty) return { ok: false, reasonCode: "DOCUMENT_ALREADY_EDITED" };
+      const document = await input.documents.getOwnedDocument({ documentId: selectedDocumentId, ownerUserId: input.ownerUserId });
+      if (document.workspaceId !== input.workspaceId || document.format !== "docx") return { ok: false, reasonCode: "DOCUMENT_NOT_EDITABLE" };
+      const bytes = await input.documents.readExactVersionBytes({ documentId: selectedDocumentId, versionId: document.latestVersion.id, ownerUserId: input.ownerUserId });
+      rebind({ documentId: selectedDocumentId, versionId: document.latestVersion.id, bytes: new Uint8Array(bytes) });
+      input.onDocumentSelected?.({ documentId: selectedDocumentId, versionId: document.latestVersion.id });
+      return { ok: true, documentId, versionId, name: document.name };
+    },
+    async inspectWorkingDocument(selectedDocumentId: string, focus: InspectFocus) {
+      if (!workingDocumentIds.has(selectedDocumentId)) return { ok: false, reasonCode: "DOCUMENT_NOT_IN_WORKING_SET" };
+      const document = await input.documents.getOwnedDocument({ documentId: selectedDocumentId, ownerUserId: input.ownerUserId });
+      if (document.workspaceId !== input.workspaceId || document.format !== "docx") return { ok: false, reasonCode: "DOCUMENT_NOT_READABLE" };
+      const bytes = await input.documents.readExactVersionBytes({ documentId: selectedDocumentId, versionId: document.latestVersion.id, ownerUserId: input.ownerUserId });
+      return input.binding.inspectDocx(new Uint8Array(bytes), { focus });
+    },
     async createBlank(title?: string) {
       const fromDocumentId = documentId;
       try {
@@ -390,6 +414,8 @@ const titleInput = jsonSchema<{ title?: string }>({
 function createLifecycleTools(session: {
   createBlank: (title?: string) => Promise<unknown>;
   duplicateCurrent: (title?: string) => Promise<unknown>;
+  selectDocument: (documentId: string) => Promise<unknown>;
+  inspectWorkingDocument: (documentId: string, focus: InspectFocus) => Promise<unknown>;
 }): AgentToolSet {
   return {
     "workspace.create_blank_document": defineTool({
@@ -406,6 +432,22 @@ function createLifecycleTools(session: {
       inputSchema: titleInput,
       execute: async (input) => session.duplicateCurrent(input.title),
     }),
+    "workspace.select_document": defineTool({
+      kind: "mutate",
+      description: "Make an existing DOCX in the working set the active editable document. Choose the target before editing; other working documents remain available as read-only sources. Use the document ID shown in the working set.",
+      inputSchema: jsonSchema<{ documentId: string }>({ type: "object", properties: { documentId: { type: "string" } }, required: ["documentId"], additionalProperties: false }),
+      execute: async ({ documentId }) => session.selectDocument(documentId),
+    }),
+    "workspace.inspect_document": defineTool({
+      kind: "read",
+      description: "Read an existing DOCX in the working set without changing the active editable document. Use for source updates when the supplied context lacks needed details. Page through body_blocks or tables with offset and limit.",
+      inputSchema: jsonSchema<{ documentId: string; kind: "body_blocks" | "tables"; offset?: number; limit?: number }>({
+        type: "object",
+        properties: { documentId: { type: "string" }, kind: { type: "string", enum: ["body_blocks", "tables"] }, offset: { type: "number" }, limit: { type: "number" } },
+        required: ["documentId", "kind"], additionalProperties: false,
+      }),
+      execute: async ({ documentId, kind, offset, limit }) => session.inspectWorkingDocument(documentId, { kind, offset: Math.max(0, offset ?? 0), limit: Math.min(100, Math.max(1, limit ?? 50)) }),
+    }),
   };
 }
 
@@ -420,6 +462,8 @@ export async function createPrimaryDocxTools(input: {
   readonly workspaceId: string;
   readonly documentId: string | null;
   readonly versionId: string | null;
+  readonly workingDocumentIds?: readonly string[];
+  readonly editableDocumentId?: string;
   readonly onVersionAdvanced?: (event: {
     readonly documentId: string;
     readonly fromVersionId: string;
@@ -434,6 +478,7 @@ export async function createPrimaryDocxTools(input: {
     readonly kind: "created" | "duplicated";
   }) => void | Promise<void>;
   readonly onWorkingUpdated?: (event: { documentId: string; baseVersionId: string; revision: number }) => void;
+  readonly onDocumentSelected?: (event: { documentId: string; versionId: string }) => void;
 }): Promise<PrimaryDocxToolsResult | undefined> {
   if (!input.binding) {
     return undefined;
@@ -444,6 +489,8 @@ export async function createPrimaryDocxTools(input: {
     documents: input.documents,
     ownerUserId: input.ownerUserId,
     workspaceId: input.workspaceId,
+    workingDocumentIds: input.workingDocumentIds ?? (input.documentId ? [input.documentId] : []),
+    ...(input.editableDocumentId ? { editableDocumentId: input.editableDocumentId } : {}),
     ...(input.onVersionAdvanced
       ? { onVersionAdvanced: input.onVersionAdvanced }
       : {}),
@@ -451,6 +498,7 @@ export async function createPrimaryDocxTools(input: {
       ? { onDocumentCreated: input.onDocumentCreated }
       : {}),
     ...(input.onWorkingUpdated ? { onWorkingUpdated: input.onWorkingUpdated } : {}),
+    ...(input.onDocumentSelected ? { onDocumentSelected: input.onDocumentSelected } : {}),
   });
 
   if (input.documentId && input.versionId) {

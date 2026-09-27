@@ -14,6 +14,8 @@ _Read this before starting any work. Keep it a concise current-state handoff, no
 
 ## Just Completed
 
+* **Recurring DOCX refresh** — a run can select an editable DOCX from its existing working set and inspect another DOCX as a read-only source. Selection reuses the active binding, keeps complete working-set context through the switch, and is blocked after edits so one run still saves one edited version. No Rust or agent-core-v3 changes.
+
 * **Telemetry terminology cleanup** — compact `[agent-run-report]` log uses `toolCalls` / `readCalls` / `mutationCalls` / `editsApplied` / `persistedVersions` / `toolErrors` (not ambiguous `edits`/`versions`/`failures`). Recovered tool attempts log as `[agent-run-tool-error]`; `outcome` remains authoritative for terminal run failure. `AgentRunReport.failures` kept for Cloud JSON compatibility. Product completion headline is `Updated document · 19s` (no accidental activity-row “actions” count). Vocab note in `docs/agent_core.md`. No engine / agent-core-v3 / Cloud behavior change.
 
 * **Table-cell text formatting** — `@opensuitehq/engine` 0.1.2 (sibling repo; local darwin binary wired) lets `set_text_formatting` bold/color simple direct-body table cells. Agent tool copy + operating instruction now tell the model to use it after header shading; paragraph style/formatting still exclude cells. Node binding check: shade → bold headers → column widths. npm pin remains 0.1.1 until 0.1.2 is published; local dogfood uses the rebuilt platform `.node`.

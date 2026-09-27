@@ -277,7 +277,7 @@ export function createAgentExecutionService(deps: AgentExecutionServiceDeps) {
 
     try {
       const model = await resolveModel(deps, input.userId);
-      const primaryDocument = await resolvePrimaryDocument(
+      let primaryDocument = await resolvePrimaryDocument(
         deps.documents,
         thread,
         input.userId,
@@ -292,6 +292,18 @@ export function createAgentExecutionService(deps: AgentExecutionServiceDeps) {
         ...(primaryDocument ? [primaryDocument.documentId] : []),
         ...(input.documentIds ?? []),
       ])];
+      let editableDocumentId: string | undefined;
+      if (workingDocumentIds.length > 1) {
+        const documents = await deps.documents.listInWorkspace(thread.workspaceId, input.userId).catch(() => []);
+        const namedTargets = documents.filter((document) =>
+          workingDocumentIds.includes(document.id) && document.format === "docx" &&
+          namesEditTarget(input.instruction, document.name),
+        );
+        if (namedTargets.length === 1) editableDocumentId = namedTargets[0]!.id;
+        if (namedTargets.length === 1 && namedTargets[0]!.id !== primaryDocument?.documentId) {
+          primaryDocument = await resolvePrimaryDocument(deps.documents, thread, input.userId, namedTargets[0]!.id);
+        }
+      }
       const started = await deps.persistence.withTransaction(async (tx) => {
         await deps.persistence.addWorkingDocuments({
           threadId: thread.id,
@@ -337,6 +349,7 @@ export function createAgentExecutionService(deps: AgentExecutionServiceDeps) {
         instruction: input.instruction,
         submittedDocumentIds: input.documentIds ?? [],
         workingDocumentIds,
+        editableDocumentId,
         ...(continuation ? { continuationContext: continuation.context, continuationPreviousRunId: input.continueFromRunId } : {}),
         signal: input.signal,
         liveEvents: input.liveEvents,
@@ -358,6 +371,11 @@ export function createAgentExecutionService(deps: AgentExecutionServiceDeps) {
   }
 
   return { start, execute };
+}
+
+function namesEditTarget(instruction: string, filename: string): boolean {
+  const name = filename.replace(/\.docx$/i, "").replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return new RegExp(`\\b(?:update|edit|revise|refresh|modify)\\s+(?:the\\s+)?${name}\\b`, "i").test(instruction);
 }
 
 async function resolveModel(
@@ -452,6 +470,7 @@ async function runExecution(input: {
   readonly instruction: string;
   readonly submittedDocumentIds: readonly string[];
   readonly workingDocumentIds: readonly string[];
+  readonly editableDocumentId?: string;
   readonly continuationContext?: string;
   readonly continuationPreviousRunId?: string;
   readonly signal?: AbortSignal;
@@ -504,6 +523,7 @@ async function runExecution(input: {
     const versionAdvances: DocumentVersionAdvance[] = [];
     const initialDocumentId = input.primaryDocumentId;
     let directVersionId: string | null = null;
+    let directWorkingVersions = new Map<string, string>();
     let updateDirectReadGuard = (_complete: boolean) => {};
     boundTools = await createPrimaryDocxTools({
       binding: input.deps.docxBinding,
@@ -512,6 +532,12 @@ async function runExecution(input: {
       workspaceId: input.thread.workspaceId,
       documentId: input.primaryDocumentId,
       versionId: input.run.baseDocumentVersionId,
+      workingDocumentIds: input.workingDocumentIds,
+      ...(input.editableDocumentId ? { editableDocumentId: input.editableDocumentId } : {}),
+      onDocumentSelected: ({ documentId, versionId }) => {
+        directVersionId = directWorkingVersions.get(documentId) === versionId ? versionId : null;
+        updateDirectReadGuard(directVersionId !== null);
+      },
       onWorkingUpdated: (working) => {
         void input.liveEvents?.emit({
           type: "document.working.updated",
@@ -575,7 +601,8 @@ async function runExecution(input: {
     const system = buildAgentOperatingInstruction(Object.keys(tools)) +
       (!boundTools?.getActiveDocumentId() && tools["workspace.create_blank_document"]
         ? "\n\nNo document is active. If the user requests a new document, create it before calling any document tool."
-        : "");
+        : "") +
+      "\n\nFor requests involving several documents, identify the editable target before mutating. The active document is the default target only when it matches the request. Use workspace.select_document to bind another working-set DOCX before editing. Read source documents with workspace.inspect_document when the supplied context lacks their details. Keep edits narrow and preserve unrelated structure and formatting.";
     const historicalMessages = priorMessages.map((message) => ({
       role: message.role,
       content: message.content,
@@ -633,6 +660,7 @@ async function runExecution(input: {
     });
     readGuard.setCompleteDirect(retrieval?.observation.contextStrategy === "direct");
     if (retrieval?.observation.contextStrategy === "direct") {
+      directWorkingVersions = new Map(retrieval.workingSet.map((document) => [document.documentId, document.versionId]));
       directVersionId = input.run.baseDocumentVersionId;
       updateDirectReadGuard = (complete) => readGuard.setCompleteDirect(complete);
     }

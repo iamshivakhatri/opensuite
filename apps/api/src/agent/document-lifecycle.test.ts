@@ -220,6 +220,26 @@ test("duplicate switches active binding; subsequent mutate targets only the copy
   assert.equal(tools.getActiveDocumentId(), copyId);
 });
 
+test("select existing working document rebinds before editing", async () => {
+  const binding = await createNapiDocxEngineBinding();
+  const mem = memoryDocs({ documentId: "doc-1", versionId: "ver-1", name: "Old.docx", bytes: Buffer.from(buildMinimalDocx(["Old period"])) });
+  const setup = await createPrimaryDocxTools({ binding, documents: mem.api, ownerUserId: "user-1", workspaceId: "ws-1", documentId: "doc-1", versionId: "ver-1" });
+  assert.ok(setup);
+  const call = { toolCallId: "select", messages: [], context: undefined as never };
+  await setup.tools["workspace.duplicate_current_document"]!.execute!({ title: "Updates.docx" }, call);
+  const sourceId = setup.getActiveDocumentId()!;
+  const tools = await createPrimaryDocxTools({ binding, documents: mem.api, ownerUserId: "user-1", workspaceId: "ws-1", documentId: sourceId, versionId: setup.getActiveVersionId(), workingDocumentIds: ["doc-1", sourceId] });
+  assert.ok(tools);
+  assert.equal((await tools.tools["workspace.select_document"]!.execute!({ documentId: "doc-1" }, call) as { ok: boolean }).ok, true);
+  assert.equal(tools.getActiveDocumentId(), "doc-1");
+  assert.match(JSON.stringify(await tools.tools["document.inspect"]!.execute!({ kind: "body_blocks" }, call)), /Old period/);
+  assert.equal((await tools.tools["document.replace_text"]!.execute!({ target: { text: "Old period" }, expectedCurrentText: "Old period", replacement: "New period" }, call) as { ok: boolean }).ok, true);
+  assert.equal((await tools.tools["workspace.select_document"]!.execute!({ documentId: sourceId }, call) as { reasonCode: string }).reasonCode, "DOCUMENT_ALREADY_EDITED");
+  await tools.flush();
+  assert.equal(mem.store.get("doc-1")!.versions.size, 2);
+  assert.equal(mem.store.get(sourceId)!.versions.size, 1);
+});
+
 test("create blank becomes active; subsequent mutation targets the blank", async () => {
   const binding = await createNapiDocxEngineBinding();
   const initial = Buffer.from(buildMinimalDocx(["Keep me"]));

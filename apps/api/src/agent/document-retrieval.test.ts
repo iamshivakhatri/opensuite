@@ -188,7 +188,7 @@ test("active and tagged documents form the request working set", async () => {
     readBytes: async () => new Uint8Array(),
   });
   assert.deepEqual(retrieved.workingSet.map((artifact) => artifact.documentId), ["active", "tagged"]);
-  assert.match(retrieved.message ?? "", /WORKING SET\n- Plan\.docx \(docx\)\n- Numbers\.xlsx \(xlsx\)/);
+  assert.match(retrieved.message ?? "", /WORKING SET\n- Plan\.docx \(docx; ID active\)\n- Numbers\.xlsx \(xlsx; ID tagged\)/);
 });
 
 test("small single DOCX uses complete direct context, including every table row", async () => {
@@ -277,8 +277,8 @@ test("ten tiny working documents use one shared direct budget", async () => {
   });
   assert.equal(retrieved.contextStrategy, "direct");
   assert.ok(retrieved.fullDocumentEstimatedTokens! < 12_000);
-  assert.match(retrieved.message ?? "", /=== Document: Tiny 0\.docx \(version v-0\) ===/);
-  assert.match(retrieved.message ?? "", /=== Document: Tiny 9\.docx \(version v-9\) ===/);
+  assert.match(retrieved.message ?? "", /=== Document: Tiny 0\.docx \(ID doc-0; version v-0\) ===/);
+  assert.match(retrieved.message ?? "", /=== Document: Tiny 9\.docx \(ID doc-9; version v-9\) ===/);
   assert.match(retrieved.message ?? "", /bound to the active artifact only/);
 });
 

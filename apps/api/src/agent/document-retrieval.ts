@@ -276,7 +276,7 @@ async function formatCompleteDocument(
 function formatCompleteWorkingDocuments(documents: readonly { artifact: WorkspaceArtifact; content: string }[]): string {
   return [
     "COMPLETE CURRENT DOCUMENT CONTENT. Each document below is complete at its stated version. An exact duplicate has the same content until edited. Plan edits from this content and request compatible mutations together. Do not inspect or find merely to rediscover this content; read only for missing exact mutation targets, unsupported structure, changes after this snapshot, or targeted verification.",
-    ...documents.map((document) => `=== Document: ${document.artifact.name} (version ${document.artifact.versionId}) ===\n${document.content}`),
+    ...documents.map((document) => `=== Document: ${document.artifact.name} (ID ${document.artifact.documentId}; version ${document.artifact.versionId}) ===\n${document.content}`),
   ].join("\n\n");
 }
 
@@ -415,7 +415,7 @@ export function formatWorkspaceRetrievedContext(
   if (artifacts.length > catalog.length) lines.push(`- ${artifacts.length - catalog.length} additional documents omitted`);
   if (primaryDocumentId) lines.push("The exposed document tools are bound to the active artifact only.");
   lines.push("WORKING SET");
-  for (const artifact of workingSet) lines.push(`- ${artifact.name} (${artifact.format})`);
+  for (const artifact of workingSet) lines.push(`- ${artifact.name} (${artifact.format}; ID ${artifact.documentId})`);
   if (workingSet.length === 0) lines.push("- No active or tagged documents");
   if (directContent) lines.push(directContent);
   else {

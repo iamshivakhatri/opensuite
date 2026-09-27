@@ -567,10 +567,82 @@ test("later runs restore durable working documents into model context", async ()
   } finally {
     console.info = original;
   }
-  assert.match(String(projected.at(-2)?.content), /WORKING SET\n- B\.docx \(docx\)\n- A\.docx \(docx\)/);
+  assert.match(String(projected.at(-2)?.content), /WORKING SET\n- B\.docx \(docx; ID doc-b\)\n- A\.docx \(docx; ID doc-a\)/);
   assert.equal(projected.at(-1)?.content, "second");
   assert.ok(logs.some((message) => message.includes('"workingSetArtifactCount": 2')));
   assert.ok(logs.some((message) => message.includes('"availableEvidenceTokens"')));
+});
+
+test("recurring report refresh selects the target, reads the source, and saves one target version", async () => {
+  const persistence = memoryPersistence("user-1");
+  const binding = await createNapiDocxEngineBinding();
+  const target = Buffer.from(buildMinimalDocx(["August report", "Revenue: 10", "Unrelated note"]));
+  const source = Buffer.from(buildMinimalDocx(["September updates", "Revenue: 12"]));
+  let savedTarget = target;
+  let targetVersion = "target-v1";
+  let appends = 0;
+  const artifacts = [
+    { id: "target", name: "August report.docx", format: "docx", workspaceId: "ws-1", latestVersion: { id: targetVersion } },
+    { id: "source", name: "September updates.docx", format: "docx", workspaceId: "ws-1", latestVersion: { id: "source-v1" } },
+  ];
+  const call = { toolCallId: "refresh", messages: [], context: undefined as never };
+  const execution = createAgentExecutionService({
+    ...baseDeps(persistence, async (input) => {
+      const projected = input.projectMessages!(input.messages);
+      assert.match(JSON.stringify(projected), /August report\.docx.*ID target/);
+      assert.match(JSON.stringify(projected), /September updates\.docx.*ID source/);
+      const tools = input.tools!;
+      assert.equal((await tools["workspace.select_document"]!.execute!({ documentId: "other" }, call) as { reasonCode: string }).reasonCode, "DOCUMENT_NOT_IN_WORKING_SET");
+      assert.equal((await tools["workspace.select_document"]!.execute!({ documentId: "source" }, call) as { reasonCode: string }).reasonCode, "DOCUMENT_IS_REFERENCE");
+      assert.equal((await tools["workspace.select_document"]!.execute!({ documentId: "target" }, call) as { ok: boolean }).ok, true);
+      assert.match(JSON.stringify(input.projectMessages!(input.messages)), /Revenue: 12/);
+      const updates = await tools["workspace.inspect_document"]!.execute!({ documentId: "source", kind: "body_blocks" }, call);
+      assert.match(JSON.stringify(updates), /Revenue: 12/);
+      for (const [oldText, newText] of [["August report", "September report"], ["Revenue: 10", "Revenue: 12"]]) {
+        assert.equal((await tools["document.replace_text"]!.execute!({ target: { text: oldText }, expectedCurrentText: oldText, replacement: newText }, call) as { ok: boolean }).ok, true);
+      }
+      assert.equal((await tools["workspace.select_document"]!.execute!({ documentId: "source" }, call) as { reasonCode: string }).reasonCode, "DOCUMENT_IS_REFERENCE");
+      assert.match(JSON.stringify(await tools["workspace.inspect_document"]!.execute!({ documentId: "source", kind: "body_blocks" }, call)), /Revenue: 12/);
+      return softResult("completed", "Updated the report.");
+    }, undefined, 100_000),
+    docxBinding: binding,
+    documents: {
+      listInWorkspace: async () => artifacts as never,
+      getOwnedDocument: async ({ documentId }) => {
+        const document = artifacts.find((item) => item.id === documentId);
+        if (!document) throw new Error("missing document");
+        return document as never;
+      },
+      readExactVersionBytes: async ({ documentId, versionId }) => {
+        if (documentId === "target" && versionId === "target-v1") return target;
+        if (documentId === "source" && versionId === "source-v1") return source;
+        throw new Error("wrong version");
+      },
+      appendDocumentVersion: async ({ documentId, baseVersionId, bytes }) => {
+        assert.equal(documentId, "target");
+        assert.equal(baseVersionId, "target-v1");
+        appends++;
+        savedTarget = Buffer.from(bytes);
+        targetVersion = "target-v2";
+        return { version: { id: targetVersion, versionNumber: 2 } } as never;
+      },
+      createBlankDocxDocument: async () => { throw new Error("unused"); },
+      createOfficeDocumentFromBytes: async () => { throw new Error("unused"); },
+    },
+  });
+  const result = await (await execution.start({
+    userId: "user-1", threadId: "thread-1", activeDocumentId: "source",
+    documentIds: ["target"],
+    instruction: "Update the August report into the September report using the attached updates. Preserve the existing structure and formatting.",
+  })).result;
+  assert.equal(result.run.status, "completed");
+  assert.equal(result.run.baseDocumentVersionId, "target-v1");
+  assert.equal(appends, 1);
+  assert.equal(artifacts[1]!.latestVersion.id, "source-v1");
+  assert.match(JSON.stringify(await binding.inspectDocx(savedTarget, { focus: { kind: "body_blocks" } })), /September report/);
+  assert.match(JSON.stringify(await binding.inspectDocx(savedTarget, { focus: { kind: "body_blocks" } })), /Revenue: 12/);
+  assert.match(JSON.stringify(await binding.inspectDocx(savedTarget, { focus: { kind: "body_blocks" } })), /Unrelated note/);
+  assert.deepEqual(source, Buffer.from(buildMinimalDocx(["September updates", "Revenue: 12"])));
 });
 
 test("completed runs persist narration at tool boundaries without duplicating the final answer", async () => {
