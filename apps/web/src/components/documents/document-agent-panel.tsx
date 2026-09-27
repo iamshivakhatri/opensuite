@@ -28,6 +28,7 @@ import {
   shouldClearLiveTranscript,
 } from "@/lib/agent-messages";
 import { shouldAcceptSubmit } from "@/lib/agent-submit";
+import { uploadPromptAttachments, type PromptAttachment } from "@/lib/agent-prompt-attachments";
 import {
   ApiError,
   cancelAgentRun,
@@ -41,6 +42,7 @@ import {
   renameAgentThread,
   startAgentRun,
   subscribeAgentRunEvents,
+  uploadDocument,
   type AgentMessage,
   type AgentMessagesCursor,
   type AgentRun,
@@ -210,6 +212,7 @@ export function DocumentAgentPanel({
   width = 320,
   onDocumentUpdated,
   onDocumentCreated,
+  onDocumentUploaded,
   onWorkingDocumentUpdated,
 }: {
   workspaceId: string;
@@ -222,6 +225,7 @@ export function DocumentAgentPanel({
   onDocumentUpdated?: (document: ListedDocument) => void;
   /** Fired when the agent creates a new workspace document (blank DOCX). */
   onDocumentCreated?: (document: ListedDocument) => void;
+  onDocumentUploaded?: (document: ListedDocument) => void;
   onWorkingDocumentUpdated?: (preview: { runId: string; documentId: string; baseVersionId: string; revision: number } | null) => void;
 }) {
   const router = useRouter();
@@ -247,6 +251,9 @@ export function DocumentAgentPanel({
   const activeThreadRequestRef = React.useRef<string | null>(null);
   const [draft, setDraft] = React.useState("");
   const [tagged, setTagged] = React.useState<TaggedDocument[]>([]);
+  const [attachments, setAttachments] = React.useState<PromptAttachment[]>([]);
+  const [attachmentError, setAttachmentError] = React.useState<string | null>(null);
+  const attachmentInputRef = React.useRef<HTMLInputElement>(null);
   const [mentionOpen, setMentionOpen] = React.useState(false);
   const [mentionQuery, setMentionQuery] = React.useState("");
   const [workspaceFiles, setWorkspaceFiles] = React.useState<ListedDocument[]>(
@@ -1032,7 +1039,7 @@ export function DocumentAgentPanel({
   async function submitInstruction(
     instruction: string,
     documentIds: string[],
-    options?: { restoreDraftOnError?: boolean; continueFromRunId?: string },
+    options?: { restoreDraftOnError?: boolean; continueFromRunId?: string; attachments?: readonly PromptAttachment[] },
   ) {
     if (
       !shouldAcceptSubmit({
@@ -1054,19 +1061,26 @@ export function DocumentAgentPanel({
     setMentionOpen(false);
 
     const optimisticId = `local-${Date.now()}`;
-    setMessages((prev) => [
-      ...prev,
-      {
-        id: optimisticId,
-        role: "user",
-        content: instruction,
-        ...(documentIds.length ? { documentIds } : {}),
-        createdAt: new Date().toISOString(),
-      },
-    ]);
-
     let id = threadId;
     try {
+      if (options?.attachments?.length) {
+        const uploadedIds = await uploadPromptAttachments(workspaceId, options.attachments, uploadDocument, (file, document) => {
+          setAttachments((previous) => previous.map((item) => item.file === file ? { file, document } : item));
+          setWorkspaceFiles((previous) => [...previous, document]);
+          onDocumentUploaded?.(document);
+        });
+        documentIds = [...new Set([...documentIds, ...uploadedIds])];
+      }
+      setMessages((prev) => [
+        ...prev,
+        {
+          id: optimisticId,
+          role: "user",
+          content: instruction,
+          ...(documentIds.length ? { documentIds } : {}),
+          createdAt: new Date().toISOString(),
+        },
+      ]);
       if (!id) {
         const thread = await createWorkspaceAgentThread(workspaceId);
         id = thread.id;
@@ -1084,6 +1098,7 @@ export function DocumentAgentPanel({
       });
       if (options?.restoreDraftOnError) setDraft("");
       setTagged([]);
+      if (options?.attachments) setAttachments([]);
       await refreshMessages(id);
       attachRun(run, id);
     } catch (error) {
@@ -1127,9 +1142,15 @@ export function DocumentAgentPanel({
     ) {
       return;
     }
+    if (tagged.length + attachments.length > 20) {
+      setAttachmentError("Use at most 20 documents in one message.");
+      return;
+    }
+    setAttachmentError(null);
     const documentIds = taggedDocumentIdsForRun();
     await submitInstruction(instruction, documentIds, {
       restoreDraftOnError: true,
+      attachments,
     });
   }
 
@@ -1230,6 +1251,8 @@ export function DocumentAgentPanel({
     setTerminalRunTranscript(null);
     setRunStepsByMessageId({});
     setDraft("");
+    setAttachments([]);
+    setAttachmentError(null);
     runIdRef.current = null;
     reconnectAttemptsRef.current = 0;
     // C6: reset pagination state so old cursors/pages never leak into the new thread.
@@ -1322,6 +1345,8 @@ export function DocumentAgentPanel({
       setTerminalRunTranscript(null);
       setDraft("");
       setTagged([]);
+      setAttachments([]);
+      setAttachmentError(null);
       runIdRef.current = null;
       reconnectAttemptsRef.current = 0;
       runStartedAtRef.current = null;
@@ -1808,6 +1833,25 @@ export function DocumentAgentPanel({
               ))}
             </div>
           ) : null}
+          {attachments.length > 0 ? (
+            <div className="mb-1.5 flex flex-wrap gap-1">
+              {attachments.map(({ file, document }) => (
+                <button
+                  key={file.name + file.lastModified + file.size}
+                  type="button"
+                  title={`Remove ${file.name}`}
+                  aria-label={`Remove attachment ${file.name}`}
+                  disabled={busy}
+                  onClick={() => setAttachments((previous) => previous.filter((item) => item.file !== file))}
+                  className={cn(focusRingClass, "inline-flex max-w-full items-center gap-1 rounded-[var(--radius-sm)] bg-accent-soft px-1.5 py-0.5 text-[length:var(--text-2xs)] font-medium text-accent-hover disabled:opacity-50")}
+                >
+                  <span className="truncate">{file.name}</span>
+                  <span className="opacity-60">{document ? "Uploaded" : submitting ? "Uploading" : "Ready"} · ×</span>
+                </button>
+              ))}
+            </div>
+          ) : null}
+          {attachmentError ? <p role="alert" className="mb-1.5 text-[length:var(--text-xs)] text-danger">{attachmentError}</p> : null}
           <div className="relative">
             {mentionOpen && mentionMatches.length > 0 ? (
               <div className="absolute bottom-full left-0 right-0 z-[var(--z-dropdown)] mb-1 max-h-[180px] overflow-y-auto rounded-[var(--radius-md)] border border-line bg-surface py-1 shadow-[var(--elevation-sm)]">
@@ -1849,8 +1893,26 @@ export function DocumentAgentPanel({
             />
           </div>
           <div className="mt-1 flex items-center justify-between gap-2">
-            <div className="min-w-0 truncate text-[length:var(--text-2xs)] tabular-nums text-ink-faint">
-              {canStop && wallClockMs !== null ? formatProgressElapsed(wallClockMs) : null}
+            <div className="flex min-w-0 items-center gap-2">
+              <input
+                ref={attachmentInputRef}
+                type="file"
+                accept=".docx,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+                multiple
+                className="sr-only"
+                aria-label="Attach DOCX files"
+                onChange={(event) => {
+                  const files = Array.from(event.target.files ?? []);
+                  const rejected = files.filter((file) => !/\.docx$/i.test(file.name));
+                  setAttachmentError(rejected.length ? "Only DOCX files can be attached." : null);
+                  setAttachments((previous) => [...previous, ...files.filter((file) => /\.docx$/i.test(file.name)).filter((file) => !previous.some((item) => item.file.name === file.name && item.file.size === file.size && item.file.lastModified === file.lastModified)).map((file) => ({ file }))]);
+                  event.target.value = "";
+                }}
+              />
+              <button type="button" disabled={busy || phase.kind !== "ready"} onClick={() => attachmentInputRef.current?.click()} aria-label="Attach DOCX files" title="Attach DOCX files" className={cn(focusRingClass, "rounded-[var(--radius-sm)] px-1 text-[length:var(--text-sm)] text-ink-faint hover:text-ink disabled:opacity-50")}>＋</button>
+              <span className="truncate text-[length:var(--text-2xs)] tabular-nums text-ink-faint">
+                {canStop && wallClockMs !== null ? formatProgressElapsed(wallClockMs) : null}
+              </span>
             </div>
             {canStop ? (
               <Button

@@ -518,6 +518,10 @@ export function WorkspaceIde({
             setRefreshKey((value) => value + 1);
             setActiveDocument(created);
           }}
+          onDocumentUploaded={() => {
+            void queryClient.invalidateQueries({ queryKey: queryKeys.workspaceDocuments(workspaceId) });
+            setRefreshKey((value) => value + 1);
+          }}
           onWorkingDocumentUpdated={setWorkingPreview}
         />
       </div>
