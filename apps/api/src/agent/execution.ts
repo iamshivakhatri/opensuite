@@ -33,16 +33,14 @@ import {
 } from "./agent-run-report.js";
 import {
   formatDocumentSaved,
+  formatDocumentTarget,
   formatModelTurnCompleted,
   formatModelTurnFirstOutput,
   formatModelTurnStarted,
-  formatMutationsApplied,
   formatToolFinished,
-  formatToolStarted,
   formatValidationChecks,
   logAgentLine,
   logAgentRunBanner,
-  sanitizeLogName,
 } from "./agent-run-log.js";
 import { createPrimaryDocxTools } from "./docx-tools.js";
 import { verifyDocumentUpdate, type DocumentCheck } from "./document-verification.js";
@@ -553,7 +551,9 @@ async function runExecution(input: {
       workingDocumentIds: input.workingDocumentIds,
       ...(input.editableDocumentId ? { editableDocumentId: input.editableDocumentId } : {}),
       onDocumentSelected: ({ documentId, versionId }) => {
-        logAgentLine(`Target     ${sanitizeLogName(documentNames.get(documentId) ?? documentId.slice(0, 8))}`);
+        logAgentLine(
+          formatDocumentTarget(documentNames.get(documentId) ?? documentId.slice(0, 8)),
+        );
         directVersionId = directWorkingVersions.get(documentId) === versionId ? versionId : null;
         updateDirectReadGuard(directVersionId !== null);
       },
@@ -825,6 +825,7 @@ async function runExecution(input: {
     let result;
     try {
       const toolStartedAt = new Map<string, number>();
+      let turnSawFirstOutput = false;
       result = await executeAgent({
         model: input.model.model,
         system,
@@ -836,24 +837,29 @@ async function runExecution(input: {
         maxTurns: MAX_MODEL_TURNS,
         onEvent: (event) => {
           if (event.type === "model_turn_started") {
-            logAgentLine(formatModelTurnStarted(event.turn));
+            turnSawFirstOutput = false;
+            logAgentLine(formatModelTurnStarted({ turn: event.turn, model: modelLabel }));
           } else if (event.type === "model_turn_first_output") {
-            logAgentLine(formatModelTurnFirstOutput(event.elapsedMs));
+            turnSawFirstOutput = true;
+            logAgentLine(
+              formatModelTurnFirstOutput({ turn: event.turn, elapsedMs: event.elapsedMs }),
+            );
           } else if (event.type === "model_turn_completed") {
             logAgentLine(
               formatModelTurnCompleted({
+                turn: event.turn,
                 durationMs: event.durationMs,
                 inputTokens: event.inputTokens,
                 cachedInputTokens: event.cachedInputTokens,
                 outputTokens: event.outputTokens,
                 reasoningTokens: event.reasoningTokens,
                 toolNames: event.toolNames,
+                sawFirstOutput: turnSawFirstOutput,
               }),
             );
           } else if (event.type === "tool_started") {
             if (event.toolName !== "finish") {
               toolStartedAt.set(event.toolCallId, Date.now());
-              logAgentLine(formatToolStarted(event.toolName));
             }
           } else if (
             event.type === "tool_completed" ||
@@ -870,6 +876,7 @@ async function runExecution(input: {
                     : undefined;
               logAgentLine(
                 formatToolFinished({
+                  toolName: event.toolName,
                   ok: event.type === "tool_completed",
                   durationMs: elapsed,
                   skipped: event.type === "tool_skipped",
@@ -888,8 +895,6 @@ async function runExecution(input: {
           return relayEvent(event, input.liveEvents, input.run.id, messageId, transcript);
         },
       });
-      const mutationCount = boundTools?.getWorkingMutationCount() ?? 0;
-      if (mutationCount > 0) logAgentLine(formatMutationsApplied(mutationCount));
       await flushWorking();
       await verifySavedDocument(result.metrics);
     } catch (error) {

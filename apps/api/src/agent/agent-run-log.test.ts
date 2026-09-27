@@ -6,45 +6,77 @@ import {
   formatAgentRunDone,
   formatCompactDuration,
   formatCompactTokens,
+  formatDocumentSaved,
   formatModelTurnCompleted,
   formatModelTurnFirstOutput,
   formatModelTurnStarted,
   formatToolFinished,
-  formatToolStarted,
   formatValidationChecks,
 } from "./agent-run-log.js";
 import { shouldLogHttpRequest } from "../dev-log.js";
 
 test("lifecycle helpers format scannable model and tool lines", () => {
-  assert.equal(formatModelTurnStarted(1), "[Turn 1]\n→ LLM call started");
-  assert.equal(formatModelTurnFirstOutput(420), "  first output 420ms");
-  assert.match(
-    formatModelTurnCompleted({
-      durationMs: 31_600,
-      inputTokens: 11_400,
-      cachedInputTokens: 0,
-      outputTokens: 9_000,
-      reasoningTokens: 8_400,
-      toolNames: ["document.set_table_cells_text"],
-    }),
-    /← LLM responded 31\.6s/,
+  assert.equal(
+    formatModelTurnStarted({ turn: 1, model: "deepseek/deepseek-v4.1-flash" }),
+    "[agent] TURN 1\n  → LLM start\n  model=deepseek/deepseek-v4.1-flash",
   );
+  assert.equal(
+    formatModelTurnFirstOutput({ turn: 1, elapsedMs: 420 }),
+    "[agent] TURN 1\n  … first 420ms streaming",
+  );
+  const done = formatModelTurnCompleted({
+    turn: 1,
+    durationMs: 31_600,
+    inputTokens: 11_400,
+    cachedInputTokens: 0,
+    outputTokens: 9_000,
+    reasoningTokens: 8_400,
+    toolNames: ["document.set_table_cells_text"],
+    sawFirstOutput: true,
+  });
+  assert.match(done, /\[agent\] TURN 1/);
+  assert.match(done, /← LLM done 31\.6s/);
+  assert.match(done, /input=11\.4k cached=0/);
+  assert.match(done, /output=9k reasoning=8\.4k/);
+  assert.match(done, /tools=1 \[document\.set_table_cells_text\]/);
   assert.match(
     formatModelTurnCompleted({
+      turn: 2,
       durationMs: 1_800,
       inputTokens: 19_000,
       cachedInputTokens: 9_900,
       outputTokens: 363,
       reasoningTokens: 0,
       toolNames: [],
+      sawFirstOutput: false,
     }),
-    /no tools · turn complete/,
+    /tools=0 \(none\)/,
   );
-  assert.equal(formatToolStarted("document.replace_text"), "→ document.replace_text");
-  assert.equal(formatToolFinished({ ok: true, durationMs: 113 }), "✓ completed 113ms");
+  assert.match(
+    formatModelTurnCompleted({
+      turn: 2,
+      durationMs: 1_800,
+      inputTokens: 19_000,
+      cachedInputTokens: 9_900,
+      outputTokens: 363,
+      reasoningTokens: 0,
+      toolNames: [],
+      sawFirstOutput: false,
+    }),
+    /streaming=no/,
+  );
   assert.equal(
-    formatToolFinished({ ok: false, durationMs: 5, code: "TABLE_NOT_FOUND" }),
-    "✗ TABLE_NOT_FOUND · 5ms",
+    formatToolFinished({ toolName: "document.inspect", ok: true, durationMs: 26 }),
+    "[agent] TOOL document.inspect ✓ 26ms",
+  );
+  assert.equal(
+    formatToolFinished({
+      toolName: "document.set_table_cells_text",
+      ok: false,
+      durationMs: 18,
+      code: "TABLE_NOT_FOUND",
+    }),
+    "[agent] TOOL document.set_table_cells_text ✗ TABLE_NOT_FOUND 18ms",
   );
 });
 
@@ -56,40 +88,46 @@ test("run banner and DONE summary stay compact and name-based", () => {
     sources: ["September Updates.docx"],
     retrievalMode: "direct",
     documentCount: 2,
-    contextTokens: 2_000,
+    contextTokens: 3_100,
   });
-  assert.match(banner, /AGENT RUN 35c6e573/);
-  assert.match(banner, /Target\s+Northstar Launch Report\.docx/);
-  assert.match(banner, /Sources\s+September Updates\.docx/);
-  assert.match(banner, /Retrieval\s+DIRECT · 2 docs · ~2k context tokens/);
+  assert.match(banner, /\[agent\] RETRIEVAL DIRECT · 2 docs · ~3\.1k ctx/);
+  assert.match(banner, /model=deepseek\/deepseek-v4\.1-flash/);
+  assert.match(banner, /target=Northstar Launch Report\.docx/);
+  assert.match(banner, /sources=September Updates\.docx/);
   assert.doesNotMatch(banner, /35c6e573-aaaa/);
+
+  assert.equal(
+    formatDocumentSaved("Atlas ERP.xlsx", 3),
+    "[agent] SAVE Atlas ERP.xlsx → v3",
+  );
 
   const done = formatAgentRunDone({
     outcome: "success",
-    totalDurationMs: 33_500,
-    modelTimeMs: 33_400,
-    toolTimeMs: 113,
-    modelTurns: 2,
-    toolCalls: 1,
+    totalDurationMs: 151_500,
+    modelTimeMs: 151_000,
+    toolTimeMs: 510,
+    modelTurns: 7,
+    toolCalls: 14,
+    toolErrors: 1,
     persistedVersions: 1,
-    costUsd: 0.0175,
+    inputTokens: 304_000,
+    cachedInputTokens: 240_000,
+    outputTokens: 36_000,
+    costUsd: 0.0642,
   });
-  assert.match(done, /DONE ✓ 33\.5s/);
-  assert.match(done, /Model\s+33\.4s/);
-  assert.match(done, /Tools\s+113ms/);
-  assert.match(done, /Cost\s+\$0\.0175/);
+  assert.match(done, /\[agent\] DONE 151\.5s/);
+  assert.match(done, /model=151\.0s tools=510ms/);
+  assert.match(done, /turns=7 toolCalls=14 errors=1 versions=1/);
+  assert.match(done, /input=304k cached=240k output=36k cost=\$0\.0642/);
 });
 
-test("validation formatting uses pass/warn/skip marks", () => {
+test("validation formatting uses pass/warn/skip marks on one line", () => {
   const text = formatValidationChecks([
-    { status: "pass", message: "Target updated" },
-    { status: "warning", message: "Heading structure changed" },
-    { status: "skipped", message: "Period check skipped" },
+    { id: "target", status: "pass", message: "Target updated" },
+    { id: "sources", status: "pass", message: "Source documents unchanged" },
+    { id: "period", status: "warning", message: "stale-period remains" },
   ]);
-  assert.match(text, /^\[Validation\]/);
-  assert.match(text, /✓ target updated/);
-  assert.match(text, /⚠ heading structure changed/);
-  assert.match(text, /– period check skipped/);
+  assert.equal(text, "[agent] VALIDATION ✓ target ✓ sources ⚠ period");
 });
 
 test("compact token and duration helpers", () => {

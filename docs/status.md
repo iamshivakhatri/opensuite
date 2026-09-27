@@ -14,7 +14,7 @@ _Read this before starting any work. Keep it a concise current-state handoff, no
 
 ## Just Completed
 
-* **Readable agent run logs** — live LLM turn start/first-output/finish, tool →/✓/✗, retrieval banner (names not UUIDs), mutations/save/validation, and a DONE latency breakdown. Routine GET poll noise (`/events`, `/working-document`, `/messages`, run status) filtered; context compaction logs only when triggered. `AGENT_RUN_REPORT_VERBOSE=1` still dumps the full report JSON. No runtime/tool/prompt behavior change.
+* **Readable agent run logs** — compact `[agent]` lines for RETRIEVAL / TURN (LLM start, first-token/streaming, done+usage+tools) / TOOL ✓✗ / SAVE / VALIDATION / DONE. Provider usage (input/cached) lands on LLM done; TTFT via `model_turn_first_output`. Routine GET poll noise filtered; context compaction logs only when triggered. `AGENT_RUN_REPORT_VERBOSE=1` still dumps full report JSON. No runtime/tool/prompt behavior change.
 
 * **Phase 3 verification/logging fix** — explicit report transitions now recognize month/year/quarter across descriptive titles; table dimensions use successful structural tool names to label supported changes as expected and unexplained loss as warning. API logs now show retrieval/target/source names, live tool outcomes, saved version, validation, and the existing per-turn/final metrics. No runtime, Rust, or UI changes in this fix.
 
@@ -109,7 +109,7 @@ _Read this before starting any work. Keep it a concise current-state handoff, no
 
 | Check | Status |
 |---|---|
-| Readable agent run logs (API formatters + report + isolation; core-v3 lifecycle) | Pass (55 API focused, 27 core-v3) |
+| Readable agent run logs (API formatters + report + isolation; core-v3 lifecycle) | Pass (60 API focused: log 5 + report 20 + isolation 35) |
 | agent-core-v3 unit (26) | Pass |
 | API unit (221; 20 skipped) | Pass |
 | Model accounting live OpenRouter E2E | Pass (`availableEvidenceTokens`, ctx=1048576, actual cost) |

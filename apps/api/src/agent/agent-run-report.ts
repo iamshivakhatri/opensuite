@@ -612,7 +612,11 @@ export function logAgentRunReport(report: AgentRunReport): void {
       toolTimeMs: report.toolTimeMs,
       modelTurns: report.modelTurns,
       toolCalls: report.toolCalls,
+      toolErrors,
       persistedVersions: persistedVersionCount(report),
+      inputTokens: report.usage.inputTokens,
+      cachedInputTokens: report.usage.cachedInputTokens,
+      outputTokens: report.usage.outputTokens,
       ...(cost !== undefined ? { costUsd: cost } : {}),
       ...(report.stopReason ? { stopReason: report.stopReason } : {}),
     }),
@@ -627,8 +631,8 @@ export function logAgentRunReport(report: AgentRunReport): void {
           later.outcome === "success",
       );
       console.info(
-        `  tool error · ${tool.name} · ${tool.failureCode ?? "TOOL_FAILED"}` +
-          (recovered ? " · recovered" : ""),
+        `[agent] TOOL-ERROR ${tool.name} ${tool.failureCode ?? "TOOL_FAILED"}` +
+          (recovered ? " recovered" : ""),
       );
     }
   }
