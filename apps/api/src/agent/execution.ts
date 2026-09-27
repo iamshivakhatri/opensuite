@@ -32,6 +32,7 @@ import {
   type DocumentVersionAdvance,
 } from "./agent-run-report.js";
 import { createPrimaryDocxTools } from "./docx-tools.js";
+import { verifyDocumentUpdate, type DocumentCheck } from "./document-verification.js";
 import {
   retrieveWorkspaceContext,
   SlimDocumentStructureCache,
@@ -77,6 +78,7 @@ type TranscriptEntry = {
   readonly status: AgentStepStatus;
   readonly name: string;
   readonly summary: string;
+  readonly output?: Record<string, unknown>;
 };
 
 function createTranscriptCollector() {
@@ -114,6 +116,9 @@ function createTranscriptCollector() {
       ) {
         entries.push({ kind: "narration", status: "completed", name: "Assistant narration", summary: remaining });
       }
+    },
+    validation(checks: readonly DocumentCheck[]) {
+      entries.push({ kind: "validation", status: "completed", name: "Document validation", summary: "Document validation", output: { checks } });
     },
     entries() {
       return entries;
@@ -521,6 +526,7 @@ async function runExecution(input: {
     }
 
     const versionAdvances: DocumentVersionAdvance[] = [];
+    let savedTarget: { documentId: string; fromVersionId: string; versionId: string } | null = null;
     const initialDocumentId = input.primaryDocumentId;
     let directVersionId: string | null = null;
     let directWorkingVersions = new Map<string, string>();
@@ -549,6 +555,7 @@ async function runExecution(input: {
         });
       },
       onVersionAdvanced: async (advanced) => {
+        savedTarget = { documentId: advanced.documentId, fromVersionId: advanced.fromVersionId, versionId: advanced.versionId };
         versionAdvances.push({
           fromVersionId: advanced.fromVersionId,
           toVersionId: advanced.versionId,
@@ -750,6 +757,30 @@ async function runExecution(input: {
 
     // The one API → agent-core-v3 execution call.
     const executeAgent = input.deps.runAgent ?? runAgent;
+    const verifySavedDocument = async () => {
+      if (!savedTarget || !boundTools?.getWorkingMutationCount() || !input.deps.docxBinding) return;
+      const target = savedTarget as { documentId: string; fromVersionId: string; versionId: string };
+      try {
+        const sources = (retrieval?.workingSet ?? []).filter((item) => item.documentId !== target.documentId);
+        const [before, after, ...currentSources] = await Promise.all([
+          input.deps.documents.readExactVersionBytes({ documentId: target.documentId, versionId: target.fromVersionId, ownerUserId: input.ownerUserId }),
+          input.deps.documents.readExactVersionBytes({ documentId: target.documentId, versionId: target.versionId, ownerUserId: input.ownerUserId }),
+          ...sources.map((item) => input.deps.documents.getOwnedDocument({ documentId: item.documentId, ownerUserId: input.ownerUserId })),
+        ]);
+        transcript.validation(await verifyDocumentUpdate({
+          binding: input.deps.docxBinding,
+          before: new Uint8Array(before), after: new Uint8Array(after), instruction: input.instruction,
+          targetAdvanced: target.fromVersionId !== target.versionId,
+          sourcesUnchanged: input.workingDocumentIds.every((id) => id === target.documentId)
+            ? true
+            : retrieval && input.workingDocumentIds.every((id) => id === target.documentId || sources.some((source) => source.documentId === id))
+              ? sources.every((item, index) => currentSources[index]?.latestVersion.id === item.versionId)
+              : null,
+        }));
+      } catch {
+        transcript.validation([{ id: "verification", status: "fail", message: "Saved document could not be verified" }]);
+      }
+    };
     let result;
     try {
       result = await executeAgent({
@@ -764,9 +795,11 @@ async function runExecution(input: {
         onEvent: (event) => relayEvent(event, input.liveEvents, input.run.id, messageId, transcript),
       });
       await flushWorking();
+      await verifySavedDocument();
     } catch (error) {
       let terminalError = error;
       try { await flushWorking(); } catch (flushError) { terminalError = flushError; }
+      await verifySavedDocument();
       await emitRunReport({
         runId: input.run.id,
         instruction: input.instruction,

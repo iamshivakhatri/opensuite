@@ -77,7 +77,7 @@ type TaggedDocument = {
 };
 
 function stepProgressLine(step: AgentStep): AgentProgressLine | null {
-  if (step.kind === "narration" || step.status === "cancelled") return null;
+  if (step.kind === "narration" || step.kind === "validation" || step.status === "cancelled") return null;
   return {
     id: `step:${step.id}`,
     label: step.summary === "Completed" ? toolLabels(step.name).done : step.summary ?? step.name,
@@ -174,6 +174,7 @@ function CompletedRunTranscript({
   const visibleSteps = omitFinishNarration
     ? presentationStepsForAssistantMessage(steps, true)
     : steps;
+  const checks = steps.find((step) => step.kind === "validation")?.output?.checks;
   return (
     <div className="flex flex-col gap-1.5">
       {summary ? (
@@ -185,6 +186,17 @@ function CompletedRunTranscript({
         </p>
       ) : null}
       <RunTranscript entries={durableTranscript(visibleSteps)} />
+      {checks?.length ? (
+        <div className="mt-1 text-[length:var(--text-2xs)] text-ink-soft" aria-label="Document validation">
+          <p className="font-medium">Validation</p>
+          <ul className="mt-1 space-y-0.5">
+            {checks.map((check) => <li key={check.id} title={check.evidence}>
+              <span aria-hidden>{check.status === "pass" ? "✓" : check.status === "warning" ? "⚠" : check.status === "fail" ? "!" : "–"}</span> {check.message}
+              {check.evidence ? <span className="block truncate pl-3 text-ink-faint">{check.evidence}</span> : null}
+            </li>)}
+          </ul>
+        </div>
+      ) : null}
     </div>
   );
 }

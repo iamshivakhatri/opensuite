@@ -44,6 +44,7 @@ export interface AgentStepDto {
   readonly status: AgentStep["status"];
   readonly name: string;
   readonly summary: string | null;
+  readonly output?: Record<string, unknown>;
   readonly createdAt: string;
   readonly startedAt: string | null;
   readonly completedAt: string | null;
@@ -93,6 +94,7 @@ export function toAgentStepDto(step: AgentStep): AgentStepDto {
     status: step.status,
     name: step.name,
     summary: step.summary,
+    ...(step.kind === "validation" && step.output ? { output: step.output } : {}),
     createdAt: step.createdAt,
     startedAt: step.startedAt,
     completedAt: step.completedAt,

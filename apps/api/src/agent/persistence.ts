@@ -628,6 +628,7 @@ export function createAgentPersistenceService(db: Db) {
         name: string;
         status: AgentStepStatus;
         summary?: string | null;
+        output?: Record<string, unknown>;
       }[];
     },
     tx?: AgentPersistenceExecutor,
@@ -648,7 +649,7 @@ export function createAgentPersistenceService(db: Db) {
           status: step.status,
           summary: step.summary ?? null,
           input: null,
-          output: null,
+          output: step.output ?? null,
           startedAt: now,
           completedAt: TERMINAL_STEP_STATUSES.has(step.status) ? now : null,
         })))

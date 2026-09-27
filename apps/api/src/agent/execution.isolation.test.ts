@@ -1104,10 +1104,12 @@ test("terminal runs flush valid working changes once, including partial and canc
     let bytes = Buffer.from(buildMinimalDocx(["Start"]));
     let versionId = "v1";
     let appends = 0;
+    let modelCalls = 0;
     const events: AgentEvent[] = [];
     const reports: AgentRunReport[] = [];
     const controller = new AbortController();
     const deps = baseDeps(persistence, async (input) => {
+      modelCalls++;
       if (mode === "fail_before") throw new Error("model failed");
       const call = { toolCallId: "test", messages: [], context: undefined as never };
       if (mode === "read_only") {
@@ -1141,6 +1143,8 @@ test("terminal runs flush valid working changes once, including partial and canc
       },
     });
     const result = await (await execution.start({ userId: "user-1", threadId: "thread-1", activeDocumentId: "doc-1", instruction: "edit", signal: controller.signal, liveEvents: { emit: (event) => { events.push(event); } } })).result;
+    assert.equal(modelCalls, 1, `verification must not add a model turn: ${mode}`);
+    assert.equal(persistence.steps.some((step) => step.kind === "validation"), appends > 0 && mode !== "append_fail", mode);
     assert.equal(appends, mode === "read_only" || mode === "fail_before" ? 0 : 1, mode);
     assert.equal(events.filter((event) => event.type === "document.version.advanced").length, mode === "append_fail" ? 0 : appends, mode);
     assert.equal(events.filter((event) => event.type === "document.working.updated").length,

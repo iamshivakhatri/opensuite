@@ -649,6 +649,7 @@ export interface AgentStep {
   readonly status: "pending" | "running" | "completed" | "failed" | "cancelled";
   readonly name: string;
   readonly summary: string | null;
+  readonly output?: { readonly checks?: readonly { readonly id: string; readonly status: "pass" | "warning" | "fail" | "skipped"; readonly message: string; readonly evidence?: string }[] };
   readonly createdAt: string;
   readonly startedAt: string | null;
   readonly completedAt: string | null;

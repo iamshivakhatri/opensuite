@@ -14,6 +14,8 @@ _Read this before starting any work. Keep it a concise current-state handoff, no
 
 ## Just Completed
 
+* **Verified Document Update v1** — after a mutated DOCX is saved, API validation checks the target version, source versions, saved DOCX inspection, structure, explicit old month/year references, and obvious placeholders. Structured checks persist in the run transcript and appear in the Agent Panel. No Rust or agent-core-v3 changes.
+
 * **Recurring DOCX refresh** — a run can select an editable DOCX from its existing working set and inspect another DOCX as a read-only source. Selection reuses the active binding, keeps complete working-set context through the switch, and is blocked after edits so one run still saves one edited version. No Rust or agent-core-v3 changes.
 
 * **Telemetry terminology cleanup** — compact `[agent-run-report]` log uses `toolCalls` / `readCalls` / `mutationCalls` / `editsApplied` / `persistedVersions` / `toolErrors` (not ambiguous `edits`/`versions`/`failures`). Recovered tool attempts log as `[agent-run-tool-error]`; `outcome` remains authoritative for terminal run failure. `AgentRunReport.failures` kept for Cloud JSON compatibility. Product completion headline is `Updated document · 19s` (no accidental activity-row “actions” count). Vocab note in `docs/agent_core.md`. No engine / agent-core-v3 / Cloud behavior change.
@@ -92,6 +94,8 @@ _Read this before starting any work. Keep it a concise current-state handoff, no
 * Agent Panel shows execution state only — not CoT, not AgentRunReport telemetry.
 
 ## Verification Status
+
+* Document verification and V3 lifecycle focused tests: 39 pass; API build and web typecheck pass. No manual browser test for this phase.
 
 | Check | Status |
 |---|---|
