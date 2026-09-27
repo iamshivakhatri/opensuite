@@ -200,7 +200,7 @@ test("format and text batches keep partial work, one preview per batch, and one 
   assert.match(JSON.stringify(await binding.inspectDocx(stored, { focus: { kind: "body_blocks" } })), /Third/);
 });
 
-test("table formatting and column widths reuse one inspect with stable selectors", async () => {
+test("header shading then table formatting and widths reuse one inspect", async () => {
   const binding = await createNapiDocxEngineBinding();
   const stored = Buffer.from(buildMinimalDocx(["Memo"]));
   const tools = await createPrimaryDocxTools({
@@ -220,11 +220,23 @@ test("table formatting and column widths reuse one inspect with stable selectors
   assert.equal((await execute("document.create_table", {
     rows: [["Item", "Owner"], ["Plan", "Team"]], placement: { kind: "end" },
   })).ok, true);
-  await execute("document.inspect", { kind: "tables" });
+  const inspected = await tools.tools["document.inspect"]!.execute!({ kind: "tables" }, call) as {
+    tables?: { items: { handle: string; rows: { cellHandles: string[] }[] }[] };
+  };
+  const headerHandles = inspected.tables?.items[0]?.rows[0]?.cellHandles;
+  assert.equal(headerHandles?.length, 2);
+  assert.equal((await execute("document.set_table_cell_shading", {
+    table: { handle: inspected.tables!.items[0]!.handle },
+    updates: headerHandles!.map((handle) => ({ target: { handle }, fill: "17365D" })),
+  })).ok, true);
+  assert.equal((await execute("document.set_table_cell_shading", {
+    table: { handle: inspected.tables!.items[0]!.handle },
+    updates: [{ target: { handle: headerHandles![0] }, fill: "17365D" }],
+  })).reasonCode, "STALE_HANDLE");
   const table = { headerCells: ["Item", "Owner"] };
   assert.equal((await execute("document.set_table_formatting", { table, borders: "grid" })).ok, true);
   assert.equal((await execute("document.set_table_column_widths", { table, widthsTwips: [3000, 3000] })).ok, true);
-  assert.equal(tools.getWorkingRevision(), 3);
+  assert.equal(tools.getWorkingRevision(), 4);
 });
 
 test("working reads, failed writes, and stale handles keep the last valid state", async () => {
@@ -321,8 +333,13 @@ test("repeated mutation failures nudge once, then success and a new run reset th
   assert.equal(first.retryGuidance, undefined);
   const second = await insert(bad);
   assert.equal(second.reasonCode, "STALE_HANDLE");
-  assert.match(second.retryGuidance ?? "", /Skip optional polish; retry only for an explicit user requirement/);
+  assert.match(second.retryGuidance ?? "", /For an explicit requirement, retry only with a changed target or method/);
   assert.equal((await insert(bad)).retryGuidance, undefined); // Guidance does not block a required retry.
+
+  assert.equal((await run.tools["document.set_paragraph_formatting"]!.execute!({
+    target: { text: "Start" }, alignment: "center",
+  }, call) as { ok: boolean }).ok, true);
+  assert.equal((await insert(bad)).retryGuidance, undefined); // Unrelated formatting does not reset the count.
 
   assert.equal((await insert({ text: "Done", placement: { kind: "end" } })).ok, true);
   assert.equal((await insert(bad)).retryGuidance, undefined);

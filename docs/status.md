@@ -14,7 +14,7 @@ _Read this before starting any work. Keep it a concise current-state handoff, no
 
 ## Just Completed
 
-* **Table mutation ordering** — guidance delays exact table handles until content/structure edits finish, then groups table work using stable selectors where safe. Existing multi-cell shading and sequential same-turn mutation calls are reused. The DOCX run adds one model-facing nudge after two same-capability failures; success or rebind clears the count. No core/engine change. Focused checks added; execution and live dogfood await user run.
+* **Table mutation ordering** — inspected `cellHandles[]` now register as fresh handles, then go stale after a write. Header shading precedes other writes; later table formatting uses stable table selectors. Label selectors skip header rows, and body text tools cannot bold table text. Failure nudges persist across unrelated formatting. User dogfood before correction hit 20 turns/11 failures with only widths saved; rerun pending. No core/engine change.
 
 * **Silent recovery / polish discipline** — operating instruction: recover tool failures without narrating reason codes/selectors/stale handles; abandon optional cosmetic polish after repeated failure; keep retrying for explicit user requirements or correctness. Final response mentions unresolved limits only when material. Prompt-only; no agent-core-v3 / engine change. Logs and activity Details unchanged.
 

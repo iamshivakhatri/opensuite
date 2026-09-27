@@ -151,7 +151,7 @@ const rowAnchor = {
 const cellTarget = {
   type: "object",
   description:
-    "Cell selector: handle from the latest inspect (invalid after a mutation), OR rowLabel+columnHeader for an unambiguous cell.",
+    "Cell selector: use a fresh inspect handle for header-row or first-column cells. rowLabel+columnHeader selects only data rows and non-first columns.",
   properties: {
     handle: { type: "string" },
     rowLabel: { type: "string" },
@@ -208,7 +208,7 @@ const MUTATION_DEFS: Record<string, MutDef> = {
   },
   set_paragraph_style: {
     description:
-      "Set or clear a paragraph style by display name (e.g. 'Heading 1'), not styleId. Target via exact text + zero-based occurrence. Omit style to clear.",
+      "Set or clear a direct body paragraph style by display name (e.g. 'Heading 1'), not styleId. Does not format table cells. Target via exact text + zero-based occurrence. Omit style to clear.",
     inputSchema: op(
       {
         target: textTarget,
@@ -222,7 +222,7 @@ const MUTATION_DEFS: Record<string, MutDef> = {
   },
   set_paragraph_formatting: {
     description:
-      "Set paragraph-level alignment, spacing, or indent on a text target (occurrence zero-based when ambiguous).",
+      "Set alignment, spacing, or indent on a direct body paragraph, not a table cell (occurrence zero-based when ambiguous).",
     inputSchema: op(
       {
         target: textTarget,
@@ -240,7 +240,7 @@ const MUTATION_DEFS: Record<string, MutDef> = {
   },
   set_text_formatting: {
     description:
-      "Set run-level formatting (bold/italic/size/color/underline/highlight/strikethrough/verticalAlignment) on an exact text target. Occurrence is zero-based when ambiguous.",
+      "Set bold/italic/size/color/other run formatting on ordinary direct body text. Table-cell text is unsupported. Occurrence is zero-based when ambiguous.",
     inputSchema: op(
       {
         target: textTarget,
@@ -368,7 +368,7 @@ const MUTATION_DEFS: Record<string, MutDef> = {
     ),
   },
   set_table_cell_shading: {
-    description: "Set fill/shading for one or more table cells in one call. Omit fill to clear.",
+    description: "Set fill for one or more cells in one call (6-digit RGB, no #). Header-row cells require fresh cell handles from inspect(tables). Shade all header cells before other mutations; omit fill to clear.",
     inputSchema: op(
       {
         table: tableTarget,
@@ -585,7 +585,7 @@ export function createDocumentTools(document: BoundDocumentHost): AgentToolSet {
       if (!caps.has(capability)) continue;
       tools[`document.${name}`] = defineTool({
         kind: "mutate",
-        description: `Apply several independent ${capability} operations in order. Stops on the first failure; earlier successful edits remain. Use known text targets only.`,
+        description: `Apply several independent ${capability} operations in order. Stops on the first failure; earlier successful edits remain. Use known text targets only.${capability !== "replace_text" ? " Formatting targets direct body text, not table cells." : ""}`,
         inputSchema: jsonSchema<{ operations: Record<string, unknown>[] }>({
           type: "object",
           properties: {

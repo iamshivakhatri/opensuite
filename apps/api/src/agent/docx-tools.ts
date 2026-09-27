@@ -53,6 +53,9 @@ function collectHandles(value: unknown, handles: Set<string>): void {
   }
   for (const [key, item] of Object.entries(value)) {
     if (/(^handle$|Handle$)/.test(key) && typeof item === "string") handles.add(item);
+    else if (key.endsWith("Handles") && Array.isArray(item)) {
+      for (const handle of item) if (typeof handle === "string") handles.add(handle);
+    }
     else collectHandles(item, handles);
   }
 }
@@ -100,7 +103,7 @@ function createActiveDocxSession(input: {
     console.info(`[agent] repeated_mutation_failure capability=${capability}`);
     return {
       ...result,
-      retryGuidance: "This operation failed twice. Skip optional polish; retry only for an explicit user requirement or document correctness.",
+      retryGuidance: "This operation failed twice. Skip optional polish. For an explicit requirement, retry only with a changed target or method that addresses the failure; otherwise finish and report the unmet requirement.",
     };
   }
 
@@ -168,7 +171,6 @@ function createActiveDocxSession(input: {
     workingRevision += 1;
     workingMutationCount += applied;
     currentHandles.clear();
-    mutationFailures.clear();
     if (documentId && versionId) {
       try {
         input.onWorkingUpdated?.({ documentId, baseVersionId: versionId, revision: workingRevision });
@@ -203,7 +205,10 @@ function createActiveDocxSession(input: {
           diagnostics: [{ code: "STALE_HANDLE", severity: "error", message: "Inspect the current document again before using this handle." }] });
       }
       const result = await host.mutate(capability, operation);
-      if (result.ok) advanceWorkingState(1);
+      if (result.ok) {
+        advanceWorkingState(1);
+        mutationFailures.delete(capability);
+      }
       return noteMutationFailure(capability, result);
     },
     mutateBatch: async (capability, operations) => {
@@ -215,6 +220,7 @@ function createActiveDocxSession(input: {
         const result = await host.mutate(capability, operations[index]!);
         if (!result.ok) {
           advanceWorkingState(index);
+          if (index) mutationFailures.delete(capability);
           return noteMutationFailure(capability, {
             ok: false, capability, applied: index, failedIndex: index,
             reasonCode: result.reasonCode, diagnostics: result.diagnostics,
@@ -223,6 +229,7 @@ function createActiveDocxSession(input: {
         }
       }
       advanceWorkingState(operations.length);
+      mutationFailures.delete(capability);
       return { ok: true, capability, applied: operations.length, workingRevision };
     },
   };
