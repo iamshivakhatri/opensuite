@@ -546,6 +546,7 @@ async function runExecution(input: {
 
     const versionAdvances: DocumentVersionAdvance[] = [];
     let savedTarget: { documentId: string; fromVersionId: string; versionId: string } | null = null;
+    let createdDocumentId: string | null = null;
     const initialDocumentId = input.primaryDocumentId;
     let directVersionId: string | null = null;
     let directWorkingVersions = new Map<string, string>();
@@ -599,6 +600,7 @@ async function runExecution(input: {
         });
       },
       onDocumentCreated: async (created) => {
+        if (created.kind === "created") createdDocumentId = created.documentId;
         // Duplication preserves DIRECT context only when the source was unchanged.
         if (created.kind === "duplicated" && directVersionId && boundTools?.getWorkingMutationCount() === 0) {
           directVersionId = created.versionId;
@@ -828,6 +830,8 @@ async function runExecution(input: {
           binding: input.deps.docxBinding,
           before: new Uint8Array(before), after: new Uint8Array(after), instruction: input.instruction,
           successfulMutations: metrics?.toolCalls.filter((tool) => tool.kind === "mutate" && tool.outcome === "success").map((tool) => tool.toolName),
+          created: createdDocumentId === target.documentId,
+          inputNeeded: metrics?.toolCalls.filter((tool) => tool.outcome === "success" && isFinishTool(tool.toolName)).at(-1)?.toolName === "finish_with_input_needed",
           targetAdvanced: target.fromVersionId !== target.versionId,
           sourcesUnchanged: input.workingDocumentIds.every((id) => id === target.documentId)
             ? true

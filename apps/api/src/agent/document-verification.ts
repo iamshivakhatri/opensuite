@@ -1,4 +1,4 @@
-import type { DocxEngineBinding, DocxInspectResult } from "@opensuite/engine-client";
+import type { DocxEngineBinding, DocxInspectResult, DocxInspectTableItem } from "@opensuite/engine-client";
 
 export interface DocumentCheck {
   readonly id: string;
@@ -9,7 +9,7 @@ export interface DocumentCheck {
 
 const months = "January February March April May June July August September October November December".split(" ");
 
-export function oldPeriodFromInstruction(instruction: string): string | null {
+function periodTransition(instruction: string): { old: string; next: string } | null {
   const period = new RegExp(`\\b(?:${months.join("|")}|Q[1-4])(?:\\s+(?:19|20)\\d{2})?\\b|\\b(?:19|20)\\d{2}\\b`, "gi");
   const transitions = [...instruction.matchAll(/\b(?:into|to)\b|→|->/gi)].map((connector) => {
     const left = instruction.slice(Math.max(0, connector.index - 160), connector.index).split(/[.!?;\n]/).at(-1) ?? "";
@@ -18,9 +18,13 @@ export function oldPeriodFromInstruction(instruction: string): string | null {
     const next = [...right.matchAll(period)].map((match) => match[0]);
     if (old.length !== 1 || next.length !== 1 || old[0]!.toLowerCase() === next[0]!.toLowerCase()) return null;
     if (/^(?:19|20)\d{2}$/.test(old[0]!) && !/\b(?:update|refresh|revise|convert|change|turn)\b/i.test(left)) return null;
-    return old[0]!;
-  }).filter((value): value is string => value !== null);
+    return { old: old[0]!, next: next[0]! };
+  }).filter((value): value is { old: string; next: string } => value !== null);
   return transitions.length === 1 ? transitions[0]! : null;
+}
+
+export function oldPeriodFromInstruction(instruction: string): string | null {
+  return periodTransition(instruction)?.old ?? null;
 }
 
 function tableChangeMessage(before: readonly (readonly number[])[], after: readonly (readonly number[])[], operations: readonly string[]) {
@@ -49,10 +53,10 @@ function tableChangeMessage(before: readonly (readonly number[])[], after: reado
         const totalRemoved = changes.reduce((sum, change) => sum + Math.max(-change, 0), 0);
         const changedTables = changes.filter((change) => change > 0).length;
         const supported = difference > 0
-          ? (count(add) >= totalAdded || (label === "row" && count("insert_table_rows") >= changedTables)) && !count(remove)
+          ? (count(add) + (label === "row" ? count("insert_table_row") : 0) >= totalAdded || (label === "row" && count("insert_table_rows") >= changedTables)) && !count(remove)
           : count(remove) >= totalRemoved && !count(add) && !(label === "row" && count("insert_table_row"));
         (supported ? expected : unexpected).push(supported
-          ? `${Math.abs(difference)} table ${label}${Math.abs(difference) === 1 ? "" : "s"} ${difference > 0 ? "added" : "removed"} as expected`
+          ? `Table ${index + 1} ${label} count changed as expected: ${previous[dimension]} → ${current[dimension]}`
           : `Table ${index + 1} ${label} count changed unexpectedly: ${previous[dimension]} → ${current[dimension]}`);
       }
     }
@@ -76,14 +80,69 @@ async function structure(binding: DocxEngineBinding, bytes: Uint8Array) {
   if (!overview.ok || !overview.overview) throw new Error("Could not inspect DOCX overview");
   const [headings, tables] = await Promise.all([
     inspectAll(binding, bytes, "headings"),
-    inspectAll(binding, bytes, "tables"),
+    inspectAll(binding, bytes, "tables") as Promise<DocxInspectTableItem[]>,
   ]);
   return {
     sections: overview.overview.sectionCount,
     bodyBlocks: overview.overview.bodyBlockCount,
     headings: headings.map((heading) => "level" in heading ? [heading.level, heading.styleName] : []),
-    tables: tables.map((table) => "rowCount" in table ? [table.rowCount, table.columns.length] : []),
+    tables: tables.map((table) => [table.rowCount, table.columns.length]),
+    tableItems: tables,
   };
+}
+
+function numberValue(text: string): number | null {
+  const value = text.trim();
+  if (!/^\$?(?:\d+|\d{1,3}(?:,\d{3})+)(?:\.\d+)?$/.test(value)) return null;
+  const number = Number(value.replace(/[$,]/g, ""));
+  return Number.isSafeInteger(number) ? number : null;
+}
+
+async function reconcileTables(binding: DocxEngineBinding, bytes: Uint8Array, tables: Awaited<ReturnType<typeof structure>>["tableItems"]): Promise<DocumentCheck[]> {
+  const checks: DocumentCheck[] = [];
+  let tableNames: Map<string, string> | null = null;
+  for (const [index, table] of tables.entries()) {
+    // ponytail: large tables are skipped; page through table_rows if large reports need reconciliation.
+    if (!table.isRectangular || table.rowCount > 100 || table.rowCount < 4 || table.columns.length < 2) continue;
+    const result = await binding.inspectDocx(bytes, { focus: { kind: "table_rows", tableHandle: table.handle, rowOffset: 0, rowLimit: 100 } }).catch(() => null);
+    const detail = result?.ok ? result.tableRows : undefined;
+    if (!detail || detail.rows.length !== table.rowCount || detail.columnCount !== table.columns.length) continue;
+    const rows = detail.rows.map((row) => row.cells);
+    const totals = rows.map((row, rowIndex) => /^total$/i.test(row[0]?.trim() ?? "") || /^grand total$/i.test(row[0]?.trim() ?? "") || /^network total$/i.test(row[0]?.trim() ?? "") ? rowIndex : -1).filter((rowIndex) => rowIndex >= 0);
+    if (totals.length !== 1 || totals[0] !== rows.length - 1) continue;
+    const totalIndex = totals[0]!;
+    const data = rows.slice(0, totalIndex);
+    const header = detail.headerTexts.length === table.columns.length &&
+      detail.headerTexts.every((cell, column) => cell === data[0]?.[column]) ? data.shift() : undefined;
+    if (data.length < 2 || data.some((row) => row.length !== table.columns.length)) continue;
+    for (let column = 1; column < table.columns.length; column++) {
+      const label = header?.[column] ?? detail.headerTexts[column] ?? table.columns[column]?.text ?? `Column ${column + 1}`;
+      if (/percent|%|average|avg|ratio|rate|weighted|margin/i.test(label)) continue;
+      const values = data.map((row) => numberValue(row[column] ?? ""));
+      const total = numberValue(rows[totalIndex]?.[column] ?? "");
+      if (total === null || values.some((value) => value === null)) continue;
+      const sum = values.reduce<number>((value, item) => value + item!, 0);
+      if (!Number.isSafeInteger(sum)) continue;
+      if (sum !== total) {
+        if (!tableNames) {
+          tableNames = new Map();
+          let heading = "";
+          for (let offset = 0; ; offset += 100) {
+            const result = await binding.inspectDocx(bytes, { focus: { kind: "body_blocks", offset, limit: 100 } }).catch(() => null);
+            if (!result?.ok || !result.bodyBlocks) break;
+            for (const block of result.bodyBlocks.items) {
+              if (block.headingLevel && block.text?.trim()) heading = block.text.trim();
+              if (block.tableHandle && heading) tableNames.set(block.tableHandle, heading);
+            }
+            if (!result.bodyBlocks.page.hasMore || !result.bodyBlocks.page.returned) break;
+          }
+        }
+        checks.push({ id: `reconciliation-${index}-${column}`, status: "warning",
+          message: `${tableNames.get(table.handle) ?? `Table ${index + 1}`} '${label}' rows sum to ${sum.toLocaleString("en-US")} but Total is ${total.toLocaleString("en-US")}.` });
+      }
+    }
+  }
+  return checks;
 }
 
 export async function verifyDocumentUpdate(input: {
@@ -94,6 +153,8 @@ export async function verifyDocumentUpdate(input: {
   targetAdvanced: boolean;
   sourcesUnchanged: boolean | null;
   successfulMutations?: readonly string[];
+  created?: boolean;
+  inputNeeded?: boolean;
 }): Promise<DocumentCheck[]> {
   const checks: DocumentCheck[] = [
     { id: "target", status: input.targetAdvanced ? "pass" : "fail", message: input.targetAdvanced ? "Target updated" : "Target did not advance" },
@@ -107,26 +168,53 @@ export async function verifyDocumentUpdate(input: {
     checks.push({ id: "open", status: "fail", message: "Saved DOCX could not be inspected" });
     return checks;
   }
-  try {
-    const before = await structure(input.binding, input.before);
-    const tables = tableChangeMessage(before.tables, after.tables, input.successfulMutations ?? []);
-    const unexpected = [...tables.unexpected];
-    if (before.sections !== after.sections) unexpected.push(`Section count changed: ${before.sections} → ${after.sections}`);
-    if (JSON.stringify(before.headings) !== JSON.stringify(after.headings)) unexpected.push("Heading structure changed");
-    if (before.bodyBlocks !== after.bodyBlocks && !(tables.tableDifference && tables.expected.length && after.bodyBlocks - before.bodyBlocks === tables.tableDifference)) {
-      unexpected.push(`Body block count changed: ${before.bodyBlocks} → ${after.bodyBlocks}`);
+  if (input.created) {
+    const createdTables = (input.successfulMutations ?? []).filter((name) => name === "document.create_table").length;
+    let hasContent = after.tables.length > 0 || after.headings.length > 0;
+    let contentInspected = true;
+    for (let offset = 0; !hasContent && offset < after.bodyBlocks; offset += 100) {
+      const result = await input.binding.inspectDocx(input.after, { focus: { kind: "body_blocks", offset, limit: 100 } }).catch(() => null);
+      if (!result?.ok || !result.bodyBlocks) { contentInspected = false; break; }
+      hasContent = result.bodyBlocks.items.some((block) => Boolean(block.text?.trim()));
+      if (!result.bodyBlocks.page.hasMore) break;
     }
-    checks.push({ id: "structure", status: unexpected.length ? "warning" : "pass", message: [...tables.expected, ...unexpected].join("; ") || "Structure preserved" });
-  } catch {
-    checks.push({ id: "structure", status: "skipped", message: "Original structure could not be inspected" });
+    const valid = hasContent && after.tables.length >= createdTables;
+    checks.push({ id: "structure", status: !contentInspected ? "skipped" : valid ? "pass" : "warning", message: !contentInspected ? "Created content could not be inspected" : !hasContent ? "Created document is empty" : !valid ? `Created ${after.tables.length} of ${createdTables} requested tables` : `Created document has content and ${after.tables.length} tables` });
+  } else {
+    try {
+      const before = await structure(input.binding, input.before);
+      const tables = tableChangeMessage(before.tables, after.tables, input.successfulMutations ?? []);
+      const expected = [...tables.expected];
+      const unexpected = [...tables.unexpected];
+      if (before.sections !== after.sections) unexpected.push(`Section count changed: ${before.sections} → ${after.sections}`);
+      const mutations = input.successfulMutations ?? [];
+      const paragraphChange = mutations.some((name) => /^document\.(?:insert_paragraphs?|delete_paragraph)$/.test(name));
+      const headingChange = paragraphChange || mutations.includes("document.set_paragraph_style");
+      if (JSON.stringify(before.headings) !== JSON.stringify(after.headings)) (headingChange ? expected : unexpected).push(headingChange ? "Heading structure changed as expected" : "Heading structure changed");
+      if (before.bodyBlocks !== after.bodyBlocks && !paragraphChange && !(tables.tableDifference && tables.expected.length && after.bodyBlocks - before.bodyBlocks === tables.tableDifference)) {
+        unexpected.push(`Body block count changed: ${before.bodyBlocks} → ${after.bodyBlocks}`);
+      } else if (before.bodyBlocks !== after.bodyBlocks && paragraphChange) {
+        expected.push(`Body block count changed as expected: ${before.bodyBlocks} → ${after.bodyBlocks}`);
+      }
+      checks.push({ id: "structure", status: unexpected.length ? "warning" : "pass", message: [...expected, ...unexpected].join("; ") || "Structure preserved" });
+    } catch {
+      checks.push({ id: "structure", status: "skipped", message: "Original structure could not be inspected" });
+    }
   }
-  const oldPeriod = oldPeriodFromInstruction(input.instruction);
-  if (!oldPeriod) checks.push({ id: "period", status: "skipped", message: "No unambiguous old and new period" });
+  checks.push(...await reconcileTables(input.binding, input.after, after.tableItems));
+  const transition = periodTransition(input.instruction);
+  if (input.created || !transition) checks.push({ id: "period", status: "skipped", message: "Period rollover not applicable to this edit" });
   else {
-    const result = await input.binding.findDocxText(input.after, { text: oldPeriod });
-    checks.push(result.ok
-      ? { id: "period", status: result.matchCount ? "warning" : "pass", message: result.matchCount ? `${oldPeriod} remains ${result.matchCount} time(s)` : `No ${oldPeriod} references remain`, ...(result.matches[0] ? { evidence: `${result.matches[0].container}: ${result.matches[0].before}${result.matches[0].text}${result.matches[0].after}`.slice(0, 160) } : {}) }
-      : { id: "period", status: "skipped", message: "Old period could not be searched" });
+    const results = await Promise.all([transition.old, transition.next].map((text) => input.binding.findDocxText(input.after, { text })));
+    const suspicious = results.every((result) => result.ok) ? results.flatMap((result) => result.matches).filter((match) => {
+      const context = `${match.before}${match.text}${match.after}`;
+      return /\b(?:scheduled|planned|upcoming|launching|due|expected|will|target date)\b/i.test(context) && !/\b(?:vs|versus|compared (?:with|to)|from|reported in|during|since|prior|previous)\b/i.test(context);
+    }) : [];
+    const first = suspicious[0];
+    const excerpt = first ? `${first.before}${first.text}${first.after}`.trim().slice(0, 120) : "";
+    checks.push(results.every((result) => result.ok)
+      ? { id: "period", status: first ? "warning" : "pass", message: first ? `Possible stale period reference: '${excerpt}'` : "No suspicious stale-period statements found", ...(first ? { evidence: `${first.container}: ${excerpt}` } : {}) }
+      : { id: "period", status: "skipped", message: "Report periods could not be searched" });
   }
   const found = [];
   for (const token of ["[UPDATE", "[INSERT", "TODO", "TBD"]) {
@@ -139,6 +227,6 @@ export async function verifyDocumentUpdate(input: {
       }
     }
   }
-  checks.push({ id: "placeholders", status: found.length ? "warning" : "pass", message: found.length ? `${found.length} unresolved placeholder(s)` : "No unresolved placeholders", ...(found[0] ? { evidence: found[0] } : {}) });
+  checks.push({ id: "placeholders", status: found.length ? "warning" : "pass", message: found.length ? input.inputNeeded ? `${found.length} unresolved values require user input` : `${found.length} unresolved placeholder(s)` : "No unresolved placeholders", ...(found[0] ? { evidence: found[0] } : {}) });
   return checks;
 }
