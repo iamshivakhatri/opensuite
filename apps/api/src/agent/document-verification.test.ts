@@ -5,7 +5,7 @@ import { oldPeriodFromInstruction, verifyDocumentUpdate } from "./document-verif
 
 const bytes = (text: string) => new TextEncoder().encode(text);
 const binding = {
-  async inspectDocx(data: Uint8Array, request: { focus: { kind: string } }) {
+  async inspectDocx(data: Uint8Array, request: { focus: { kind: string; rowOffset?: number; rowLimit?: number } }) {
     const content = new TextDecoder().decode(data);
     const changed = content.includes("STRUCTURE_CHANGED");
     const rowsAdded = content.includes("ROWS_ADDED");
@@ -18,9 +18,11 @@ const binding = {
       return { ok: true, bodyBlocks: { page: { total: items.length, offset: 0, returned: items.length, hasMore: false }, items } };
     }
     if (request.focus.kind === "table_rows") {
-      const cells = content.includes("PIPELINE") ? [["Stage", "Value (USD)"], ["Discovery", "620,000"], ["Evaluation", "540,000"], ["Proposal", "480,000"], ["Negotiation", "260,000"], ["Total", content.includes("BAD_TOTAL") ? "2,350,000" : "1,900,000"]]
+      const cells = content.includes("PIPELINE") ? [["Stage", "Value (USD)"], ["Discovery", "620,000"], ["Evaluation", "540,000"], ["Proposal", "480,000"], ["Negotiation", "260,000"], ["Total", content.includes("BAD_TOTAL") || content.includes("2350000") ? "2,350,000" : "1,900,000"]]
         : content.includes("WEIGHTED") ? [["Stage", "Weighted %"], ["A", "40%"], ["B", "60%"], ["Total", "50%"]] : [];
-      return { ok: true, tableRows: { tableHandle: "t0", rowCount: cells.length, columnCount: 2, headerTexts: cells[0] ?? [], rowOffset: 0, rows: cells.map((row, index) => ({ index, cells: row })) } };
+      if ((request.focus.rowLimit ?? 3) > 10) return { ok: false, diagnostics: [{ code: "INVALID_TABLE_ROW_LIMIT" }] };
+      const offset = request.focus.rowOffset ?? 0;
+      return { ok: true, tableRows: { tableHandle: "t0", rowCount: cells.length, columnCount: 2, headerTexts: cells[0] ?? [], rowOffset: offset, rows: cells.slice(offset, offset + (request.focus.rowLimit ?? 3)).map((row, index) => ({ index: offset + index, cells: row })) } };
     }
     const items = request.focus.kind === "headings"
       ? created ? [{ occurrence: 0, text: "New Report", styleName: "Heading 1", level: 1 }] : [{ occurrence: 0, text: "Report", styleName: "Heading 1", level: 1 }]
@@ -89,6 +91,17 @@ test("additive totals reconcile or warn independently of saving", async () => {
   assert.equal(mismatch.find((item) => item.id === "reconciliation-0-1")?.status, "warning");
   assert.equal((await check("September PIPELINE")).some((item) => item.id.startsWith("reconciliation")), false);
   assert.equal((await check("September WEIGHTED")).some((item) => item.id.startsWith("reconciliation")), false);
+});
+
+test("generic replace_text of only the Total still reconciles the final table", async () => {
+  const before = "September PIPELINE Total=1900000";
+  const after = before.replace("1900000", "2350000");
+  assert.equal((await check(before, "Change only the Total", { successfulMutations: ["document.set_table_cells_text"] })).some((item) => item.id.startsWith("reconciliation")), false);
+  const checks = await check(after, "Change only the Total", { successfulMutations: ["document.replace_text"] });
+  assert.equal(checks.find((item) => item.id === "reconciliation-0-1")?.message, "Sales Pipeline 'Value (USD)' rows sum to 1,900,000 but Total is 2,350,000.");
+  assert.equal(checks.find((item) => item.id === "reconciliation-0-1")?.status, "warning");
+  assert.equal(checks.find((item) => item.id === "period")?.status, "skipped");
+  assert.equal((await check(after, "Change only the Total", { successfulMutations: ["document.set_table_cells_text"] })).find((item) => item.id === "reconciliation-0-1")?.status, "warning");
 });
 
 test("one intentional row insert passes; unexplained row insert warns", async () => {

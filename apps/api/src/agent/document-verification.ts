@@ -102,12 +102,19 @@ async function reconcileTables(binding: DocxEngineBinding, bytes: Uint8Array, ta
   const checks: DocumentCheck[] = [];
   let tableNames: Map<string, string> | null = null;
   for (const [index, table] of tables.entries()) {
-    // ponytail: large tables are skipped; page through table_rows if large reports need reconciliation.
+    // ponytail: tables over 100 rows are skipped; raise the cap if large reports need reconciliation.
     if (!table.isRectangular || table.rowCount > 100 || table.rowCount < 4 || table.columns.length < 2) continue;
-    const result = await binding.inspectDocx(bytes, { focus: { kind: "table_rows", tableHandle: table.handle, rowOffset: 0, rowLimit: 100 } }).catch(() => null);
-    const detail = result?.ok ? result.tableRows : undefined;
-    if (!detail || detail.rows.length !== table.rowCount || detail.columnCount !== table.columns.length) continue;
-    const rows = detail.rows.map((row) => row.cells);
+    let detail: DocxInspectResult["tableRows"];
+    const rows: (readonly string[])[] = [];
+    for (let offset = 0; offset < table.rowCount; offset += 10) {
+      const result = await binding.inspectDocx(bytes, { focus: { kind: "table_rows", tableHandle: table.handle, rowOffset: offset, rowLimit: 10 } }).catch(() => null);
+      const page = result?.ok ? result.tableRows : undefined;
+      if (!page || page.columnCount !== table.columns.length || page.rowCount !== table.rowCount ||
+          page.rows.some((row, index) => row.index !== offset + index)) break;
+      detail ??= page;
+      rows.push(...page.rows.map((row) => row.cells));
+    }
+    if (!detail || rows.length !== table.rowCount) continue;
     const totals = rows.map((row, rowIndex) => /^total$/i.test(row[0]?.trim() ?? "") || /^grand total$/i.test(row[0]?.trim() ?? "") || /^network total$/i.test(row[0]?.trim() ?? "") ? rowIndex : -1).filter((rowIndex) => rowIndex >= 0);
     if (totals.length !== 1 || totals[0] !== rows.length - 1) continue;
     const totalIndex = totals[0]!;

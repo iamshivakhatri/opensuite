@@ -14,7 +14,7 @@ _Read this before starting any work. Keep it a concise current-state handoff, no
 
 ## Just Completed
 
-* **Recurring-report fix pass 2** — API post-save validation now checks narrow additive table totals, recognizes successful structure mutations and blank creation, skips period checks without a rollover, flags only future-sounding period statements, and labels input-needed placeholders as unresolved input. No Rust, model, or UI change.
+* **Recurring-report fix pass 2** — API post-save validation now checks narrow additive table totals using the engine’s 10-row inspection pages, recognizes successful structure mutations and blank creation, skips period checks without a rollover, flags only future-sounding period statements, and labels input-needed placeholders as unresolved input. No Rust, model, or UI change.
 
 * **Recurring-report fix pass 1** — update-only source rule preserves facts without explicit replacement evidence; missing requested facts can finish as `completed_with_input_needed` with a clear user response. Retrieval now scopes to the target, current attachments, and named references unless broader workspace reports are requested. Clear new-document requests start without a stale active target. No extra model call or Rust change.
 
@@ -105,7 +105,7 @@ _Read this before starting any work. Keep it a concise current-state handoff, no
 
 ## Verification Status
 
-* Fix pass 2: 71 focused API verification, lifecycle, isolation, and report tests pass; API build/typecheck pass. No manual test.
+* Fix pass 2: 71 focused API verification, lifecycle, isolation, and report tests passed. Generic-edit reconciliation regression: 51 focused API tests and API typecheck pass. No manual test.
 
 * Fix pass 1: focused API retrieval/policy/lifecycle tests and web progress tests pass; API, DB, and web typechecks pass. No manual product test.
 
