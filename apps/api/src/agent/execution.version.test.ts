@@ -200,6 +200,33 @@ test("format and text batches keep partial work, one preview per batch, and one 
   assert.match(JSON.stringify(await binding.inspectDocx(stored, { focus: { kind: "body_blocks" } })), /Third/);
 });
 
+test("table formatting and column widths reuse one inspect with stable selectors", async () => {
+  const binding = await createNapiDocxEngineBinding();
+  const stored = Buffer.from(buildMinimalDocx(["Memo"]));
+  const tools = await createPrimaryDocxTools({
+    binding, ownerUserId: "user-1", workspaceId: "ws-1", documentId: "doc-1", versionId: "v1",
+    documents: {
+      getOwnedDocument: async () => ({ format: "docx" }) as never,
+      readExactVersionBytes: async () => stored,
+      appendDocumentVersion: async () => { throw new Error("unused"); },
+      createBlankDocxDocument: async () => { throw new Error("unused"); },
+      createOfficeDocumentFromBytes: async () => { throw new Error("unused"); },
+    },
+  });
+  assert.ok(tools);
+  const call = { toolCallId: "table", messages: [], context: undefined as never };
+  const execute = (name: string, args: Record<string, unknown>) =>
+    tools.tools[name]!.execute!(args, call) as Promise<{ ok: boolean; reasonCode?: string }>;
+  assert.equal((await execute("document.create_table", {
+    rows: [["Item", "Owner"], ["Plan", "Team"]], placement: { kind: "end" },
+  })).ok, true);
+  await execute("document.inspect", { kind: "tables" });
+  const table = { headerCells: ["Item", "Owner"] };
+  assert.equal((await execute("document.set_table_formatting", { table, borders: "grid" })).ok, true);
+  assert.equal((await execute("document.set_table_column_widths", { table, widthsTwips: [3000, 3000] })).ok, true);
+  assert.equal(tools.getWorkingRevision(), 3);
+});
+
 test("working reads, failed writes, and stale handles keep the last valid state", async () => {
   const binding = await createNapiDocxEngineBinding();
   let stored = Buffer.from(buildMinimalDocx(["Start"]));
@@ -266,6 +293,45 @@ test("working reads, failed writes, and stale handles keep the last valid state"
   });
   assert.ok(continued);
   assert.match(JSON.stringify(await continued.tools["document.inspect"]!.execute!({ kind: "body_blocks" }, call)), /Step 4/);
+});
+
+test("repeated mutation failures nudge once, then success and a new run reset the count", async () => {
+  const binding = await createNapiDocxEngineBinding();
+  const stored = Buffer.from(buildMinimalDocx(["Start"]));
+  const documents = {
+    getOwnedDocument: async () => ({ format: "docx" }) as never,
+    readExactVersionBytes: async () => stored,
+    appendDocumentVersion: async () => { throw new Error("unused"); },
+    createBlankDocxDocument: async () => { throw new Error("unused"); },
+    createOfficeDocumentFromBytes: async () => { throw new Error("unused"); },
+  };
+  const createRun = () => createPrimaryDocxTools({
+    binding, documents, ownerUserId: "user-1", workspaceId: "ws-1", documentId: "doc-1", versionId: "v1",
+  });
+  const run = await createRun();
+  assert.ok(run);
+  const call = { toolCallId: "test", messages: [], context: undefined as never };
+  const insert = (args: Record<string, unknown>) => run.tools["document.insert_paragraph"]!.execute!(args, call) as Promise<{
+    ok: boolean; reasonCode?: string; retryGuidance?: string;
+  }>;
+  const bad = { text: "Bad", placement: { kind: "before", handle: "b999" } };
+
+  const first = await insert(bad);
+  assert.equal(first.reasonCode, "STALE_HANDLE");
+  assert.equal(first.retryGuidance, undefined);
+  const second = await insert(bad);
+  assert.equal(second.reasonCode, "STALE_HANDLE");
+  assert.match(second.retryGuidance ?? "", /Skip optional polish; retry only for an explicit user requirement/);
+  assert.equal((await insert(bad)).retryGuidance, undefined); // Guidance does not block a required retry.
+
+  assert.equal((await insert({ text: "Done", placement: { kind: "end" } })).ok, true);
+  assert.equal((await insert(bad)).retryGuidance, undefined);
+  assert.ok((await insert(bad)).retryGuidance);
+
+  const nextRun = await createRun();
+  assert.ok(nextRun);
+  const next = await nextRun.tools["document.insert_paragraph"]!.execute!(bad, call) as { retryGuidance?: string };
+  assert.equal(next.retryGuidance, undefined);
 });
 
 test("failed final append leaves the previous persisted version untouched", async () => {

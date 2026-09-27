@@ -76,6 +76,14 @@ test("optional cosmetic polish: abandon after repeated failure; keep required wo
   assert.match(system, /preserve document correctness/i);
 });
 
+test("table guidance delays handle inspection and groups stable table edits", () => {
+  const system = buildAgentOperatingInstruction(["document.inspect", "document.set_table_cell_shading"]);
+  assert.match(system, /Finish content, paragraph, and structural edits before inspecting for exact table\/cell handles/);
+  assert.match(system, /inspect the table once, do related table formatting together/);
+  assert.match(system, /use stable text selectors when unambiguous/);
+  assert.match(system, /Do not reuse old handles after another mutation/);
+});
+
 test("recovered failure guidance does not require narrating internal errors", () => {
   const system = buildAgentOperatingInstruction([
     "document.set_paragraph_style",

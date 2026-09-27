@@ -14,6 +14,8 @@ _Read this before starting any work. Keep it a concise current-state handoff, no
 
 ## Just Completed
 
+* **Table mutation ordering** — guidance delays exact table handles until content/structure edits finish, then groups table work using stable selectors where safe. Existing multi-cell shading and sequential same-turn mutation calls are reused. The DOCX run adds one model-facing nudge after two same-capability failures; success or rebind clears the count. No core/engine change. Focused checks added; execution and live dogfood await user run.
+
 * **Silent recovery / polish discipline** — operating instruction: recover tool failures without narrating reason codes/selectors/stale handles; abandon optional cosmetic polish after repeated failure; keep retrying for explicit user requirements or correctness. Final response mentions unresolved limits only when material. Prompt-only; no agent-core-v3 / engine change. Logs and activity Details unchanged.
 
 * **Recoverable-error UX** — activity rows no longer paint provisional `tool.failed` as terminal red. Live recovery keeps Thinking / success rows; details still show attempts (`Recovered · …` when superseded). Only `agent.failed` / run outcome failed stays red (“Couldn't complete”). SSE `error` maps to reason codes for labels. Frontend-only; no engine / agent-core-v3 / API event changes.

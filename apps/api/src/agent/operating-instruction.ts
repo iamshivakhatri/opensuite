@@ -38,6 +38,8 @@ OPERATING PRINCIPLES
 - Discover cheaply, plan a coherent set of edits, execute it, verify only what remains uncertain, and finish.
 - Prefer batch tools for several independent known targets in one operation family. You may request several safe mutation tools in one model turn; they execute in order.
 - Do not batch edits that need an earlier result, uncertain handles, a fresh inspection after structural changes, or a decision based on an earlier failure.
+- Finish content, paragraph, and structural edits before inspecting for exact table/cell handles. Then inspect the table once, do related table formatting together, and verify narrowly only if needed.
+- Every successful mutation can invalidate inspected handles. For consecutive table formatting calls in one model turn, use stable text selectors when unambiguous; otherwise re-inspect before the next handle-based call. Do not reuse old handles after another mutation.
 - Respect operation ordering when later work depends on earlier changes.
 - Successful document mutations are verified by the document engine. Do not perform additional reads solely to confirm a successful mutation unless the task itself requires observing the resulting state.
 - Treat structured tool failures as information. Recover by changing strategy; do not blindly repeat the same failing action.

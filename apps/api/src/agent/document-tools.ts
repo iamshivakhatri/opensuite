@@ -128,7 +128,7 @@ const placement = {
 const tableTarget = {
   type: "object",
   description:
-    "Table selector. Prefer handle from inspect(tables). occurrence is zero-based.",
+    "Table selector. A handle is valid only until the next successful mutation. Use headerCells/occurrence for several unambiguous table edits in one model turn. occurrence is zero-based.",
   properties: {
     handle: { type: "string" },
     headerCells: { type: "array", items: { type: "string" } },
@@ -151,7 +151,7 @@ const rowAnchor = {
 const cellTarget = {
   type: "object",
   description:
-    "Cell selector: opaque handle from inspect, OR rowLabel+columnHeader.",
+    "Cell selector: handle from the latest inspect (invalid after a mutation), OR rowLabel+columnHeader for an unambiguous cell.",
   properties: {
     handle: { type: "string" },
     rowLabel: { type: "string" },
@@ -368,7 +368,7 @@ const MUTATION_DEFS: Record<string, MutDef> = {
     ),
   },
   set_table_cell_shading: {
-    description: "Set table cell fill/shading. Omit fill to clear.",
+    description: "Set fill/shading for one or more table cells in one call. Omit fill to clear.",
     inputSchema: op(
       {
         table: tableTarget,

@@ -89,7 +89,20 @@ function createActiveDocxSession(input: {
   let workingRevision = 0;
   let workingMutationCount = 0;
   const currentHandles = new Set<string>();
+  const mutationFailures = new Map<string, number>();
   const transitions: DocumentTransition[] = [];
+
+  function noteMutationFailure(capability: string, result: unknown): unknown {
+    if (!result || typeof result !== "object" || (result as { ok?: unknown }).ok !== false) return result;
+    const failures = (mutationFailures.get(capability) ?? 0) + 1;
+    mutationFailures.set(capability, failures);
+    if (failures !== 2) return result;
+    console.info(`[agent] repeated_mutation_failure capability=${capability}`);
+    return {
+      ...result,
+      retryGuidance: "This operation failed twice. Skip optional polish; retry only for an explicit user requirement or document correctness.",
+    };
+  }
 
   function bindHost(next: {
     readonly documentId: string;
@@ -139,6 +152,7 @@ function createActiveDocxSession(input: {
     dirty = false;
     workingRevision = 0;
     currentHandles.clear();
+    mutationFailures.clear();
   }
 
   function requireHost(): BoundDocumentHost {
@@ -154,6 +168,7 @@ function createActiveDocxSession(input: {
     workingRevision += 1;
     workingMutationCount += applied;
     currentHandles.clear();
+    mutationFailures.clear();
     if (documentId && versionId) {
       try {
         input.onWorkingUpdated?.({ documentId, baseVersionId: versionId, revision: workingRevision });
@@ -184,12 +199,12 @@ function createActiveDocxSession(input: {
       const handles = new Set<string>();
       collectHandles(operation, handles);
       if ([...handles].some((handle) => !currentHandles.has(handle))) {
-        return { ok: false, reasonCode: "STALE_HANDLE", status: "error", capability,
-          diagnostics: [{ code: "STALE_HANDLE", severity: "error", message: "Inspect the current document again before using this handle." }] };
+        return noteMutationFailure(capability, { ok: false, reasonCode: "STALE_HANDLE", status: "error", capability,
+          diagnostics: [{ code: "STALE_HANDLE", severity: "error", message: "Inspect the current document again before using this handle." }] });
       }
       const result = await host.mutate(capability, operation);
       if (result.ok) advanceWorkingState(1);
-      return result;
+      return noteMutationFailure(capability, result);
     },
     mutateBatch: async (capability, operations) => {
       if (!host) return { ok: false, capability, reasonCode: "NO_ACTIVE_DOCUMENT", applied: 0 };
@@ -200,11 +215,11 @@ function createActiveDocxSession(input: {
         const result = await host.mutate(capability, operations[index]!);
         if (!result.ok) {
           advanceWorkingState(index);
-          return {
+          return noteMutationFailure(capability, {
             ok: false, capability, applied: index, failedIndex: index,
             reasonCode: result.reasonCode, diagnostics: result.diagnostics,
             workingRevision,
-          };
+          });
         }
       }
       advanceWorkingState(operations.length);
