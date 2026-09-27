@@ -357,7 +357,8 @@ test("8. completed run becomes compact", () => {
     durationMs: 12_000,
     outcome: "completed",
   });
-  assert.match(presentation.headline, /^Updated document · \d+ actions · 12s$/);
+  assert.equal(presentation.headline, "Updated document · 12s");
+  assert.doesNotMatch(presentation.headline, /actions/);
   assert.ok(presentation.actionCount >= 2);
   assert.ok(presentation.details.length >= 1);
 });
@@ -471,7 +472,8 @@ test("technicalProgressLines hides Thought cadence", () => {
 
 test("live status never says Finishing up between tools", () => {
   assert.equal(detailsAffordanceLabel(0), "View details");
-  assert.equal(detailsAffordanceLabel(1), "View 1 action");
+  assert.equal(detailsAffordanceLabel(1), "View details");
+  assert.equal(detailsAffordanceLabel(9), "View details");
 
   const betweenTools = reduceAll([
     {

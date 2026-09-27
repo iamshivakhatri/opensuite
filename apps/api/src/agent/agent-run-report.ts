@@ -13,6 +13,22 @@ import {
   type ModelPricingEntry,
 } from "../model-usage/pricing.js";
 
+/**
+ * Run telemetry vocabulary (AgentRunReport + compact log):
+ * - modelTurns / turns — model invocation cycles
+ * - toolCalls — tool invocations executed (any kind / outcome)
+ * - tools[].kind read|mutate|other — per-call classification
+ * - document.workingMutationCount / editsApplied — successful logical
+ *   mutations on the run-local working document (batch items count each)
+ * - document.versionAdvances.length / persistedVersions — immutable DB
+ *   document_version advances (normally 0–1 per run; not working revisions)
+ * - failures[] — structured events (tool attempt errors, runtime bounds,
+ *   model errors). `outcome` is authoritative for terminal run failure;
+ *   tool-source entries on a successful run are recovered tool errors.
+ * Compact logs use toolErrors= for tool-source count only — never imply
+ * that a successful run was a terminal failure.
+ */
+
 export type AgentRunOutcome = "success" | "failure" | "partial" | "cancelled";
 
 export interface DocumentVersionAdvance {
@@ -33,7 +49,9 @@ export interface AgentRunReportDocument {
   readonly finalDocumentId?: string;
   readonly initialVersionId?: string;
   readonly finalVersionId?: string;
+  /** Successful logical mutations applied to the run-local working document. */
   readonly workingMutationCount: number;
+  /** Persisted immutable document_version advances for this run. */
   readonly versionAdvances: readonly DocumentVersionAdvance[];
   readonly transitions: readonly DocumentTransition[];
 }
@@ -131,11 +149,40 @@ export interface AgentRunReport {
   readonly actualProviderCostUsd?: number;
   /** Local list-price estimate — never presented as actual. */
   readonly estimatedCostUsd?: number;
+  /**
+   * Structured failure/error events for the run.
+   * Includes recovered tool attempt errors when outcome is still success.
+   * Prefer `outcome` for terminal run result; filter `source === "tool"` for tool errors.
+   */
   readonly failures: readonly AgentRunReportFailure[];
   readonly fuseEvents: readonly FuseEventMetric[];
   readonly document?: AgentRunReportDocument;
   readonly retrieval?: AgentRunReportRetrieval;
   readonly context?: AgentRunReportContext;
+}
+
+/** Tool-attempt errors in `failures[]` (recoverable or not). Terminal run state is `outcome`. */
+export function countToolErrors(
+  failures: readonly AgentRunReportFailure[],
+): number {
+  return failures.filter((failure) => failure.source === "tool").length;
+}
+
+/** Successful logical edits applied to the run-local working document. */
+export function editsAppliedCount(report: AgentRunReport): number {
+  return report.document?.workingMutationCount ?? 0;
+}
+
+/** Immutable document_version advances persisted for this run. */
+export function persistedVersionCount(report: AgentRunReport): number {
+  return report.document?.versionAdvances.length ?? 0;
+}
+
+export function countToolsByKind(
+  tools: readonly AgentRunReportTool[],
+  kind: string,
+): number {
+  return tools.filter((tool) => tool.kind === kind).length;
 }
 
 /** Optional host-owned delivery of one completed structured agent report. */
@@ -417,13 +464,25 @@ export function formatAgentRunSummary(report: AgentRunReport): string {
   lines.push("────────────────────────");
   lines.push(`${padLabel("Outcome")}${report.outcome}`);
   lines.push(`${padLabel("Model")}${modelLabel}`);
-  lines.push(`${padLabel("Turns")}${report.modelTurns}`);
+  lines.push(`${padLabel("Model turns")}${report.modelTurns}`);
   lines.push(`${padLabel("Tool calls")}${report.toolCalls}`);
-  if (report.context?.redundantReadSuppressedCount) lines.push(`${padLabel("Reads saved")}${report.context.redundantReadSuppressedCount}`);
+  lines.push(`${padLabel("Read calls")}${countToolsByKind(report.tools, "read")}`);
+  lines.push(
+    `${padLabel("Mutation calls")}${countToolsByKind(report.tools, "mutate")}`,
+  );
+  if (report.context?.redundantReadSuppressedCount) {
+    lines.push(
+      `${padLabel("Reads saved")}${report.context.redundantReadSuppressedCount}`,
+    );
+  }
 
   if (report.document) {
-    lines.push(`${padLabel("Mutations")}${report.document.workingMutationCount}`);
-    lines.push(`${padLabel("Version advances")}${report.document.versionAdvances.length}`);
+    lines.push(
+      `${padLabel("Edits applied")}${report.document.workingMutationCount}`,
+    );
+    lines.push(
+      `${padLabel("Persisted vers.")}${report.document.versionAdvances.length}`,
+    );
     const initialDoc = report.document.initialDocumentId;
     const finalDoc = report.document.finalDocumentId;
     if (initialDoc && finalDoc && initialDoc !== finalDoc) {
@@ -527,7 +586,7 @@ export function formatAgentRunSummary(report: AgentRunReport): string {
       }`,
     );
   }
-  lines.push(`${padLabel("Failures")}${report.failures.length}`);
+  lines.push(`${padLabel("Tool errors")}${countToolErrors(report.failures)}`);
   lines.push(`${padLabel("Fuse events")}${report.fuseEvents.length}`);
   if (report.stopReason) {
     lines.push(`${padLabel("Stop")}${report.stopReason}`);
@@ -539,22 +598,26 @@ export function formatAgentRunSummary(report: AgentRunReport): string {
 /** Keep routine logs short; opt in to the full report when debugging. */
 export function logAgentRunReport(report: AgentRunReport): void {
   const cost = report.actualProviderCostUsd ?? report.estimatedCostUsd;
+  const toolErrors = countToolErrors(report.failures);
   console.info(
     `[agent-run-report] run=${shortId(report.runId)} outcome=${report.outcome}` +
       ` stop=${report.stopReason ?? "unknown"} model=${report.model ?? "unknown"}` +
       ` turns=${report.modelTurns}` +
-      ` tools=${report.toolCalls} edits=${report.document?.workingMutationCount ?? 0}` +
-      ` versions=${report.document?.versionAdvances.length ?? 0}` +
+      ` toolCalls=${report.toolCalls}` +
+      ` readCalls=${countToolsByKind(report.tools, "read")}` +
+      ` mutationCalls=${countToolsByKind(report.tools, "mutate")}` +
+      ` editsApplied=${editsAppliedCount(report)}` +
+      ` persistedVersions=${persistedVersionCount(report)}` +
+      ` toolErrors=${toolErrors}` +
       ` total=${formatMs(report.totalDurationMs)} modelTime=${formatMs(report.modelTimeMs)}` +
       ` toolTime=${formatMs(report.toolTimeMs)} cost=${cost === undefined ? "n/a" : formatUsd(cost)}` +
       ` input=${report.usage.inputTokens} cached=${report.usage.cachedInputTokens}` +
-      ` output=${report.usage.outputTokens}` +
-      ` failures=${report.failures.length}`,
+      ` output=${report.usage.outputTokens}`,
   );
   for (const tool of report.tools) {
     if (tool.outcome !== "success") {
       console.info(
-        `[agent-run-failure] run=${shortId(report.runId)} tool=${tool.sequence}` +
+        `[agent-run-tool-error] run=${shortId(report.runId)} tool=${tool.sequence}` +
           ` name=${tool.name} code=${tool.failureCode ?? "TOOL_FAILED"}`,
       );
     }

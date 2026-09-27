@@ -71,7 +71,7 @@ export interface AgentRunPresentation {
   readonly headline: string;
   /** Progressive activity rows (live expanded; completed usually collapsed). */
   readonly activities: readonly AgentActivity[];
-  /** Tool/action count for the details affordance. */
+  /** Technical progress-line count for details visibility (not toolCalls). */
   readonly actionCount: number;
   /** Technical timeline groups (no Thought cadence rows). */
   readonly details: readonly ProgressGroup[];
@@ -1172,7 +1172,6 @@ function completedHeadline(
   lines: readonly AgentProgressLine[],
   outcome: AgentTurnProgress["outcome"],
   durationMs: number | null | undefined,
-  actionCount: number,
 ): string {
   const elapsed =
     durationMs != null ? formatProgressElapsed(durationMs) : null;
@@ -1183,12 +1182,10 @@ function completedHeadline(
     return elapsed ? `Couldn't complete · ${elapsed}` : "Couldn't complete";
   }
   const summary = completionSummaryLabel(lines);
-  const actions =
-    actionCount > 0
-      ? ` · ${actionCount} ${actionCount === 1 ? "action" : "actions"}`
-      : "";
   const time = elapsed ? ` · ${elapsed}` : "";
-  return `${summary}${actions}${time}`;
+  // Keep the product summary high-level. Activity-row counts are not tool
+  // calls and do not belong in the compact headline.
+  return `${summary}${time}`;
 }
 
 function recoveryDetailLabel(label: string): string {
@@ -1340,7 +1337,6 @@ export function presentAgentRun(
         lines,
         options?.outcome ?? "completed",
         options?.durationMs,
-        actionCount,
       );
 
   return {
@@ -1364,11 +1360,9 @@ export function progressSummaryLabel(
   return presentAgentRun(lines, options).headline;
 }
 
-/** Details affordance label: "View 16 actions". */
-export function detailsAffordanceLabel(actionCount: number): string {
-  if (actionCount <= 0) return "View details";
-  const noun = actionCount === 1 ? "action" : "actions";
-  return `View ${actionCount} ${noun}`;
+/** Details affordance — no noisy activity-row count (that is not toolCalls). */
+export function detailsAffordanceLabel(_actionCount?: number): string {
+  return "View details";
 }
 
 /** Show done + active + error (completed tools stay visible during the run). */

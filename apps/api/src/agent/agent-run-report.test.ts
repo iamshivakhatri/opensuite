@@ -5,10 +5,14 @@ import type { AgentRunMetrics } from "@opensuite/agent-core-v3";
 
 import {
   composeAgentRunReport,
+  countToolErrors,
+  countToolsByKind,
   deriveRunOutcome,
+  editsAppliedCount,
   estimateModelCostUsd,
   formatAgentRunSummary,
   logAgentRunReport,
+  persistedVersionCount,
 } from "./agent-run-report.js";
 import type { ModelPricingEntry } from "../model-usage/pricing.js";
 
@@ -183,6 +187,15 @@ test("run report logs one short line by default and keeps full JSON opt-in", () 
     logAgentRunReport(report);
     assert.equal(messages.length, 1);
     assert.match(messages[0] ?? "", /^\[agent-run-report\] run=run-log outcome=success/);
+    assert.match(messages[0] ?? "", /toolCalls=2/);
+    assert.match(messages[0] ?? "", /readCalls=1/);
+    assert.match(messages[0] ?? "", /mutationCalls=1/);
+    assert.match(messages[0] ?? "", /editsApplied=0/);
+    assert.match(messages[0] ?? "", /persistedVersions=0/);
+    assert.match(messages[0] ?? "", /toolErrors=0/);
+    assert.doesNotMatch(messages[0] ?? "", /\bfailures=/);
+    assert.doesNotMatch(messages[0] ?? "", /\bedits=/);
+    assert.doesNotMatch(messages[0] ?? "", /\bversions=/);
     assert.doesNotMatch(messages[0] ?? "", /\n/);
     process.env.AGENT_RUN_REPORT_VERBOSE = "1";
     logAgentRunReport(report);
@@ -193,6 +206,198 @@ test("run report logs one short line by default and keeps full JSON opt-in", () 
   }
   assert.match(messages[3] ?? "", /^\[agent-run-report:json\]\n\{/);
   assert.match(messages[3] ?? "", /\n    "availableEvidenceTokens": 18000/);
+});
+
+test("success with recovered tool errors does not imply terminal failure", () => {
+  const report = composeAgentRunReport({
+    runId: "run-recovered",
+    instruction: "format table",
+    metrics: baseMetrics({
+      modelTurns: [
+        {
+          turn: 1,
+          durationMs: 100,
+          inputTokens: 10,
+          cachedInputTokens: 0,
+          outputTokens: 5,
+        },
+        {
+          turn: 2,
+          durationMs: 100,
+          inputTokens: 10,
+          cachedInputTokens: 0,
+          outputTokens: 5,
+        },
+      ],
+      toolCalls: [
+        {
+          sequence: 1,
+          turn: 1,
+          toolName: "document.set_paragraph_style",
+          kind: "mutate",
+          durationMs: 10,
+          outcome: "failure",
+          failureCode: "STYLE_NOT_FOUND",
+        },
+        {
+          sequence: 2,
+          turn: 1,
+          toolName: "document.set_table_formatting",
+          kind: "mutate",
+          durationMs: 10,
+          outcome: "failure",
+          failureCode: "TABLE_NOT_FOUND",
+        },
+        {
+          sequence: 3,
+          turn: 2,
+          toolName: "document.insert_paragraph",
+          kind: "mutate",
+          durationMs: 20,
+          outcome: "success",
+        },
+      ],
+      usage: {
+        inputTokens: 20,
+        cachedInputTokens: 0,
+        outputTokens: 10,
+        reasoningTokens: 0,
+      },
+      stopReason: "finish_tool",
+    }),
+    stopReason: "finish_tool",
+    workingMutationCount: 3,
+    versionAdvances: [{ fromVersionId: "v1", toVersionId: "v2" }],
+  });
+
+  assert.equal(report.outcome, "success");
+  assert.equal(report.toolCalls, 3);
+  assert.equal(countToolsByKind(report.tools, "mutate"), 3);
+  assert.equal(countToolsByKind(report.tools, "read"), 0);
+  assert.equal(editsAppliedCount(report), 3);
+  assert.equal(persistedVersionCount(report), 1);
+  assert.equal(countToolErrors(report.failures), 2);
+  assert.equal(report.failures.every((f) => f.source === "tool"), true);
+
+  const messages: string[] = [];
+  const original = console.info;
+  console.info = (message?: unknown) => messages.push(String(message));
+  try {
+    logAgentRunReport(report);
+  } finally {
+    console.info = original;
+  }
+  assert.match(messages[0] ?? "", /outcome=success/);
+  assert.match(messages[0] ?? "", /toolErrors=2/);
+  assert.match(messages[0] ?? "", /editsApplied=3/);
+  assert.match(messages[0] ?? "", /persistedVersions=1/);
+  assert.doesNotMatch(messages[0] ?? "", /\bfailures=/);
+  assert.match(messages[1] ?? "", /^\[agent-run-tool-error\].*STYLE_NOT_FOUND/);
+  assert.match(messages[2] ?? "", /^\[agent-run-tool-error\].*TABLE_NOT_FOUND/);
+  assert.equal(messages.some((m) => m.startsWith("[agent-run-failure]")), false);
+});
+
+test("terminal failure stays distinct from recovered tool errors", () => {
+  const report = composeAgentRunReport({
+    runId: "run-terminal",
+    instruction: "keep going",
+    metrics: baseMetrics({
+      toolCalls: [
+        {
+          sequence: 1,
+          turn: 1,
+          toolName: "document.find",
+          kind: "read",
+          durationMs: 5,
+          outcome: "failure",
+          failureCode: "NO_ACTIVE_DOCUMENT",
+        },
+      ],
+      stopReason: "max_turns",
+    }),
+    stopReason: "max_turns",
+    workingMutationCount: 0,
+    versionAdvances: [],
+  });
+  assert.equal(report.outcome, "failure");
+  assert.equal(countToolErrors(report.failures), 1);
+  assert.equal(report.failures.some((f) => f.source === "runtime"), true);
+  assert.equal(editsAppliedCount(report), 0);
+  assert.equal(persistedVersionCount(report), 0);
+});
+
+test("read + mutation counts follow tool kind; batch edits can exceed mutation calls", () => {
+  const report = composeAgentRunReport({
+    runId: "run-batch",
+    instruction: "rewrite",
+    metrics: baseMetrics({
+      toolCalls: [
+        {
+          sequence: 1,
+          turn: 1,
+          toolName: "document.inspect",
+          kind: "read",
+          durationMs: 5,
+          outcome: "success",
+        },
+        {
+          sequence: 2,
+          turn: 1,
+          toolName: "document.find",
+          kind: "read",
+          durationMs: 5,
+          outcome: "success",
+        },
+        {
+          sequence: 3,
+          turn: 1,
+          toolName: "document.replace_texts",
+          kind: "mutate",
+          durationMs: 40,
+          outcome: "success",
+        },
+      ],
+    }),
+    stopReason: "finish_tool",
+    workingMutationCount: 7,
+    versionAdvances: [{ fromVersionId: "v1", toVersionId: "v2" }],
+  });
+  assert.equal(report.toolCalls, 3);
+  assert.equal(countToolsByKind(report.tools, "read"), 2);
+  assert.equal(countToolsByKind(report.tools, "mutate"), 1);
+  assert.equal(editsAppliedCount(report), 7);
+  assert.notEqual(editsAppliedCount(report), countToolsByKind(report.tools, "mutate"));
+  assert.equal(persistedVersionCount(report), 1);
+});
+
+test("read-only run reports zero edits and zero persisted versions", () => {
+  const report = composeAgentRunReport({
+    runId: "run-readonly",
+    instruction: "summarize",
+    metrics: baseMetrics({
+      toolCalls: [
+        {
+          sequence: 1,
+          turn: 1,
+          toolName: "document.inspect",
+          kind: "read",
+          durationMs: 8,
+          outcome: "success",
+        },
+      ],
+    }),
+    stopReason: "finish_tool",
+    initialVersionId: "v1",
+    finalVersionId: "v1",
+    workingMutationCount: 0,
+    versionAdvances: [],
+  });
+  assert.equal(report.outcome, "success");
+  assert.equal(countToolsByKind(report.tools, "read"), 1);
+  assert.equal(countToolsByKind(report.tools, "mutate"), 0);
+  assert.equal(editsAppliedCount(report), 0);
+  assert.equal(persistedVersionCount(report), 0);
+  assert.equal(countToolErrors(report.failures), 0);
 });
 
 test("composeAgentRunReport includes history diagnostics without message content", () => {

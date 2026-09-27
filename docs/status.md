@@ -6,7 +6,7 @@ _Read this before starting any work. Keep it a concise current-state handoff, no
 
 * Workspace shell, Casual Docs DOCX, engine-backed inspect/mutate, blank create, workspace agent.
 * **Agent Core V3-2 (live)** — general policy + dynamic AVAILABLE CAPABILITIES; finish + soft stopReasons.
-* **V3 Phase 3 observability** — `AgentRunMetrics` + API `AgentRunReport` / compact log (no DB/OTel; not shown in Agent Panel).
+* **V3 Phase 3 observability** — `AgentRunMetrics` + API `AgentRunReport` / compact log with stable vocabulary (`toolCalls`, `editsApplied`, `persistedVersions`, `toolErrors`; no DB/OTel; not shown in Agent Panel).
 * **V3 lifecycle tools** — `workspace.create_blank_document` + `workspace.duplicate_current_document` with same-run active rebind; `document.created` SSE; report `transitions[]`.
 * **Phase 3.5 Live Agent Activity UX** — progressive `AgentActivityGroup` / `ActivityRow` from existing SSE (`tool.*`, model-wait Thinking, lifecycle); read grouping; compact completion with total elapsed; no stacked Working… beside Thinking; no new progress protocol.
 * V2 retained off-path. `pnpm dev:api` builds deps then `tsc -w` + `tsx watch`.
@@ -14,7 +14,9 @@ _Read this before starting any work. Keep it a concise current-state handoff, no
 
 ## Just Completed
 
-* **Table mutation ordering** — inspected `cellHandles[]` now register as fresh handles, then go stale after a write. Header shading precedes other writes; later table formatting uses stable table selectors. Label selectors skip header rows, and body text tools cannot bold table text. Failure nudges persist across unrelated formatting. User dogfood before correction hit 20 turns/11 failures with only widths saved; rerun pending. No core/engine change.
+* **Telemetry terminology cleanup** — compact `[agent-run-report]` log uses `toolCalls` / `readCalls` / `mutationCalls` / `editsApplied` / `persistedVersions` / `toolErrors` (not ambiguous `edits`/`versions`/`failures`). Recovered tool attempts log as `[agent-run-tool-error]`; `outcome` remains authoritative for terminal run failure. `AgentRunReport.failures` kept for Cloud JSON compatibility. Product completion headline is `Updated document · 19s` (no accidental activity-row “actions” count). Vocab note in `docs/agent_core.md`. No engine / agent-core-v3 / Cloud behavior change.
+
+* **Table-cell text formatting** — `@opensuitehq/engine` 0.1.2 (sibling repo; local darwin binary wired) lets `set_text_formatting` bold/color simple direct-body table cells. Agent tool copy + operating instruction now tell the model to use it after header shading; paragraph style/formatting still exclude cells. Node binding check: shade → bold headers → column widths. npm pin remains 0.1.1 until 0.1.2 is published; local dogfood uses the rebuilt platform `.node`.
 
 * **Silent recovery / polish discipline** — operating instruction: recover tool failures without narrating reason codes/selectors/stale handles; abandon optional cosmetic polish after repeated failure; keep retrying for explicit user requirements or correctness. Final response mentions unresolved limits only when material. Prompt-only; no agent-core-v3 / engine change. Logs and activity Details unchanged.
 
@@ -123,4 +125,4 @@ _Read this before starting any work. Keep it a concise current-state handoff, no
 
 ## Recommended Next Step
 
-Telemetry terminology cleanup, then source-backed research capability, then Phase 2B semantic retrieval.
+SOURCE-BACKED RESEARCH — then PHASE 2B SEMANTIC RETRIEVAL.
