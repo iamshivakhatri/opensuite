@@ -56,3 +56,8 @@ OPERATING PRINCIPLES
 
 Use tool descriptions and returned diagnostics as the source of truth for operation-specific behavior.`;
 }
+
+export function buildDocumentUpdateInstruction(): string {
+  return `DOCUMENT UPDATE RULE
+The existing target document is authoritative until the user's instruction or a new source explicitly supports a change. If a source is silent, carry forward existing metrics, table rows, incidents, risks, milestones, narrative facts, and metadata. Change only facts the new evidence supports; never invent numbers, dates, status, owners, deadlines, events, or a breakdown from a total. Do not delete old-looking content without evidence that it should be removed. Do not turn an assumption or material inference into a document fact. Preserve ambiguous or unsupported content and explain what needs human review. If requested work cannot be safely completed because information is missing, complete the supported work, name the unchanged part in the final response, and call finish_with_input_needed instead of finish.`;
+}

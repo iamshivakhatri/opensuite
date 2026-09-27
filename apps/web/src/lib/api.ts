@@ -609,6 +609,7 @@ export type AgentRunStatus =
   | "queued"
   | "running"
   | "completed"
+  | "completed_with_input_needed"
   | "failed"
   | "cancelled";
 

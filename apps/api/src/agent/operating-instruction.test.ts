@@ -1,7 +1,16 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { buildAgentOperatingInstruction } from "./operating-instruction.js";
+import { buildAgentOperatingInstruction, buildDocumentUpdateInstruction } from "./operating-instruction.js";
+
+test("update policy preserves source-silent facts and flags missing input", () => {
+  const policy = buildDocumentUpdateInstruction();
+  assert.match(policy, /source is silent, carry forward existing metrics, table rows/);
+  assert.match(policy, /Change only facts the new evidence supports/);
+  assert.match(policy, /never invent numbers, dates, status, owners, deadlines, events, or a breakdown from a total/);
+  assert.match(policy, /finish_with_input_needed/);
+  assert.doesNotMatch(buildAgentOperatingInstruction(["finish"]), /DOCUMENT UPDATE RULE/);
+});
 
 test("operating instruction embeds general policy and only exposed tools", () => {
   const system = buildAgentOperatingInstruction([

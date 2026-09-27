@@ -121,6 +121,38 @@ test("workspace ranking keeps primary and tagged artifacts visible", () => {
   assert.match(formatWorkspaceRetrievedContext(artifacts, candidates, [], "deck", ["numbers"]), /semantic inspection unavailable/);
 });
 
+test("current attachments scope update evidence while an explicit broad request can reach other reports", async () => {
+  const artifacts = [
+    { documentId: "orbit", versionId: "v1", name: "OrbitDesk report.docx", format: "docx" },
+    { documentId: "nepal", versionId: "v2", name: "Digital Skills Nepal report.docx", format: "docx" },
+    { documentId: "source", versionId: "v3", name: "September OrbitDesk update.docx", format: "docx" },
+  ];
+  const binding = { inspectDocx: async () => ({ ok: true, diagnostics: [], bodyBlocks: { page: { total: 0, offset: 0, returned: 0, hasMore: false }, items: [] } }) } as unknown as DocxEngineBinding;
+  const common = { artifacts, primaryDocumentId: "orbit", taggedDocumentIds: ["source"], workingSetDocumentIds: ["orbit", "source", "nepal"], binding, cache: new SlimDocumentStructureCache(), readBytes: async () => new Uint8Array() };
+  const focused = await retrieveWorkspaceContext({ ...common, instruction: "Update OrbitDesk from the attached September update" });
+  assert.deepEqual(new Set(focused.candidates.map((item) => item.documentId)), new Set(["orbit", "source"]));
+  assert.deepEqual(focused.workingSet.map((item) => item.documentId), ["orbit", "source"]);
+  assert.doesNotMatch(focused.message ?? "", /Digital Skills Nepal/);
+  const broad = await retrieveWorkspaceContext({ ...common, instruction: "Use the other project reports in this workspace as references" });
+  assert.ok(broad.candidates.some((item) => item.documentId === "nepal"));
+});
+
+test("new-document retrieval ignores a previous active report", async () => {
+  const retrieved = await retrieveWorkspaceContext({
+    artifacts: [{ documentId: "old", versionId: "v1", name: "Old report.docx", format: "docx" }],
+    instruction: "Create a new monthly report",
+    primaryDocumentId: null,
+    taggedDocumentIds: [],
+    workingSetDocumentIds: ["old"],
+    binding: { inspectDocx: async () => { throw new Error("should not inspect"); } } as unknown as DocxEngineBinding,
+    cache: new SlimDocumentStructureCache(),
+    readBytes: async () => { throw new Error("should not read"); },
+  });
+  assert.deepEqual(retrieved.candidates, []);
+  assert.deepEqual(retrieved.workingSet, []);
+  assert.equal(retrieved.message, undefined);
+});
+
 test("workspace catalog remains separate from selected DOCX evidence", () => {
   const artifacts = [
     { documentId: "a", versionId: "v1", name: "A.docx", format: "docx" },
@@ -418,7 +450,7 @@ test("workspace retrieval reads only selected DOCX versions and falls back witho
   assert.deepEqual(readVersions, ["v-exact"]);
   assert.equal(retrieved.evidence[0]?.artifact.versionId, "v-exact");
   assert.match(retrieved.message ?? "", /Version: v-exact/);
-  assert.match(retrieved.message ?? "", /Vacation Notes\.docx \(docx\)/);
+  assert.doesNotMatch(retrieved.message ?? "", /Vacation Notes\.docx/);
 });
 
 test("first-turn projection places retrieval context before the latest user instruction", () => {

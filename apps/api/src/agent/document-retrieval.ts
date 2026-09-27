@@ -150,14 +150,21 @@ export async function retrieveWorkspaceContext(input: {
   readonly availableEvidenceTokens?: number;
   readonly readBytes: (artifact: WorkspaceArtifact) => Promise<Uint8Array>;
 }): Promise<WorkspaceRetrieval> {
+  const broadRequest = /\b(?:other|all|across|workspace|related)\b.{0,60}\b(?:documents?|reports?|files?|projects?)\b|\b(?:documents?|reports?|files?|projects?)\b.{0,60}\b(?:workspace|as references?)\b/i.test(input.instruction);
+  const selected = broadRequest ? input.artifacts : input.artifacts.filter((artifact) =>
+    artifact.documentId === input.primaryDocumentId ||
+    input.taggedDocumentIds.includes(artifact.documentId) ||
+    input.instruction.toLowerCase().includes(stripExtension(artifact.name).toLowerCase()),
+  );
   const candidates = rankWorkspaceArtifacts({
     ...input,
-    taggedDocumentIds: input.workingSetDocumentIds ?? input.taggedDocumentIds,
+    artifacts: selected,
+    taggedDocumentIds: broadRequest ? input.workingSetDocumentIds ?? input.taggedDocumentIds : input.taggedDocumentIds,
   });
   const workingSet = workingSetArtifacts(
-    input.artifacts,
+    selected,
     input.primaryDocumentId,
-    input.workingSetDocumentIds ?? input.taggedDocumentIds,
+    broadRequest ? input.workingSetDocumentIds ?? input.taggedDocumentIds : input.taggedDocumentIds,
   );
   const plannerEvidenceBudgetTokens = plannerEvidenceBudget(input.availableEvidenceTokens);
   if (!input.binding || candidates.length === 0) {
@@ -222,7 +229,7 @@ export async function retrieveWorkspaceContext(input: {
     evidence,
     ...(plannerEvidenceBudgetTokens !== undefined ? { plannerEvidenceBudgetTokens } : {}),
     ...(fullDocumentEstimatedTokens !== undefined ? { fullDocumentEstimatedTokens } : {}),
-    ...(candidates.length > 0 ? { message: formatWorkspaceRetrievedContext(input.artifacts, candidates, evidence, input.primaryDocumentId, input.taggedDocumentIds, workingSet, directContent ? [] : documentMaps, directContent) } : {}),
+    ...(candidates.length > 0 ? { message: formatWorkspaceRetrievedContext(selected, candidates, evidence, input.primaryDocumentId, input.taggedDocumentIds, workingSet, directContent ? [] : documentMaps, directContent) } : {}),
   };
 }
 

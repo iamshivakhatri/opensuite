@@ -36,6 +36,7 @@ export const agentRunStatusEnum = pgEnum("agent_run_status", [
   "running",
   "waiting_for_confirmation",
   "completed",
+  "completed_with_input_needed",
   "failed",
   "cancelled",
 ]);

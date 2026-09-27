@@ -14,6 +14,7 @@ export type AgentRunStatus =
   | "running"
   | "waiting_for_confirmation"
   | "completed"
+  | "completed_with_input_needed"
   | "failed"
   | "cancelled";
 
@@ -143,11 +144,13 @@ const RUN_STATUS_TRANSITIONS: Readonly<
   running: [
     "waiting_for_confirmation",
     "completed",
+    "completed_with_input_needed",
     "failed",
     "cancelled",
   ],
   waiting_for_confirmation: ["running", "cancelled", "failed"],
   completed: [],
+  completed_with_input_needed: [],
   failed: [],
   cancelled: [],
 };
@@ -164,6 +167,7 @@ const STEP_STATUS_TRANSITIONS: Readonly<
 
 const TERMINAL_RUN_STATUSES: ReadonlySet<AgentRunStatus> = new Set([
   "completed",
+  "completed_with_input_needed",
   "failed",
   "cancelled",
 ]);

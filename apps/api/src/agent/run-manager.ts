@@ -396,7 +396,7 @@ export function createAgentRunManager(deps: AgentRunManagerDeps) {
   };
 }
 
-const TERMINAL_STATUSES = new Set(["completed", "failed", "cancelled"]);
+const TERMINAL_STATUSES = new Set(["completed", "completed_with_input_needed", "failed", "cancelled"]);
 
 /**
  * Final safety net when the background execution promise rejects without

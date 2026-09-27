@@ -230,6 +230,7 @@ function memoryPersistence(ownerUserId: string): AgentPersistenceService & {
         startedAt: existing.startedAt ?? now(),
         completedAt:
           input.status === "completed" ||
+          input.status === "completed_with_input_needed" ||
           input.status === "failed" ||
           input.status === "cancelled"
             ? now()
@@ -403,6 +404,24 @@ test("successful V3 finish_tool settles completed + agent.completed", async () =
   assert.match(sawSystem!, /- finish/);
   assert.equal(sawSystem!.includes("document."), false);
   assert.equal(sawSystem!.includes("document.capabilities"), false);
+});
+
+test("missing requested data preserves work and settles as input needed", async () => {
+  const persistence = memoryPersistence("user-1");
+  const execution = createAgentExecutionService(baseDeps(persistence, async (input) => {
+    assert.ok(input.tools?.finish_with_input_needed);
+    await input.onEvent?.({ type: "text_delta", delta: "KPIs updated. Budget unchanged; new budget figures are needed." });
+    await input.onEvent?.({ type: "tool_started", toolCallId: "finish-1", toolName: "finish_with_input_needed" });
+    await input.tools.finish_with_input_needed.execute!({ missingInformation: "New budget figures" }, { toolCallId: "finish-1", messages: [], context: undefined as never });
+    await input.onEvent?.({ type: "tool_completed", toolCallId: "finish-1", toolName: "finish_with_input_needed" });
+    const result = softResult("finish_tool", "KPIs updated. Budget unchanged; new budget figures are needed.");
+    return { ...result, metrics: { ...result.metrics, toolCalls: [{ sequence: 0, turn: 1, toolName: "finish_with_input_needed", kind: "read", durationMs: 0, outcome: "success" }] } };
+  }));
+  const result = await (await execution.start({ userId: "user-1", threadId: "thread-1", instruction: "Update KPIs and budget" })).result;
+  assert.equal(result.run.status, "completed_with_input_needed");
+  assert.equal(result.run.errorCode, null);
+  assert.match(result.assistantMessage?.content ?? "", /Budget unchanged/);
+  assert.deepEqual(persistence.steps.map((step) => step.name), ["finish_with_input_needed"]);
 });
 
 test("managed AI failure keeps a safe, actionable reason on the run", async () => {
@@ -580,7 +599,7 @@ test("later runs restore durable working documents into model context", async ()
 test("recurring report refresh selects the target, reads the source, and saves one target version", async () => {
   const persistence = memoryPersistence("user-1");
   const binding = await createNapiDocxEngineBinding();
-  const target = Buffer.from(buildMinimalDocx(["August report", "Revenue: 10", "Unrelated note"]));
+  const target = Buffer.from(buildMinimalDocx(["August report", "Revenue: 10", "Budget: 20", "Unrelated note"]));
   const source = Buffer.from(buildMinimalDocx(["September updates", "Revenue: 12"]));
   let savedTarget = target;
   let targetVersion = "target-v1";
@@ -593,6 +612,8 @@ test("recurring report refresh selects the target, reads the source, and saves o
   const execution = createAgentExecutionService({
     ...baseDeps(persistence, async (input) => {
       const projected = input.projectMessages!(input.messages);
+      assert.match(input.system ?? "", /DOCUMENT UPDATE RULE/);
+      assert.match(input.system ?? "", /source is silent, carry forward/);
       assert.match(JSON.stringify(projected), /August report\.docx.*ID target/);
       assert.match(JSON.stringify(projected), /September updates\.docx.*ID source/);
       const tools = input.tools!;
@@ -645,8 +666,34 @@ test("recurring report refresh selects the target, reads the source, and saves o
   assert.equal(artifacts[1]!.latestVersion.id, "source-v1");
   assert.match(JSON.stringify(await binding.inspectDocx(savedTarget, { focus: { kind: "body_blocks" } })), /September report/);
   assert.match(JSON.stringify(await binding.inspectDocx(savedTarget, { focus: { kind: "body_blocks" } })), /Revenue: 12/);
+  assert.match(JSON.stringify(await binding.inspectDocx(savedTarget, { focus: { kind: "body_blocks" } })), /Budget: 20/);
   assert.match(JSON.stringify(await binding.inspectDocx(savedTarget, { focus: { kind: "body_blocks" } })), /Unrelated note/);
   assert.deepEqual(source, Buffer.from(buildMinimalDocx(["September updates", "Revenue: 12"])));
+});
+
+test("creating a new report does not bind or retrieve a stale active document", async () => {
+  const persistence = memoryPersistence("user-1");
+  persistence.workingDocumentIds.push("old");
+  const old = { id: "old", name: "Prior report.docx", format: "docx", workspaceId: "ws-1", latestVersion: { id: "old-v1" } };
+  const execution = createAgentExecutionService({
+    ...baseDeps(persistence, async (input) => {
+      assert.match(input.system ?? "", /No document is active/);
+      assert.doesNotMatch(input.system ?? "", /DOCUMENT UPDATE RULE/);
+      assert.doesNotMatch(JSON.stringify(input.projectMessages!(input.messages)), /Prior report/);
+      return softResult("completed", "Ready to create the report.");
+    }),
+    documents: {
+      listInWorkspace: async () => [old] as never,
+      getOwnedDocument: async () => old as never,
+      readExactVersionBytes: async () => { throw new Error("stale document was read"); },
+      appendDocumentVersion: async () => { throw new Error("unused"); },
+      createBlankDocxDocument: async () => { throw new Error("unused"); },
+      createOfficeDocumentFromBytes: async () => { throw new Error("unused"); },
+    },
+    docxBinding: { getDocxCapabilities: () => ({ ok: true, protocolVersion: 1, engineVersion: "test", formats: [{ format: "docx", capabilities: [] }] }) } as unknown as AgentExecutionServiceDeps["docxBinding"],
+  });
+  const result = await (await execution.start({ userId: "user-1", threadId: "thread-1", activeDocumentId: "old", instruction: "Create a new monthly report" })).result;
+  assert.equal(result.run.baseDocumentVersionId, null);
 });
 
 test("completed runs persist narration at tool boundaries without duplicating the final answer", async () => {

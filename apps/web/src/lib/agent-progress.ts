@@ -21,7 +21,7 @@ export interface AgentTurnProgress {
   readonly runId: string;
   readonly durationMs: number;
   readonly lines: readonly AgentProgressLine[];
-  readonly outcome: "completed" | "cancelled" | "failed";
+  readonly outcome: "completed" | "completed_with_input_needed" | "cancelled" | "failed";
 }
 
 /** Semantic activity family — used for details recovery grouping. */
@@ -303,6 +303,10 @@ const TOOL_LABELS: Record<string, { active: string; done: string }> = {
     active: "Completing task",
     done: "Completed task",
   },
+  finish_with_input_needed: {
+    active: "Completing task",
+    done: "Needs your input",
+  },
   "slides.update_text": {
     active: "Updating slide text",
     done: "Updated slide text",
@@ -346,7 +350,7 @@ export function toolLabels(toolName: string): { active: string; done: string } {
 }
 
 export function activityKindForTool(toolName: string): ActivityKind {
-  if (toolName === "finish") return "finish";
+  if (toolName === "finish" || toolName === "finish_with_input_needed") return "finish";
   if (READ_TOOLS.has(toolName)) return "read";
   if (LIFECYCLE_TOOLS.has(toolName)) return "lifecycle";
   if (toolName.startsWith("document.") || toolName.startsWith("workspace.")) {
@@ -772,6 +776,7 @@ export function thoughtForLabel(
   const elapsed = formatProgressElapsed(durationMs);
   if (outcome === "cancelled") return `Stopped after ${elapsed}`;
   if (outcome === "failed") return `Couldn't complete · ${elapsed}`;
+  if (outcome === "completed_with_input_needed") return `Needs your input · ${elapsed}`;
   if (stepCount !== undefined && stepCount > 0) {
     return `Done in ${elapsed}`;
   }
@@ -1156,7 +1161,7 @@ function completionSummaryLabel(lines: readonly AgentProgressLine[]): string {
       }
     } else if (READ_TOOLS.has(line.toolName)) {
       hasRead = true;
-    } else if (line.toolName !== "finish") {
+    } else if (line.toolName !== "finish" && line.toolName !== "finish_with_input_needed") {
       hasMutation = true;
     }
   }
@@ -1180,6 +1185,9 @@ function completedHeadline(
   }
   if (outcome === "failed") {
     return elapsed ? `Couldn't complete · ${elapsed}` : "Couldn't complete";
+  }
+  if (outcome === "completed_with_input_needed") {
+    return elapsed ? `Needs your input · ${elapsed}` : "Needs your input";
   }
   const summary = completionSummaryLabel(lines);
   const time = elapsed ? ` · ${elapsed}` : "";

@@ -114,6 +114,7 @@ export interface AgentRouteDeps {
 
 const TERMINAL_RUN_STATUSES = new Set([
   "completed",
+  "completed_with_input_needed",
   "failed",
   "cancelled",
 ]);
@@ -642,6 +643,7 @@ export function registerAgentRoutes(
       // stops reconnecting / polling.
       if (
         run.status !== "completed" &&
+        run.status !== "completed_with_input_needed" &&
         run.status !== "failed" &&
         run.status !== "cancelled"
       ) {

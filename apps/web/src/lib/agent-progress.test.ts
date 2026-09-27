@@ -727,6 +727,11 @@ test("progressSummaryLabel live tracks active tool", () => {
   assert.match(progressSummaryLabel(lines, { live: true }), /Formatting paragraph/);
 });
 
+test("input-needed completion has a distinct neutral headline", () => {
+  assert.equal(progressSummaryLabel([], { outcome: "completed_with_input_needed", durationMs: 1000 }), "Needs your input · 1.0s");
+  assert.equal(activityKindForTool("finish_with_input_needed"), "finish");
+});
+
 test("shouldAcceptSubmit blocks empty and in-flight submits", () => {
   assert.equal(
     shouldAcceptSubmit({ instruction: "  ", busy: false, locked: false }),

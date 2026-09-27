@@ -14,6 +14,8 @@ _Read this before starting any work. Keep it a concise current-state handoff, no
 
 ## Just Completed
 
+* **Recurring-report fix pass 1** — update-only source rule preserves facts without explicit replacement evidence; missing requested facts can finish as `completed_with_input_needed` with a clear user response. Retrieval now scopes to the target, current attachments, and named references unless broader workspace reports are requested. Clear new-document requests start without a stale active target. No extra model call or Rust change.
+
 * **Readable agent run logs** — compact `[agent]` lines for RETRIEVAL / TURN (LLM start, first-token/streaming, done+usage+tools) / TOOL ✓✗ / SAVE / VALIDATION / DONE. Provider usage (input/cached) lands on LLM done; TTFT via `model_turn_first_output`. Routine GET poll noise filtered; context compaction logs only when triggered. `AGENT_RUN_REPORT_VERBOSE=1` still dumps full report JSON. No runtime/tool/prompt behavior change.
 
 * **Phase 3 verification/logging fix** — explicit report transitions now recognize month/year/quarter across descriptive titles; table dimensions use successful structural tool names to label supported changes as expected and unexplained loss as warning. API logs now show retrieval/target/source names, live tool outcomes, saved version, validation, and the existing per-turn/final metrics. No runtime, Rust, or UI changes in this fix.
@@ -101,6 +103,8 @@ _Read this before starting any work. Keep it a concise current-state handoff, no
 
 ## Verification Status
 
+* Fix pass 1: focused API retrieval/policy/lifecycle tests and web progress tests pass; API, DB, and web typechecks pass. No manual product test.
+
 * Phase 3 fix: focused API verification, lifecycle, and run-report tests pass; API build passes. No manual browser test.
 
 * Continue presentation: 48 focused web tests pass; web typecheck and production build pass. No manual browser test.
@@ -143,4 +147,4 @@ _Read this before starting any work. Keep it a concise current-state handoff, no
 
 ## Recommended Next Step
 
-SOURCE-BACKED RESEARCH — then PHASE 2B SEMANTIC RETRIEVAL.
+Numeric reconciliation for source-backed report updates.

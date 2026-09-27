@@ -1,5 +1,6 @@
 import {
   createFinishTool,
+  defineTool,
   getRunMetricsFromError,
   isSuccessfulStop,
   runAgent,
@@ -11,6 +12,7 @@ import {
   type StopReason,
   type V3Model,
 } from "@opensuite/agent-core-v3";
+import { jsonSchema } from "ai";
 
 import type { DocxEngineBinding } from "@opensuite/engine-client";
 
@@ -66,7 +68,7 @@ import {
   createInRunObservationStats,
   projectInRunObservations,
 } from "./in-run-observation-projection.js";
-import { buildAgentOperatingInstruction } from "./operating-instruction.js";
+import { buildAgentOperatingInstruction, buildDocumentUpdateInstruction } from "./operating-instruction.js";
 import {
   type AgentMessage,
   type AgentPersistenceService,
@@ -83,6 +85,7 @@ import {
 } from "./execution-lease.js";
 
 const MAX_MODEL_TURNS = 20;
+const isFinishTool = (name: string | undefined) => name === "finish" || name === "finish_with_input_needed";
 
 type TranscriptEntry = {
   readonly kind: AgentStepKind;
@@ -107,7 +110,7 @@ function createTranscriptCollector() {
     toolStarted(toolName?: string) {
       // Final answer text before `finish` stays buffered so finish(finalText)
       // can drop it; flushing here would duplicate agent_message content.
-      if (toolName === "finish") return;
+      if (isFinishTool(toolName)) return;
       flushNarration();
     },
     toolFinished(toolName: string, status: AgentStepStatus, skipped = false, error?: string) {
@@ -299,6 +302,8 @@ export function createAgentExecutionService(deps: AgentExecutionServiceDeps) {
         input.userId,
         input.activeDocumentId,
       );
+      const creatingNewDocument = /\b(?:create|make|start|draft)\s+(?:a\s+|an\s+|the\s+)?(?:brand\s+)?new\b/i.test(input.instruction);
+      if (creatingNewDocument) primaryDocument = null;
       const persistedWorkingDocumentIds = await deps.persistence.listWorkingDocumentIds({
         threadId: thread.id,
         ownerUserId: input.userId,
@@ -309,7 +314,7 @@ export function createAgentExecutionService(deps: AgentExecutionServiceDeps) {
         ...(input.documentIds ?? []),
       ])];
       let editableDocumentId: string | undefined;
-      if (workingDocumentIds.length > 1) {
+      if (!creatingNewDocument && workingDocumentIds.length > 1) {
         const documents = await deps.documents.listInWorkspace(thread.workspaceId, input.userId).catch(() => []);
         const namedTargets = documents.filter((document) =>
           workingDocumentIds.includes(document.id) && document.format === "docx" &&
@@ -363,7 +368,12 @@ export function createAgentExecutionService(deps: AgentExecutionServiceDeps) {
         structureCache,
         ownerUserId: input.userId,
         instruction: input.instruction,
-        submittedDocumentIds: input.documentIds ?? [],
+        submittedDocumentIds: [...new Set([
+          ...(input.documentIds ?? []),
+          ...(!creatingNewDocument && input.activeDocumentId && input.activeDocumentId !== primaryDocument?.documentId
+            ? [input.activeDocumentId]
+            : []),
+        ])],
         workingDocumentIds,
         editableDocumentId,
         ...(continuation ? { continuationContext: continuation.context, continuationPreviousRunId: input.continueFromRunId } : {}),
@@ -617,6 +627,13 @@ async function runExecution(input: {
     const tools: AgentToolSet = {
       ...(boundTools?.tools ?? {}),
       [finish.name]: finish.tool,
+      finish_with_input_needed: defineTool<{ missingInformation: string }, string>({
+        kind: "read",
+        terminal: true,
+        description: "End after your final response when some requested work remains unchanged because human input or source evidence is missing. State the missing information in the final response.",
+        inputSchema: jsonSchema({ type: "object", properties: { missingInformation: { type: "string", minLength: 1 } }, required: ["missingInformation"], additionalProperties: false }),
+        execute: () => "",
+      }),
     };
     const readGuard = guardRepeatedReads(
       tools,
@@ -625,6 +642,9 @@ async function runExecution(input: {
       () => boundTools?.getWorkingRevision() ?? 0,
     );
     const system = buildAgentOperatingInstruction(Object.keys(tools)) +
+      (input.primaryDocumentId && /\b(?:update|edit|revise|refresh|modify)\b/i.test(input.instruction)
+        ? `\n\n${buildDocumentUpdateInstruction()}`
+        : "") +
       (!boundTools?.getActiveDocumentId() && tools["workspace.create_blank_document"]
         ? "\n\nNo document is active. If the user requests a new document, create it before calling any document tool."
         : "") +
@@ -858,7 +878,7 @@ async function runExecution(input: {
               }),
             );
           } else if (event.type === "tool_started") {
-            if (event.toolName !== "finish") {
+            if (!isFinishTool(event.toolName)) {
               toolStartedAt.set(event.toolCallId, Date.now());
             }
           } else if (
@@ -866,7 +886,7 @@ async function runExecution(input: {
             event.type === "tool_failed" ||
             event.type === "tool_skipped"
           ) {
-            if (event.toolName !== "finish") {
+            if (!isFinishTool(event.toolName)) {
               const elapsed = Date.now() - (toolStartedAt.get(event.toolCallId) ?? Date.now());
               const code =
                 event.type === "tool_failed"
@@ -1006,6 +1026,9 @@ async function runExecution(input: {
       threadId: input.thread.id,
       runId: input.run.id,
       content: result.text,
+      inputNeeded: result.stopReason === "finish_tool" &&
+        result.metrics.toolCalls.filter((call) => call.outcome === "success" && isFinishTool(call.toolName))
+          .at(-1)?.toolName === "finish_with_input_needed",
     });
     transcript.finish(result.text);
     await persistTranscript(input.deps.persistence, input.ownerUserId, input.run.id, transcript.entries());
@@ -1445,6 +1468,7 @@ async function finalizeCompletedRun(input: {
   readonly threadId: string;
   readonly runId: string;
   readonly content: string;
+  readonly inputNeeded?: boolean;
 }): Promise<{ run: AgentRun; assistantMessage: AgentMessage | null }> {
   return input.persistence.withTransaction(async (tx) => {
     const content = input.content.trim();
@@ -1455,7 +1479,7 @@ async function finalizeCompletedRun(input: {
       {
         runId: input.runId,
         ownerUserId: input.ownerUserId,
-        status: "completed",
+        status: input.inputNeeded ? "completed_with_input_needed" : "completed",
         resultMessageId: assistantMessage?.id ?? null,
       },
       tx,
@@ -1496,6 +1520,7 @@ async function settleTerminalRunFailure(input: {
     if (
       current &&
       (current.status === "completed" ||
+        current.status === "completed_with_input_needed" ||
         current.status === "failed" ||
         current.status === "cancelled")
     ) {

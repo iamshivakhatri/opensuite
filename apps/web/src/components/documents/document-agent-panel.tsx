@@ -509,7 +509,7 @@ export function DocumentAgentPanel({
       setRunNotice(null);
       setCanRetryRun(false);
       setContinueRunId(null);
-    } else if (run.status === "completed") {
+    } else if (run.status === "completed" || run.status === "completed_with_input_needed") {
       setRunError(null);
       setRunNotice(null);
       setCanRetryRun(false);
@@ -529,7 +529,9 @@ export function DocumentAgentPanel({
             ? "cancelled"
             : run.status === "failed"
               ? "failed"
-              : "completed";
+              : run.status === "completed_with_input_needed"
+                ? "completed_with_input_needed"
+                : "completed";
         setLastTurn({
           runId: run.id,
           durationMs: ms,
@@ -894,14 +896,16 @@ export function DocumentAgentPanel({
               ? "cancelled"
               : latestRun.status === "failed"
                 ? "failed"
-                : "completed";
+                : latestRun.status === "completed_with_input_needed"
+                  ? "completed_with_input_needed"
+                  : "completed";
           setLastTurn({
             runId: latestRun.id,
             durationMs: ms,
             lines: [],
             outcome,
           });
-          if (latestRun.status === "completed") {
+          if (latestRun.status === "completed" || latestRun.status === "completed_with_input_needed") {
             setRunNotice(null);
           } else if (latestRun.status === "cancelled") {
             setRunNotice(null);
@@ -1301,7 +1305,9 @@ export function DocumentAgentPanel({
                 ? "cancelled"
                 : latestRun.status === "failed"
                   ? "failed"
-                  : "completed",
+                  : latestRun.status === "completed_with_input_needed"
+                    ? "completed_with_input_needed"
+                    : "completed",
           });
           if (latestRun.status === "failed") {
             setCanRetryRun(true);
