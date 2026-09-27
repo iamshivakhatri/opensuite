@@ -12,6 +12,11 @@ import {
   MICRO_USD_PER_USD,
   type ModelPricingEntry,
 } from "../model-usage/pricing.js";
+import {
+  formatAgentRunDone,
+  formatCompactDuration,
+  formatCompactUsd,
+} from "./agent-run-log.js";
 
 /**
  * Run telemetry vocabulary (AgentRunReport + compact log):
@@ -600,6 +605,36 @@ export function logAgentRunReport(report: AgentRunReport): void {
   const cost = report.actualProviderCostUsd ?? report.estimatedCostUsd;
   const toolErrors = countToolErrors(report.failures);
   console.info(
+    formatAgentRunDone({
+      outcome: report.outcome,
+      totalDurationMs: report.totalDurationMs,
+      modelTimeMs: report.modelTimeMs,
+      toolTimeMs: report.toolTimeMs,
+      modelTurns: report.modelTurns,
+      toolCalls: report.toolCalls,
+      persistedVersions: persistedVersionCount(report),
+      ...(cost !== undefined ? { costUsd: cost } : {}),
+      ...(report.stopReason ? { stopReason: report.stopReason } : {}),
+    }),
+  );
+  if (toolErrors > 0) {
+    for (const tool of report.tools) {
+      if (tool.outcome === "success") continue;
+      const recovered = report.tools.some(
+        (later) =>
+          later.sequence > tool.sequence &&
+          later.name === tool.name &&
+          later.outcome === "success",
+      );
+      console.info(
+        `  tool error · ${tool.name} · ${tool.failureCode ?? "TOOL_FAILED"}` +
+          (recovered ? " · recovered" : ""),
+      );
+    }
+  }
+  if (process.env.AGENT_RUN_REPORT_VERBOSE !== "1") return;
+
+  console.info(
     `[agent-run-report] run=${shortId(report.runId)} outcome=${report.outcome}` +
       ` stop=${report.stopReason ?? "unknown"} model=${report.model ?? "unknown"}` +
       ` turns=${report.modelTurns}` +
@@ -609,22 +644,11 @@ export function logAgentRunReport(report: AgentRunReport): void {
       ` editsApplied=${editsAppliedCount(report)}` +
       ` persistedVersions=${persistedVersionCount(report)}` +
       ` toolErrors=${toolErrors}` +
-      ` total=${formatMs(report.totalDurationMs)} modelTime=${formatMs(report.modelTimeMs)}` +
-      ` toolTime=${formatMs(report.toolTimeMs)} cost=${cost === undefined ? "n/a" : formatUsd(cost)}` +
+      ` total=${formatCompactDuration(report.totalDurationMs)} modelTime=${formatCompactDuration(report.modelTimeMs)}` +
+      ` toolTime=${formatCompactDuration(report.toolTimeMs)} cost=${cost === undefined ? "n/a" : formatCompactUsd(cost)}` +
       ` input=${report.usage.inputTokens} cached=${report.usage.cachedInputTokens}` +
       ` output=${report.usage.outputTokens}`,
   );
-  for (const tool of report.tools) {
-    if (tool.outcome !== "success") {
-      console.info(
-        `[agent-run-tool-error] run=${shortId(report.runId)} tool=${tool.sequence}` +
-          ` name=${tool.name} code=${tool.failureCode ?? "TOOL_FAILED"}` +
-          (report.tools.some((later) => later.sequence > tool.sequence && later.name === tool.name && later.outcome === "success") ? " recovered=true" : ""),
-      );
-    }
-  }
-  if (process.env.AGENT_RUN_REPORT_VERBOSE !== "1") return;
-
   console.info(`[agent-run-report:detail]\n${formatAgentRunSummary(report)}`);
   console.info(
     `[agent-run-report:json]\n${JSON.stringify({

@@ -569,7 +569,12 @@ test("later runs restore durable working documents into model context", async ()
   }
   assert.match(String(projected.at(-2)?.content), /WORKING SET\n- B\.docx \(docx; ID doc-b\)\n- A\.docx \(docx; ID doc-a\)/);
   assert.equal(projected.at(-1)?.content, "second");
-  assert.ok(logs.some((message) => message.includes("documents=2") && message.includes("target=B.docx") && message.includes("sources=A.docx")));
+  assert.ok(logs.some((message) =>
+    message.includes("AGENT RUN") &&
+    message.includes("Target     B.docx") &&
+    message.includes("Sources    A.docx") &&
+    message.includes("2 docs"),
+  ));
 });
 
 test("recurring report refresh selects the target, reads the source, and saves one target version", async () => {

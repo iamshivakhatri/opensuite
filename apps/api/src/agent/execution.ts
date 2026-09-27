@@ -31,6 +31,19 @@ import {
   type DocumentTransition,
   type DocumentVersionAdvance,
 } from "./agent-run-report.js";
+import {
+  formatDocumentSaved,
+  formatModelTurnCompleted,
+  formatModelTurnFirstOutput,
+  formatModelTurnStarted,
+  formatMutationsApplied,
+  formatToolFinished,
+  formatToolStarted,
+  formatValidationChecks,
+  logAgentLine,
+  logAgentRunBanner,
+  sanitizeLogName,
+} from "./agent-run-log.js";
 import { createPrimaryDocxTools } from "./docx-tools.js";
 import { verifyDocumentUpdate, type DocumentCheck } from "./document-verification.js";
 import {
@@ -72,10 +85,6 @@ import {
 } from "./execution-lease.js";
 
 const MAX_MODEL_TURNS = 20;
-
-function logDocumentName(name: string): string {
-  return name.replace(/[\r\n\t\x00-\x1f]/g, " ").slice(0, 80);
-}
 
 type TranscriptEntry = {
   readonly kind: AgentStepKind;
@@ -343,7 +352,7 @@ export function createAgentExecutionService(deps: AgentExecutionServiceDeps) {
         return { userMessage, run };
       });
 
-      console.info(`[agent] runtime=v3 run=${started.run.id.slice(0, 8)}`);
+      // Banner logged once retrieval resolves (target/sources known).
       let getWorkingDocument = () => null as ReturnType<AgentExecutionHandle["getWorkingDocument"]>;
       const result = runExecution({
         deps,
@@ -519,7 +528,7 @@ async function runExecution(input: {
       status: "running",
     });
     const runShort = input.run.id.slice(0, 8);
-    console.info(`[agent] RUN ${runShort} started model=${input.model.usageAttribution?.model ?? "unknown"}`);
+    const modelLabel = input.model.usageAttribution?.model ?? "unknown";
     if (
       input.model.usageAttribution?.provider === "openrouter" &&
       input.model.usageAttribution.credentialSource === "managed"
@@ -544,7 +553,7 @@ async function runExecution(input: {
       workingDocumentIds: input.workingDocumentIds,
       ...(input.editableDocumentId ? { editableDocumentId: input.editableDocumentId } : {}),
       onDocumentSelected: ({ documentId, versionId }) => {
-        console.info(`[agent] TARGET ${logDocumentName(documentNames.get(documentId) ?? documentId.slice(0, 8))}`);
+        logAgentLine(`Target     ${sanitizeLogName(documentNames.get(documentId) ?? documentId.slice(0, 8))}`);
         directVersionId = directWorkingVersions.get(documentId) === versionId ? versionId : null;
         updateDirectReadGuard(directVersionId !== null);
       },
@@ -559,7 +568,12 @@ async function runExecution(input: {
         });
       },
       onVersionAdvanced: async (advanced) => {
-        console.info(`[agent] SAVE target=${logDocumentName(documentNames.get(advanced.documentId) ?? advanced.documentId.slice(0, 8))} version=${advanced.versionNumber}`);
+        logAgentLine(
+          formatDocumentSaved(
+            documentNames.get(advanced.documentId) ?? advanced.documentId.slice(0, 8),
+            advanced.versionNumber,
+          ),
+        );
         savedTarget = { documentId: advanced.documentId, fromVersionId: advanced.fromVersionId, versionId: advanced.versionId };
         versionAdvances.push({
           fromVersionId: advanced.fromVersionId,
@@ -673,10 +687,21 @@ async function runExecution(input: {
     for (const document of retrieval?.workingSet ?? []) documentNames.set(document.documentId, document.name);
     const targetId = boundTools?.getActiveDocumentId();
     const sources = (retrieval?.workingSet ?? []).filter((document) => document.documentId !== targetId);
-    console.info(`[agent] RETRIEVAL run=${runShort} mode=${retrieval?.observation.contextStrategy.toUpperCase() ?? "SKIPPED"}` +
-      ` documents=${retrieval?.workingSet.length ?? 0} context≈${retrieval ? estimateTokens(retrieval.message ?? "") : 0} tokens` +
-      ` target=${logDocumentName(documentNames.get(targetId ?? "") ?? targetId?.slice(0, 8) ?? "none")}` +
-      ` sources=${sources.length ? sources.slice(0, 3).map((document) => logDocumentName(document.name)).join(", ") + (sources.length > 3 ? ` +${sources.length - 3} more` : "") : "none"}`);
+    logAgentRunBanner({
+      runId: input.run.id,
+      model: modelLabel,
+      ...(targetId
+        ? { target: documentNames.get(targetId) ?? targetId.slice(0, 8) }
+        : {}),
+      sources: sources.map((document) => document.name),
+      ...(retrieval
+        ? {
+            retrievalMode: retrieval.observation.contextStrategy,
+            documentCount: retrieval.workingSet.length,
+            contextTokens: estimateTokens(retrieval.message ?? ""),
+          }
+        : { retrievalMode: "skipped", documentCount: 0 }),
+    });
     readGuard.setCompleteDirect(retrieval?.observation.contextStrategy === "direct");
     if (retrieval?.observation.contextStrategy === "direct") {
       directWorkingVersions = new Map(retrieval.workingSet.map((document) => [document.documentId, document.versionId]));
@@ -791,10 +816,10 @@ async function runExecution(input: {
               : null,
         });
         transcript.validation(checks);
-        console.info(`[agent] VALIDATION run=${runShort} ${checks.map((check) => `${check.status}:${check.message}`).join(" | ")}`);
+        logAgentLine(formatValidationChecks(checks));
       } catch {
         transcript.validation([{ id: "verification", status: "fail", message: "Saved document could not be verified" }]);
-        console.warn(`[agent] VALIDATION run=${runShort} fail: saved document could not be verified`);
+        logAgentLine(formatValidationChecks([{ status: "fail", message: "Saved document could not be verified" }]));
       }
     };
     let result;
@@ -810,17 +835,61 @@ async function runExecution(input: {
         runId: runShort,
         maxTurns: MAX_MODEL_TURNS,
         onEvent: (event) => {
-          if (event.type === "tool_started") toolStartedAt.set(event.toolCallId, Date.now());
-          if (event.type === "tool_completed" || event.type === "tool_failed" || event.type === "tool_skipped") {
-            const elapsed = Date.now() - (toolStartedAt.get(event.toolCallId) ?? Date.now());
-            const code = event.type === "tool_failed" ? event.error : event.type === "tool_skipped" ? event.reason : "";
-            console.info(`[agent] TOOL run=${runShort} ${event.toolName} ${event.type === "tool_completed" ? "✓" : event.type === "tool_skipped" ? "–" : "✗"} ${elapsed}ms` +
-              (code ? ` code=${/^[A-Z][A-Z0-9_]{2,63}$/.test(code) ? code : "TOOL_FAILED"}` : ""));
-            toolStartedAt.delete(event.toolCallId);
+          if (event.type === "model_turn_started") {
+            logAgentLine(formatModelTurnStarted(event.turn));
+          } else if (event.type === "model_turn_first_output") {
+            logAgentLine(formatModelTurnFirstOutput(event.elapsedMs));
+          } else if (event.type === "model_turn_completed") {
+            logAgentLine(
+              formatModelTurnCompleted({
+                durationMs: event.durationMs,
+                inputTokens: event.inputTokens,
+                cachedInputTokens: event.cachedInputTokens,
+                outputTokens: event.outputTokens,
+                reasoningTokens: event.reasoningTokens,
+                toolNames: event.toolNames,
+              }),
+            );
+          } else if (event.type === "tool_started") {
+            if (event.toolName !== "finish") {
+              toolStartedAt.set(event.toolCallId, Date.now());
+              logAgentLine(formatToolStarted(event.toolName));
+            }
+          } else if (
+            event.type === "tool_completed" ||
+            event.type === "tool_failed" ||
+            event.type === "tool_skipped"
+          ) {
+            if (event.toolName !== "finish") {
+              const elapsed = Date.now() - (toolStartedAt.get(event.toolCallId) ?? Date.now());
+              const code =
+                event.type === "tool_failed"
+                  ? event.error
+                  : event.type === "tool_skipped"
+                    ? event.reason
+                    : undefined;
+              logAgentLine(
+                formatToolFinished({
+                  ok: event.type === "tool_completed",
+                  durationMs: elapsed,
+                  skipped: event.type === "tool_skipped",
+                  ...(code && /^[A-Z][A-Z0-9_]{2,63}$/.test(code)
+                    ? { code }
+                    : event.type === "tool_failed"
+                      ? { code: "TOOL_FAILED" }
+                      : code
+                        ? { code }
+                        : {}),
+                }),
+              );
+              toolStartedAt.delete(event.toolCallId);
+            }
           }
           return relayEvent(event, input.liveEvents, input.run.id, messageId, transcript);
         },
       });
+      const mutationCount = boundTools?.getWorkingMutationCount() ?? 0;
+      if (mutationCount > 0) logAgentLine(formatMutationsApplied(mutationCount));
       await flushWorking();
       await verifySavedDocument(result.metrics);
     } catch (error) {

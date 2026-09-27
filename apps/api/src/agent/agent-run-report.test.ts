@@ -160,7 +160,7 @@ test("composeAgentRunReport includes workspace retrieval trace without model con
   });
 });
 
-test("run report logs one short line by default and keeps full JSON opt-in", () => {
+test("run report logs a short DONE block by default and keeps full JSON opt-in", () => {
   const report = composeAgentRunReport({
     runId: "run-log",
     instruction: "test",
@@ -186,17 +186,11 @@ test("run report logs one short line by default and keeps full JSON opt-in", () 
     process.env.AGENT_RUN_REPORT_VERBOSE = "0";
     logAgentRunReport(report);
     assert.equal(messages.length, 1);
-    assert.match(messages[0] ?? "", /^\[agent-run-report\] run=run-log outcome=success/);
-    assert.match(messages[0] ?? "", /toolCalls=2/);
-    assert.match(messages[0] ?? "", /readCalls=1/);
-    assert.match(messages[0] ?? "", /mutationCalls=1/);
-    assert.match(messages[0] ?? "", /editsApplied=0/);
-    assert.match(messages[0] ?? "", /persistedVersions=0/);
-    assert.match(messages[0] ?? "", /toolErrors=0/);
-    assert.doesNotMatch(messages[0] ?? "", /\bfailures=/);
-    assert.doesNotMatch(messages[0] ?? "", /\bedits=/);
-    assert.doesNotMatch(messages[0] ?? "", /\bversions=/);
-    assert.doesNotMatch(messages[0] ?? "", /\n/);
+    assert.match(messages[0] ?? "", /^────────────────────────────────────────\nDONE ✓ /);
+    assert.match(messages[0] ?? "", /Turns\s+1/);
+    assert.match(messages[0] ?? "", /Tool calls\s+2/);
+    assert.match(messages[0] ?? "", /Versions\s+0/);
+    assert.doesNotMatch(messages[0] ?? "", /\[agent-run-report\]/);
     process.env.AGENT_RUN_REPORT_VERBOSE = "1";
     logAgentRunReport(report);
   } finally {
@@ -204,8 +198,16 @@ test("run report logs one short line by default and keeps full JSON opt-in", () 
     else process.env.AGENT_RUN_REPORT_VERBOSE = previousVerbose;
     console.info = original;
   }
-  assert.match(messages[3] ?? "", /^\[agent-run-report:json\]\n\{/);
-  assert.match(messages[3] ?? "", /\n    "availableEvidenceTokens": 18000/);
+  assert.match(messages[1] ?? "", /^────────────────────────────────────────\nDONE ✓ /);
+  assert.match(messages[2] ?? "", /^\[agent-run-report\] run=run-log outcome=success/);
+  assert.match(messages[2] ?? "", /toolCalls=2/);
+  assert.match(messages[2] ?? "", /readCalls=1/);
+  assert.match(messages[2] ?? "", /mutationCalls=1/);
+  assert.match(messages[2] ?? "", /editsApplied=0/);
+  assert.match(messages[2] ?? "", /persistedVersions=0/);
+  assert.match(messages[2] ?? "", /toolErrors=0/);
+  assert.match(messages[4] ?? "", /^\[agent-run-report:json\]\n\{/);
+  assert.match(messages[4] ?? "", /\n    "availableEvidenceTokens": 18000/);
 });
 
 test("success with recovered tool errors does not imply terminal failure", () => {
@@ -287,15 +289,13 @@ test("success with recovered tool errors does not imply terminal failure", () =>
   } finally {
     console.info = original;
   }
-  assert.match(messages[0] ?? "", /outcome=success/);
-  assert.match(messages[0] ?? "", /toolErrors=2/);
-  assert.match(messages[0] ?? "", /editsApplied=3/);
-  assert.match(messages[0] ?? "", /persistedVersions=1/);
-  assert.doesNotMatch(messages[0] ?? "", /\bfailures=/);
-  assert.match(messages[1] ?? "", /^\[agent-run-tool-error\].*STYLE_NOT_FOUND/);
-  assert.match(messages[1] ?? "", /recovered=true/);
-  assert.match(messages[2] ?? "", /^\[agent-run-tool-error\].*TABLE_NOT_FOUND/);
-  assert.doesNotMatch(messages[2] ?? "", /recovered=true/);
+  assert.match(messages[0] ?? "", /outcome=success|DONE ✓/);
+  assert.match(messages[0] ?? "", /DONE ✓/);
+  assert.match(messages[0] ?? "", /Tool calls\s+3/);
+  assert.match(messages[0] ?? "", /Versions\s+1/);
+  assert.match(messages[1] ?? "", /tool error · document\.set_paragraph_style · STYLE_NOT_FOUND · recovered/);
+  assert.match(messages[2] ?? "", /tool error · document\.set_table_formatting · TABLE_NOT_FOUND/);
+  assert.doesNotMatch(messages[2] ?? "", /recovered/);
   assert.equal(messages.some((m) => m.startsWith("[agent-run-failure]")), false);
 });
 

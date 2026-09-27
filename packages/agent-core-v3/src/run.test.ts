@@ -117,7 +117,37 @@ test("no tool call: one model invocation, completed stop reason", async () => {
   assert.equal(result.turns, 1);
   assert.equal(result.stopReason, "completed");
   assert.equal(result.text, "done");
-  assert.deepEqual(events, ["started", "text_delta", "completed"]);
+  assert.deepEqual(events, [
+    "started",
+    "model_turn_started",
+    "model_turn_first_output",
+    "text_delta",
+    "model_turn_completed",
+    "completed",
+  ]);
+});
+
+test("model turn lifecycle events include start, first output, and completion", async () => {
+  const model = new MockLanguageModelV4({
+    doStream: async () => ({ stream: simulateReadableStream({ chunks: textChunks("ok") }) }),
+  });
+  const events: Array<{ type: string; turn?: number; toolNames?: readonly string[] }> = [];
+  await runAgent({
+    model,
+    messages: [{ role: "user", content: "hi" }],
+    onEvent: (e) => {
+      if (e.type === "model_turn_started") events.push({ type: e.type, turn: e.turn });
+      if (e.type === "model_turn_first_output") events.push({ type: e.type, turn: e.turn });
+      if (e.type === "model_turn_completed") {
+        events.push({ type: e.type, turn: e.turn, toolNames: e.toolNames });
+      }
+    },
+  });
+  assert.deepEqual(events, [
+    { type: "model_turn_started", turn: 1 },
+    { type: "model_turn_first_output", turn: 1 },
+    { type: "model_turn_completed", turn: 1, toolNames: [] },
+  ]);
 });
 
 test("system prompt is prepended to the model messages", async () => {

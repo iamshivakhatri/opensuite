@@ -64,7 +64,7 @@ import { registerWorkspaceRoutes } from "./routes/workspaces.js";
 import { createOpenRouterManagedModelCatalog } from "./openrouter-models/catalog.js";
 import type { ObjectStorage } from "./storage/types.js";
 import { createWorkspaceService } from "./workspaces/service.js";
-import { isDevConsole, requestPath } from "./dev-log.js";
+import { isDevConsole, requestPath, shouldLogHttpRequest } from "./dev-log.js";
 import {
   createUserRateLimiter,
   type UserRateLimiter,
@@ -123,7 +123,18 @@ export async function buildApp(
       done();
       return;
     }
-    const line = `${request.method} ${requestPath(request.url)} ${reply.statusCode} ${Math.round(reply.elapsedTime)}ms`;
+    const path = requestPath(request.url);
+    if (
+      !shouldLogHttpRequest({
+        method: request.method,
+        path,
+        statusCode: reply.statusCode,
+      })
+    ) {
+      done();
+      return;
+    }
+    const line = `${request.method} ${path} ${reply.statusCode} ${Math.round(reply.elapsedTime)}ms`;
     if (isDevConsole()) {
       // Plain one-liner — no pino level/time/pid/hostname/reqId wrapper.
       console.log(line);

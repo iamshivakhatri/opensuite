@@ -14,6 +14,12 @@ _Read this before starting any work. Keep it a concise current-state handoff, no
 
 ## Just Completed
 
+* **Readable agent run logs** — live LLM turn start/first-output/finish, tool →/✓/✗, retrieval banner (names not UUIDs), mutations/save/validation, and a DONE latency breakdown. Routine GET poll noise (`/events`, `/working-document`, `/messages`, run status) filtered; context compaction logs only when triggered. `AGENT_RUN_REPORT_VERBOSE=1` still dumps the full report JSON. No runtime/tool/prompt behavior change.
+
+* **Phase 3 verification/logging fix** — explicit report transitions now recognize month/year/quarter across descriptive titles; table dimensions use successful structural tool names to label supported changes as expected and unexplained loss as warning. API logs now show retrieval/target/source names, live tool outcomes, saved version, validation, and the existing per-turn/final metrics. No runtime, Rust, or UI changes in this fix.
+
+* **Continue presentation** — max-turn/deadline stops show a neutral saved assistant status with Continue beneath it. Continue remains a new user message and starts from the saved document/current run context; prior messages stay visible. Other failures retain error treatment. The 27.29s user run made 20 model turns, 21 tools, 17 edits, and one saved version; Together served 278,656 of 304,797 input tokens from cache.
+
 * **Verified Document Update v1** — after a mutated DOCX is saved, API validation checks the target version, source versions, saved DOCX inspection, structure, explicit old month/year references, and obvious placeholders. Structured checks persist in the run transcript and appear in the Agent Panel. No Rust or agent-core-v3 changes.
 
 * **Recurring DOCX refresh** — a run can select an editable DOCX from its existing working set and inspect another DOCX as a read-only source. Selection reuses the active binding, keeps complete working-set context through the switch, and is blocked after edits so one run still saves one edited version. No Rust or agent-core-v3 changes.
@@ -95,10 +101,15 @@ _Read this before starting any work. Keep it a concise current-state handoff, no
 
 ## Verification Status
 
+* Phase 3 fix: focused API verification, lifecycle, and run-report tests pass; API build passes. No manual browser test.
+
+* Continue presentation: 48 focused web tests pass; web typecheck and production build pass. No manual browser test.
+
 * Document verification and V3 lifecycle focused tests: 39 pass; API build and web typecheck pass. No manual browser test for this phase.
 
 | Check | Status |
 |---|---|
+| Readable agent run logs (API formatters + report + isolation; core-v3 lifecycle) | Pass (55 API focused, 27 core-v3) |
 | agent-core-v3 unit (26) | Pass |
 | API unit (221; 20 skipped) | Pass |
 | Model accounting live OpenRouter E2E | Pass (`availableEvidenceTokens`, ctx=1048576, actual cost) |

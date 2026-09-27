@@ -26,3 +26,5 @@ The core has no database, HTTP, auth, storage, document semantics, checkpoints, 
 | Outcome | `outcome` | Terminal run result (`success` / `failure` / `partial` / `cancelled`) |
 
 Do not mix working revisions with persisted versions, or tool errors with terminal run failure. Product UI shows a high-level summary only; detailed counts belong in logs/admin.
+
+Default server logs are a short human-readable run transcript (turn/LLM/tool/save/validation + DONE latency). Full JSON remains opt-in via `AGENT_RUN_REPORT_VERBOSE=1`.

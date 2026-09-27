@@ -81,6 +81,23 @@ export type ToolSkipReason = "PRIOR_MUTATION_FAILED" | "FUSE_TRIPPED";
 /** Generic run events. No product/document vocabulary. */
 export type AgentEvent =
   | { readonly type: "started" }
+  | { readonly type: "model_turn_started"; readonly turn: number }
+  | {
+      readonly type: "model_turn_first_output";
+      readonly turn: number;
+      readonly elapsedMs: number;
+    }
+  | {
+      readonly type: "model_turn_completed";
+      readonly turn: number;
+      readonly durationMs: number;
+      readonly inputTokens: number;
+      readonly cachedInputTokens: number;
+      readonly outputTokens: number;
+      readonly reasoningTokens: number;
+      readonly toolNames: readonly string[];
+      readonly routedProvider?: string;
+    }
   | { readonly type: "text_delta"; readonly delta: string }
   | { readonly type: "tool_started"; readonly toolCallId: string; readonly toolName: string }
   | { readonly type: "tool_completed"; readonly toolCallId: string; readonly toolName: string }

@@ -192,7 +192,18 @@ export async function compactThreadContext(input: {
 }
 
 export function logContextCompaction(result: ContextCompactionResult): void {
-  console.info("[context-compaction]", result);
+  if (!result.triggered) return;
+  if (result.checkpointCreated) {
+    console.info(
+      `[Context] compacted ${result.sourceMessageCount} → ${result.retainedMessageCount} messages · ${result.durationMs}ms`,
+    );
+    return;
+  }
+  if (result.failureCode) {
+    console.info(
+      `[Context] compaction skipped (${result.failureCode}) · ${result.durationMs}ms`,
+    );
+  }
 }
 
 function compactionInput(

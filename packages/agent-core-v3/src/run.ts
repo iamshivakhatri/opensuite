@@ -110,6 +110,9 @@ export async function runAgent(input: RunAgentInput): Promise<RunAgentResult> {
         ? [...input.projectMessages(transcript)]
         : transcript;
 
+      await input.onEvent?.({ type: "model_turn_started", turn: turns });
+
+      let sawOutput = false;
       let turn;
       try {
         turn = await streamTurn({
@@ -120,6 +123,14 @@ export async function runAgent(input: RunAgentInput): Promise<RunAgentResult> {
           signal: input.signal,
           retry,
           onTextDelta: async (delta) => {
+            if (!sawOutput && delta.length > 0) {
+              sawOutput = true;
+              await input.onEvent?.({
+                type: "model_turn_first_output",
+                turn: turns,
+                elapsedMs: now() - turnStarted,
+              });
+            }
             await input.onTextDelta?.(delta);
             await input.onEvent?.({ type: "text_delta", delta });
           },
@@ -135,9 +146,10 @@ export async function runAgent(input: RunAgentInput): Promise<RunAgentResult> {
         throw error;
       }
 
+      const turnDurationMs = now() - turnStarted;
       metrics.recordModelTurn({
         turn: turns,
-        durationMs: now() - turnStarted,
+        durationMs: turnDurationMs,
         inputTokens: turn.inputTokens,
         cachedInputTokens: turn.cachedInputTokens,
         outputTokens: turn.outputTokens,
@@ -162,9 +174,19 @@ export async function runAgent(input: RunAgentInput): Promise<RunAgentResult> {
       lastFinishReason = turn.finishReason;
 
       const calls = turn.toolCalls as readonly ToolCall[];
-      console.info(
-        `[agent-v3] turn run=${run} turn=${turns} elapsedMs=${now() - turnStarted} provider=${turn.routedProvider ?? "unknown"} inputTokens=${turn.inputTokens} cachedInputTokens=${turn.cachedInputTokens} outputTokens=${turn.outputTokens} reasoningTokens=${turn.reasoningTokens} toolCalls=${calls.length}`,
-      );
+      await input.onEvent?.({
+        type: "model_turn_completed",
+        turn: turns,
+        durationMs: turnDurationMs,
+        inputTokens: turn.inputTokens,
+        cachedInputTokens: turn.cachedInputTokens,
+        outputTokens: turn.outputTokens,
+        reasoningTokens: turn.reasoningTokens,
+        toolNames: calls.map((call) => call.toolName),
+        ...(turn.routedProvider !== undefined
+          ? { routedProvider: turn.routedProvider }
+          : {}),
+      });
 
       if (calls.length === 0) {
         await input.onEvent?.({
@@ -249,7 +271,8 @@ export async function runAgent(input: RunAgentInput): Promise<RunAgentResult> {
     const finalized = metrics.finish(stopReason);
     attachRunMetrics(error, finalized);
     console.info(
-      `[agent-v3] run_aborted_or_failed run=${run} turns=${turns} toolCalls=${toolCallCount} elapsedMs=${finalized.completedAtMs - finalized.startedAtMs}`,
+      `[agent] run ${run} ${stopReason === "cancelled" ? "cancelled" : "failed"}` +
+        ` · ${turns} turns · ${toolCallCount} tools · ${finalized.completedAtMs - finalized.startedAtMs}ms`,
     );
     throw error;
   }
