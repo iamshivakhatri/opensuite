@@ -14,7 +14,9 @@ _Read this before starting any work. Keep it a concise current-state handoff, no
 
 ## Just Completed
 
-* **Public marketing + auth UI** — landing, privacy, terms, 404, and auth pages from updated documents; `/` renders immediately (signed-in redirect is non-blocking); health poll + outage banner only on `/app/*` and auth. Site serif + `.os-site` tokens scoped to public chrome. Web typecheck and production build pass.
+* **Public site routes + brand** — main marketing sections are real pages (`/product`, `/how-it-works`, `/principles`, `/architecture`, `/scope`, `/open-source`); hash sliding removed. Nav shows active route. Brand tokens on `.os-site`: primary brick CTAs, secondary slate chrome, accent ochre sparingly. Layout/spacing preserved. Web typecheck + production build pass.
+
+* **Public marketing + auth UI** — landing, privacy, terms, 404, and auth pages; `/` renders immediately (signed-in redirect non-blocking); health poll + outage banner only on `/app/*` and auth. Site serif + `.os-site` tokens scoped to public chrome.
 
 * **Agent tool ergonomics** — table text edits, structural formatting, and contiguous row insertion now describe the existing one-call path; the operating instruction uses exact retrieval selectors before inspection and favors batch/multi-target operations. No runtime or engine change.
 
@@ -129,6 +131,7 @@ _Read this before starting any work. Keep it a concise current-state handoff, no
 
 | Check | Status |
 |---|---|
+| Public site route split + brand tokens; web typecheck + `next build` | Pass |
 | Public marketing + auth UI copy-over; web typecheck + `next build` | Pass |
 | Readable agent run logs (API formatters + report + isolation; core-v3 lifecycle) | Pass (60 API focused: log 5 + report 20 + isolation 35) |
 | agent-core-v3 unit (26) | Pass |
@@ -164,4 +167,4 @@ _Read this before starting any work. Keep it a concise current-state handoff, no
 
 ## Recommended Next Step
 
-Manually spot-check `/`, `/privacy`, `/terms`, and `/sign-in` with the API stopped to confirm public pages stay usable offline.
+Spot-check public nav active states and primary/secondary button contrast on `/`, `/product`, and `/sign-in`.

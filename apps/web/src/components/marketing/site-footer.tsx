@@ -7,16 +7,15 @@ import {
   GITHUB_URL,
   SUPPORT_EMAIL,
 } from "@/lib/site";
+import { SITE_PRODUCT_LINKS } from "@/lib/site-nav";
 
 const columns = [
   {
     label: "Product",
-    links: [
-      { href: "/#workspace", label: "Workspace" },
-      { href: "/#run", label: "How a run works" },
-      { href: "/#scope", label: "Scope today" },
-      { href: "/sign-in", label: "Sign in" },
-    ],
+    links: SITE_PRODUCT_LINKS.map((link) => ({
+      href: link.href,
+      label: link.label,
+    })),
   },
   {
     label: "Project",
@@ -24,6 +23,7 @@ const columns = [
       { href: GITHUB_URL, label: "Application repository", external: true },
       { href: ENGINE_GITHUB_URL, label: "Document engine", external: true },
       { href: CONTRIBUTING_URL, label: "Contributing", external: true },
+      { href: "/open-source", label: "Open source" },
     ],
   },
   {
@@ -59,7 +59,7 @@ export function SiteFooter() {
                     {...("external" in link && link.external
                       ? { target: "_blank", rel: "noreferrer noopener" }
                       : null)}
-                    className="text-[13.5px] text-ink-soft transition-colors hover:text-ink"
+                    className="text-[13.5px] text-ink-soft transition-colors hover:text-primary"
                   >
                     {link.label}
                   </Link>
@@ -72,7 +72,17 @@ export function SiteFooter() {
 
       <div className="os-container flex flex-col gap-2 border-t border-line py-7 text-[12.5px] text-ink-faint sm:flex-row sm:items-center sm:justify-between">
         <p>© {new Date().getFullYear()} OpenSuite. MIT licensed.</p>
-        <p className="os-annot">Alpha · DOCX editing · self-hostable</p>
+        <p className="os-annot">
+          <span className="text-secondary">Alpha</span>
+          <span aria-hidden="true" className="px-2 text-[var(--rule)]">
+            ·
+          </span>
+          DOCX editing
+          <span aria-hidden="true" className="px-2 text-[var(--rule)]">
+            ·
+          </span>
+          self-hostable
+        </p>
       </div>
     </footer>
   );

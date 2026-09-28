@@ -48,7 +48,7 @@ export function AuthSubmit({ className, ...props }: ButtonProps) {
   return (
     <Button
       className={cn(
-        "h-11 w-full bg-ink text-[14.5px] text-paper hover:bg-[#2c2c28]",
+        "h-11 w-full bg-primary text-[14.5px] text-paper hover:bg-primary-hover",
         className,
       )}
       {...props}
@@ -61,7 +61,7 @@ export function AuthSecondaryButton({ className, ...props }: ButtonProps) {
     <Button
       variant="outline"
       className={cn(
-        "h-11 w-full border-[var(--rule)] bg-transparent text-[14.5px] text-ink-soft hover:border-ink hover:bg-transparent hover:text-ink",
+        "h-11 w-full border-secondary-line bg-transparent text-[14.5px] text-secondary hover:border-secondary hover:bg-secondary-soft hover:text-ink",
         className,
       )}
       {...props}

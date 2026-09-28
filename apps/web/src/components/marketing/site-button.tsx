@@ -3,22 +3,24 @@ import Link from "next/link";
 import { cn } from "@/lib/utils";
 
 /**
- * The only two button treatments on the public site.
+ * Public-site buttons.
  *
- * `solid` is ink, not accent: the brick accent stays reserved for editorial
- * marks, links, and the edited line in the product visual, so buttons never
- * turn the page into a row of coloured pills.
+ * - `solid` — primary brand fill for important CTAs
+ * - `outline` — secondary chrome (borders / quieter actions)
+ * - `ghost` — text-weight tertiary links that sit in running chrome
  */
-type Variant = "solid" | "outline";
+type Variant = "solid" | "outline" | "ghost";
 type Size = "sm" | "md";
 
 const base =
   "inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-[var(--radius-sm)] font-medium transition-colors";
 
 const variants: Record<Variant, string> = {
-  solid: "bg-ink text-paper hover:bg-[#2c2c28]",
+  solid: "bg-primary text-paper hover:bg-primary-hover",
   outline:
-    "border border-[var(--rule)] text-ink-soft hover:border-ink hover:text-ink",
+    "border border-secondary-line text-secondary hover:border-secondary hover:bg-secondary-soft hover:text-ink",
+  ghost:
+    "text-ink-soft hover:text-primary",
 };
 
 const sizes: Record<Size, string> = {

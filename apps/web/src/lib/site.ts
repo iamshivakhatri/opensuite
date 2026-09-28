@@ -1,6 +1,6 @@
 /**
- * Public-site constants — single source of truth for the marketing pages
- * (`/`, `/privacy`, `/terms`) so URLs/emails aren't hand-typed per page.
+ * Public-site constants — single source of truth for marketing pages
+ * (`/`, `/product`, `/how-it-works`, `/privacy`, `/terms`, …).
  */
 
 /** Real repository URL — do not invent a different one. */

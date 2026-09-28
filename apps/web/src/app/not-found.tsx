@@ -5,14 +5,17 @@ import { GitHubMark } from "@/components/marketing/github-mark";
 import { SiteButton } from "@/components/marketing/site-button";
 import { SiteShell } from "@/components/marketing/site-shell";
 import { GITHUB_URL } from "@/lib/site";
+import { SITE_PRIMARY_NAV } from "@/lib/site-nav";
 
 export const metadata: Metadata = {
   title: "Page not found — OpenSuite",
 };
 
 const elsewhere = [
-  { href: "/#run", label: "How a run works" },
-  { href: "/#open-source", label: "Open source" },
+  ...SITE_PRIMARY_NAV.map((link) => ({
+    href: link.href,
+    label: link.label,
+  })),
   { href: "/sign-in", label: "Sign in" },
   { href: "/privacy", label: "Privacy" },
 ];
@@ -51,10 +54,10 @@ export default function NotFound() {
               <li key={link.href}>
                 <Link
                   href={link.href}
-                  className="flex items-baseline justify-between gap-4 border-b border-line py-3.5 text-[14.5px] text-ink-soft transition-colors hover:text-ink"
+                  className="flex items-baseline justify-between gap-4 border-b border-line py-3.5 text-[14.5px] text-ink-soft transition-colors hover:text-primary"
                 >
                   {link.label}
-                  <span aria-hidden="true" className="os-annot">
+                  <span aria-hidden="true" className="os-annot text-secondary">
                     →
                   </span>
                 </Link>

@@ -45,7 +45,13 @@ export function ProductPreview() {
           <DocGlyph className="h-3 w-3 text-ink-faint" />
           <span className="text-[11.5px] text-ink-faint">Q3-Plan.docx</span>
         </div>
-        <div className="ml-auto os-annot text-[11px]">v7 · saved</div>
+        <div className="ml-auto os-annot text-[11px]">
+          <span className="text-accent">v7</span>
+          <span aria-hidden="true" className="px-1.5 text-[var(--rule)]">
+            ·
+          </span>
+          saved
+        </div>
       </div>
 
       <div className="flex flex-col md:flex-row">

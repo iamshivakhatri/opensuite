@@ -1,18 +1,18 @@
+"use client";
+
 import Link from "next/link";
+import { usePathname } from "next/navigation";
 
 import { GitHubMark } from "@/components/marketing/github-mark";
 import { SiteButton } from "@/components/marketing/site-button";
 import { SiteWordmark } from "@/components/marketing/site-wordmark";
 import { GITHUB_URL } from "@/lib/site";
+import { SITE_PRIMARY_NAV } from "@/lib/site-nav";
 import { isSignupAllowed } from "@/lib/signup";
-
-const navLinks = [
-  { href: "/#workspace", label: "Product" },
-  { href: "/#run", label: "How it works" },
-  { href: "/#open-source", label: "Open source" },
-];
+import { cn } from "@/lib/utils";
 
 export function SiteHeader() {
+  const pathname = usePathname();
   const startHref = isSignupAllowed() ? "/sign-up" : "/sign-in";
 
   return (
@@ -30,15 +30,24 @@ export function SiteHeader() {
           aria-label="Site"
           className="hidden flex-1 items-center gap-7 md:flex"
         >
-          {navLinks.map((link) => (
-            <Link
-              key={link.href}
-              href={link.href}
-              className="text-[13.5px] text-ink-soft transition-colors hover:text-ink"
-            >
-              {link.label}
-            </Link>
-          ))}
+          {SITE_PRIMARY_NAV.map((link) => {
+            const active = pathname === link.href;
+            return (
+              <Link
+                key={link.href}
+                href={link.href}
+                aria-current={active ? "page" : undefined}
+                className={cn(
+                  "text-[13.5px] transition-colors",
+                  active
+                    ? "font-medium text-primary"
+                    : "text-ink-soft hover:text-ink",
+                )}
+              >
+                {link.label}
+              </Link>
+            );
+          })}
         </nav>
         <div className="flex-1 md:hidden" />
 
@@ -47,7 +56,7 @@ export function SiteHeader() {
             href={GITHUB_URL}
             target="_blank"
             rel="noreferrer noopener"
-            className="flex h-9 items-center gap-2 rounded-[3px] px-2 text-[13.5px] text-ink-soft transition-colors hover:text-ink"
+            className="flex h-9 items-center gap-2 rounded-[3px] px-2 text-[13.5px] text-ink-soft transition-colors hover:text-secondary"
           >
             <GitHubMark className="h-[15px] w-[15px]" />
             <span className="hidden sm:inline">GitHub</span>

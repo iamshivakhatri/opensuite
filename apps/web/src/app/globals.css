@@ -436,21 +436,27 @@ html[data-opensuite-modal] .opensuite-docx-host [data-testid="toolbar"] {
   --rule: #cfcbbe;
   --overlay: rgba(25, 25, 23, 0.4);
 
-  /* One accent: a muted editor's-mark brick. 6.2:1 on paper, 6.5:1 inverted. */
+  /*
+   * Brand — used sparingly on the public site.
+   * --primary   brick editor's mark: CTAs, active nav, links, key indices
+   * --secondary cool slate: outline buttons, quiet chrome, secondary marks
+   * --accent    muted ochre: rare highlights (badges, tertiary emphasis)
+   */
   --primary: #9d3f26;
   --primary-hover: #86341e;
-  --secondary: color-mix(in srgb, var(--primary) 80%, white);
-  --secondary-hover: var(--primary);
+  --secondary: #3f4f63;
+  --secondary-hover: #334155;
+  --accent: #8a6a3d;
+  --accent-hover: #735832;
+
   --primary-soft: color-mix(in srgb, var(--primary) 7%, #faf9f6);
   --primary-line: color-mix(in srgb, var(--primary) 30%, #faf9f6);
-  --secondary-soft: color-mix(in srgb, var(--secondary) 7%, #faf9f6);
-  --secondary-line: color-mix(in srgb, var(--secondary) 26%, #faf9f6);
+  --secondary-soft: color-mix(in srgb, var(--secondary) 8%, #faf9f6);
+  --secondary-line: color-mix(in srgb, var(--secondary) 22%, #faf9f6);
+  --accent-soft: color-mix(in srgb, var(--accent) 10%, #faf9f6);
+  --accent-line: color-mix(in srgb, var(--accent) 28%, #faf9f6);
   --hover: color-mix(in srgb, var(--primary) 6%, transparent);
   --selected: var(--primary-soft);
-  --accent: var(--primary);
-  --accent-hover: var(--primary-hover);
-  --accent-soft: var(--primary-soft);
-  --accent-line: var(--primary-line);
 
   --success: #2f6f4f;
   --success-soft: #eef4ef;

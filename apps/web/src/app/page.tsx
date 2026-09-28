@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
 
-import { LandingPage } from "@/components/marketing/landing-page";
+import { HomePage } from "@/components/marketing/home-page";
 import { RedirectSignedIn } from "@/components/marketing/redirect-signed-in";
 
 export const metadata: Metadata = {
@@ -14,7 +14,7 @@ export default function RootPage() {
     <>
       {/* `/` renders immediately; signed-in visitors are moved to /app. */}
       <RedirectSignedIn />
-      <LandingPage />
+      <HomePage />
     </>
   );
 }
