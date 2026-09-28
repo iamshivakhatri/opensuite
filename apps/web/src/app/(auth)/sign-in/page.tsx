@@ -23,7 +23,7 @@ function AuthBanner() {
 
   if (verified) {
     return (
-      <p className="rounded-[var(--radius-sm)] bg-success-soft px-3 py-2 text-[12px] text-success">
+      <p className="border-l-2 border-success bg-success-soft px-4 py-3 text-[13.5px] leading-[1.55] text-success">
         Your email is verified. Sign in below.
       </p>
     );
@@ -31,7 +31,7 @@ function AuthBanner() {
 
   if (reset) {
     return (
-      <p className="rounded-[var(--radius-sm)] bg-success-soft px-3 py-2 text-[12px] text-success">
+      <p className="border-l-2 border-success bg-success-soft px-4 py-3 text-[13.5px] leading-[1.55] text-success">
         Your password was updated. Sign in with your new password.
       </p>
     );
@@ -39,7 +39,7 @@ function AuthBanner() {
 
   if (errorCode) {
     return (
-      <p className="rounded-[var(--radius-sm)] bg-danger-soft px-3 py-2 text-[12px] text-danger">
+      <p className="border-l-2 border-danger bg-danger-soft px-4 py-3 text-[13.5px] leading-[1.55] text-danger">
         {AUTH_ERROR_MESSAGES[errorCode] ??
           "That verification link could not be used. Request a new one below."}
       </p>
@@ -51,13 +51,11 @@ function AuthBanner() {
 
 export default function SignInPage() {
   return (
-    <div className="flex flex-col gap-5">
+    <div className="flex flex-col gap-7">
       <div>
-        <h1 className="text-[18px] font-semibold tracking-[-0.02em] text-ink">
-          Sign in
-        </h1>
-        <p className="mt-1 text-[12px] text-ink-soft">
-          Welcome back to OpenSuite.
+        <h1 className="os-display text-[27px] leading-[1.15]">Sign in</h1>
+        <p className="mt-2.5 text-[14.5px] leading-[1.6] text-ink-soft">
+          Continue to your workspace.
         </p>
       </div>
       <React.Suspense fallback={null}>
@@ -65,10 +63,13 @@ export default function SignInPage() {
       </React.Suspense>
       <SignInForm />
       {isSignupAllowed() ? (
-        <p className="text-center text-[12px] text-ink-soft">
-          Don&apos;t have an account?{" "}
-          <Link href="/sign-up" className="font-medium text-accent">
-            Sign up
+        <p className="border-t border-line pt-5 text-[13.5px] text-ink-soft">
+          No account yet?{" "}
+          <Link
+            href="/sign-up"
+            className="font-medium text-primary underline decoration-1 underline-offset-[3px] hover:text-primary-hover"
+          >
+            Create one
           </Link>
         </p>
       ) : null}

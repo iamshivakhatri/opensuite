@@ -3,9 +3,11 @@
 import * as React from "react";
 
 import { signUp } from "@/lib/auth-client";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
+import {
+  AuthField,
+  AuthNotice,
+  AuthSubmit,
+} from "@/components/auth/auth-primitives";
 
 export function SignUpForm({
   onSignedUp,
@@ -46,49 +48,40 @@ export function SignUpForm({
   }
 
   return (
-    <form onSubmit={handleSubmit} className="flex flex-col gap-4">
-      <div className="flex flex-col gap-1.5">
-        <Label htmlFor="name">Name</Label>
-        <Input
-          id="name"
-          type="text"
-          autoComplete="name"
-          required
-          value={name}
-          onChange={(event) => setName(event.target.value)}
-        />
-      </div>
-      <div className="flex flex-col gap-1.5">
-        <Label htmlFor="email">Email</Label>
-        <Input
-          id="email"
-          type="email"
-          autoComplete="email"
-          required
-          value={email}
-          onChange={(event) => setEmail(event.target.value)}
-        />
-      </div>
-      <div className="flex flex-col gap-1.5">
-        <Label htmlFor="password">Password</Label>
-        <Input
-          id="password"
-          type="password"
-          autoComplete="new-password"
-          minLength={8}
-          required
-          value={password}
-          onChange={(event) => setPassword(event.target.value)}
-        />
-      </div>
-      {error ? (
-        <p className="rounded-[var(--radius-sm)] bg-danger-soft px-3 py-2 text-[12px] text-danger">
-          {error}
-        </p>
-      ) : null}
-      <Button type="submit" variant="accent" disabled={isSubmitting}>
+    <form onSubmit={handleSubmit} className="flex flex-col gap-5">
+      <AuthField
+        id="name"
+        label="Name"
+        type="text"
+        autoComplete="name"
+        required
+        value={name}
+        onChange={(event) => setName(event.target.value)}
+      />
+      <AuthField
+        id="email"
+        label="Email"
+        type="email"
+        autoComplete="email"
+        required
+        value={email}
+        onChange={(event) => setEmail(event.target.value)}
+      />
+      <AuthField
+        id="password"
+        label="Password"
+        type="password"
+        autoComplete="new-password"
+        minLength={8}
+        required
+        value={password}
+        onChange={(event) => setPassword(event.target.value)}
+        hint={<span className="text-[12px] text-ink-faint">8+ characters</span>}
+      />
+      {error ? <AuthNotice>{error}</AuthNotice> : null}
+      <AuthSubmit type="submit" disabled={isSubmitting}>
         {isSubmitting ? "Creating account…" : "Create account"}
-      </Button>
+      </AuthSubmit>
     </form>
   );
 }

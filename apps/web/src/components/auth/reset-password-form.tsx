@@ -5,9 +5,11 @@ import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 
 import { authClient } from "@/lib/auth-client";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
+import {
+  AuthField,
+  AuthNotice,
+  AuthSubmit,
+} from "@/components/auth/auth-primitives";
 
 export function ResetPasswordForm() {
   const router = useRouter();
@@ -22,14 +24,17 @@ export function ResetPasswordForm() {
 
   if (linkError || !token) {
     return (
-      <div className="flex flex-col gap-4">
-        <p className="rounded-[var(--radius-sm)] bg-danger-soft px-3 py-2 text-[12px] text-danger">
+      <div className="flex flex-col gap-5">
+        <AuthNotice>
           {linkError
             ? "That password reset link is invalid or has expired."
             : "This page needs a valid password reset link from your email."}
-        </p>
-        <p className="text-center text-[12px] text-ink-soft">
-          <Link href="/forgot-password" className="font-medium text-accent">
+        </AuthNotice>
+        <p className="text-[13.5px] text-ink-soft">
+          <Link
+            href="/forgot-password"
+            className="font-medium text-primary underline decoration-1 underline-offset-[3px] hover:text-primary-hover"
+          >
             Request a new reset link
           </Link>
         </p>
@@ -79,39 +84,32 @@ export function ResetPasswordForm() {
   }
 
   return (
-    <form onSubmit={handleSubmit} className="flex flex-col gap-4">
-      <div className="flex flex-col gap-1.5">
-        <Label htmlFor="password">New password</Label>
-        <Input
-          id="password"
-          type="password"
-          autoComplete="new-password"
-          minLength={8}
-          required
-          value={password}
-          onChange={(event) => setPassword(event.target.value)}
-        />
-      </div>
-      <div className="flex flex-col gap-1.5">
-        <Label htmlFor="confirmPassword">Confirm password</Label>
-        <Input
-          id="confirmPassword"
-          type="password"
-          autoComplete="new-password"
-          minLength={8}
-          required
-          value={confirmPassword}
-          onChange={(event) => setConfirmPassword(event.target.value)}
-        />
-      </div>
-      {error ? (
-        <p className="rounded-[var(--radius-sm)] bg-danger-soft px-3 py-2 text-[12px] text-danger">
-          {error}
-        </p>
-      ) : null}
-      <Button type="submit" variant="accent" disabled={isSubmitting}>
+    <form onSubmit={handleSubmit} className="flex flex-col gap-5">
+      <AuthField
+        id="password"
+        label="New password"
+        type="password"
+        autoComplete="new-password"
+        minLength={8}
+        required
+        value={password}
+        onChange={(event) => setPassword(event.target.value)}
+        hint={<span className="text-[12px] text-ink-faint">8+ characters</span>}
+      />
+      <AuthField
+        id="confirmPassword"
+        label="Confirm password"
+        type="password"
+        autoComplete="new-password"
+        minLength={8}
+        required
+        value={confirmPassword}
+        onChange={(event) => setConfirmPassword(event.target.value)}
+      />
+      {error ? <AuthNotice>{error}</AuthNotice> : null}
+      <AuthSubmit type="submit" disabled={isSubmitting}>
         {isSubmitting ? "Updating…" : "Update password"}
-      </Button>
+      </AuthSubmit>
     </form>
   );
 }

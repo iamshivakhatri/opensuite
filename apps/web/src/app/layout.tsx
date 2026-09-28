@@ -12,7 +12,8 @@ const inter = Inter({
 
 export const metadata: Metadata = {
   title: "OpenSuite",
-  description: "OpenSuite — AI-native Office application.",
+  description:
+    "An open-source AI workspace for editing real Word documents through a deterministic document engine.",
 };
 
 export default function RootLayout({

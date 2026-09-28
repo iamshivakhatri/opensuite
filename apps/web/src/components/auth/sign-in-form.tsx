@@ -5,15 +5,18 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 
 import { authClient, signIn } from "@/lib/auth-client";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
+import {
+  AuthField,
+  AuthNotice,
+  AuthSecondaryButton,
+  AuthSubmit,
+} from "@/components/auth/auth-primitives";
 
 function GoogleMark() {
   return (
     <svg
       aria-hidden="true"
-      className="size-5"
+      className="size-[17px]"
       viewBox="0 0 48 48"
       xmlns="http://www.w3.org/2000/svg"
     >
@@ -100,84 +103,71 @@ export function SignInForm() {
   }
 
   return (
-    <form onSubmit={handleSubmit} className="flex flex-col gap-4">
-      <div className="flex flex-col gap-1.5">
-        <Label htmlFor="email">Email</Label>
-        <Input
-          id="email"
-          type="email"
-          autoComplete="email"
-          required
-          value={email}
-          onChange={(event) => setEmail(event.target.value)}
-        />
-      </div>
-      <div className="flex flex-col gap-1.5">
-        <div className="flex items-center justify-between">
-          <Label htmlFor="password">Password</Label>
+    <form onSubmit={handleSubmit} className="flex flex-col gap-5">
+      <AuthField
+        id="email"
+        label="Email"
+        type="email"
+        autoComplete="email"
+        required
+        value={email}
+        onChange={(event) => setEmail(event.target.value)}
+      />
+      <AuthField
+        id="password"
+        label="Password"
+        type="password"
+        autoComplete="current-password"
+        required
+        value={password}
+        onChange={(event) => setPassword(event.target.value)}
+        hint={
           <Link
             href="/forgot-password"
-            className="text-[11.5px] font-medium text-accent"
+            className="text-[12.5px] text-ink-faint transition-colors hover:text-ink"
           >
             Forgot password?
           </Link>
-        </div>
-        <Input
-          id="password"
-          type="password"
-          autoComplete="current-password"
-          required
-          value={password}
-          onChange={(event) => setPassword(event.target.value)}
-        />
-      </div>
-      {error ? (
-        <p className="rounded-[var(--radius-sm)] bg-danger-soft px-3 py-2 text-[12px] text-danger">
-          {error}
-        </p>
-      ) : null}
+        }
+      />
+      {error ? <AuthNotice>{error}</AuthNotice> : null}
       {isUnverified ? (
         <div className="flex flex-col gap-2">
-          <Button
+          <AuthSecondaryButton
             type="button"
-            variant="outline"
-            size="sm"
             onClick={() => void handleResend()}
             disabled={resendState === "sending"}
           >
             {resendState === "sending"
               ? "Sending…"
               : "Resend verification email"}
-          </Button>
+          </AuthSecondaryButton>
           {resendState === "sent" ? (
-            <p className="text-[12px] text-success">
-              Verification email sent.
-            </p>
+            <p className="text-[13px] text-success">Verification email sent.</p>
           ) : null}
           {resendState === "error" ? (
-            <p className="text-[12px] text-danger">
+            <p className="text-[13px] text-danger">
               Could not resend the email. Try again in a moment.
             </p>
           ) : null}
         </div>
       ) : null}
-      <Button type="submit" variant="accent" disabled={isSubmitting}>
+      <AuthSubmit type="submit" disabled={isSubmitting}>
         {isSubmitting ? "Signing in…" : "Sign in"}
-      </Button>
-      <div className="flex items-center gap-3 text-[11.5px] text-ink-faint">
+      </AuthSubmit>
+      <div className="flex items-center gap-4 os-label">
         <span className="h-px flex-1 bg-line" />
-        <span>or</span>
+        or
         <span className="h-px flex-1 bg-line" />
       </div>
-      <Button
+      <AuthSecondaryButton
         type="button"
-        variant="outline"
         onClick={() => void handleGoogleSignIn()}
         disabled={isSubmitting || isGoogleSubmitting}
       >
         <GoogleMark />
         {isGoogleSubmitting ? "Opening Google…" : "Continue with Google"}
-      </Button>
+      </AuthSecondaryButton>
     </form>
   );
 }

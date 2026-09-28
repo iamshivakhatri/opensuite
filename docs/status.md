@@ -14,6 +14,8 @@ _Read this before starting any work. Keep it a concise current-state handoff, no
 
 ## Just Completed
 
+* **Public marketing + auth UI** — landing, privacy, terms, 404, and auth pages from updated documents; `/` renders immediately (signed-in redirect is non-blocking); health poll + outage banner only on `/app/*` and auth. Site serif + `.os-site` tokens scoped to public chrome. Web typecheck and production build pass.
+
 * **Agent tool ergonomics** — table text edits, structural formatting, and contiguous row insertion now describe the existing one-call path; the operating instruction uses exact retrieval selectors before inspection and favors batch/multi-target operations. No runtime or engine change.
 
 * **Engine 0.1.2 + exact table targeting** — npm engine 0.1.2 advertises structural multi-cell formatting through the existing capability gate; one call formats several inspected cells and expires old handles. DOCX DIRECT, map, and targeted evidence now show exact version-local `headerCells` + duplicate-header `occurrence` selectors; retrieval handles are not mutation handles.
@@ -127,6 +129,7 @@ _Read this before starting any work. Keep it a concise current-state handoff, no
 
 | Check | Status |
 |---|---|
+| Public marketing + auth UI copy-over; web typecheck + `next build` | Pass |
 | Readable agent run logs (API formatters + report + isolation; core-v3 lifecycle) | Pass (60 API focused: log 5 + report 20 + isolation 35) |
 | agent-core-v3 unit (26) | Pass |
 | API unit (221; 20 skipped) | Pass |
@@ -161,4 +164,4 @@ _Read this before starting any work. Keep it a concise current-state handoff, no
 
 ## Recommended Next Step
 
-Evaluate a future recurring-report run for unnecessary inspect and mutation calls.
+Manually spot-check `/`, `/privacy`, `/terms`, and `/sign-in` with the API stopped to confirm public pages stay usable offline.

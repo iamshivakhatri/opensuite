@@ -14,18 +14,21 @@ export default function SignUpPage() {
 
   if (!isSignupAllowed()) {
     return (
-      <div className="flex flex-col gap-5">
+      <div className="flex flex-col gap-7">
         <div>
-          <h1 className="text-[18px] font-semibold tracking-[-0.02em] text-ink">
+          <h1 className="os-display text-[27px] leading-[1.15]">
             Sign-up is closed
           </h1>
-          <p className="mt-1 text-[12px] text-ink-soft">
+          <p className="mt-2.5 text-[14.5px] leading-[1.6] text-ink-soft">
             New accounts are not being accepted right now.
           </p>
         </div>
-        <p className="text-center text-[12px] text-ink-soft">
+        <p className="border-t border-line pt-5 text-[13.5px] text-ink-soft">
           Already have an account?{" "}
-          <Link href="/sign-in" className="font-medium text-accent">
+          <Link
+            href="/sign-in"
+            className="font-medium text-primary underline decoration-1 underline-offset-[3px] hover:text-primary-hover"
+          >
             Sign in
           </Link>
         </p>
@@ -38,19 +41,22 @@ export default function SignUpPage() {
   }
 
   return (
-    <div className="flex flex-col gap-5">
+    <div className="flex flex-col gap-7">
       <div>
-        <h1 className="text-[18px] font-semibold tracking-[-0.02em] text-ink">
+        <h1 className="os-display text-[27px] leading-[1.15]">
           Create your account
         </h1>
-        <p className="mt-1 text-[12px] text-ink-soft">
-          Start using OpenSuite.
+        <p className="mt-2.5 text-[14.5px] leading-[1.6] text-ink-soft">
+          Email verification is required before the first sign-in.
         </p>
       </div>
       <SignUpForm onSignedUp={setSubmittedEmail} />
-      <p className="text-center text-[12px] text-ink-soft">
+      <p className="border-t border-line pt-5 text-[13.5px] text-ink-soft">
         Already have an account?{" "}
-        <Link href="/sign-in" className="font-medium text-accent">
+        <Link
+          href="/sign-in"
+          className="font-medium text-primary underline decoration-1 underline-offset-[3px] hover:text-primary-hover"
+        >
           Sign in
         </Link>
       </p>

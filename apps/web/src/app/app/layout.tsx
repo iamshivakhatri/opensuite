@@ -5,8 +5,10 @@ import { useRouter } from "next/navigation";
 
 import { useSession } from "@/lib/auth-client";
 import { CommandPaletteProvider } from "@/components/shell/command-palette";
+import { ServiceStatusBanner } from "@/components/service-status-banner";
 import {
   isDatabaseUnavailable,
+  ServiceStatusProvider,
   useServiceStatus,
 } from "@/lib/service-status";
 
@@ -26,6 +28,14 @@ export default function AppLayout({
 }: {
   children: React.ReactNode;
 }) {
+  return (
+    <ServiceStatusProvider>
+      <AppLayoutInner>{children}</AppLayoutInner>
+    </ServiceStatusProvider>
+  );
+}
+
+function AppLayoutInner({ children }: { children: React.ReactNode }) {
   const router = useRouter();
   const { data: session, isPending, error: sessionError } = useSession();
   const serviceStatus = useServiceStatus();
@@ -46,6 +56,7 @@ export default function AppLayout({
   if (session) {
     return (
       <CommandPaletteProvider>
+        <ServiceStatusBanner />
         <div className="h-screen">{children}</div>
       </CommandPaletteProvider>
     );

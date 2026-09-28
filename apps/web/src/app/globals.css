@@ -121,14 +121,7 @@ html[data-opensuite-theme] {
   --elevation-xs: 0 1px 2px rgba(16, 24, 40, 0.06);
 }
 
-/*
- * Public marketing site (`/`, `/privacy`, `/terms`) is always dark,
- * independent of the signed-in app's light/dark preference. `.os-theme-dark`
- * mirrors html[data-opensuite-theme="dark"] below and is applied to the
- * marketing root wrapper — same tokens, no new color system.
- */
-html[data-opensuite-theme="dark"],
-.os-theme-dark {
+html[data-opensuite-theme="dark"] {
   --paper: #12141a;
   --surface: #1a1d24;
   --elevated: #22262f;
@@ -414,4 +407,246 @@ html[data-opensuite-modal] .opensuite-docx-host [data-testid="toolbar"] {
   clip: rect(0, 0, 0, 0);
   white-space: nowrap;
   border-width: 0;
+}
+/* ───────────────────────────────────────────────────────────────────────────
+ * PUBLIC SITE
+ *
+ * `/`, `/privacy`, `/terms`, `/sign-in`, `/sign-up`, `/forgot-password`,
+ * `/reset-password`, 404. Always the warm paper theme, independent of the
+ * signed-in app's light/dark preference, and applied to the public root
+ * wrapper only — the workspace shell above is untouched.
+ *
+ * Token names match the shell so shared primitives (Button / Input / Label)
+ * adopt this palette without new variants. The `--color-*` bridges must be
+ * redeclared here: `@theme inline` resolves them on <html>, so overriding a
+ * raw token alone would not reach `bg-paper` / `text-ink` utilities.
+ * ─────────────────────────────────────────────────────────────────────────── */
+.os-site {
+  /* Paper, ink, rules. Warm neutrals; near-black rather than pure black. */
+  --paper: #faf9f6;
+  --surface: #ffffff;
+  --elevated: #ffffff;
+  --sunken: #f3f1ea;
+  --canvas: #efece4;
+  --ink: #191917;
+  --ink-soft: #55554e;
+  --ink-faint: #6e6e64;
+  --line: #e3e0d7;
+  /* Stronger hairline for structural rules (section dividers, ledgers). */
+  --rule: #cfcbbe;
+  --overlay: rgba(25, 25, 23, 0.4);
+
+  /* One accent: a muted editor's-mark brick. 6.2:1 on paper, 6.5:1 inverted. */
+  --primary: #9d3f26;
+  --primary-hover: #86341e;
+  --secondary: color-mix(in srgb, var(--primary) 80%, white);
+  --secondary-hover: var(--primary);
+  --primary-soft: color-mix(in srgb, var(--primary) 7%, #faf9f6);
+  --primary-line: color-mix(in srgb, var(--primary) 30%, #faf9f6);
+  --secondary-soft: color-mix(in srgb, var(--secondary) 7%, #faf9f6);
+  --secondary-line: color-mix(in srgb, var(--secondary) 26%, #faf9f6);
+  --hover: color-mix(in srgb, var(--primary) 6%, transparent);
+  --selected: var(--primary-soft);
+  --accent: var(--primary);
+  --accent-hover: var(--primary-hover);
+  --accent-soft: var(--primary-soft);
+  --accent-line: var(--primary-line);
+
+  --success: #2f6f4f;
+  --success-soft: #eef4ef;
+  --danger: #a32c1f;
+  --danger-soft: #f9efec;
+  --on-ink: #ffffff;
+  --sidebar: #f6f4ee;
+  --shell-main: #f3f1ea;
+
+  /* Tighter, more classic corners than the app shell. */
+  --radius-sm: 4px;
+  --radius-md: 6px;
+  --radius-lg: 8px;
+
+  /* Shared controls read one size larger out here than in the dense shell. */
+  --text-sm: 14px;
+
+  --font-serif: var(--font-site-serif), ui-serif, Georgia, "Times New Roman",
+    serif;
+  --font-mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas,
+    monospace;
+
+  --color-paper: var(--paper);
+  --color-surface: var(--surface);
+  --color-elevated: var(--elevated);
+  --color-sunken: var(--sunken);
+  --color-canvas: var(--canvas);
+  --color-ink: var(--ink);
+  --color-ink-soft: var(--ink-soft);
+  --color-ink-faint: var(--ink-faint);
+  --color-line: var(--line);
+  --color-hover: var(--hover);
+  --color-selected: var(--selected);
+  --color-overlay: var(--overlay);
+  --color-accent: var(--accent);
+  --color-accent-hover: var(--accent-hover);
+  --color-accent-soft: var(--accent-soft);
+  --color-accent-line: var(--accent-line);
+  --color-primary: var(--primary);
+  --color-primary-hover: var(--primary-hover);
+  --color-primary-soft: var(--primary-soft);
+  --color-primary-line: var(--primary-line);
+  --color-secondary: var(--secondary);
+  --color-secondary-hover: var(--secondary-hover);
+  --color-secondary-soft: var(--secondary-soft);
+  --color-secondary-line: var(--secondary-line);
+  --color-success: var(--success);
+  --color-success-soft: var(--success-soft);
+  --color-danger: var(--danger);
+  --color-danger-soft: var(--danger-soft);
+  --color-on-ink: var(--on-ink);
+  --color-sidebar: var(--sidebar);
+  --color-shell-main: var(--shell-main);
+
+  background: var(--paper);
+  color: var(--ink);
+  color-scheme: light;
+}
+
+/* Page measure. One width for every public section, including the footer. */
+.os-container {
+  margin-inline: auto;
+  width: 100%;
+  max-width: 72rem;
+  padding-inline: 1.25rem;
+}
+
+@media (min-width: 640px) {
+  .os-container {
+    padding-inline: 2rem;
+  }
+}
+
+@media (min-width: 1024px) {
+  .os-container {
+    padding-inline: 2.5rem;
+  }
+}
+
+/* Display type: serif, set tight and dark. Used for h1 / section titles. */
+.os-display {
+  font-family: var(--font-serif);
+  font-weight: 400;
+  color: var(--ink);
+  letter-spacing: -0.014em;
+  text-wrap: balance;
+}
+
+/* Small caps label: section numbers, table headers, annotations, eyebrows. */
+.os-label {
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  font-weight: 500;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--ink-faint);
+}
+
+/* Inline technical annotation — tool names, versions, file names. */
+.os-annot {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  letter-spacing: 0;
+  color: var(--ink-faint);
+}
+
+.os-lead {
+  font-size: 17px;
+  line-height: 1.6;
+  color: var(--ink-soft);
+  letter-spacing: -0.003em;
+}
+
+@media (min-width: 640px) {
+  .os-lead {
+    font-size: 17.5px;
+  }
+}
+
+.os-body {
+  font-size: 15.5px;
+  line-height: 1.7;
+  color: var(--ink-soft);
+}
+
+/* Visible keyboard focus on every public control, without per-element work. */
+.os-site :focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 3px;
+  border-radius: 2px;
+}
+
+/* Legal documents: one readable measure, document hierarchy, no cards. */
+.os-prose {
+  font-size: 16px;
+  line-height: 1.75;
+  color: var(--ink-soft);
+}
+
+.os-prose > * + * {
+  margin-top: 1.05em;
+}
+
+.os-prose h2 {
+  margin-top: 0;
+  margin-bottom: 0.6rem;
+  font-family: var(--font-serif);
+  font-size: 21px;
+  font-weight: 400;
+  line-height: 1.25;
+  letter-spacing: -0.01em;
+  color: var(--ink);
+}
+
+.os-prose ul {
+  list-style: none;
+  padding-left: 0;
+}
+
+.os-prose li {
+  position: relative;
+  padding-left: 1.15rem;
+}
+
+.os-prose li + li {
+  margin-top: 0.5rem;
+}
+
+.os-prose li::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 0.72em;
+  width: 5px;
+  height: 1px;
+  background: var(--rule);
+}
+
+.os-prose a {
+  color: var(--primary);
+  text-decoration: underline;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 3px;
+}
+
+.os-prose a:hover {
+  color: var(--primary-hover);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .os-site *,
+  .os-site *::before,
+  .os-site *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
 }

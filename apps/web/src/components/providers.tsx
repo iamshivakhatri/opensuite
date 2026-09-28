@@ -3,8 +3,6 @@
 import * as React from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
-import { ServiceStatusBanner } from "@/components/service-status-banner";
-import { ServiceStatusProvider } from "@/lib/service-status";
 import { ThemeProvider } from "@/lib/theme";
 import { ToastProvider } from "@/lib/toast";
 
@@ -27,10 +25,12 @@ export function AppProviders({ children }: { children: React.ReactNode }) {
     <QueryClientProvider client={queryClient}>
       <ThemeProvider>
         <ToastProvider>
-          <ServiceStatusProvider>
-            <ServiceStatusBanner />
-            {children}
-          </ServiceStatusProvider>
+          {/*
+            Service status polling stays on API-dependent surfaces only
+            (`/app/*` and auth routes). Public marketing pages must work with
+            the API offline, so they do not mount ServiceStatusProvider.
+          */}
+          {children}
         </ToastProvider>
       </ThemeProvider>
     </QueryClientProvider>

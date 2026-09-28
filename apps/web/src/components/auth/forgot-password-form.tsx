@@ -4,9 +4,11 @@ import * as React from "react";
 import Link from "next/link";
 
 import { authClient } from "@/lib/auth-client";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
+import {
+  AuthField,
+  AuthNotice,
+  AuthSubmit,
+} from "@/components/auth/auth-primitives";
 
 export function ForgotPasswordForm() {
   const [email, setEmail] = React.useState("");
@@ -44,22 +46,18 @@ export function ForgotPasswordForm() {
 
   if (submitted) {
     return (
-      <div className="flex flex-col gap-4 text-center">
-        <div className="mx-auto grid h-11 w-11 place-items-center rounded-[12px] bg-accent-soft text-accent">
-          ✉
-        </div>
-        <div>
-          <h1 className="text-[18px] font-semibold tracking-[-0.02em] text-ink">
-            Check your email
-          </h1>
-          <p className="mt-2 text-[12px] leading-relaxed text-ink-soft">
-            If an account exists for{" "}
-            <span className="font-medium text-ink">{email}</span>, we sent a
-            password reset link. It expires in 1 hour.
-          </p>
-        </div>
-        <p className="text-center text-[12px] text-ink-soft">
-          <Link href="/sign-in" className="font-medium text-accent">
+      <div className="flex flex-col gap-4">
+        <p className="os-label">Check your email</p>
+        <p className="text-[14.5px] leading-[1.65] text-ink-soft">
+          If an account exists for{" "}
+          <span className="font-medium text-ink">{email}</span>, we sent a
+          password reset link. It expires in one hour.
+        </p>
+        <p className="border-t border-line pt-5 text-[13.5px] text-ink-soft">
+          <Link
+            href="/sign-in"
+            className="font-medium text-primary underline decoration-1 underline-offset-[3px] hover:text-primary-hover"
+          >
             Back to sign in
           </Link>
         </p>
@@ -68,26 +66,20 @@ export function ForgotPasswordForm() {
   }
 
   return (
-    <form onSubmit={handleSubmit} className="flex flex-col gap-4">
-      <div className="flex flex-col gap-1.5">
-        <Label htmlFor="email">Email</Label>
-        <Input
-          id="email"
-          type="email"
-          autoComplete="email"
-          required
-          value={email}
-          onChange={(event) => setEmail(event.target.value)}
-        />
-      </div>
-      {error ? (
-        <p className="rounded-[var(--radius-sm)] bg-danger-soft px-3 py-2 text-[12px] text-danger">
-          {error}
-        </p>
-      ) : null}
-      <Button type="submit" variant="accent" disabled={isSubmitting}>
+    <form onSubmit={handleSubmit} className="flex flex-col gap-5">
+      <AuthField
+        id="email"
+        label="Email"
+        type="email"
+        autoComplete="email"
+        required
+        value={email}
+        onChange={(event) => setEmail(event.target.value)}
+      />
+      {error ? <AuthNotice>{error}</AuthNotice> : null}
+      <AuthSubmit type="submit" disabled={isSubmitting}>
         {isSubmitting ? "Sending…" : "Send reset link"}
-      </Button>
+      </AuthSubmit>
     </form>
   );
 }

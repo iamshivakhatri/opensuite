@@ -24,19 +24,11 @@ export function RedirectIfAuthenticated({
   }, [isPending, session, router]);
 
   if (isPending) {
-    return (
-      <div className="py-8 text-center text-[13px] text-ink-soft">
-        Loading…
-      </div>
-    );
+    return <p className="os-label py-6">Loading…</p>;
   }
 
   if (session) {
-    return (
-      <div className="py-8 text-center text-[13px] text-ink-soft">
-        Redirecting…
-      </div>
-    );
+    return <p className="os-label py-6">Redirecting…</p>;
   }
 
   return children;

@@ -1,30 +1,20 @@
-"use client";
-
-import * as React from "react";
-import { useRouter } from "next/navigation";
+import type { Metadata } from "next";
 
 import { LandingPage } from "@/components/marketing/landing-page";
-import { useSession } from "@/lib/auth-client";
+import { RedirectSignedIn } from "@/components/marketing/redirect-signed-in";
+
+export const metadata: Metadata = {
+  title: "OpenSuite — an agent that edits the document, not a copy of it",
+  description:
+    "OpenSuite is an open-source AI workspace for editing real Word documents. It inspects your .docx and applies targeted changes through a deterministic document engine.",
+};
 
 export default function RootPage() {
-  const router = useRouter();
-  const { data: session, isPending } = useSession();
-
-  React.useEffect(() => {
-    if (isPending) return;
-    if (session) {
-      router.replace("/app");
-    }
-    // No unauthenticated redirect — `/` is the public landing page.
-  }, [isPending, session, router]);
-
-  if (isPending || session) {
-    return (
-      <div className="grid h-screen place-items-center text-[13px] text-ink-soft">
-        Loading OpenSuite…
-      </div>
-    );
-  }
-
-  return <LandingPage />;
+  return (
+    <>
+      {/* `/` renders immediately; signed-in visitors are moved to /app. */}
+      <RedirectSignedIn />
+      <LandingPage />
+    </>
+  );
 }
