@@ -1,8 +1,8 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" fill="none">
   <defs>
     <linearGradient id="os-mark" x1="4" y1="2" x2="28" y2="30" gradientUnits="userSpaceOnUse">
-      <stop stop-color="#6e8fea"/>
-      <stop offset="1" stop-color="#2d4fc4"/>
+      <stop stop-color="#ef7a95"/>
+      <stop offset="1" stop-color="#951b3b"/>
     </linearGradient>
   </defs>
   <rect width="32" height="32" rx="9" fill="url(#os-mark)"/>

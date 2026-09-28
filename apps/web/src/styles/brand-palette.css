@@ -1,10 +1,15 @@
 /*
  * OpenSuite brand palette — the ONLY place raw brand colors live.
  *
- * HOW TO SWITCH: exactly one palette block below is live. Comment the live
- * block out (wrap it in a block comment) and uncomment another. Nothing else
- * changes: globals.css derives every semantic token (soft / line / hover /
- * selected / focus) from these variables, and components only read those.
+ * HOW TO SWITCH (exactly one palette is live at a time):
+ *   1. Deactivate the live palette: add a line containing only the comment
+ *      opener above its first rule, and a line containing only the comment
+ *      closer after its dark rule.
+ *   2. Activate another: delete those two lines around it.
+ * Every inactive palette below is already wrapped that way, so switching is
+ * two deletions plus two additions. Nothing else changes: globals.css
+ * derives every semantic token (soft / line / hover / selected / focus)
+ * from these variables, and components only read those.
  *
  * Every palette defines the same 10 variables, twice: light values on
  * `:root, .os-site` (the public site is always light) and dark values on the
@@ -32,7 +37,7 @@
  */
 
 /* ── BLUE — OpenSuite blue (LIVE) ── */
-:root,
+/* :root,
 .os-site {
   --brand-primary: #3f63d6;
   --brand-primary-hover: #2d4fc4;
@@ -57,9 +62,10 @@ html[data-opensuite-theme="dark"] {
   --brand-link: #8fa8f2;
   --brand-link-hover: #b3c3f7;
   --brand-ring: #8fa8f2;
-}
+} */
 
-/* ── BROWN — brick, the previous public-site brand, preserved ──
+/* ── BROWN — brick, the previous public-site brand, preserved ── */
+/* 
 :root,
 .os-site {
   --brand-primary: #9d3f26;
@@ -85,10 +91,11 @@ html[data-opensuite-theme="dark"] {
   --brand-link: #f0a58f;
   --brand-link-hover: #f7c2b2;
   --brand-ring: #f0a58f;
-}
-*/
+} */
 
-/* ── INDIGO — deeper, more editorial ──
+
+/* ── INDIGO — deeper, more editorial ── */
+/* 
 :root,
 .os-site {
   --brand-primary: #4b45c9;
@@ -114,10 +121,11 @@ html[data-opensuite-theme="dark"] {
   --brand-link: #a9a4f7;
   --brand-link-hover: #c4c0fa;
   --brand-ring: #a9a4f7;
-}
-*/
+} */
 
-/* ── TEAL — calm, technical ──
+
+/* ── TEAL — calm, technical ── */
+/* 
 :root,
 .os-site {
   --brand-primary: #0f766e;
@@ -143,10 +151,11 @@ html[data-opensuite-theme="dark"] {
   --brand-link: #5fd0c4;
   --brand-link-hover: #8fe0d7;
   --brand-ring: #5fd0c4;
-}
-*/
+} */
 
-/* ── PLUM — distinctive, warm-cool ──
+
+/* ── PLUM — distinctive, warm-cool ── */
+/* 
 :root,
 .os-site {
   --brand-primary: #7a3a91;
@@ -172,5 +181,125 @@ html[data-opensuite-theme="dark"] {
   --brand-link: #d9adea;
   --brand-link-hover: #e8c9f2;
   --brand-ring: #d9adea;
+} */
+
+
+/* ── FOREST — deep green, natural ── */
+
+/* :root,
+.os-site {
+  --brand-primary: #1f6b4a;
+  --brand-primary-hover: #175539;
+  --brand-on-primary: #ffffff;
+  --brand-secondary: #3f5148;
+  --brand-secondary-hover: #2e3d35;
+  --brand-accent: #9a650d;
+  --brand-accent-hover: #7e5209;
+  --brand-link: #1f6b4a;
+  --brand-link-hover: #175539;
+  --brand-ring: #1f6b4a;
 }
-*/
+
+html[data-opensuite-theme="dark"] {
+  --brand-primary: #4fb98a;
+  --brand-primary-hover: #7ccaa5;
+  --brand-on-primary: #0e1014;
+  --brand-secondary: #a9c2b5;
+  --brand-secondary-hover: #c8dbd0;
+  --brand-accent: #e2a94a;
+  --brand-accent-hover: #efc26e;
+  --brand-link: #8fd8b3;
+  --brand-link-hover: #b3e6cc;
+  --brand-ring: #8fd8b3;
+} */
+
+
+/* ── GRAPHITE — near-black ink, blue link; the most minimal ── */
+/* 
+:root,
+.os-site {
+  --brand-primary: #23272f;
+  --brand-primary-hover: #0f1216;
+  --brand-on-primary: #ffffff;
+  --brand-secondary: #4a5763;
+  --brand-secondary-hover: #38424c;
+  --brand-accent: #3f63d6;
+  --brand-accent-hover: #2d4fc4;
+  --brand-link: #2f52c8;
+  --brand-link-hover: #223fa3;
+  --brand-ring: #3f63d6;
+}
+
+html[data-opensuite-theme="dark"] {
+  --brand-primary: #e6e8ec;
+  --brand-primary-hover: #ffffff;
+  --brand-on-primary: #0e1014;
+  --brand-secondary: #a3adba;
+  --brand-secondary-hover: #c4ccd6;
+  --brand-accent: #8fa8f2;
+  --brand-accent-hover: #b3c3f7;
+  --brand-link: #8fa8f2;
+  --brand-link-hover: #b3c3f7;
+  --brand-ring: #8fa8f2;
+} */
+
+
+/* ── ROSE — crimson-rose, confident ── */
+/* ── ROSE — NICE ── */
+ :root,
+.os-site {
+  --brand-primary: #b4234a;
+  --brand-primary-hover: #951b3b;
+  --brand-on-primary: #ffffff;
+  --brand-secondary: #4d4650;
+  --brand-secondary-hover: #3a343d;
+  --brand-accent: #9a650d;
+  --brand-accent-hover: #7e5209;
+  --brand-link: #b4234a;
+  --brand-link-hover: #951b3b;
+  --brand-ring: #b4234a;
+}
+
+html[data-opensuite-theme="dark"] {
+  --brand-primary: #ef7a95;
+  --brand-primary-hover: #f5a3b7;
+  --brand-on-primary: #0e1014;
+  --brand-secondary: #bdb3c0;
+  --brand-secondary-hover: #d6cfd8;
+  --brand-accent: #e2a94a;
+  --brand-accent-hover: #efc26e;
+  --brand-link: #f5a3b7;
+  --brand-link-hover: #f9c2cf;
+  --brand-ring: #f5a3b7;
+} 
+
+
+/* ── OCEAN — deep cyan-blue, cooler than BLUE ── */
+/* 
+:root,
+.os-site {
+  --brand-primary: #0b6a8a;
+  --brand-primary-hover: #08546d;
+  --brand-on-primary: #ffffff;
+  --brand-secondary: #3d4f5c;
+  --brand-secondary-hover: #2c3b46;
+  --brand-accent: #a03f12;
+  --brand-accent-hover: #7f310d;
+  --brand-link: #0b6a8a;
+  --brand-link-hover: #08546d;
+  --brand-ring: #0b6a8a;
+}
+
+html[data-opensuite-theme="dark"] {
+  --brand-primary: #4cb6d9;
+  --brand-primary-hover: #7fd0ec;
+  --brand-on-primary: #0e1014;
+  --brand-secondary: #a5b8c4;
+  --brand-secondary-hover: #c4d3dc;
+  --brand-accent: #f0925a;
+  --brand-accent-hover: #f5b088;
+  --brand-link: #7fd0ec;
+  --brand-link-hover: #a6e0f3;
+  --brand-ring: #7fd0ec;
+} */
+
