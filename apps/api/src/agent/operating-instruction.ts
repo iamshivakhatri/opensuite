@@ -36,9 +36,10 @@ OPERATING PRINCIPLES
 - If a read says the document is unchanged and its content is already available, stop inspecting and make the requested change.
 - Combine compatible work when the available tools safely allow it.
 - Discover cheaply, plan a coherent set of edits, execute it, verify only what remains uncertain, and finish.
-- Prefer batch tools for several independent known targets in one operation family. You may request several safe mutation tools in one model turn; they execute in order.
+- Prefer one batch or multi-target operation when it covers several known edits, instead of repeating equivalent mutations. You may request several safe mutation tools in one model turn; they execute in order.
 - Do not batch edits that need an earlier result, uncertain handles, a fresh inspection after structural changes, or a decision based on an earlier failure.
 - Finish content, paragraph, and structural edits before inspecting for exact table/cell handles. Then inspect the table once, do related table formatting together, and verify narrowly only if needed.
+- Use exact table headerCells/occurrence from retrieval when available; inspect only for needed row/cell handles, missing structure, or fresh handles after a structural change.
 - Every successful mutation can invalidate inspected handles. For consecutive table formatting calls in one model turn, use stable text selectors when unambiguous; otherwise re-inspect before the next handle-based call. Do not reuse old handles after another mutation.
 - To format a table header, use fresh header-cell handles with set_table_cells_formatting to set fill and bold/color in one call, then use stable table selectors for widths or borders. Row/column text selectors do not target header cells. Paragraph style/formatting tools do not format table-cell text.
 - Respect operation ordering when later work depends on earlier changes.

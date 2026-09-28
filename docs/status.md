@@ -14,6 +14,8 @@ _Read this before starting any work. Keep it a concise current-state handoff, no
 
 ## Just Completed
 
+* **Agent tool ergonomics** — table text edits, structural formatting, and contiguous row insertion now describe the existing one-call path; the operating instruction uses exact retrieval selectors before inspection and favors batch/multi-target operations. No runtime or engine change.
+
 * **Engine 0.1.2 + exact table targeting** — npm engine 0.1.2 advertises structural multi-cell formatting through the existing capability gate; one call formats several inspected cells and expires old handles. DOCX DIRECT, map, and targeted evidence now show exact version-local `headerCells` + duplicate-header `occurrence` selectors; retrieval handles are not mutation handles.
 
 * **Recurring-report fix pass 2** — API post-save validation now checks narrow additive table totals using the engine’s 10-row inspection pages, recognizes successful structure mutations and blank creation, skips period checks without a rollover, flags only future-sounding period statements, and labels input-needed placeholders as unresolved input. No Rust, model, or UI change.
@@ -107,6 +109,10 @@ _Read this before starting any work. Keep it a concise current-state handoff, no
 
 ## Verification Status
 
+* Agent tool ergonomics: 40 focused API operating-instruction, retrieval, and mutation tests pass; API TypeScript build/typecheck passes. No model or browser test.
+
+* Linux deployment-image check: existing `node:22-bookworm-slim` API Dockerfile built on Colima linux/arm64; npm installed `@opensuitehq/engine-linux-arm64-gnu@0.1.2`. Native load, DOCX inspect, structural formatting of two header cells, output re-inspection, and API capability-gated tool exposure passed. No product test or production change.
+
 * Engine 0.1.2 integration and table selectors: 31 focused API tests and 9 focused engine-client tests pass; API and engine-client typechecks pass. Real binding confirms capability gating, multi-cell formatting, stale handles, duplicate-header selector round trip, and unchanged multi-document retrieval. No manual test.
 
 * Fix pass 2: 71 focused API verification, lifecycle, isolation, and report tests passed. Generic-edit reconciliation regression: 51 focused API tests and API typecheck pass. No manual test.
@@ -155,4 +161,4 @@ _Read this before starting any work. Keep it a concise current-state handoff, no
 
 ## Recommended Next Step
 
-Check 0.1.2 in the Linux deployment image.
+Evaluate a future recurring-report run for unnecessary inspect and mutation calls.

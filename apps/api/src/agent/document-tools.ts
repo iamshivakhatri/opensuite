@@ -139,7 +139,7 @@ const tableTarget = {
 
 const rowAnchor = {
   type: "object",
-  description: "Row selector. Prefer handle from inspect(tables).rows[].handle.",
+  description: "Row selector. Use firstCellText/occurrence when unambiguous; inspect only when a current row handle is needed.",
   properties: {
     handle: { type: "string" },
     firstCellText: { type: "string" },
@@ -268,7 +268,7 @@ const MUTATION_DEFS: Record<string, MutDef> = {
   },
   set_table_cells_text: {
     description:
-      "Atomically update one or more table cells. Table and cells are selected by handle and/or labels; each update requires expectedCurrentText and replacement.",
+      "Update all known cells in one table with one call. Use its exact headerCells/occurrence from retrieval; inspect only for needed cell handles. Each update needs expectedCurrentText and replacement.",
     inputSchema: op(
       {
         table: tableTarget,
@@ -290,14 +290,14 @@ const MUTATION_DEFS: Record<string, MutDef> = {
     ),
   },
   insert_table_rows: {
-    description: "Insert rows after a table row anchor.",
+    description: "Insert several contiguous, known rows in one call after a row anchor; prefer this over repeated insert_table_row calls.",
     inputSchema: op(
       { table: tableTarget, after: rowAnchor, rows: stringRows },
       ["table", "after", "rows"],
     ),
   },
   insert_table_row: {
-    description: "Insert a single table row after an anchor.",
+    description: "Insert one table row after an anchor; use insert_table_rows when several contiguous rows are known.",
     inputSchema: op(
       { table: tableTarget, after: rowAnchor, cells: strings },
       ["table", "after", "cells"],
@@ -368,7 +368,7 @@ const MUTATION_DEFS: Record<string, MutDef> = {
     ),
   },
   set_table_cell_shading: {
-    description: "Set fill for one or more cells in one call (6-digit RGB, no #). Header-row cells require fresh cell handles from inspect(tables). Shade all header cells before other mutations; omit fill to clear.",
+    description: "Set fill for one or more cells in one call (6-digit RGB, no #). Header-row cells require fresh cell handles from inspect(tables). If available, use set_table_cells_formatting for fill and text together. Omit fill to clear.",
     inputSchema: op(
       {
         table: tableTarget,
@@ -390,7 +390,7 @@ const MUTATION_DEFS: Record<string, MutDef> = {
   },
   set_table_cells_formatting: {
     description:
-      "Format several cells in one table and one mutation. Use fresh cell handles from inspect(tables) to set header fill and direct text formatting together. Supports fill (6-digit RGB), bold, italic, font family, font size in half-points, and text color.",
+      "Use current cell handles from one inspect(tables), then format all relevant cells in one call. Set fill and direct text formatting together when needed; handles expire after a successful mutation. Supports fill (6-digit RGB), bold, italic, font family, font size in half-points, and text color.",
     inputSchema: op(
       {
         table: tableTarget,
