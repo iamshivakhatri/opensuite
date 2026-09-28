@@ -23,6 +23,7 @@ const DIRECT: Record<string, keyof DocxEngineBinding> = {
   set_table_formatting: "executeDocxSetTableFormatting",
   set_table_column_widths: "executeDocxSetTableColumnWidths",
   set_table_cell_shading: "executeDocxSetTableCellShading",
+  set_table_cells_formatting: "executeDocxSetTableCellsFormatting",
 };
 
 /**

@@ -388,6 +388,41 @@ const MUTATION_DEFS: Record<string, MutDef> = {
       ["table", "updates"],
     ),
   },
+  set_table_cells_formatting: {
+    description:
+      "Format several cells in one table and one mutation. Use fresh cell handles from inspect(tables) to set header fill and direct text formatting together. Supports fill (6-digit RGB), bold, italic, font family, font size in half-points, and text color.",
+    inputSchema: op(
+      {
+        table: tableTarget,
+        updates: {
+          type: "array",
+          minItems: 1,
+          maxItems: 100,
+          items: {
+            type: "object",
+            properties: {
+              target: cellTarget,
+              fill: { type: "string" },
+              textFormatting: {
+                type: "object",
+                properties: {
+                  bold: { type: "boolean" },
+                  italic: { type: "boolean" },
+                  fontFamily: { type: "string" },
+                  fontSizeHalfPoints: { type: "number" },
+                  color: { type: "string" },
+                },
+                additionalProperties: false,
+              },
+            },
+            required: ["target"],
+            additionalProperties: false,
+          },
+        },
+      },
+      ["table", "updates"],
+    ),
+  },
   set_content_control_text: {
     description: "Set content-control text by tag and/or alias.",
     inputSchema: op(

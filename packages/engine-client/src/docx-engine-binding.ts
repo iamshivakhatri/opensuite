@@ -175,6 +175,22 @@ export interface DocxSetTableCellShadingOperation {
   readonly baseRevision?: string;
 }
 
+export interface DocxSetTableCellsFormattingOperation {
+  readonly table: DocxTableTarget;
+  readonly updates: readonly {
+    readonly target: DocxTableCellTarget;
+    readonly fill?: string;
+    readonly textFormatting?: {
+      readonly bold?: boolean;
+      readonly italic?: boolean;
+      readonly fontFamily?: string;
+      readonly fontSizeHalfPoints?: number;
+      readonly color?: string;
+    };
+  }[];
+  readonly baseRevision?: string;
+}
+
 /** Placement for insert_paragraph — engine protocol shape. */
 export type DocxParagraphPlacement =
   | { readonly kind: "start" }
@@ -517,6 +533,10 @@ export interface DocxEngineBinding {
     input: Uint8Array,
     operation: DocxSetTableCellShadingOperation,
   ): Promise<DocxMutationBindingResult>;
+  executeDocxSetTableCellsFormatting?(
+    input: Uint8Array,
+    operation: DocxSetTableCellsFormattingOperation,
+  ): Promise<DocxMutationBindingResult>;
   executeDocxExtended?(
     input: Uint8Array,
     name: DocxExtendedOperationName,
@@ -672,6 +692,7 @@ type NativeEngineModule = {
   }>;
   executeDocxSetTableColumnWidths: (input: Buffer, operation: Record<string, unknown>) => Promise<{ result: DocxEngineOperationResult; output?: Buffer }>;
   executeDocxSetTableCellShading: (input: Buffer, operation: Record<string, unknown>) => Promise<{ result: DocxEngineOperationResult; output?: Buffer }>;
+  executeDocxSetTableCellsFormatting?: (input: Buffer, operation: Record<string, unknown>) => Promise<{ result: DocxEngineOperationResult; output?: Buffer }>;
   [name: string]: unknown;
 };
 
@@ -1102,6 +1123,37 @@ export async function createNapiDocxEngineBinding(): Promise<DocxEngineBinding> 
             return {
               target: toNativeCellTarget(update.target),
               ...(update.fill !== undefined ? { fill: update.fill } : {}),
+            };
+          }),
+          ...(operation.baseRevision !== undefined
+            ? { baseRevision: operation.baseRevision }
+            : {}),
+        },
+      );
+      return mapMutationBindingResponse(response);
+    },
+
+    async executeDocxSetTableCellsFormatting(input, operation) {
+      if (!Array.isArray(operation.updates) || operation.updates.length === 0) {
+        throw new MutationArgError("updates must be a non-empty array");
+      }
+      if (!native.executeDocxSetTableCellsFormatting) {
+        throw new Error("@opensuitehq/engine is missing executeDocxSetTableCellsFormatting");
+      }
+      const response = await native.executeDocxSetTableCellsFormatting(
+        Buffer.from(input),
+        {
+          table: toNativeTableTarget(operation.table),
+          updates: operation.updates.map((update, index) => {
+            if (!update || typeof update !== "object") {
+              throw new MutationArgError(`updates[${index}] must be an object`);
+            }
+            return {
+              target: toNativeCellTarget(update.target),
+              ...(update.fill !== undefined ? { fill: update.fill } : {}),
+              ...(update.textFormatting !== undefined
+                ? { textFormatting: update.textFormatting }
+                : {}),
             };
           }),
           ...(operation.baseRevision !== undefined

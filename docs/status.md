@@ -14,6 +14,8 @@ _Read this before starting any work. Keep it a concise current-state handoff, no
 
 ## Just Completed
 
+* **Structural table-cell formatting** — the agent now exposes one typed call for fill and direct text formatting across several cells from the same inspected table. The Rust/N-API source supports it; the app tool appears when the installed engine advertises the new capability. Existing handle invalidation remains in force.
+
 * **Recurring-report fix pass 2** — API post-save validation now checks narrow additive table totals using the engine’s 10-row inspection pages, recognizes successful structure mutations and blank creation, skips period checks without a rollover, flags only future-sounding period statements, and labels input-needed placeholders as unresolved input. No Rust, model, or UI change.
 
 * **Recurring-report fix pass 1** — update-only source rule preserves facts without explicit replacement evidence; missing requested facts can finish as `completed_with_input_needed` with a clear user response. Retrieval now scopes to the target, current attachments, and named references unless broader workspace reports are requested. Clear new-document requests start without a stale active target. No extra model call or Rust change.

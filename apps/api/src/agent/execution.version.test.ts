@@ -239,6 +239,70 @@ test("header shading then table formatting and widths reuse one inspect", async 
   assert.equal(tools.getWorkingRevision(), 4);
 });
 
+test("one structural header formatting call advances preview and expires inspected handles", async () => {
+  const native = await createNapiDocxEngineBinding();
+  let formattingCalls = 0;
+  // The app is pinned to the previous native release; Rust and N-API test the new formatting itself.
+  const binding = {
+    ...native,
+    getDocxCapabilities: () => {
+      const caps = native.getDocxCapabilities();
+      return { ...caps, formats: caps.formats.map((format) => ({
+        ...format,
+        capabilities: [...format.capabilities, "set_table_cells_formatting"],
+      })) };
+    },
+    executeDocxSetTableCellsFormatting: async (
+      bytes: Uint8Array,
+      operation: { table: { handle?: string }; updates: { target: { handle: string }; fill?: string }[] },
+    ) => {
+      formattingCalls += 1;
+      return native.executeDocxSetTableCellShading!(bytes, {
+        table: operation.table,
+        updates: operation.updates.map(({ target, fill }) => ({ target, fill })),
+      });
+    },
+  };
+  const tools = await createPrimaryDocxTools({
+    binding, ownerUserId: "user-1", workspaceId: "ws-1", documentId: "doc-1", versionId: "v1",
+    documents: {
+      getOwnedDocument: async () => ({ format: "docx" }) as never,
+      readExactVersionBytes: async () => Buffer.from(buildMinimalDocx(["Status"])),
+      appendDocumentVersion: async () => { throw new Error("unused"); },
+      createBlankDocxDocument: async () => { throw new Error("unused"); },
+      createOfficeDocumentFromBytes: async () => { throw new Error("unused"); },
+    },
+  });
+  assert.ok(tools);
+  const call = { toolCallId: "format", messages: [], context: undefined as never };
+  const execute = (name: string, args: Record<string, unknown>) =>
+    tools.tools[name]!.execute!(args, call) as Promise<{ ok: boolean; reasonCode?: string }>;
+  assert.equal((await execute("document.create_table", {
+    rows: [["Status", "Owner", "Actual"], ["Open", "Alice", "10"]],
+    placement: { kind: "end" },
+  })).ok, true);
+  const inspected = await tools.tools["document.inspect"]!.execute!({ kind: "tables" }, call) as {
+    tables?: { items: { handle: string; rows: { cellHandles: string[] }[] }[] };
+  };
+  const table = inspected.tables!.items[0]!;
+  const before = Buffer.from(tools.getWorkingDocument()!.bytes);
+  const updates = table.rows[0]!.cellHandles.map((handle) => ({
+    target: { handle }, fill: "17365D", textFormatting: { bold: true },
+  }));
+  const formatted = await execute("document.set_table_cells_formatting", {
+    table: { handle: table.handle }, updates,
+  });
+  assert.equal(formatted.ok, true);
+  assert.equal(formattingCalls, 1);
+  assert.equal(tools.getWorkingRevision(), 2);
+  assert.notDeepEqual(Buffer.from(tools.getWorkingDocument()!.bytes), before);
+  const stale = await execute("document.set_table_cells_formatting", {
+    table: { handle: table.handle }, updates,
+  });
+  assert.equal(stale.reasonCode, "STALE_HANDLE");
+  assert.equal(formattingCalls, 1);
+});
+
 test("working reads, failed writes, and stale handles keep the last valid state", async () => {
   const binding = await createNapiDocxEngineBinding();
   let stored = Buffer.from(buildMinimalDocx(["Start"]));

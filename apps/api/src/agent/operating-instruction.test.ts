@@ -90,9 +90,9 @@ test("table guidance delays handle inspection and groups stable table edits", ()
   assert.match(system, /inspect the table once, do related table formatting together/);
   assert.match(system, /use stable text selectors when unambiguous/);
   assert.match(system, /Do not reuse old handles after another mutation/);
-  assert.match(system, /shade all header cells in one call before other mutations/);
+  assert.match(system, /set_table_cells_formatting to set fill and bold\/color in one call/);
   assert.match(system, /Row\/column text selectors do not target header cells/);
-  assert.match(system, /Paragraph style\/formatting tools do not format table-cell text; set_text_formatting does for simple cells/);
+  assert.match(system, /Paragraph style\/formatting tools do not format table-cell text/);
   assert.match(system, /TABLE_COLUMN_NOT_FOUND mean the selector missed the target/);
   assert.match(system, /state the unmet requirement in the final response/);
 });
