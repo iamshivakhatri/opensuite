@@ -739,18 +739,18 @@ export async function createNapiDocxEngineBinding(): Promise<DocxEngineBinding> 
     const message =
       error instanceof Error ? error.message : String(error);
     throw new Error(
-      `Failed to load @opensuitehq/engine Node binding. Ensure @opensuitehq/engine@0.1.1 is installed for this platform (darwin-arm64, darwin-x64, linux-x64-gnu, linux-arm64-gnu, win32-x64-msvc; glibc only — no musl/Alpine). Underlying error: ${message}`,
+      `Failed to load @opensuitehq/engine Node binding. Ensure @opensuitehq/engine@0.1.2 is installed for this platform (darwin-arm64, darwin-x64, linux-x64-gnu, linux-arm64-gnu, win32-x64-msvc; glibc only — no musl/Alpine). Underlying error: ${message}`,
     );
   }
 
   if (typeof native.createBlankDocx !== "function") {
     throw new Error(
-      "@opensuitehq/engine is missing createBlankDocx — pin/install @opensuitehq/engine@0.1.1",
+      "@opensuitehq/engine is missing createBlankDocx — pin/install @opensuitehq/engine@0.1.2",
     );
   }
   if (typeof native.executeDocxInsertParagraph !== "function") {
     throw new Error(
-      "@opensuitehq/engine is missing executeDocxInsertParagraph — pin/install @opensuitehq/engine@0.1.1",
+      "@opensuitehq/engine is missing executeDocxInsertParagraph — pin/install @opensuitehq/engine@0.1.2",
     );
   }
   for (const name of [
@@ -782,7 +782,7 @@ export async function createNapiDocxEngineBinding(): Promise<DocxEngineBinding> 
   ] as const) {
     if (typeof native[name] !== "function") {
       throw new Error(
-        `@opensuitehq/engine is missing ${name} — pin/install @opensuitehq/engine@0.1.1`,
+        `@opensuitehq/engine is missing ${name} — pin/install @opensuitehq/engine@0.1.2`,
       );
     }
   }

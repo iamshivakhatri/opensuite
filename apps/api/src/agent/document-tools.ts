@@ -128,7 +128,7 @@ const placement = {
 const tableTarget = {
   type: "object",
   description:
-    "Table selector. A handle is valid only until the next successful mutation. Use headerCells/occurrence for several unambiguous table edits in one model turn. occurrence is zero-based.",
+    "Use exact headerCells and occurrence from current retrieval when shown; never guess or shorten headers. Use document.inspect for a needed cell/row handle or missing selector. Inspect handles expire after a successful mutation; occurrence is zero-based.",
   properties: {
     handle: { type: "string" },
     headerCells: { type: "array", items: { type: "string" } },

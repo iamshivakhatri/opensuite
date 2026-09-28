@@ -22,7 +22,7 @@ const IGNORED_WORDS = new Set([
 
 export type SlimDocumentBlock =
   | { readonly kind: "paragraph"; readonly handle: string; readonly text: string; readonly styleName?: string; readonly headingLevel?: number }
-  | { readonly kind: "table"; readonly handle: string; readonly tableHandle: string; readonly rowCount: number; readonly columnCount: number; readonly headerTexts: readonly string[] }
+  | { readonly kind: "table"; readonly handle: string; readonly tableHandle: string; readonly rowCount: number; readonly columnCount: number; readonly headerTexts: readonly string[]; readonly tableOccurrence?: number }
   | { readonly kind: "picture" | "page_break"; readonly handle: string };
 
 export interface SlimDocumentStructure {
@@ -78,7 +78,7 @@ export interface DocumentMap {
   readonly artifact: WorkspaceArtifact;
   readonly entries: readonly (
     | { readonly kind: "heading"; readonly level: number; readonly text: string }
-    | { readonly kind: "table"; readonly headingPath: readonly string[]; readonly rowCount: number; readonly columnCount: number; readonly headerTexts: readonly string[] }
+    | { readonly kind: "table"; readonly headingPath: readonly string[]; readonly rowCount: number; readonly columnCount: number; readonly headerTexts: readonly string[]; readonly tableOccurrence?: number }
   )[];
 }
 
@@ -274,6 +274,7 @@ async function formatCompleteDocument(
     } else if (block.kind === "table") {
       const table = tables.get(block.tableHandle);
       if (!table) throw new Error("Could not match document table");
+      lines.push(formatTableSelector(block));
       for (const row of table.rows) lines.push(`| ${row.cells.map(markdownCell).join(" | ")} |`);
     }
   }
@@ -305,7 +306,8 @@ export function buildDocumentMap(artifact: WorkspaceArtifact, structure: SlimDoc
         headingPath: headings.filter(Boolean),
         rowCount: block.rowCount,
         columnCount: block.columnCount,
-        headerTexts: block.headerTexts.map(truncate),
+        headerTexts: block.headerTexts,
+        ...(block.tableOccurrence !== undefined ? { tableOccurrence: block.tableOccurrence } : {}),
       });
     }
   }
@@ -316,7 +318,7 @@ export function formatDocumentMap(map: DocumentMap): string {
   const lines = [`Document: ${map.artifact.name}`];
   for (const entry of map.entries) {
     if (entry.kind === "heading") lines.push(`- ${"#".repeat(entry.level)} ${entry.text}`);
-    else lines.push(`- Table${entry.headingPath.length ? ` under ${entry.headingPath.join(" > ")}` : ""}: ${entry.rowCount} rows × ${entry.columnCount} columns${entry.headerTexts.length ? `; headers: ${entry.headerTexts.join(" | ")}` : ""}`);
+    else lines.push(`- Table${entry.headingPath.length ? ` under ${entry.headingPath.join(" > ")}` : ""}: ${entry.rowCount} rows × ${entry.columnCount} columns; ${formatTableSelector(entry)}`);
   }
   return lines.join("\n");
 }
@@ -346,7 +348,16 @@ async function loadStructure(input: {
     const page = result.bodyBlocks;
     if (!result.ok || !page) throw new Error("Could not inspect document structure");
     blocks.push(...page.items.flatMap(toSlimBlock));
-    if (!page.page.hasMore) return { versionId: input.versionId, blocks };
+    if (!page.page.hasMore) {
+      const occurrences = new Map<string, number>();
+      return { versionId: input.versionId, blocks: blocks.map((block) => {
+        if (block.kind !== "table") return block;
+        const key = JSON.stringify(block.headerTexts);
+        const tableOccurrence = occurrences.get(key) ?? 0;
+        occurrences.set(key, tableOccurrence + 1);
+        return { ...block, tableOccurrence };
+      }) };
+    }
     if (page.page.returned === 0) throw new Error("Document structure paging did not advance");
     offset += page.page.returned;
   }
@@ -393,7 +404,7 @@ export function retrieveRelevantDocumentContext(
 export function formatRetrievedDocumentContext(context: RetrievedDocumentContext): string {
   const lines = ["Relevant document structure:"];
   for (const block of context.blocks) {
-    if (block.kind === "table") lines.push(`- Table ${block.tableHandle}: ${block.rowCount} rows × ${block.columnCount} columns; headers: ${block.headerTexts.join(" | ")}`);
+    if (block.kind === "table") lines.push(`- Table: ${block.rowCount} rows × ${block.columnCount} columns; ${formatTableSelector(block)}`);
     else if (block.kind === "paragraph") lines.push(`- ${block.headingLevel !== undefined ? `Heading ${block.headingLevel}` : "Paragraph"}: ${truncate(block.text)}`);
     else lines.push(`- ${block.kind === "page_break" ? "Page break" : "Picture"}`);
   }
@@ -458,13 +469,19 @@ export function selectTableRowDetail(instruction: string, context: RetrievedDocu
 }
 
 export function formatTableRowDetail(detail: { readonly tableHandle: string; readonly rowCount: number; readonly columnCount: number; readonly headerTexts: readonly string[]; readonly rows: readonly { readonly index: number; readonly cells: readonly string[] }[] }): string {
-  const lines = ["Relevant recent rows:", `- Table ${detail.tableHandle}: ${detail.rowCount} rows × ${detail.columnCount} columns; headers: ${detail.headerTexts.join(" | ")}`];
+  const lines = ["Relevant recent rows:", `- ${detail.rowCount} rows × ${detail.columnCount} columns`];
   for (const row of detail.rows) lines.push(`- [${row.index}] ${row.cells.map((cell) => cell.length <= 160 ? cell : `${cell.slice(0, 159)}…`).join(" | ")}`);
   return lines.join("\n").slice(0, 2000);
 }
 
 function context(blocks: readonly SlimDocumentBlock[], reason: RetrievedDocumentContext["reason"]): RetrievedDocumentContext {
   return { blocks: blocks.slice(0, MAX_BLOCKS).map((block) => block.kind === "paragraph" ? { ...block, text: truncate(block.text) } : block), reason };
+}
+
+function formatTableSelector(table: { readonly headerTexts: readonly string[]; readonly tableOccurrence?: number }): string {
+  return table.tableOccurrence === undefined || table.headerTexts.length === 0
+    ? `headers: ${table.headerTexts.join(" | ")}`
+    : `Current table selector: ${JSON.stringify({ headerCells: table.headerTexts, occurrence: table.tableOccurrence })}`;
 }
 
 function withNeighbors(blocks: readonly SlimDocumentBlock[], handle: string): readonly SlimDocumentBlock[] {

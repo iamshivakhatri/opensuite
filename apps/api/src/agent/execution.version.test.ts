@@ -240,29 +240,9 @@ test("header shading then table formatting and widths reuse one inspect", async 
 });
 
 test("one structural header formatting call advances preview and expires inspected handles", async () => {
-  const native = await createNapiDocxEngineBinding();
-  let formattingCalls = 0;
-  // The app is pinned to the previous native release; Rust and N-API test the new formatting itself.
-  const binding = {
-    ...native,
-    getDocxCapabilities: () => {
-      const caps = native.getDocxCapabilities();
-      return { ...caps, formats: caps.formats.map((format) => ({
-        ...format,
-        capabilities: [...format.capabilities, "set_table_cells_formatting"],
-      })) };
-    },
-    executeDocxSetTableCellsFormatting: async (
-      bytes: Uint8Array,
-      operation: { table: { handle?: string }; updates: { target: { handle: string }; fill?: string }[] },
-    ) => {
-      formattingCalls += 1;
-      return native.executeDocxSetTableCellShading!(bytes, {
-        table: operation.table,
-        updates: operation.updates.map(({ target, fill }) => ({ target, fill })),
-      });
-    },
-  };
+  const binding = await createNapiDocxEngineBinding();
+  assert.equal(binding.getDocxCapabilities().engineVersion, "0.1.2");
+  assert.ok(binding.getDocxCapabilities().formats.find((format) => format.format === "docx")?.capabilities.includes("set_table_cells_formatting"));
   const tools = await createPrimaryDocxTools({
     binding, ownerUserId: "user-1", workspaceId: "ws-1", documentId: "doc-1", versionId: "v1",
     documents: {
@@ -274,6 +254,7 @@ test("one structural header formatting call advances preview and expires inspect
     },
   });
   assert.ok(tools);
+  assert.ok(tools.tools["document.set_table_cells_formatting"]);
   const call = { toolCallId: "format", messages: [], context: undefined as never };
   const execute = (name: string, args: Record<string, unknown>) =>
     tools.tools[name]!.execute!(args, call) as Promise<{ ok: boolean; reasonCode?: string }>;
@@ -293,14 +274,12 @@ test("one structural header formatting call advances preview and expires inspect
     table: { handle: table.handle }, updates,
   });
   assert.equal(formatted.ok, true);
-  assert.equal(formattingCalls, 1);
   assert.equal(tools.getWorkingRevision(), 2);
   assert.notDeepEqual(Buffer.from(tools.getWorkingDocument()!.bytes), before);
   const stale = await execute("document.set_table_cells_formatting", {
     table: { handle: table.handle }, updates,
   });
   assert.equal(stale.reasonCode, "STALE_HANDLE");
-  assert.equal(formattingCalls, 1);
 });
 
 test("working reads, failed writes, and stale handles keep the last valid state", async () => {

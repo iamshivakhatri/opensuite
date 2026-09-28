@@ -68,6 +68,7 @@ exact immutable version N
     | executeDocxDeleteTableRow
     | executeDocxDeleteTableColumn
     | executeDocxSetTableFormatting
+    | executeDocxSetTableCellsFormatting
   → verified artifactBytes
   → run-local bytes → final appendDocumentVersion → N+1
   → find/inspect latest working bytes during the run
@@ -81,6 +82,7 @@ exact immutable version N
 * Occurrence/order from inspect is VERSION-LOCAL — never persist as durable identity.
 * Table inspect returns opaque artifact-local handles (table/column/row/cell). Mutations accept those
   handles alongside semantic selectors. Prefer handles for blank/duplicate targets; re-inspect after N→N+1.
+* Retrieval table selectors use exact first-row `headerCells` plus zero-based occurrence among identical headers. They are valid for the current document version; retrieval `tN` references are not registered mutation handles.
 * Table/cell inspect may include format-neutral `affordances[]` from Rust (capability + supported + optional reason).
   Adapter transport only — TypeScript does not recompute editability. Absence ≠ supported/unsupported.
 * Application records handles from the latest run-local inspect. A successful mutation clears them; stale/unknown handles never reach Rust.
@@ -99,10 +101,10 @@ exact immutable version N
 ### Node binding setup
 
 ```bash
-pnpm install   # pulls @opensuitehq/engine@0.1.1 + platform package from npm
+pnpm install   # pulls @opensuitehq/engine@0.1.2 + platform package from npm
 ```
 
-`packages/engine-client` declares `@opensuitehq/engine` as a **dependency** (exact `0.1.1`) — not optional — so installs fail if the package cannot be resolved. Platform binaries ship as optionalDependencies of that package. Supported: darwin-arm64/x64, linux-x64-gnu, linux-arm64-gnu, win32-x64-msvc (glibc only; no Alpine/musl). No sibling `opensuite-engine` checkout required. Smoke test may write `/private/tmp/opensuite-app-engine-adapter-output.docx` for manual inspection only.
+`packages/engine-client` declares `@opensuitehq/engine` as a **dependency** (exact `0.1.2`) — not optional — so installs fail if the package cannot be resolved. Platform binaries ship as optionalDependencies of that package. Supported: darwin-arm64/x64, linux-x64-gnu, linux-arm64-gnu, win32-x64-msvc (glibc only; no Alpine/musl). No sibling `opensuite-engine` checkout required. Smoke test may write `/private/tmp/opensuite-app-engine-adapter-output.docx` for manual inspection only.
 
 ## Conceptual Interface
 

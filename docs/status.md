@@ -14,7 +14,7 @@ _Read this before starting any work. Keep it a concise current-state handoff, no
 
 ## Just Completed
 
-* **Structural table-cell formatting** — the agent now exposes one typed call for fill and direct text formatting across several cells from the same inspected table. The Rust/N-API source supports it; the app tool appears when the installed engine advertises the new capability. Existing handle invalidation remains in force.
+* **Engine 0.1.2 + exact table targeting** — npm engine 0.1.2 advertises structural multi-cell formatting through the existing capability gate; one call formats several inspected cells and expires old handles. DOCX DIRECT, map, and targeted evidence now show exact version-local `headerCells` + duplicate-header `occurrence` selectors; retrieval handles are not mutation handles.
 
 * **Recurring-report fix pass 2** — API post-save validation now checks narrow additive table totals using the engine’s 10-row inspection pages, recognizes successful structure mutations and blank creation, skips period checks without a rollover, flags only future-sounding period statements, and labels input-needed placeholders as unresolved input. No Rust, model, or UI change.
 
@@ -32,7 +32,7 @@ _Read this before starting any work. Keep it a concise current-state handoff, no
 
 * **Telemetry terminology cleanup** — compact `[agent-run-report]` log uses `toolCalls` / `readCalls` / `mutationCalls` / `editsApplied` / `persistedVersions` / `toolErrors` (not ambiguous `edits`/`versions`/`failures`). Recovered tool attempts log as `[agent-run-tool-error]`; `outcome` remains authoritative for terminal run failure. `AgentRunReport.failures` kept for Cloud JSON compatibility. Product completion headline is `Updated document · 19s` (no accidental activity-row “actions” count). Vocab note in `docs/agent_core.md`. No engine / agent-core-v3 / Cloud behavior change.
 
-* **Table-cell text formatting** — `@opensuitehq/engine` 0.1.2 (sibling repo; local darwin binary wired) lets `set_text_formatting` bold/color simple direct-body table cells. Agent tool copy + operating instruction now tell the model to use it after header shading; paragraph style/formatting still exclude cells. Node binding check: shade → bold headers → column widths. npm pin remains 0.1.1 until 0.1.2 is published; local dogfood uses the rebuilt platform `.node`.
+* **Table-cell text formatting** — `@opensuitehq/engine` 0.1.2 lets `set_text_formatting` bold/color simple direct-body table cells. Paragraph style/formatting still exclude cells.
 
 * **Silent recovery / polish discipline** — operating instruction: recover tool failures without narrating reason codes/selectors/stale handles; abandon optional cosmetic polish after repeated failure; keep retrying for explicit user requirements or correctness. Final response mentions unresolved limits only when material. Prompt-only; no agent-core-v3 / engine change. Logs and activity Details unchanged.
 
@@ -75,7 +75,7 @@ _Read this before starting any work. Keep it a concise current-state handoff, no
 * **Phase 1 pre-model retrieval** — API-only workspace metadata ranking before model invocation; selected DOCX artifacts are inspected through the existing engine-client path and injected once with exact-version provenance. PPTX/XLSX remain metadata-only; retrieval errors fall back to the previous model path. Run reports now log artifact/evidence counts, duration, context size, and candidates.
 * **Deploy restart loop** — Dokploy image was missing gitignored `0013`/`0014` migration SQL (`No file … found`); entrypoint now uses programmatic migrate with real pg errors; engine check uses `require()` (pnpm layout).
 * **Prod API URL join** — web strips trailing `/` on `NEXT_PUBLIC_API_URL`; API `GET /` returns plain `OpenSuite API` for browser up-checks. Hosted web must point at API host (not Vercel apex/www).
-* **Engine npm cutover** — `@opensuite/engine-client` depends on `@opensuitehq/engine@0.1.1` from npm (not sibling `link:` / vendor stub). Docker `node:22-bookworm-slim` (glibc) validated: installs `engine-linux-arm64-gnu@0.1.1`, raw + engine-client smoke, API soft-boots without sibling/vendor. Alpine/musl unsupported.
+* **Engine npm cutover** — `@opensuite/engine-client` depends on `@opensuitehq/engine@0.1.2` from npm (not sibling `link:` / vendor stub). Docker `node:22-bookworm-slim` (glibc) was validated with 0.1.1; Alpine/musl unsupported.
 * **Live transcript ordering** — SSE narration now appends within ordered live segments beside tool activities; the existing completed-step renderer is shared, then durable steps replace live entries at terminalization.
 * **Live waiting + final response** — Thinking marks initial and post-tool model waits; the final model turn streams normal assistant text before an empty terminal `finish` call, keeping one model turn and one durable final message.
 * **Max-turn terminalization** — `max_turns` remains a failed run status with a deterministic incomplete/preserved-changes message and a linked assistant history entry for its durable transcript.
@@ -107,6 +107,8 @@ _Read this before starting any work. Keep it a concise current-state handoff, no
 
 ## Verification Status
 
+* Engine 0.1.2 integration and table selectors: 31 focused API tests and 9 focused engine-client tests pass; API and engine-client typechecks pass. Real binding confirms capability gating, multi-cell formatting, stale handles, duplicate-header selector round trip, and unchanged multi-document retrieval. No manual test.
+
 * Fix pass 2: 71 focused API verification, lifecycle, isolation, and report tests passed. Generic-edit reconciliation regression: 51 focused API tests and API typecheck pass. No manual test.
 
 * Fix pass 1: focused API retrieval/policy/lifecycle tests and web progress tests pass; API, DB, and web typechecks pass. No manual product test.
@@ -126,7 +128,7 @@ _Read this before starting any work. Keep it a concise current-state handoff, no
 | Context lifecycle C1–C7 targeted API checks | Pass |
 | Phase 6A API retrieval + lifecycle/report tests (22) | Pass |
 | Phase 1 workspace retrieval API tests | Pass |
-| engine-client tests (13) | Pass (npm `@opensuitehq/engine@0.1.1` + darwin-arm64) |
+| engine-client tests (13) | Pass (npm `@opensuitehq/engine@0.1.2` + darwin-arm64) |
 | web agent-progress recoverable-error UX | Pass (32) |
 | web agent-messages + reconciliation (A–F) | Pass |
 | web typecheck | Pass |
@@ -153,4 +155,4 @@ _Read this before starting any work. Keep it a concise current-state handoff, no
 
 ## Recommended Next Step
 
-Fix pass 3: stale handles and table formatting ergonomics.
+Check 0.1.2 in the Linux deployment image.

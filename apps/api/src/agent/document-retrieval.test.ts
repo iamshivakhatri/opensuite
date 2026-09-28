@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import type { DocxEngineBinding } from "@opensuite/engine-client";
+import { bindDocxDocument, buildDocxBody, createNapiDocxEngineBinding, type DocxEngineBinding } from "@opensuite/engine-client";
 
 import {
   formatRetrievedDocumentContext,
@@ -17,6 +17,7 @@ import {
   type SlimDocumentStructure,
 } from "./document-retrieval.js";
 import { firstTurnContextProjection } from "./execution.js";
+import { createDocumentTools } from "./document-tools.js";
 
 const structure: SlimDocumentStructure = {
   versionId: "v1",
@@ -259,7 +260,63 @@ test("small single DOCX uses complete direct context, including every table row"
   assert.match(retrieved.message ?? "", /COMPLETE CURRENT DOCUMENT CONTENT/);
   assert.match(retrieved.message ?? "", /version v-direct/);
   assert.match(retrieved.message ?? "", /Milestone 11/);
+  assert.match(retrieved.message ?? "", /Current table selector: {"headerCells":\["Milestone","Owner"\],"occurrence":0}/);
+  assert.doesNotMatch(retrieved.message ?? "", /Table t1/);
   assert.doesNotMatch(retrieved.message ?? "", /DOCUMENT MAPS/);
+});
+
+test("retrieval selectors distinguish duplicate headers and resolve through the mutation tool", async () => {
+  const binding = await createNapiDocxEngineBinding();
+  const bytes = buildDocxBody([
+    { kind: "table", rows: [["Metric", "Actual"], ["First", "1"]] },
+    { kind: "table", rows: [["Task", "Owner"], ["Review", "Alex"]] },
+    { kind: "table", rows: [["Metric", "Actual"], ["Second", "2"]] },
+  ]);
+  const common = {
+    artifacts: [{ documentId: "doc", versionId: "v1", name: "Metrics.docx", format: "docx" }],
+    instruction: "Update the metrics table",
+    primaryDocumentId: "doc",
+    taggedDocumentIds: [],
+    binding,
+    cache: new SlimDocumentStructureCache(),
+    readBytes: async () => bytes,
+  };
+  const direct = await retrieveWorkspaceContext({ ...common, availableEvidenceTokens: 100_000 });
+  assert.equal(direct.contextStrategy, "direct");
+  const selectors = [...(direct.message ?? "").matchAll(/Current table selector: (\{[^\n]+\})/g)].map((match) => JSON.parse(match[1]!) as { headerCells: string[]; occurrence: number });
+  assert.deepEqual(selectors, [
+    { headerCells: ["Metric", "Actual"], occurrence: 0 },
+    { headerCells: ["Task", "Owner"], occurrence: 0 },
+    { headerCells: ["Metric", "Actual"], occurrence: 1 },
+  ]);
+  assert.doesNotMatch(direct.message ?? "", /Table t\d/);
+
+  const hierarchical = await retrieveWorkspaceContext(common);
+  assert.equal(hierarchical.contextStrategy, "hierarchical");
+  assert.match(hierarchical.message ?? "", /Current table selector: {"headerCells":\["Metric","Actual"\],"occurrence":1}/);
+  assert.doesNotMatch(hierarchical.message ?? "", /Table t\d/);
+
+  const document = bindDocxDocument({ binding, bytes, versionId: "v1" });
+  const tool = createDocumentTools(document)["document.set_table_cells_text"];
+  assert.ok(tool);
+  const result = await tool.execute!({ table: selectors[2], updates: [{ target: { rowLabel: "Second", columnHeader: "Actual" }, expectedCurrentText: "2", replacement: "3" }] }, { toolCallId: "edit", messages: [], context: undefined as never });
+  assert.equal((result as { ok: boolean }).ok, true);
+  const tables = await document.inspect({ focus: { kind: "tables" } });
+  assert.equal(tables.tables?.items[0]?.rows[1]?.cells[1], "1");
+  assert.equal(tables.tables?.items[2]?.rows[1]?.cells[1], "3");
+});
+
+test("targeted table evidence includes its exact selector without an inspect handle", async () => {
+  const bytes = buildDocxBody([{ kind: "table", rows: [["Metric", "Target", "Actual", "Status"], ["Revenue", "10", "9", "Open"]] }]);
+  const retrieved = await retrieveWorkspaceContext({
+    artifacts: [{ documentId: "doc", versionId: "v1", name: "Report.docx", format: "docx" }],
+    instruction: "Add rows to the Metric table",
+    primaryDocumentId: "doc", taggedDocumentIds: [],
+    binding: await createNapiDocxEngineBinding(), cache: new SlimDocumentStructureCache(),
+    readBytes: async () => bytes,
+  });
+  assert.match(retrieved.message ?? "", /RETRIEVED DOCX EVIDENCE[\s\S]*Current table selector: {"headerCells":\["Metric","Target","Actual","Status"\],"occurrence":0}/);
+  assert.doesNotMatch(retrieved.message ?? "", /Table t\d/);
 });
 
 test("direct context remains bounded under a huge physical budget and multi-document working set", async () => {
