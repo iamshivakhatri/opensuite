@@ -1,0 +1,176 @@
+/*
+ * OpenSuite brand palette — the ONLY place raw brand colors live.
+ *
+ * HOW TO SWITCH: exactly one palette block below is live. Comment the live
+ * block out (wrap it in a block comment) and uncomment another. Nothing else
+ * changes: globals.css derives every semantic token (soft / line / hover /
+ * selected / focus) from these variables, and components only read those.
+ *
+ * Every palette defines the same 10 variables, twice: light values on
+ * `:root, .os-site` (the public site is always light) and dark values on the
+ * dark app theme. Swap a whole palette (both rules) at once.
+ *
+ *   --brand-primary          solid fills: CTAs, active marks, progress
+ *   --brand-primary-hover    pressed / hovered primary
+ *   --brand-on-primary       text + icons placed on a primary fill
+ *   --brand-secondary        quiet chrome: outline buttons, secondary text
+ *   --brand-secondary-hover  secondary pressed
+ *   --brand-accent           rare highlights: starred, tertiary emphasis
+ *   --brand-accent-hover     accent pressed
+ *   --brand-link             inline text links (kept >= 4.5:1 on paper)
+ *   --brand-link-hover       link hover
+ *   --brand-ring             keyboard focus ring
+ *
+ * Keep contrast: on-primary over primary and link over paper >= 4.5:1.
+ * Do not put block comments inside a palette (they do not nest).
+ * (Not light-dark(): the CSS pipeline rewrites it and breaks the runtime
+ * theme toggle, which sets color-scheme from JS.)
+ *
+ * Favicon exception: src/app/icon.svg cannot read CSS variables. When you
+ * change the live palette, update its two gradient stops to primary (dark
+ * value) and primary-hover (light value) to match.
+ */
+
+/* ── BLUE — OpenSuite blue (LIVE) ── */
+:root,
+.os-site {
+  --brand-primary: #3f63d6;
+  --brand-primary-hover: #2d4fc4;
+  --brand-on-primary: #ffffff;
+  --brand-secondary: #44506e;
+  --brand-secondary-hover: #333e58;
+  --brand-accent: #9a650d;
+  --brand-accent-hover: #7e5209;
+  --brand-link: #2f52c8;
+  --brand-link-hover: #223fa3;
+  --brand-ring: #3f63d6;
+}
+
+html[data-opensuite-theme="dark"] {
+  --brand-primary: #6e8fea;
+  --brand-primary-hover: #93a9f2;
+  --brand-on-primary: #0e1014;
+  --brand-secondary: #a9b6d3;
+  --brand-secondary-hover: #c6d0e6;
+  --brand-accent: #e2a94a;
+  --brand-accent-hover: #efc26e;
+  --brand-link: #8fa8f2;
+  --brand-link-hover: #b3c3f7;
+  --brand-ring: #8fa8f2;
+}
+
+/* ── BROWN — brick, the previous public-site brand, preserved ──
+:root,
+.os-site {
+  --brand-primary: #9d3f26;
+  --brand-primary-hover: #86341e;
+  --brand-on-primary: #ffffff;
+  --brand-secondary: #3f4f63;
+  --brand-secondary-hover: #334155;
+  --brand-accent: #8a6a3d;
+  --brand-accent-hover: #735832;
+  --brand-link: #9d3f26;
+  --brand-link-hover: #86341e;
+  --brand-ring: #9d3f26;
+}
+
+html[data-opensuite-theme="dark"] {
+  --brand-primary: #e0795c;
+  --brand-primary-hover: #f0a58f;
+  --brand-on-primary: #0e1014;
+  --brand-secondary: #9db0c8;
+  --brand-secondary-hover: #c1cfe0;
+  --brand-accent: #d1a86a;
+  --brand-accent-hover: #e2c08c;
+  --brand-link: #f0a58f;
+  --brand-link-hover: #f7c2b2;
+  --brand-ring: #f0a58f;
+}
+*/
+
+/* ── INDIGO — deeper, more editorial ──
+:root,
+.os-site {
+  --brand-primary: #4b45c9;
+  --brand-primary-hover: #3a34ad;
+  --brand-on-primary: #ffffff;
+  --brand-secondary: #4a4a6a;
+  --brand-secondary-hover: #38385a;
+  --brand-accent: #b0436a;
+  --brand-accent-hover: #8f3355;
+  --brand-link: #4b45c9;
+  --brand-link-hover: #3a34ad;
+  --brand-ring: #4b45c9;
+}
+
+html[data-opensuite-theme="dark"] {
+  --brand-primary: #8b85f0;
+  --brand-primary-hover: #a9a4f7;
+  --brand-on-primary: #0e1014;
+  --brand-secondary: #b0b0d0;
+  --brand-secondary-hover: #cbcbe4;
+  --brand-accent: #e58aa8;
+  --brand-accent-hover: #f0a9c0;
+  --brand-link: #a9a4f7;
+  --brand-link-hover: #c4c0fa;
+  --brand-ring: #a9a4f7;
+}
+*/
+
+/* ── TEAL — calm, technical ──
+:root,
+.os-site {
+  --brand-primary: #0f766e;
+  --brand-primary-hover: #0b5f59;
+  --brand-on-primary: #ffffff;
+  --brand-secondary: #334e68;
+  --brand-secondary-hover: #243b53;
+  --brand-accent: #a05a0c;
+  --brand-accent-hover: #804709;
+  --brand-link: #0b6b64;
+  --brand-link-hover: #084f4a;
+  --brand-ring: #0f766e;
+}
+
+html[data-opensuite-theme="dark"] {
+  --brand-primary: #2fb5a8;
+  --brand-primary-hover: #5fd0c4;
+  --brand-on-primary: #0e1014;
+  --brand-secondary: #9fb6cc;
+  --brand-secondary-hover: #c0d0e0;
+  --brand-accent: #e0a04a;
+  --brand-accent-hover: #ecbb74;
+  --brand-link: #5fd0c4;
+  --brand-link-hover: #8fe0d7;
+  --brand-ring: #5fd0c4;
+}
+*/
+
+/* ── PLUM — distinctive, warm-cool ──
+:root,
+.os-site {
+  --brand-primary: #7a3a91;
+  --brand-primary-hover: #63307a;
+  --brand-on-primary: #ffffff;
+  --brand-secondary: #4a4560;
+  --brand-secondary-hover: #38344c;
+  --brand-accent: #8a6a1f;
+  --brand-accent-hover: #6f5418;
+  --brand-link: #7a3a91;
+  --brand-link-hover: #63307a;
+  --brand-ring: #7a3a91;
+}
+
+html[data-opensuite-theme="dark"] {
+  --brand-primary: #c48ad9;
+  --brand-primary-hover: #d9adea;
+  --brand-on-primary: #0e1014;
+  --brand-secondary: #b6b0cc;
+  --brand-secondary-hover: #d0cce0;
+  --brand-accent: #d8b45a;
+  --brand-accent-hover: #e6c987;
+  --brand-link: #d9adea;
+  --brand-link-hover: #e8c9f2;
+  --brand-ring: #d9adea;
+}
+*/

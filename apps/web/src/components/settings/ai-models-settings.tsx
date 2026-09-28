@@ -326,7 +326,7 @@ export function AiModelsSettings() {
           }}
           className={cn(
             "h-9 w-full rounded-[var(--radius-sm)] border border-line bg-surface px-3 text-[13px] text-ink outline-none transition-colors",
-            "focus-visible:border-accent focus-visible:ring-2 focus-visible:ring-accent/20",
+            "focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/20",
             "disabled:opacity-60",
           )}
         >
@@ -452,7 +452,7 @@ export function AiModelsSettings() {
                       className={cn(
                         "rounded-[var(--radius-sm)] px-2 py-2 text-[12px]",
                         active
-                          ? "bg-accent-soft font-semibold text-accent-hover"
+                          ? "bg-primary-soft font-semibold text-primary-hover"
                           : "text-ink-soft hover:bg-primary-soft hover:text-primary",
                       )}
                     >
@@ -710,7 +710,7 @@ function ModeCard({
       className={cn(
         "rounded-[var(--radius-md)] border px-3.5 py-3 text-left transition-colors",
         selected
-          ? "border-accent bg-accent-soft/60"
+          ? "border-primary bg-primary-soft/60"
           : "border-line bg-surface hover:border-ink-faint",
         disabled && "opacity-60",
       )}
@@ -720,7 +720,7 @@ function ModeCard({
           className={cn(
             "flex h-3.5 w-3.5 items-center justify-center rounded-full border",
             selected
-              ? "border-accent bg-accent"
+              ? "border-primary bg-primary"
               : "border-ink-faint bg-surface",
           )}
           aria-hidden

@@ -33,7 +33,7 @@ export function ResetPasswordForm() {
         <p className="text-[13.5px] text-ink-soft">
           <Link
             href="/forgot-password"
-            className="font-medium text-primary underline decoration-1 underline-offset-[3px] hover:text-primary-hover"
+            className="font-medium text-link underline decoration-1 underline-offset-[3px] hover:text-link-hover"
           >
             Request a new reset link
           </Link>

@@ -35,10 +35,10 @@ export function Topbar({ userName }: { userName: string }) {
       <div className="flex items-center gap-2">
         <Link
           href="/app/settings"
-          className="grid h-[30px] w-[30px] place-items-center rounded-full text-[10px] font-semibold text-on-ink shadow-[0_0_0_2px_var(--surface),0_2px_8px_color-mix(in_srgb,var(--primary)_28%,transparent)]"
+          className="grid h-[30px] w-[30px] place-items-center rounded-full text-[10px] font-semibold text-on-primary shadow-[0_0_0_2px_var(--surface),0_2px_8px_color-mix(in_srgb,var(--primary)_28%,transparent)]"
           style={{
             background:
-              "linear-gradient(145deg, var(--primary), color-mix(in srgb, var(--primary) 55%, white))",
+              "linear-gradient(145deg, var(--primary), var(--primary-hover))",
           }}
           title={`${userName} · Settings`}
         >

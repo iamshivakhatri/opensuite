@@ -14,7 +14,8 @@ _Read this before starting any work. Keep it a concise current-state handoff, no
 
 ## Just Completed
 
-* **Public site routes + brand** — main marketing sections are real pages (`/product`, `/how-it-works`, `/principles`, `/architecture`, `/scope`, `/open-source`); hash sliding removed. Nav shows active route. Brand tokens on `.os-site`: primary brick CTAs, secondary slate chrome, accent ochre sparingly. Layout/spacing preserved. Web typecheck + production build pass.
+* **Centralized brand palette** — `apps/web/src/styles/brand-palette.css` is the only place with raw brand colors: 10 `--brand-*` vars (primary/hover/on-primary, secondary/hover, accent/hover, link/hover, ring), light + dark per palette. Live: BLUE (`#3f63d6`, deepened from `#4d71de` to pass AA with white text). BROWN (previous public brand), INDIGO, TEAL, PLUM are commented; swap by commenting/uncommenting a block. `globals.css` derives soft/line/hover/selected once for the app root and `.os-site`, so landing, auth and `/app` share one system. `accent` now means the real accent (starred, `v7`); former shell uses moved to `primary`/`link`/`ring`. Favicon `icon.svg` cannot read CSS vars — sync its stops when switching.
+* **Public site routes** — main marketing sections are real pages (`/product`, `/how-it-works`, `/principles`, `/architecture`, `/scope`, `/open-source`); nav shows active route.
 
 * **Public marketing + auth UI** — landing, privacy, terms, 404, and auth pages; `/` renders immediately (signed-in redirect non-blocking); health poll + outage banner only on `/app/*` and auth. Site serif + `.os-site` tokens scoped to public chrome.
 
@@ -131,7 +132,7 @@ _Read this before starting any work. Keep it a concise current-state handoff, no
 
 | Check | Status |
 |---|---|
-| Public site route split + brand tokens; web typecheck + `next build` | Pass |
+| Brand palette: web typecheck; all 5 palettes swap live (CDP: app + landing, light/dark); no leftover blue under BROWN across 14 public pages + agent fixture | Pass (no logged-in `/app` visual, no `next build`) |
 | Public marketing + auth UI copy-over; web typecheck + `next build` | Pass |
 | Readable agent run logs (API formatters + report + isolation; core-v3 lifecycle) | Pass (60 API focused: log 5 + report 20 + isolation 35) |
 | agent-core-v3 unit (26) | Pass |
@@ -167,4 +168,4 @@ _Read this before starting any work. Keep it a concise current-state handoff, no
 
 ## Recommended Next Step
 
-Spot-check public nav active states and primary/secondary button contrast on `/`, `/product`, and `/sign-in`.
+Sign in and eyeball `/app` (sidebar active row, Settings, workspace IDE, dark theme) with BLUE, then run `next build`.

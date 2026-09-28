@@ -19,7 +19,7 @@ export default function ForgotPasswordPage() {
         Remembered it?{" "}
         <Link
           href="/sign-in"
-          className="font-medium text-primary underline decoration-1 underline-offset-[3px] hover:text-primary-hover"
+          className="font-medium text-link underline decoration-1 underline-offset-[3px] hover:text-link-hover"
         >
           Back to sign in
         </Link>

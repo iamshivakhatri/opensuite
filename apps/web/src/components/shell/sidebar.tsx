@@ -239,7 +239,7 @@ export function Sidebar() {
                 <span
                   className={
                     "grid w-4 place-items-center " +
-                    (active ? "text-accent" : "text-ink-faint")
+                    (active ? "text-primary" : "text-ink-faint")
                   }
                 >
                   <NavIcon name={item.icon} active={active} />
@@ -289,7 +289,7 @@ export function Sidebar() {
                   className={
                     "os-type-label flex items-center gap-2 rounded-[var(--radius-sm)] py-1.5 pl-2.5 pr-7 " +
                     (active
-                      ? "bg-accent-soft font-medium text-accent-hover"
+                      ? "bg-primary-soft font-medium text-primary-hover"
                       : "text-ink-soft hover:bg-primary-soft hover:text-primary")
                   }
                 >
@@ -330,7 +330,7 @@ export function Sidebar() {
           className={
             "os-type-label flex items-center gap-2.5 rounded-[var(--radius-sm)] px-2.5 py-2 " +
             (isActive(pathname, "/app/settings", "prefix")
-              ? "bg-accent-soft font-semibold text-accent-hover"
+              ? "bg-primary-soft font-semibold text-primary-hover"
               : "text-ink-soft hover:bg-primary-soft hover:text-primary")
           }
         >

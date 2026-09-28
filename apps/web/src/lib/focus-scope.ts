@@ -11,7 +11,7 @@ const FOCUSABLE_SELECTOR = [
 
 /** Keyboard focus ring — visible only for :focus-visible. */
 export const focusRingClass =
-  "outline-none focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent";
+  "outline-none focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring";
 
 export function getFocusableElements(
   container: HTMLElement,

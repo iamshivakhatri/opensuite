@@ -562,7 +562,7 @@ function CommandPalette({
                   onClick={() => void activate(item)}
                   className={
                     "flex w-full items-center gap-2.5 rounded-[10px] px-2.5 py-2 text-left " +
-                    (active ? "bg-accent-soft" : "hover:bg-primary-soft")
+                    (active ? "bg-primary-soft" : "hover:bg-primary-soft")
                   }
                 >
                   {item.kind === "document" ? (
@@ -581,7 +581,7 @@ function CommandPalette({
                       className={
                         "os-type-label block truncate " +
                         (active
-                          ? "font-semibold text-accent-hover"
+                          ? "font-semibold text-primary-hover"
                           : "font-medium text-ink")
                       }
                     >

@@ -22,7 +22,7 @@ export default function ResetPasswordPage() {
       <p className="border-t border-line pt-5 text-[13.5px] text-ink-soft">
         <Link
           href="/sign-in"
-          className="font-medium text-primary underline decoration-1 underline-offset-[3px] hover:text-primary-hover"
+          className="font-medium text-link underline decoration-1 underline-offset-[3px] hover:text-link-hover"
         >
           Back to sign in
         </Link>

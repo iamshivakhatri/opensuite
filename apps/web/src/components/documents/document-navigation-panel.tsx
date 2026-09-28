@@ -440,7 +440,7 @@ export function DocumentNavigationPanel({
             onClick={() => setAddOpen(true)}
             className={cn(
               focusRingClass,
-              "grid h-9 w-9 place-items-center rounded-[var(--radius-md)] bg-primary text-[22px] font-medium leading-none text-on-ink shadow-[0_1px_2px_color-mix(in_srgb,var(--primary)_30%,transparent)] hover:bg-primary-hover",
+              "grid h-9 w-9 place-items-center rounded-[var(--radius-md)] bg-primary text-[22px] font-medium leading-none text-on-primary shadow-[0_1px_2px_color-mix(in_srgb,var(--primary)_30%,transparent)] hover:bg-primary-hover",
             )}
           >
             +

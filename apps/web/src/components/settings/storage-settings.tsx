@@ -76,7 +76,7 @@ export function StorageSettings() {
           kind === "full"
             ? "border-danger/25"
             : kind === "near"
-              ? "border-accent-line"
+              ? "border-primary-line"
               : "border-line",
         )}
       >
@@ -126,7 +126,7 @@ export function StorageSettings() {
       <div>
         <Link
           href={TRASH_PATH}
-          className="text-[12.5px] font-medium text-accent-hover underline-offset-2 hover:underline"
+          className="text-[12.5px] font-medium text-link underline-offset-2 hover:text-link-hover hover:underline"
         >
           Review Trash
         </Link>

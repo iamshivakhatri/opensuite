@@ -16,7 +16,7 @@ const base =
   "inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-[var(--radius-sm)] font-medium transition-colors";
 
 const variants: Record<Variant, string> = {
-  solid: "bg-primary text-paper hover:bg-primary-hover",
+  solid: "bg-primary text-on-primary hover:bg-primary-hover",
   outline:
     "border border-secondary-line text-secondary hover:border-secondary hover:bg-secondary-soft hover:text-ink",
   ghost:

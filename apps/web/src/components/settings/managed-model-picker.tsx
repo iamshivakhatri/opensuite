@@ -69,7 +69,7 @@ export function ManagedModelPicker({
         className={cn(
           "flex w-full items-start justify-between gap-3 rounded-[var(--radius-sm)] border border-line bg-surface px-3 py-2.5 text-left transition-colors",
           "hover:border-ink-faint disabled:opacity-50",
-          open && "border-accent ring-2 ring-accent/20",
+          open && "border-ring ring-2 ring-ring/20",
         )}
       >
         <span className="min-w-0 flex-1">
@@ -129,7 +129,7 @@ export function ManagedModelPicker({
                       type="button"
                       className={cn(
                         "flex w-full flex-col items-start gap-0.5 px-3 py-2 text-left hover:bg-primary-soft",
-                        active && "bg-accent-soft",
+                        active && "bg-primary-soft",
                       )}
                       onClick={() => {
                         onChange(model.id);

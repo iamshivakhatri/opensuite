@@ -216,10 +216,10 @@ export function ConfirmDialog({
             disabled={busy}
             className={cn(
               focusRingClass,
-              "os-type-label inline-flex h-8 items-center rounded-[var(--radius-sm)] px-3 font-medium text-on-ink hover:opacity-90 disabled:opacity-50",
+              "os-type-label inline-flex h-8 items-center rounded-[var(--radius-sm)] px-3 font-medium disabled:opacity-50",
               tone === "danger"
-                ? "bg-danger hover:opacity-90"
-                : "bg-primary hover:bg-primary-hover",
+                ? "bg-danger text-on-ink hover:opacity-90"
+                : "bg-primary text-on-primary hover:bg-primary-hover",
             )}
             onClick={onConfirm}
           >
@@ -339,7 +339,7 @@ export function PromptDialog({
             disabled={busy || !value.trim()}
             className={cn(
               focusRingClass,
-              "os-type-label inline-flex h-8 items-center rounded-[var(--radius-sm)] bg-primary px-3 font-medium text-on-ink hover:bg-primary-hover disabled:opacity-50",
+              "os-type-label inline-flex h-8 items-center rounded-[var(--radius-sm)] bg-primary px-3 font-medium text-on-primary hover:bg-primary-hover disabled:opacity-50",
             )}
           >
             {busy ? "Saving…" : "Save"}

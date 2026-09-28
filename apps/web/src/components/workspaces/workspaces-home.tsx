@@ -366,7 +366,7 @@ export function WorkspacesHome() {
 
       {draggingOver ? (
         <div className="pointer-events-none absolute inset-0 z-20 flex items-center justify-center rounded-[var(--radius-lg)] bg-overlay/40 backdrop-blur-[1px]">
-          <div className="rounded-[var(--radius-lg)] border border-dashed border-accent bg-surface px-8 py-6 text-center shadow-[var(--elevation-md)]">
+          <div className="rounded-[var(--radius-lg)] border border-dashed border-primary bg-surface px-8 py-6 text-center shadow-[var(--elevation-md)]">
             <p className="text-[length:var(--text-md)] font-semibold tracking-[-0.02em] text-ink">
               Drop Office files to upload
             </p>
@@ -651,7 +651,7 @@ function UploadDestinationDialog({
                 focusRingClass,
                 "os-type-label block w-full rounded-[var(--radius-sm)] px-3 py-2 text-left",
                 workspaceId === workspace.id
-                  ? "bg-accent-soft font-medium text-accent-hover"
+                  ? "bg-primary-soft font-medium text-primary-hover"
                   : "text-ink hover:bg-primary-soft",
               )}
               onClick={() => setWorkspaceId(workspace.id)}

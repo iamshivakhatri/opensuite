@@ -174,7 +174,7 @@ export function WorkspaceRouteShell({ workspaceId }: { workspaceId: string }) {
         </p>
         <Link
           href="/app"
-          className="os-type-label inline-flex h-9 items-center justify-center rounded-[var(--radius-md)] bg-primary px-4 font-medium text-on-ink hover:bg-primary-hover"
+          className="os-type-label inline-flex h-9 items-center justify-center rounded-[var(--radius-md)] bg-primary px-4 font-medium text-on-primary hover:bg-primary-hover"
         >
           Back to Home
         </Link>

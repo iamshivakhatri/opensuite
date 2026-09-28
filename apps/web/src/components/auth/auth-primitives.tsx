@@ -10,7 +10,7 @@ import { cn } from "@/lib/utils";
  *
  * The workspace `ui/` primitives are intentionally dense; auth pages are the
  * first screen someone sees, so they run one step larger and with the public
- * site's ink button instead of the accent fill. Keeping that in one place
+ * site's brand button treatment. Keeping that in one place
  * stops the four forms from drifting apart.
  */
 export function AuthField({
@@ -48,7 +48,7 @@ export function AuthSubmit({ className, ...props }: ButtonProps) {
   return (
     <Button
       className={cn(
-        "h-11 w-full bg-primary text-[14.5px] text-paper hover:bg-primary-hover",
+        "h-11 w-full bg-primary text-[14.5px] text-on-primary hover:bg-primary-hover",
         className,
       )}
       {...props}

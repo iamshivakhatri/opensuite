@@ -1,4 +1,6 @@
 @import "tailwindcss";
+/* Raw brand palette (the only place brand hex values live). */
+@import "../styles/brand-palette.css";
 
 /*
  * Design tokens from opensuite_v4_modern_minimal.html.
@@ -24,45 +26,7 @@ html[data-opensuite-theme] {
   --line: #d8dce3;
   --overlay: rgba(15, 18, 24, 0.4);
 
-  /*
-   * ── Brand (edit here to retheme) ──────────────────────────────
-   * Logo mid-blue is the source. Change --primary (and optionally
-   * --primary-hover); secondary / soft / line / hover / selected derive.
-   *
-   * --primary         solid fills: CTAs, active accents (logo mid)
-   * --primary-hover   pressed primary (logo deep end)
-   *
-   * Derived (usually leave alone):
-   * --secondary       quieter accent chrome (lighter mix of primary)
-   * --secondary-hover secondary press → primary
-   * --primary-soft    selected + hover backgrounds (sidebar, rows)
-   * --primary-line    soft borders / focus rings
-   * --secondary-soft  quiet tint fills (e.g. user chat bubbles)
-   * --secondary-line  quiet borders on secondary controls
-   * --hover           generic hover wash (bg-hover)
-   * --selected        selected-row background
-   *
-   * Favicon cannot read CSS vars — if you change primary/hover,
-   * also update gradient stops in src/app/icon.svg.
-   * In-app mark (BrandMark / Wordmark) follows these tokens automatically.
-   */
-  --primary: #4d71de;
-  --primary-hover: #2d50d1;
-  --secondary: color-mix(in srgb, var(--primary) 78%, white);
-  --secondary-hover: var(--primary);
-
-  --primary-soft: color-mix(in srgb, var(--primary) 9%, white);
-  --primary-line: color-mix(in srgb, var(--primary) 42%, white);
-  --secondary-soft: color-mix(in srgb, var(--secondary) 8%, white);
-  --secondary-line: color-mix(in srgb, var(--secondary) 35%, white);
-  --hover: color-mix(in srgb, var(--primary) 9%, transparent);
-  --selected: var(--primary-soft);
-
-  /* Back-compat aliases (prefer --primary* / --secondary* in new code). */
-  --accent: var(--primary);
-  --accent-hover: var(--primary-hover);
-  --accent-soft: var(--primary-soft);
-  --accent-line: var(--primary-line);
+  /* Brand tokens: see "Brand semantic tokens" below (palette in styles/). */
 
   --success: #238a63;
   --success-soft: #eaf7f1;
@@ -132,21 +96,6 @@ html[data-opensuite-theme="dark"] {
   --ink-faint: #757b88;
   --line: #2c313b;
   --overlay: rgba(0, 0, 0, 0.55);
-  /* Brand dark — lighter logo blue for contrast; soft/line/hover derive. */
-  --primary: #6e8fea;
-  --primary-hover: #93a9f2;
-  --secondary: color-mix(in srgb, var(--primary) 70%, white);
-  --secondary-hover: var(--primary);
-  --primary-soft: color-mix(in srgb, var(--primary) 22%, #12141a);
-  --primary-line: color-mix(in srgb, var(--primary) 45%, #12141a);
-  --secondary-soft: color-mix(in srgb, var(--secondary) 14%, #12141a);
-  --secondary-line: color-mix(in srgb, var(--secondary) 40%, #12141a);
-  --hover: color-mix(in srgb, var(--primary) 16%, transparent);
-  --selected: var(--primary-soft);
-  --accent: var(--primary);
-  --accent-hover: var(--primary-hover);
-  --accent-soft: var(--primary-soft);
-  --accent-line: var(--primary-line);
   --success: #3da87a;
   --success-soft: #1a2c24;
   --danger: #f87171;
@@ -154,6 +103,56 @@ html[data-opensuite-theme="dark"] {
   --on-ink: #0e1014;
   --sidebar: #161920;
   --shell-main: #101218;
+}
+
+/*
+ * ── Brand semantic tokens ─────────────────────────────────────────────
+ * Derived from --brand-* (src/styles/brand-palette.css). Components read
+ * ONLY these; never a raw hex. Declared for the app root AND `.os-site`, so
+ * the mixes below use each surface's own --paper.
+ *
+ *   primary / primary-hover / on-primary   solid brand fills + their text
+ *   primary-soft   subtle brand background (selected + hover rows)
+ *   primary-line   brand border / highlight
+ *   secondary(-hover/-soft/-line)          quiet chrome
+ *   accent(-hover/-soft/-line)             rare highlights (starred, badges)
+ *   link / link-hover                      inline text links
+ *   ring                                   keyboard focus
+ *   hover / selected                       generic washes
+ */
+:root,
+html[data-opensuite-theme],
+.os-site {
+  --primary: var(--brand-primary);
+  --primary-hover: var(--brand-primary-hover);
+  --on-primary: var(--brand-on-primary);
+  --secondary: var(--brand-secondary);
+  --secondary-hover: var(--brand-secondary-hover);
+  --accent: var(--brand-accent);
+  --accent-hover: var(--brand-accent-hover);
+  --link: var(--brand-link);
+  --link-hover: var(--brand-link-hover);
+  --ring: var(--brand-ring);
+
+  --primary-soft: color-mix(in srgb, var(--primary) 8%, var(--paper));
+  --primary-line: color-mix(in srgb, var(--primary) 36%, var(--paper));
+  --secondary-soft: color-mix(in srgb, var(--secondary) 8%, var(--paper));
+  --secondary-line: color-mix(in srgb, var(--secondary) 24%, var(--paper));
+  --accent-soft: color-mix(in srgb, var(--accent) 10%, var(--paper));
+  --accent-line: color-mix(in srgb, var(--accent) 30%, var(--paper));
+  --hover: color-mix(in srgb, var(--primary) 8%, transparent);
+  --selected: var(--primary-soft);
+}
+
+/* Dark app shell: stronger tints over the dark paper. (`.os-site` stays light.) */
+html[data-opensuite-theme="dark"] {
+  --primary-soft: color-mix(in srgb, var(--primary) 20%, var(--paper));
+  --primary-line: color-mix(in srgb, var(--primary) 45%, var(--paper));
+  --secondary-soft: color-mix(in srgb, var(--secondary) 14%, var(--paper));
+  --secondary-line: color-mix(in srgb, var(--secondary) 40%, var(--paper));
+  --accent-soft: color-mix(in srgb, var(--accent) 16%, var(--paper));
+  --accent-line: color-mix(in srgb, var(--accent) 40%, var(--paper));
+  --hover: color-mix(in srgb, var(--primary) 16%, transparent);
 }
 
 @theme inline {
@@ -181,6 +180,10 @@ html[data-opensuite-theme="dark"] {
   --color-secondary-hover: var(--secondary-hover);
   --color-secondary-soft: var(--secondary-soft);
   --color-secondary-line: var(--secondary-line);
+  --color-on-primary: var(--on-primary);
+  --color-link: var(--link);
+  --color-link-hover: var(--link-hover);
+  --color-ring: var(--ring);
   --color-success: var(--success);
   --color-success-soft: var(--success-soft);
   --color-danger: var(--danger);
@@ -200,8 +203,10 @@ html[data-opensuite-theme="dark"] {
  * @theme emits these on :root (loses to Casual after DOCX open); this
  * selector wins and keeps the shell on OpenSuite values.
  * Type scale / radius live once above in :root, html[data-opensuite-theme].
+ * `.os-site` shares this block: its scoped tokens are read by the same names.
  */
-html[data-opensuite-theme] {
+html[data-opensuite-theme],
+.os-site {
   --color-paper: var(--paper);
   --color-surface: var(--surface);
   --color-elevated: var(--elevated);
@@ -226,6 +231,10 @@ html[data-opensuite-theme] {
   --color-secondary-hover: var(--secondary-hover);
   --color-secondary-soft: var(--secondary-soft);
   --color-secondary-line: var(--secondary-line);
+  --color-on-primary: var(--on-primary);
+  --color-link: var(--link);
+  --color-link-hover: var(--link-hover);
+  --color-ring: var(--ring);
   --color-success: var(--success);
   --color-success-soft: var(--success-soft);
   --color-danger: var(--danger);
@@ -252,6 +261,10 @@ body {
   box-sizing: border-box;
 }
 
+::selection {
+  background: var(--primary-line);
+}
+
 /*
  * Casual Docs host — scoped consumer of OpenSuite resolved theme.
  * Document page stays paper-white; chrome follows --ce-* tokens.
@@ -263,10 +276,10 @@ body {
   --ce-surface: var(--surface);
   --ce-text: var(--ink);
   --ce-text-muted: var(--ink-soft);
-  --ce-primary: var(--accent);
-  --ce-accent: var(--accent);
+  --ce-primary: var(--primary);
+  --ce-accent: var(--primary);
   --ce-border: var(--line);
-  --ce-link: var(--accent);
+  --ce-link: var(--link);
   height: 100%;
   min-height: 0;
   background: var(--canvas);
@@ -417,9 +430,8 @@ html[data-opensuite-modal] .opensuite-docx-host [data-testid="toolbar"] {
  * wrapper only — the workspace shell above is untouched.
  *
  * Token names match the shell so shared primitives (Button / Input / Label)
- * adopt this palette without new variants. The `--color-*` bridges must be
- * redeclared here: `@theme inline` resolves them on <html>, so overriding a
- * raw token alone would not reach `bg-paper` / `text-ink` utilities.
+ * adopt this palette without new variants. `.os-site` also shares the
+ * `--color-*` bridge block above, so scoped tokens reach every utility.
  * ─────────────────────────────────────────────────────────────────────────── */
 .os-site {
   /* Paper, ink, rules. Warm neutrals; near-black rather than pure black. */
@@ -436,27 +448,8 @@ html[data-opensuite-modal] .opensuite-docx-host [data-testid="toolbar"] {
   --rule: #cfcbbe;
   --overlay: rgba(25, 25, 23, 0.4);
 
-  /*
-   * Brand — used sparingly on the public site.
-   * --primary   brick editor's mark: CTAs, active nav, links, key indices
-   * --secondary cool slate: outline buttons, quiet chrome, secondary marks
-   * --accent    muted ochre: rare highlights (badges, tertiary emphasis)
-   */
-  --primary: #9d3f26;
-  --primary-hover: #86341e;
-  --secondary: #3f4f63;
-  --secondary-hover: #334155;
-  --accent: #8a6a3d;
-  --accent-hover: #735832;
-
-  --primary-soft: color-mix(in srgb, var(--primary) 7%, #faf9f6);
-  --primary-line: color-mix(in srgb, var(--primary) 30%, #faf9f6);
-  --secondary-soft: color-mix(in srgb, var(--secondary) 8%, #faf9f6);
-  --secondary-line: color-mix(in srgb, var(--secondary) 22%, #faf9f6);
-  --accent-soft: color-mix(in srgb, var(--accent) 10%, #faf9f6);
-  --accent-line: color-mix(in srgb, var(--accent) 28%, #faf9f6);
-  --hover: color-mix(in srgb, var(--primary) 6%, transparent);
-  --selected: var(--primary-soft);
+  /* Brand tokens (primary / secondary / accent / link / ring) come from the
+     shared derivation block above and the palette in styles/. */
 
   --success: #2f6f4f;
   --success-soft: #eef4ef;
@@ -478,38 +471,6 @@ html[data-opensuite-modal] .opensuite-docx-host [data-testid="toolbar"] {
     serif;
   --font-mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas,
     monospace;
-
-  --color-paper: var(--paper);
-  --color-surface: var(--surface);
-  --color-elevated: var(--elevated);
-  --color-sunken: var(--sunken);
-  --color-canvas: var(--canvas);
-  --color-ink: var(--ink);
-  --color-ink-soft: var(--ink-soft);
-  --color-ink-faint: var(--ink-faint);
-  --color-line: var(--line);
-  --color-hover: var(--hover);
-  --color-selected: var(--selected);
-  --color-overlay: var(--overlay);
-  --color-accent: var(--accent);
-  --color-accent-hover: var(--accent-hover);
-  --color-accent-soft: var(--accent-soft);
-  --color-accent-line: var(--accent-line);
-  --color-primary: var(--primary);
-  --color-primary-hover: var(--primary-hover);
-  --color-primary-soft: var(--primary-soft);
-  --color-primary-line: var(--primary-line);
-  --color-secondary: var(--secondary);
-  --color-secondary-hover: var(--secondary-hover);
-  --color-secondary-soft: var(--secondary-soft);
-  --color-secondary-line: var(--secondary-line);
-  --color-success: var(--success);
-  --color-success-soft: var(--success-soft);
-  --color-danger: var(--danger);
-  --color-danger-soft: var(--danger-soft);
-  --color-on-ink: var(--on-ink);
-  --color-sidebar: var(--sidebar);
-  --color-shell-main: var(--shell-main);
 
   background: var(--paper);
   color: var(--ink);
@@ -584,7 +545,7 @@ html[data-opensuite-modal] .opensuite-docx-host [data-testid="toolbar"] {
 
 /* Visible keyboard focus on every public control, without per-element work. */
 .os-site :focus-visible {
-  outline: 2px solid var(--primary);
+  outline: 2px solid var(--ring);
   outline-offset: 3px;
   border-radius: 2px;
 }
@@ -636,14 +597,14 @@ html[data-opensuite-modal] .opensuite-docx-host [data-testid="toolbar"] {
 }
 
 .os-prose a {
-  color: var(--primary);
+  color: var(--link);
   text-decoration: underline;
   text-decoration-thickness: 1px;
   text-underline-offset: 3px;
 }
 
 .os-prose a:hover {
-  color: var(--primary-hover);
+  color: var(--link-hover);
 }
 
 @media (prefers-reduced-motion: reduce) {

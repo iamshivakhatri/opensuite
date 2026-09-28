@@ -626,14 +626,14 @@ export function DocxSurface({
           </button>
         </div>
       ) : newerAvailable && dirty ? (
-        <div className="flex shrink-0 items-center justify-between gap-3 border-b border-accent-line bg-accent-soft px-3 py-2">
+        <div className="flex shrink-0 items-center justify-between gap-3 border-b border-primary-line bg-primary-soft px-3 py-2">
           <p className="os-type-secondary leading-snug text-ink-soft">
             Newer version available. Save is blocked until you reload — local
             edits will be discarded.
           </p>
           <button
             type="button"
-            className="os-type-label shrink-0 rounded-[var(--radius-sm)] border border-accent-line bg-surface px-2.5 py-1 font-medium text-accent hover:bg-elevated"
+            className="os-type-label shrink-0 rounded-[var(--radius-sm)] border border-primary-line bg-surface px-2.5 py-1 font-medium text-primary hover:bg-elevated"
             onClick={() => setReloadOpen(true)}
           >
             Reload latest

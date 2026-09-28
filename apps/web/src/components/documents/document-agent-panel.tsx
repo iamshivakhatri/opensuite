@@ -148,7 +148,7 @@ function RunTranscript({
       <div key={entry.id} className={isCurrent ? "relative" : undefined}>
         <AgentMarkdown text={entry.content} streaming={isCurrent} />
         {isCurrent ? (
-          <span aria-hidden className="ml-0.5 inline-block h-[0.85em] w-[2px] translate-y-[2px] animate-pulse bg-accent align-baseline" />
+          <span aria-hidden className="ml-0.5 inline-block h-[0.85em] w-[2px] translate-y-[2px] animate-pulse bg-primary align-baseline" />
         ) : null}
       </div>,
     );
@@ -163,9 +163,9 @@ function WorkingDots({ connectionStale, stopping }: { connectionStale: boolean; 
   }
   return (
     <div role="status" aria-label="Agent working" className="flex items-center gap-1.5 py-1 pl-1">
-      <span aria-hidden className="h-1.5 w-1.5 rounded-full bg-accent motion-safe:animate-pulse [animation-delay:-800ms]" />
-      <span aria-hidden className="h-1.5 w-1.5 rounded-full bg-accent motion-safe:animate-pulse [animation-delay:-400ms]" />
-      <span aria-hidden className="h-1.5 w-1.5 rounded-full bg-accent motion-safe:animate-pulse" />
+      <span aria-hidden className="h-1.5 w-1.5 rounded-full bg-primary motion-safe:animate-pulse [animation-delay:-800ms]" />
+      <span aria-hidden className="h-1.5 w-1.5 rounded-full bg-primary motion-safe:animate-pulse [animation-delay:-400ms]" />
+      <span aria-hidden className="h-1.5 w-1.5 rounded-full bg-primary motion-safe:animate-pulse" />
     </div>
   );
 }
@@ -1438,7 +1438,7 @@ export function DocumentAgentPanel({
           "flex h-full w-10 shrink-0 flex-col items-center border-l border-line bg-sidebar pt-3",
         )}
       >
-        <span className="grid h-7 w-7 place-items-center rounded-[var(--radius-md)] text-[length:var(--text-2xs)] font-semibold text-accent hover:bg-primary-soft">
+        <span className="grid h-7 w-7 place-items-center rounded-[var(--radius-md)] text-[length:var(--text-2xs)] font-semibold text-primary hover:bg-primary-soft">
           AI
         </span>
       </button>
@@ -1626,7 +1626,7 @@ export function DocumentAgentPanel({
               onClick={() => void load()}
               className={cn(
                 focusRingClass,
-                "rounded-[var(--radius-sm)] text-[length:var(--text-xs)] font-medium text-accent hover:underline",
+                "rounded-[var(--radius-sm)] text-[length:var(--text-xs)] font-medium text-link hover:text-link-hover hover:underline",
               )}
             >
               Try again
@@ -1654,7 +1654,7 @@ export function DocumentAgentPanel({
                   aria-label="Load earlier messages"
                   className={cn(
                     focusRingClass,
-                    "rounded-[var(--radius-sm)] px-2.5 py-1 text-[length:var(--text-xs)] font-medium text-accent hover:underline disabled:cursor-not-allowed disabled:opacity-60",
+                    "rounded-[var(--radius-sm)] px-2.5 py-1 text-[length:var(--text-xs)] font-medium text-link hover:text-link-hover hover:underline disabled:cursor-not-allowed disabled:opacity-60",
                   )}
                 >
                   {loadingOlderMessages
@@ -1691,7 +1691,7 @@ export function DocumentAgentPanel({
                           {messageTags.map((file) => (
                             <span
                               key={file.id}
-                              className="inline-flex max-w-full rounded-[var(--radius-sm)] bg-accent-soft px-1.5 py-0.5 text-[length:var(--text-2xs)] font-medium text-accent-hover"
+                              className="inline-flex max-w-full rounded-[var(--radius-sm)] bg-primary-soft px-1.5 py-0.5 text-[length:var(--text-2xs)] font-medium text-primary-hover"
                             >
                               @{file.name}
                             </span>
@@ -1835,7 +1835,7 @@ export function DocumentAgentPanel({
                   disabled={busy}
                   className={cn(
                     focusRingClass,
-                    "self-start rounded-[var(--radius-sm)] text-[length:var(--text-xs)] font-medium text-accent hover:underline disabled:opacity-50",
+                    "self-start rounded-[var(--radius-sm)] text-[length:var(--text-xs)] font-medium text-link hover:text-link-hover hover:underline disabled:opacity-50",
                   )}
                 >
                   Retry last request
@@ -1876,7 +1876,7 @@ export function DocumentAgentPanel({
                   onClick={() => removeTagged(file.id)}
                   className={cn(
                     focusRingClass,
-                    "inline-flex max-w-full items-center gap-1 rounded-[var(--radius-sm)] bg-accent-soft px-1.5 py-0.5 text-[length:var(--text-2xs)] font-medium text-accent-hover",
+                    "inline-flex max-w-full items-center gap-1 rounded-[var(--radius-sm)] bg-primary-soft px-1.5 py-0.5 text-[length:var(--text-2xs)] font-medium text-primary-hover",
                   )}
                 >
                   <span className="truncate">@{file.name}</span>
@@ -1895,7 +1895,7 @@ export function DocumentAgentPanel({
                   aria-label={`Remove attachment ${file.name}`}
                   disabled={busy}
                   onClick={() => setAttachments((previous) => previous.filter((item) => item.file !== file))}
-                  className={cn(focusRingClass, "inline-flex max-w-full items-center gap-1 rounded-[var(--radius-sm)] bg-accent-soft px-1.5 py-0.5 text-[length:var(--text-2xs)] font-medium text-accent-hover disabled:opacity-50")}
+                  className={cn(focusRingClass, "inline-flex max-w-full items-center gap-1 rounded-[var(--radius-sm)] bg-primary-soft px-1.5 py-0.5 text-[length:var(--text-2xs)] font-medium text-primary-hover disabled:opacity-50")}
                 >
                   <span className="truncate">{file.name}</span>
                   <span className="opacity-60">{document ? "Uploaded" : submitting ? "Uploading" : "Ready"} · ×</span>

@@ -67,8 +67,8 @@ function ActivityGlyph({
     }
     return (
       <span className="relative flex h-3 w-3 shrink-0 items-center justify-center" aria-hidden>
-        <span className="absolute inline-flex h-1.5 w-1.5 animate-ping rounded-full bg-accent opacity-35" />
-        <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-accent" />
+        <span className="absolute inline-flex h-1.5 w-1.5 animate-ping rounded-full bg-primary opacity-35" />
+        <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-primary" />
       </span>
     );
   }
@@ -196,8 +196,8 @@ export function AgentRunProgress({
         >
           {isActive ? (
             <span className="relative flex h-1.5 w-1.5 shrink-0">
-              <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-accent opacity-35" />
-              <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-accent" />
+              <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-primary opacity-35" />
+              <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-primary" />
             </span>
           ) : status === "error" ? (
             <span className="shrink-0 text-[length:var(--text-2xs)]" aria-hidden>
@@ -255,7 +255,7 @@ export function AgentRunProgress({
                 >
                   {group.recovered ? (
                     <span
-                      className="shrink-0 text-[length:var(--text-2xs)] text-accent opacity-70"
+                      className="shrink-0 text-[length:var(--text-2xs)] text-primary opacity-70"
                       aria-hidden
                     >
                       ↻

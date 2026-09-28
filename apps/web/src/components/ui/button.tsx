@@ -12,9 +12,9 @@ const buttonVariants = cva(
   {
     variants: {
       variant: {
-        primary: "bg-primary text-on-ink hover:bg-primary-hover",
+        primary: "bg-primary text-on-primary hover:bg-primary-hover",
         /** Alias of primary — prefer `primary` for new CTAs. */
-        accent: "bg-primary text-on-ink hover:bg-primary-hover",
+        accent: "bg-primary text-on-primary hover:bg-primary-hover",
         /** Quiet theme chrome — border/hover only, no full fill. */
         secondary:
           "border border-secondary-line bg-surface text-ink-soft hover:border-primary-line hover:bg-primary-soft hover:text-primary",

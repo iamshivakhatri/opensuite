@@ -535,7 +535,7 @@ export function WorkspaceIde({
 
       {draggingOver || uploadingDrop ? (
         <div className="pointer-events-none absolute inset-0 z-40 flex items-center justify-center bg-overlay backdrop-blur-[2px]">
-          <div className="rounded-[var(--radius-lg)] border border-dashed border-accent bg-surface px-8 py-7 text-center shadow-[var(--elevation-md)]">
+          <div className="rounded-[var(--radius-lg)] border border-dashed border-primary bg-surface px-8 py-7 text-center shadow-[var(--elevation-md)]">
             <p className="text-[length:var(--text-md)] font-semibold tracking-[-0.02em] text-ink">
               {uploadingDrop ? "Uploading…" : "Drop Office files to upload"}
             </p>
@@ -778,7 +778,7 @@ function WorkspaceHomeCanvas({
             onClick={onUpload}
             className={cn(
               focusRingClass,
-              "os-type-label inline-flex h-8 items-center rounded-[var(--radius-sm)] bg-primary px-3 font-medium text-on-ink hover:bg-primary-hover",
+              "os-type-label inline-flex h-8 items-center rounded-[var(--radius-sm)] bg-primary px-3 font-medium text-on-primary hover:bg-primary-hover",
             )}
           >
             Upload file
