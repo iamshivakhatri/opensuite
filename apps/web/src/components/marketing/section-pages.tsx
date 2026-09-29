@@ -22,28 +22,28 @@ const runSteps = [
   },
   {
     name: "Locate",
-    body: "It resolves the exact cells and sentences carrying August's figures by selector, rather than by guessing at text.",
+    body: "It finds the exact passages, cells, or headings your request pointed at — by structure, not by guessing at wording.",
     annotation: "document.find",
   },
   {
     name: "Edit",
-    body: "Typed operations replace those values in place, batched so related changes land together or not at all.",
+    body: "Typed operations apply those changes in place, batched so related edits land together or not at all.",
     annotation: "batch replace",
   },
   {
     name: "Preserve",
-    body: "Anything the request didn't mention — styles, numbering, headers, unsupported parts — is left as it was.",
+    body: "Anything you didn't mention — layout, numbering, headers, unsupported parts — stays as it was.",
     annotation: "source-aware",
   },
   {
     name: "Verify",
-    body: "The saved file is inspected again for what usually breaks: stale periods, broken totals, leftover placeholders.",
+    body: "The saved file is checked again for what usually breaks: leftover placeholders, broken totals, stale labels.",
     annotation: "post-save checks",
   },
   {
     name: "Save",
-    body: "The run ends as one new immutable version, sitting alongside the six before it.",
-    annotation: "version 7",
+    body: "The run ends as one new immutable version, alongside whatever came before.",
+    annotation: "one version",
   },
 ];
 
@@ -125,22 +125,23 @@ export function HowItWorksPage() {
       <PageSection
         index="02"
         label="A real run"
-        title="Update a report without disturbing the rest of it."
-        lead="One request, start to finish. Each stage is visible while it happens, and the run ends as a single new version you can read or roll back."
+        title="Ask for a change. Keep the rest of the document."
+        lead="One request, start to finish — a brief, a draft, a syllabus, a proposal, a report. Each stage is visible while it happens, and the run ends as a single new version you can read or roll back."
       >
         <div className="mt-12 grid gap-10 lg:grid-cols-12 lg:gap-12">
           <div className="lg:col-span-5">
             <div className="rounded-[5px] border border-[var(--rule)] bg-surface p-5">
               <div className="flex items-center gap-2 os-annot">
                 <span className="h-1.5 w-1.5 rounded-full bg-primary" />
-                Monthly-Report.docx
+                Your-Document.docx
               </div>
               <p className="mt-4 text-[16.5px] leading-[1.5] text-ink">
-                “Update this monthly report with the September numbers.”
+                “Update this with the latest notes and leave everything else
+                alone.”
               </p>
               <div className="mt-5 flex items-center justify-between border-t border-line pt-3 os-annot">
-                <span>agent · run 7</span>
-                <span className="text-secondary">19s</span>
+                <span>agent · one run</span>
+                <span className="text-secondary">saved</span>
               </div>
             </div>
             <p className="os-body mt-5 max-w-[40ch] text-[14.5px]">
