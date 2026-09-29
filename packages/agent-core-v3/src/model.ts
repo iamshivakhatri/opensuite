@@ -50,21 +50,46 @@ export async function streamTurn(input: {
   readonly system?: string;
   readonly messages: readonly ModelMessage[];
   readonly tools?: ToolSet;
+  readonly maxOutputTokens?: number;
   readonly signal?: AbortSignal;
   readonly retry: InfraRetryPolicy;
   readonly onTextDelta?: (delta: string) => void | Promise<void>;
+  readonly onStreamPart?: (kind: "reasoning" | "text" | "tool") => void | Promise<void>;
 }): Promise<StreamTurnResult> {
   const response = streamText({
     model: input.model,
     ...(input.system ? { system: input.system } : {}),
     messages: [...input.messages],
     ...(input.tools ? { tools: input.tools } : {}),
+    ...(input.maxOutputTokens !== undefined ? { maxOutputTokens: input.maxOutputTokens } : {}),
     abortSignal: input.signal,
     maxRetries: input.retry.maxRetries,
   });
 
-  for await (const delta of response.textStream) {
-    await input.onTextDelta?.(delta);
+  const seenStreamParts = new Set<"reasoning" | "text" | "tool">();
+  for await (const part of response.fullStream) {
+    if (part.type === "reasoning-delta" && part.text.length > 0) {
+      if (!seenStreamParts.has("reasoning")) {
+        seenStreamParts.add("reasoning");
+        await input.onStreamPart?.("reasoning");
+      }
+    } else if (part.type === "text-delta" && part.text.length > 0) {
+      if (!seenStreamParts.has("text")) {
+        seenStreamParts.add("text");
+        await input.onStreamPart?.("text");
+      }
+      await input.onTextDelta?.(part.text);
+    } else if (part.type === "tool-input-delta" && part.delta.length > 0) {
+      if (!seenStreamParts.has("tool")) {
+        seenStreamParts.add("tool");
+        await input.onStreamPart?.("tool");
+      }
+    } else if (part.type === "tool-call") {
+      if (!seenStreamParts.has("tool")) {
+        seenStreamParts.add("tool");
+        await input.onStreamPart?.("tool");
+      }
+    }
   }
 
   const [text, finishReason, usage, toolCalls, response_, providerMetadata] =
@@ -113,6 +138,7 @@ export async function runModel(input: RunModelInput): Promise<RunModelResult> {
     model: input.model,
     ...(input.system ? { system: input.system } : {}),
     messages: input.messages,
+    ...(input.maxOutputTokens !== undefined ? { maxOutputTokens: input.maxOutputTokens } : {}),
     signal: input.signal,
     retry: input.infraRetry ?? DEFAULT_INFRA_RETRY,
     ...(input.onTextDelta ? { onTextDelta: input.onTextDelta } : {}),

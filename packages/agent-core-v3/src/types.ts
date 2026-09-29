@@ -83,8 +83,9 @@ export type AgentEvent =
   | { readonly type: "started" }
   | { readonly type: "model_turn_started"; readonly turn: number }
   | {
-      readonly type: "model_turn_first_output";
+      readonly type: "model_turn_first_stream_part";
       readonly turn: number;
+      readonly kind: "reasoning" | "text" | "tool";
       readonly elapsedMs: number;
     }
   | {
@@ -95,6 +96,7 @@ export type AgentEvent =
       readonly cachedInputTokens: number;
       readonly outputTokens: number;
       readonly reasoningTokens: number;
+      readonly finishReason: string;
       readonly toolNames: readonly string[];
       readonly routedProvider?: string;
     }
@@ -122,8 +124,9 @@ export type AgentEvent =
  * - "finish_tool": model called a terminal tool.
  * - "max_turns":   turn budget exhausted (result is likely incomplete).
  * - "deadline":    wall-clock budget exhausted (result is likely incomplete).
+ * - "output_limit": model reached its output limit without a tool call.
  */
-export type StopReason = "completed" | "finish_tool" | "max_turns" | "deadline";
+export type StopReason = "completed" | "finish_tool" | "max_turns" | "deadline" | "output_limit";
 
 export function isSuccessfulStop(reason: StopReason): boolean {
   return reason === "completed" || reason === "finish_tool";
@@ -141,6 +144,8 @@ export interface RunModelInput {
   readonly model: V3Model;
   readonly system?: string;
   readonly messages: readonly ModelMessage[];
+  /** Optional request cap; unset by default. */
+  readonly maxOutputTokens?: number;
   readonly onTextDelta?: (delta: string) => void | Promise<void>;
   readonly signal?: AbortSignal;
   readonly infraRetry?: InfraRetryPolicy;

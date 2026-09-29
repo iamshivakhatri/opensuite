@@ -8,7 +8,7 @@ import { createFinishTool } from "./finish-tool.js";
 import { runModel } from "./model.js";
 import { runAgent } from "./run.js";
 import { getRunMetricsFromError } from "./run-metrics.js";
-import { defineTool, type AgentToolSet } from "./types.js";
+import { defineTool, isSuccessfulStop, type AgentToolSet } from "./types.js";
 
 const emptyUsage = {
   inputTokens: { total: 1, noCache: 1, cacheRead: 0, cacheWrite: 0 },
@@ -120,14 +120,14 @@ test("no tool call: one model invocation, completed stop reason", async () => {
   assert.deepEqual(events, [
     "started",
     "model_turn_started",
-    "model_turn_first_output",
+    "model_turn_first_stream_part",
     "text_delta",
     "model_turn_completed",
     "completed",
   ]);
 });
 
-test("model turn lifecycle events include start, first output, and completion", async () => {
+test("model turn lifecycle events include start, first text, and completion", async () => {
   const model = new MockLanguageModelV4({
     doStream: async () => ({ stream: simulateReadableStream({ chunks: textChunks("ok") }) }),
   });
@@ -137,7 +137,7 @@ test("model turn lifecycle events include start, first output, and completion", 
     messages: [{ role: "user", content: "hi" }],
     onEvent: (e) => {
       if (e.type === "model_turn_started") events.push({ type: e.type, turn: e.turn });
-      if (e.type === "model_turn_first_output") events.push({ type: e.type, turn: e.turn });
+      if (e.type === "model_turn_first_stream_part") events.push({ type: e.type, turn: e.turn });
       if (e.type === "model_turn_completed") {
         events.push({ type: e.type, turn: e.turn, toolNames: e.toolNames });
       }
@@ -145,9 +145,77 @@ test("model turn lifecycle events include start, first output, and completion", 
   });
   assert.deepEqual(events, [
     { type: "model_turn_started", turn: 1 },
-    { type: "model_turn_first_output", turn: 1 },
+    { type: "model_turn_first_stream_part", turn: 1 },
     { type: "model_turn_completed", turn: 1, toolNames: [] },
   ]);
+});
+
+test("turn metrics distinguish first reasoning, text, and tool input", async () => {
+  const finish = createFinishTool();
+  const model = new MockLanguageModelV4({
+    doStream: async () => ({
+      stream: simulateReadableStream({
+        chunks: [
+          { type: "stream-start", warnings: [] },
+          { type: "reasoning-start", id: "reasoning" },
+          { type: "reasoning-delta", id: "reasoning", delta: "thinking" },
+          { type: "reasoning-end", id: "reasoning" },
+          ...textThenFinishChunks("done", finish.name).slice(1),
+        ] as never[],
+      }),
+    }),
+  });
+  let clock = 0;
+  const events: Array<{ kind: string; elapsedMs: number }> = [];
+  const result = await runAgent({
+    model,
+    messages: [{ role: "user", content: "go" }],
+    tools: { [finish.name]: finish.tool },
+    now: () => (clock += 10),
+    onEvent: (event) => {
+      if (event.type === "model_turn_first_stream_part") {
+        events.push({ kind: event.kind, elapsedMs: event.elapsedMs });
+      }
+    },
+  });
+  assert.deepEqual(events.map((event) => event.kind), ["reasoning", "text", "tool"]);
+  assert.ok(events[0]!.elapsedMs < events[1]!.elapsedMs);
+  assert.ok(events[1]!.elapsedMs < events[2]!.elapsedMs);
+  assert.equal(result.metrics.modelTurns[0]?.firstReasoningMs, events[0]?.elapsedMs);
+  assert.equal(result.metrics.modelTurns[0]?.firstTextMs, events[1]?.elapsedMs);
+  assert.equal(result.metrics.modelTurns[0]?.firstToolMs, events[2]?.elapsedMs);
+  assert.equal(
+    result.metrics.modelTurns[0]!.completedAtMs! - result.metrics.modelTurns[0]!.startedAtMs!,
+    result.metrics.modelTurns[0]?.durationMs,
+  );
+});
+
+test("length stop without a tool is an unsuccessful output limit", async () => {
+  let requestedLimit: number | undefined;
+  const model = new MockLanguageModelV4({
+    doStream: async (options) => {
+      requestedLimit = options.maxOutputTokens;
+      return {
+        stream: simulateReadableStream({
+          chunks: textChunks("unfinished", "stop").map((chunk) =>
+            chunk.type === "finish"
+              ? { ...chunk, finishReason: { unified: "length" as const, raw: "length" } }
+              : chunk,
+          ),
+        }),
+      };
+    },
+  });
+  const result = await runAgent({
+    model,
+    messages: [{ role: "user", content: "go" }],
+    maxOutputTokens: 8_192,
+  });
+  assert.equal(requestedLimit, 8_192);
+  assert.equal(result.finishReason, "length");
+  assert.equal(result.stopReason, "output_limit");
+  assert.equal(result.metrics.modelTurns[0]?.finishReason, "length");
+  assert.equal(isSuccessfulStop(result.stopReason), false);
 });
 
 test("system prompt is prepended to the model messages", async () => {

@@ -1148,6 +1148,33 @@ test("max_turns settles as a bounded stop and persists its existing transcript",
   ]);
 });
 
+test("configured output limit reaches the runtime and length stop fails the run", async () => {
+  const persistence = memoryPersistence("user-1");
+  const reports: AgentRunReport[] = [];
+  let requestedLimit: number | undefined;
+  const execution = createAgentExecutionService({
+    ...baseDeps(persistence, async (input) => {
+      requestedLimit = input.maxOutputTokens;
+      return softResult("output_limit");
+    }),
+    resolveModel: async () => ({
+      model: { provider: "test", modelId: "test" } as unknown as V3Model,
+      contextLength: 1_048_576,
+      maxOutputTokens: 943_718,
+      outputTokenLimit: 12_288,
+    }),
+    agentRunReportSink: (report) => { reports.push(report); },
+  });
+  const result = await (await execution.start({
+    userId: "user-1", threadId: "thread-1", instruction: "edit",
+  })).result;
+  assert.equal(requestedLimit, 12_288);
+  assert.equal(result.run.status, "failed");
+  assert.equal(result.run.errorCode, "AGENT_OUTPUT_LIMIT");
+  assert.equal(result.assistantMessage?.content, "The AI response reached its output limit before completing the task.");
+  assert.equal(reports[0]?.context?.outputReserveTokens, 12_288);
+});
+
 test("terminal runs flush valid working changes once, including partial and cancelled runs", async () => {
   const binding = await createNapiDocxEngineBinding();
   for (const mode of ["completed", "max_turns", "cancelled", "throw", "read_only", "fail_before", "append_fail"] as const) {

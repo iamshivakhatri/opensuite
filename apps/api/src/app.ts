@@ -326,6 +326,9 @@ export async function buildApp(
           ...(resolved.maxOutputTokens !== undefined
             ? { maxOutputTokens: resolved.maxOutputTokens }
             : {}),
+          ...(config.agent.maxOutputTokens !== undefined
+            ? { outputTokenLimit: Math.min(config.agent.maxOutputTokens, resolved.maxOutputTokens ?? config.agent.maxOutputTokens) }
+            : {}),
         };
       },
       modelUsage,

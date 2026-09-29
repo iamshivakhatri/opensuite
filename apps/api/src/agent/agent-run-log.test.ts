@@ -8,7 +8,7 @@ import {
   formatCompactTokens,
   formatDocumentSaved,
   formatModelTurnCompleted,
-  formatModelTurnFirstOutput,
+  formatModelTurnFirstStreamPart,
   formatModelTurnStarted,
   formatToolFinished,
   formatValidationChecks,
@@ -20,9 +20,10 @@ test("lifecycle helpers format scannable model and tool lines", () => {
     formatModelTurnStarted({ turn: 1, model: "deepseek/deepseek-v4.1-flash" }),
     "[agent] TURN 1\n  → LLM start\n  model=deepseek/deepseek-v4.1-flash",
   );
+  assert.match(formatModelTurnStarted({ turn: 1, model: "test", maxOutputTokens: 8_192 }), /model=test cap=8192/);
   assert.equal(
-    formatModelTurnFirstOutput({ turn: 1, elapsedMs: 420 }),
-    "[agent] TURN 1\n  … first 420ms streaming",
+    formatModelTurnFirstStreamPart({ turn: 1, kind: "reasoning", elapsedMs: 420 }),
+    "[agent] TURN 1\n  … reasoning 420ms",
   );
   const done = formatModelTurnCompleted({
     turn: 1,
@@ -32,10 +33,12 @@ test("lifecycle helpers format scannable model and tool lines", () => {
     outputTokens: 9_000,
     reasoningTokens: 8_400,
     toolNames: ["document.set_table_cells_text"],
-    sawFirstOutput: true,
+    finishReason: "tool-calls",
+    sawStreamPart: true,
   });
   assert.match(done, /\[agent\] TURN 1/);
   assert.match(done, /← LLM done 31\.6s/);
+  assert.match(done, /finish=tool-calls/);
   assert.match(done, /input=11\.4k cached=0/);
   assert.match(done, /output=9k reasoning=8\.4k/);
   assert.match(done, /tools=1 \[document\.set_table_cells_text\]/);
@@ -48,7 +51,8 @@ test("lifecycle helpers format scannable model and tool lines", () => {
       outputTokens: 363,
       reasoningTokens: 0,
       toolNames: [],
-      sawFirstOutput: false,
+      finishReason: "stop",
+      sawStreamPart: false,
     }),
     /tools=0 \(none\)/,
   );
@@ -61,7 +65,8 @@ test("lifecycle helpers format scannable model and tool lines", () => {
       outputTokens: 363,
       reasoningTokens: 0,
       toolNames: [],
-      sawFirstOutput: false,
+      finishReason: "stop",
+      sawStreamPart: false,
     }),
     /streaming=no/,
   );

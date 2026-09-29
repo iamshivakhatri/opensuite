@@ -37,7 +37,7 @@ import {
   formatDocumentSaved,
   formatDocumentTarget,
   formatModelTurnCompleted,
-  formatModelTurnFirstOutput,
+  formatModelTurnFirstStreamPart,
   formatModelTurnStarted,
   formatToolFinished,
   formatValidationChecks,
@@ -203,6 +203,8 @@ export interface ResolvedV3ExecutionModel {
   readonly usageAttribution?: AgentModelUsageAttribution;
   readonly contextLength?: number;
   readonly maxOutputTokens?: number;
+  /** Actual request cap, when configured; catalog maxOutputTokens is only a ceiling. */
+  readonly outputTokenLimit?: number;
 }
 
 /** @deprecated Use ResolvedV3ExecutionModel — alias during V3 cutover. */
@@ -664,7 +666,7 @@ async function runExecution(input: {
       input.model.contextLength !== undefined
         ? computeInputBudget({
             contextLength: input.model.contextLength,
-            maxOutputTokens: input.model.maxOutputTokens,
+            maxOutputTokens: input.model.outputTokenLimit ?? input.model.maxOutputTokens,
           })
         : undefined;
     if (budget?.usedOutputReserveFallback) {
@@ -691,7 +693,7 @@ async function runExecution(input: {
     const planningAvailableEvidenceTokens = availableEvidenceTokenBudget(
       input.model.contextLength,
       requiredTokens + estimateTokens(projectedCheckpoint) + historical.estimatedHistoricalTokens,
-      input.model.maxOutputTokens,
+      input.model.outputTokenLimit ?? input.model.maxOutputTokens,
     );
     const retrieval = await loadRetrievedContext({
       cache: input.structureCache,
@@ -764,7 +766,7 @@ async function runExecution(input: {
     const availableEvidenceTokens = availableEvidenceTokenBudget(
       input.model.contextLength,
       requiredTokens + estimateTokens(finalProjectedCheckpoint) + finalHistorical.estimatedHistoricalTokens,
-      input.model.maxOutputTokens,
+      input.model.outputTokenLimit ?? input.model.maxOutputTokens,
     );
     const context = {
       ...finalHistoricalContext,
@@ -849,7 +851,7 @@ async function runExecution(input: {
     let result;
     try {
       const toolStartedAt = new Map<string, number>();
-      let turnSawFirstOutput = false;
+      let turnSawStreamPart = false;
       result = await executeAgent({
         model: input.model.model,
         system,
@@ -859,14 +861,21 @@ async function runExecution(input: {
         signal: input.signal,
         runId: runShort,
         maxTurns: MAX_MODEL_TURNS,
+        ...(input.model.outputTokenLimit !== undefined
+          ? { maxOutputTokens: input.model.outputTokenLimit }
+          : {}),
         onEvent: (event) => {
           if (event.type === "model_turn_started") {
-            turnSawFirstOutput = false;
-            logAgentLine(formatModelTurnStarted({ turn: event.turn, model: modelLabel }));
-          } else if (event.type === "model_turn_first_output") {
-            turnSawFirstOutput = true;
+            turnSawStreamPart = false;
+            logAgentLine(formatModelTurnStarted({
+              turn: event.turn,
+              model: modelLabel,
+              maxOutputTokens: input.model.outputTokenLimit,
+            }));
+          } else if (event.type === "model_turn_first_stream_part") {
+            turnSawStreamPart = true;
             logAgentLine(
-              formatModelTurnFirstOutput({ turn: event.turn, elapsedMs: event.elapsedMs }),
+              formatModelTurnFirstStreamPart({ turn: event.turn, kind: event.kind, elapsedMs: event.elapsedMs }),
             );
           } else if (event.type === "model_turn_completed") {
             logAgentLine(
@@ -878,7 +887,8 @@ async function runExecution(input: {
                 outputTokens: event.outputTokens,
                 reasoningTokens: event.reasoningTokens,
                 toolNames: event.toolNames,
-                sawFirstOutput: turnSawFirstOutput,
+                finishReason: event.finishReason,
+                sawStreamPart: turnSawStreamPart,
               }),
             );
           } else if (event.type === "tool_started") {
@@ -985,7 +995,7 @@ async function runExecution(input: {
 
     if (!isSuccessfulStop(result.stopReason)) {
       transcript.finish();
-      const boundedStop = result.stopReason === "max_turns" || result.stopReason === "deadline";
+      const boundedStop = result.stopReason === "max_turns" || result.stopReason === "deadline" || result.stopReason === "output_limit";
       return settleTerminalRunFailure({
         ...(boundedStop ? { expectedStop: result.stopReason } : {}),
         cancelled: input.signal?.aborted === true,
@@ -1288,6 +1298,7 @@ function checkpointMessageContent(checkpoint: AgentThreadContextCheckpoint): str
 function failureCodeForStopReason(stopReason: StopReason): string {
   if (stopReason === "max_turns") return "AGENT_MAX_TURNS";
   if (stopReason === "deadline") return "AGENT_DEADLINE";
+  if (stopReason === "output_limit") return "AGENT_OUTPUT_LIMIT";
   return "AGENT_EXECUTION_FAILED";
 }
 
@@ -1297,6 +1308,8 @@ export function boundedStopMessage(
 ): string {
   const stopped = stopReason === "max_turns"
     ? `Reached the ${MAX_MODEL_TURNS} AI-turn limit before completing the task.`
+    : stopReason === "output_limit"
+      ? "The AI response reached its output limit before completing the task."
     : "Stopped before the task could be completed.";
   return hasVersionAdvance ? `${stopped} Changes made so far were preserved.` : stopped;
 }

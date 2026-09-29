@@ -258,6 +258,7 @@ test("small single DOCX uses complete direct context, including every table row"
   assert.equal(retrieved.contextStrategy, "direct");
   assert.equal(retrieved.plannerEvidenceBudgetTokens, 24_000);
   assert.match(retrieved.message ?? "", /COMPLETE CURRENT DOCUMENT CONTENT/);
+  assert.match(retrieved.message ?? "", /Issue known-safe mutations from this content together/);
   assert.match(retrieved.message ?? "", /version v-direct/);
   assert.match(retrieved.message ?? "", /Milestone 11/);
   assert.match(retrieved.message ?? "", /Current table selector: {"headerCells":\["Milestone","Owner"\],"occurrence":0}/);

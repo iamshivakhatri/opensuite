@@ -13,6 +13,14 @@ test("update policy preserves source-silent facts and flags missing input", () =
   assert.doesNotMatch(buildAgentOperatingInstruction(["finish"]), /DOCUMENT UPDATE RULE/);
 });
 
+test("operating instruction acts on safe edits before planning later work", () => {
+  const system = buildAgentOperatingInstruction(["document.replace_text", "finish"]);
+  assert.match(system, /safe concrete edit, issue it immediately/);
+  assert.match(system, /do not plan every later edit first/);
+  assert.match(system, /next mutation needs missing or ambiguous information/);
+  assert.doesNotMatch(system, /plan a coherent set of edits/);
+});
+
 test("operating instruction embeds general policy and only exposed tools", () => {
   const system = buildAgentOperatingInstruction([
     "document.find",

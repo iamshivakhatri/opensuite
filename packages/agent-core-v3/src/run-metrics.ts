@@ -15,16 +15,23 @@ export type MetricsStopReason =
   | "finish_tool"
   | "max_turns"
   | "deadline"
+  | "output_limit"
   | "cancelled"
   | "model_error";
 
 export interface ModelTurnMetric {
   readonly turn: number;
+  readonly startedAtMs?: number;
+  readonly completedAtMs?: number;
   readonly durationMs: number;
   readonly inputTokens: number;
   readonly cachedInputTokens: number;
   readonly outputTokens: number;
   readonly reasoningTokens?: number;
+  readonly firstReasoningMs?: number;
+  readonly firstTextMs?: number;
+  readonly firstToolMs?: number;
+  readonly finishReason?: string;
   readonly providerReportedCostUsd?: number;
 }
 

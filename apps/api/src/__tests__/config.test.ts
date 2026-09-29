@@ -43,9 +43,17 @@ test("loadConfig applies defaults when auth/database env vars are provided", () 
   assert.equal(config.agent.openaiModel, "gpt-4.1");
   assert.equal(config.agent.openrouterApiKey, null);
   assert.equal(config.agent.openrouterModel, null);
+  assert.equal(config.agent.maxOutputTokens, undefined);
   assert.equal(config.allowSignup, true);
   assert.equal(config.authCrossOrigin, false);
   assert.equal(config.google, null);
+});
+
+test("optional agent output cap accepts 8k–16k and rejects values beyond reserved headroom", () => {
+  for (const value of [8_192, 12_288, 16_384]) {
+    assert.equal(loadConfig({ ...baseEnv, AGENT_MAX_OUTPUT_TOKENS: String(value) }).agent.maxOutputTokens, value);
+  }
+  assert.throws(() => loadConfig({ ...baseEnv, AGENT_MAX_OUTPUT_TOKENS: "16385" }), /AGENT_MAX_OUTPUT_TOKENS/);
 });
 
 test("loadConfig parses ALLOW_SIGNUP and AUTH_CROSS_ORIGIN", () => {

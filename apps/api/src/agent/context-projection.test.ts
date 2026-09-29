@@ -89,6 +89,11 @@ test("availableEvidenceTokens clamps at zero and uses model max output when pres
   assert.equal(withMax.outputReserve, 16_384);
   assert.equal(withMax.usedOutputReserveFallback, false);
   assert.ok(withMax.safeInputBudget > 1_000_000);
+  for (const limit of [8_192, 12_288, 16_384]) {
+    const capped = computeInputBudget({ contextLength: 1_048_576, maxOutputTokens: limit });
+    assert.equal(capped.outputReserve, limit);
+    assert.equal(availableEvidenceTokenBudget(1_048_576, 10_000, limit), capped.safeInputBudget - 10_000);
+  }
   const fallback = computeInputBudget({ contextLength: 1_048_576 });
   assert.equal(fallback.outputReserve, 8_192);
   assert.equal(fallback.usedOutputReserveFallback, true);

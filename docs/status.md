@@ -14,6 +14,8 @@ _Read this before starting any work. Keep it a concise current-state handoff, no
 
 ## Just Completed
 
+* **Agent latency pass** — V3 turn metrics/logs now separate first reasoning, visible text, and tool-input timing; completion logs include finish reason. A length-stopped turn without a tool fails as `AGENT_OUTPUT_LIMIT`. Small action-first/DIRECT wording edits. Optional `AGENT_MAX_OUTPUT_TOKENS` (1–16,384) caps the actual model request and its input reserve; unset by default. Catalog maximum remains a capability ceiling, not a generation cap.
+
 * **Frontend request noise** — idle click/focus no longer re-hits AI prefs, provider credentials, or document metadata. Shared React Query keys (5m AI settings, existing doc/list staleTimes); agent panel reuses workspace docs cache; removed DOCX focus/visibility soft-refresh and agent BYOK focus refetch; dropped redundant `refreshKey` double-invalidate. Mutations still invalidate/setQueryData. Focused cache tests + web typecheck pass.
 
 * **Public marketing polish** — `/how-it-works` copy is role-agnostic (any .docx change, not a monthly-report demo); public `SiteWordmark` uses the same favicon-style `BrandMark` as the app shell.
@@ -30,7 +32,7 @@ _Read this before starting any work. Keep it a concise current-state handoff, no
 
 * **Recurring-report fix pass 1** — update-only source rule preserves facts without explicit replacement evidence; missing requested facts can finish as `completed_with_input_needed` with a clear user response. Retrieval now scopes to the target, current attachments, and named references unless broader workspace reports are requested. Clear new-document requests start without a stale active target. No extra model call or Rust change.
 
-* **Readable agent run logs** — compact `[agent]` lines for RETRIEVAL / TURN (LLM start, first-token/streaming, done+usage+tools) / TOOL ✓✗ / SAVE / VALIDATION / DONE. Provider usage (input/cached) lands on LLM done; TTFT via `model_turn_first_output`. Routine GET poll noise filtered; context compaction logs only when triggered. `AGENT_RUN_REPORT_VERBOSE=1` still dumps full report JSON. No runtime/tool/prompt behavior change.
+* **Readable agent run logs** — compact `[agent]` lines for RETRIEVAL / TURN (LLM start, first reasoning/text/tool input, done+usage+tools+finish reason) / TOOL ✓✗ / SAVE / VALIDATION / DONE. Routine GET poll noise filtered; context compaction logs only when triggered. `AGENT_RUN_REPORT_VERBOSE=1` still dumps full report JSON.
 
 * **Phase 3 verification/logging fix** — explicit report transitions now recognize month/year/quarter across descriptive titles; table dimensions use successful structural tool names to label supported changes as expected and unexplained loss as warning. API logs now show retrieval/target/source names, live tool outcomes, saved version, validation, and the existing per-turn/final metrics. No runtime, Rust, or UI changes in this fix.
 
@@ -117,6 +119,8 @@ _Read this before starting any work. Keep it a concise current-state handoff, no
 
 ## Verification Status
 
+* Agent latency pass: focused V3 and API tests/typechecks pass; no paid model benchmark or manual dogfood run yet.
+
 * Agent tool ergonomics: 40 focused API operating-instruction, retrieval, and mutation tests pass; API TypeScript build/typecheck passes. No model or browser test.
 
 * Linux deployment-image check: existing `node:22-bookworm-slim` API Dockerfile built on Colima linux/arm64; npm installed `@opensuitehq/engine-linux-arm64-gnu@0.1.2`. Native load, DOCX inspect, structural formatting of two header cells, output re-inspection, and API capability-gated tool exposure passed. No product test or production change.
@@ -171,4 +175,4 @@ _Read this before starting any work. Keep it a concise current-state handoff, no
 
 ## Recommended Next Step
 
-Sign in and click around a workspace (tabs, explorer, agent panel, settings) while watching Network — prefs/docs/list should stay quiet until a real open/mutation.
+Run the same real document edit with `AGENT_MAX_OUTPUT_TOKENS` unset, then 8k/12k/16k, and compare turn timings, length stops, and task quality.

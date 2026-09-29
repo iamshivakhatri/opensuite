@@ -77,17 +77,20 @@ export function logAgentRunBanner(input: {
 export function formatModelTurnStarted(input: {
   readonly turn: number;
   readonly model: string;
+  readonly maxOutputTokens?: number;
 }): string {
-  return `[agent] TURN ${input.turn}\n  → LLM start\n  model=${input.model}`;
+  return `[agent] TURN ${input.turn}\n  → LLM start\n  model=${input.model}` +
+    (input.maxOutputTokens !== undefined ? ` cap=${input.maxOutputTokens}` : "");
 }
 
-export function formatModelTurnFirstOutput(input: {
+export function formatModelTurnFirstStreamPart(input: {
   readonly turn: number;
+  readonly kind: "reasoning" | "text" | "tool";
   readonly elapsedMs: number;
 }): string {
   return (
     `[agent] TURN ${input.turn}\n` +
-    `  … first ${formatCompactDuration(input.elapsedMs)} streaming`
+    `  … ${input.kind} ${formatCompactDuration(input.elapsedMs)}`
   );
 }
 
@@ -99,12 +102,13 @@ export function formatModelTurnCompleted(input: {
   readonly outputTokens: number;
   readonly reasoningTokens: number;
   readonly toolNames: readonly string[];
-  readonly sawFirstOutput?: boolean;
+  readonly finishReason: string;
+  readonly sawStreamPart?: boolean;
 }): string {
   const tools = input.toolNames.filter((name) => name !== "finish");
   const lines = [
     `[agent] TURN ${input.turn}`,
-    `  ← LLM done ${formatCompactDuration(input.durationMs)}`,
+    `  ← LLM done ${formatCompactDuration(input.durationMs)} finish=${input.finishReason}`,
     `  input=${formatCompactTokens(input.inputTokens)}` +
       ` cached=${formatCompactTokens(input.cachedInputTokens)}`,
     `  output=${formatCompactTokens(input.outputTokens)}` +
@@ -123,7 +127,7 @@ export function formatModelTurnCompleted(input: {
     const more = tools.length > 4 ? ` +${tools.length - 4}` : "";
     lines.push(`  tools=${tools.length} [${shown.join(", ")}${more}]`);
   }
-  if (input.sawFirstOutput === false) {
+  if (input.sawStreamPart === false) {
     lines.push("  streaming=no");
   }
   return lines.join("\n");

@@ -35,7 +35,7 @@ OPERATING PRINCIPLES
 - A duplicated document starts as an exact copy. Reuse the source content already supplied; inspect the copy only for a specific missing target.
 - If a read says the document is unchanged and its content is already available, stop inspecting and make the requested change.
 - Combine compatible work when the available tools safely allow it.
-- Discover cheaply, plan a coherent set of edits, execute it, verify only what remains uncertain, and finish.
+- When the request and evidence support a safe concrete edit, issue it immediately; do not plan every later edit first. Inspect only when the next mutation needs missing or ambiguous information. After editing, verify only what is needed.
 - Prefer one batch or multi-target operation when it covers several known edits, instead of repeating equivalent mutations. You may request several safe mutation tools in one model turn; they execute in order.
 - Do not batch edits that need an earlier result, uncertain handles, a fresh inspection after structural changes, or a decision based on an earlier failure.
 - Finish content, paragraph, and structural edits before inspecting for exact table/cell handles. Then inspect the table once, do related table formatting together, and verify narrowly only if needed.

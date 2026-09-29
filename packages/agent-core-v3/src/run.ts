@@ -105,55 +105,67 @@ export async function runAgent(input: RunAgentInput): Promise<RunAgentResult> {
       }
 
       turns += 1;
-      const turnStarted = now();
       const projected = input.projectMessages
         ? [...input.projectMessages(transcript)]
         : transcript;
 
       await input.onEvent?.({ type: "model_turn_started", turn: turns });
+      const turnStarted = now();
 
-      let sawOutput = false;
+      const firstStreamMs: Partial<Record<"reasoning" | "text" | "tool", number>> = {};
       let turn;
       try {
         turn = await streamTurn({
           model: input.model,
           ...(input.system ? { system: input.system } : {}),
           messages: projected,
+          ...(input.maxOutputTokens !== undefined ? { maxOutputTokens: input.maxOutputTokens } : {}),
           ...(schemaTools ? { tools: schemaTools } : {}),
           signal: input.signal,
           retry,
+          onStreamPart: async (kind) => {
+            if (firstStreamMs[kind] !== undefined) return;
+            const elapsedMs = now() - turnStarted;
+            firstStreamMs[kind] = elapsedMs;
+            await input.onEvent?.({ type: "model_turn_first_stream_part", turn: turns, kind, elapsedMs });
+          },
           onTextDelta: async (delta) => {
-            if (!sawOutput && delta.length > 0) {
-              sawOutput = true;
-              await input.onEvent?.({
-                type: "model_turn_first_output",
-                turn: turns,
-                elapsedMs: now() - turnStarted,
-              });
-            }
             await input.onTextDelta?.(delta);
             await input.onEvent?.({ type: "text_delta", delta });
           },
         });
       } catch (error) {
+        const turnCompleted = now();
         metrics.recordModelTurn({
           turn: turns,
-          durationMs: now() - turnStarted,
+          startedAtMs: turnStarted,
+          completedAtMs: turnCompleted,
+          durationMs: turnCompleted - turnStarted,
           inputTokens: 0,
           cachedInputTokens: 0,
           outputTokens: 0,
+          ...(firstStreamMs.reasoning !== undefined ? { firstReasoningMs: firstStreamMs.reasoning } : {}),
+          ...(firstStreamMs.text !== undefined ? { firstTextMs: firstStreamMs.text } : {}),
+          ...(firstStreamMs.tool !== undefined ? { firstToolMs: firstStreamMs.tool } : {}),
         });
         throw error;
       }
 
-      const turnDurationMs = now() - turnStarted;
+      const turnCompleted = now();
+      const turnDurationMs = turnCompleted - turnStarted;
       metrics.recordModelTurn({
         turn: turns,
+        startedAtMs: turnStarted,
+        completedAtMs: turnCompleted,
         durationMs: turnDurationMs,
         inputTokens: turn.inputTokens,
         cachedInputTokens: turn.cachedInputTokens,
         outputTokens: turn.outputTokens,
         reasoningTokens: turn.reasoningTokens,
+        firstReasoningMs: firstStreamMs.reasoning,
+        firstTextMs: firstStreamMs.text,
+        firstToolMs: firstStreamMs.tool,
+        finishReason: turn.finishReason,
         ...(turn.providerReportedCostUsd !== undefined
           ? { providerReportedCostUsd: turn.providerReportedCostUsd }
           : {}),
@@ -182,6 +194,7 @@ export async function runAgent(input: RunAgentInput): Promise<RunAgentResult> {
         cachedInputTokens: turn.cachedInputTokens,
         outputTokens: turn.outputTokens,
         reasoningTokens: turn.reasoningTokens,
+        finishReason: turn.finishReason,
         toolNames: calls.map((call) => call.toolName),
         ...(turn.routedProvider !== undefined
           ? { routedProvider: turn.routedProvider }
@@ -189,6 +202,7 @@ export async function runAgent(input: RunAgentInput): Promise<RunAgentResult> {
       });
 
       if (calls.length === 0) {
+        if (turn.finishReason === "length") return finish("output_limit", turn.text);
         await input.onEvent?.({
           type: "completed",
           text: turn.text,

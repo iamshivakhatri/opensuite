@@ -64,6 +64,8 @@ const EnvSchema = z
     OPENROUTER_API_KEY: z.string().optional(),
     /** Required when provider=openrouter — no default; pick an explicit model slug. */
     OPENROUTER_MODEL: z.string().optional(),
+    /** Optional dogfood cap; the catalog value remains the model ceiling. */
+    AGENT_MAX_OUTPUT_TOKENS: z.coerce.number().int().positive().max(16_384).optional(),
     /** 32-byte base64 or 64-character hex key, used only for BYOK secrets. */
     AI_CREDENTIAL_ENCRYPTION_KEY: z.string().optional(),
     MANAGED_AI_TRIAL_CREDIT_MICROS: z.coerce.number().int().nonnegative().default(0),
@@ -187,6 +189,7 @@ export interface AgentModelConfig {
   readonly openaiModel: string;
   readonly openrouterApiKey: string | null;
   readonly openrouterModel: string | null;
+  readonly maxOutputTokens?: number;
 }
 
 export interface GoogleAuthConfig {
@@ -352,6 +355,9 @@ export function loadConfig(
       // Always surface OpenRouter key/model when present — managed gateway + catalog.
       openrouterApiKey: openrouterKey,
       openrouterModel,
+      ...(result.data.AGENT_MAX_OUTPUT_TOKENS !== undefined
+        ? { maxOutputTokens: result.data.AGENT_MAX_OUTPUT_TOKENS }
+        : {}),
     },
   };
 }
