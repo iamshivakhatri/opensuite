@@ -14,6 +14,8 @@ _Read this before starting any work. Keep it a concise current-state handoff, no
 
 ## Just Completed
 
+* **Frontend request noise** — idle click/focus no longer re-hits AI prefs, provider credentials, or document metadata. Shared React Query keys (5m AI settings, existing doc/list staleTimes); agent panel reuses workspace docs cache; removed DOCX focus/visibility soft-refresh and agent BYOK focus refetch; dropped redundant `refreshKey` double-invalidate. Mutations still invalidate/setQueryData. Focused cache tests + web typecheck pass.
+
 * **Public marketing polish** — `/how-it-works` copy is role-agnostic (any .docx change, not a monthly-report demo); public `SiteWordmark` uses the same favicon-style `BrandMark` as the app shell.
 * **Centralized brand palette** — `apps/web/src/styles/brand-palette.css` is the only place with raw brand colors: 10 `--brand-*` vars, light + dark per palette. Live: ROSE (`#b4234a`). Others wrapped in comments; swap per file header. Favicon `icon.svg` cannot read CSS vars — sync its stops when switching. `globals.css` derives soft/line/hover/selected for app root and `.os-site`.
 * **Public site routes** — main marketing sections are real pages (`/product`, `/how-it-works`, `/principles`, `/architecture`, `/scope`, `/open-source`); nav shows active route.
@@ -169,4 +171,4 @@ _Read this before starting any work. Keep it a concise current-state handoff, no
 
 ## Recommended Next Step
 
-Sign in and eyeball `/app` (sidebar active row, Settings, workspace IDE, dark theme) with BLUE, then run `next build`.
+Sign in and click around a workspace (tabs, explorer, agent panel, settings) while watching Network — prefs/docs/list should stay quiet until a real open/mutation.

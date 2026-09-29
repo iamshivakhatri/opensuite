@@ -1,6 +1,7 @@
 "use client";
 
 import * as React from "react";
+import { useQueryClient } from "@tanstack/react-query";
 
 import { Button } from "@/components/ui/button";
 import { ConfirmDialog } from "@/components/ui/context-menu";
@@ -12,10 +13,8 @@ import { userFacingError } from "@/components/files/format";
 import {
   connectProviderCredential,
   deleteProviderCredential,
-  fetchAiPreference,
   fetchAiTrial,
   fetchManagedAiModels,
-  listProviderCredentials,
   saveAiPreference,
 } from "@/lib/ai-settings-api";
 import {
@@ -40,6 +39,11 @@ import {
   type ManagedAiModel,
   type PublicProviderCredential,
 } from "@/lib/ai-settings-model";
+import {
+  aiPreferenceQuery,
+  providerCredentialsQuery,
+  queryKeys,
+} from "@/lib/query-keys";
 import { useToast } from "@/lib/toast";
 import { cn } from "@/lib/utils";
 import {
@@ -54,6 +58,7 @@ type ConnectTarget = {
 
 export function AiModelsSettings() {
   const { toast } = useToast();
+  const queryClient = useQueryClient();
 
   const [preference, setPreference] = React.useState<AiPreference | null>(null);
   const [preferenceLoading, setPreferenceLoading] = React.useState(true);
@@ -105,7 +110,7 @@ export function AiModelsSettings() {
     setPreferenceLoading(true);
     setPreferenceError(null);
     try {
-      const next = await fetchAiPreference();
+      const next = await queryClient.fetchQuery(aiPreferenceQuery());
       setPreference(next);
       const nextMode = modeFromPreference(next);
       setMode(nextMode);
@@ -118,13 +123,13 @@ export function AiModelsSettings() {
     } finally {
       setPreferenceLoading(false);
     }
-  }, []);
+  }, [queryClient]);
 
   const loadCredentials = React.useCallback(async () => {
     setCredentialsLoading(true);
     setCredentialsError(null);
     try {
-      setCredentials(await listProviderCredentials());
+      setCredentials(await queryClient.fetchQuery(providerCredentialsQuery()));
     } catch (error) {
       setCredentialsError(
         userFacingError(error, "Could not load provider keys."),
@@ -132,7 +137,7 @@ export function AiModelsSettings() {
     } finally {
       setCredentialsLoading(false);
     }
-  }, []);
+  }, [queryClient]);
 
   const loadTrial = React.useCallback(async () => {
     setTrialLoading(true);
@@ -206,6 +211,7 @@ export function AiModelsSettings() {
     try {
       const saved = await saveAiPreference(buildManagedPreferencePayload());
       setPreference(saved);
+      queryClient.setQueryData(queryKeys.aiPreference, saved);
       toast({
         tone: "success",
         title: "Using OpenSuite managed",
@@ -229,6 +235,7 @@ export function AiModelsSettings() {
         buildByokPreferencePayload(draftByokProvider, draftByokModel.trim()),
       );
       setPreference(saved);
+      queryClient.setQueryData(queryKeys.aiPreference, saved);
       setMode("byok");
       toast({
         tone: "success",
@@ -269,7 +276,9 @@ export function AiModelsSettings() {
         const next = (current ?? []).filter(
           (row) => row.provider !== credential.provider,
         );
-        return [...next, credential];
+        const updated = [...next, credential];
+        queryClient.setQueryData(queryKeys.providerCredentials, updated);
+        return updated;
       });
       toast({
         tone: "success",
@@ -290,10 +299,13 @@ export function AiModelsSettings() {
     setRemoveError(null);
     try {
       await deleteProviderCredential(removeProvider);
-      setCredentials(
-        (current) =>
-          (current ?? []).filter((row) => row.provider !== removeProvider),
-      );
+      setCredentials((current) => {
+        const updated = (current ?? []).filter(
+          (row) => row.provider !== removeProvider,
+        );
+        queryClient.setQueryData(queryKeys.providerCredentials, updated);
+        return updated;
+      });
       setRemoveProvider(null);
       toast({
         tone: "success",

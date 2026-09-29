@@ -54,7 +54,6 @@ export function DocumentNavigationPanel({
   collapsed,
   onToggle,
   width = 220,
-  refreshKey = 0,
   onDocumentRenamed,
   onDocumentTrashed,
   onRequestNavigate,
@@ -64,7 +63,6 @@ export function DocumentNavigationPanel({
   collapsed: boolean;
   onToggle: () => void;
   width?: number;
-  refreshKey?: number;
   onDocumentRenamed?: (document: ListedDocument) => void;
   onDocumentTrashed?: (documentId: string) => void;
   /** Return false to cancel navigation (dirty guard). */
@@ -76,14 +74,6 @@ export function DocumentNavigationPanel({
   const documentsQuery = useQuery({
     ...workspaceDocumentsQuery(workspaceId),
   });
-
-  React.useEffect(() => {
-    if (refreshKey > 0) {
-      void queryClient.invalidateQueries({
-        queryKey: queryKeys.workspaceDocuments(workspaceId),
-      });
-    }
-  }, [refreshKey, queryClient, workspaceId]);
 
   const files = documentsQuery.data ?? [];
   const loadError = documentsQuery.error

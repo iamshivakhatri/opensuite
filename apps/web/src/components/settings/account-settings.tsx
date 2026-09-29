@@ -2,17 +2,18 @@
 
 import * as React from "react";
 import { useRouter } from "next/navigation";
+import { useQuery } from "@tanstack/react-query";
 
 import { Button } from "@/components/ui/button";
 import { PageError, PageLoading } from "@/components/ui/page-state";
 import { userFacingError } from "@/components/files/format";
-import {
-  fetchAiPreference,
-  listProviderCredentials,
-} from "@/lib/ai-settings-api";
 import { activeModeSummary } from "@/lib/ai-settings-model";
 import { fetchMe, type Me } from "@/lib/api";
 import { signOut } from "@/lib/auth-client";
+import {
+  aiPreferenceQuery,
+  providerCredentialsQuery,
+} from "@/lib/query-keys";
 import { fetchStorageStatus } from "@/lib/storage-api";
 import { storageUsedOfQuotaLabel } from "@/lib/storage-model";
 import { useTheme, type ThemePreference } from "@/lib/theme";
@@ -61,9 +62,23 @@ export function AccountSettings() {
   const [meError, setMeError] = React.useState<string | null>(null);
   const [signingOut, setSigningOut] = React.useState(false);
 
-  const [aiSummary, setAiSummary] = React.useState<string | null>(null);
-  const [aiLoading, setAiLoading] = React.useState(true);
-  const [aiError, setAiError] = React.useState<string | null>(null);
+  const preferenceQuery = useQuery(aiPreferenceQuery());
+  const credentialsQuery = useQuery(providerCredentialsQuery());
+  const aiLoading = preferenceQuery.isPending || credentialsQuery.isPending;
+  const aiError =
+    preferenceQuery.error || credentialsQuery.error
+      ? userFacingError(
+          preferenceQuery.error ?? credentialsQuery.error,
+          "Could not load AI status.",
+        )
+      : null;
+  const aiSummary =
+    !aiLoading && !aiError
+      ? activeModeSummary({
+          preference: preferenceQuery.data ?? null,
+          credentials: credentialsQuery.data ?? [],
+        })
+      : null;
 
   const [storageSummary, setStorageSummary] = React.useState<string | null>(
     null,
@@ -77,27 +92,6 @@ export function AccountSettings() {
       .catch((err) =>
         setMeError(userFacingError(err, "Could not load account.")),
       );
-  }, []);
-
-  React.useEffect(() => {
-    let cancelled = false;
-    setAiLoading(true);
-    setAiError(null);
-    void Promise.all([fetchAiPreference(), listProviderCredentials()])
-      .then(([preference, credentials]) => {
-        if (cancelled) return;
-        setAiSummary(activeModeSummary({ preference, credentials }));
-      })
-      .catch((err) => {
-        if (cancelled) return;
-        setAiError(userFacingError(err, "Could not load AI status."));
-      })
-      .finally(() => {
-        if (!cancelled) setAiLoading(false);
-      });
-    return () => {
-      cancelled = true;
-    };
   }, []);
 
   React.useEffect(() => {

@@ -87,7 +87,6 @@ export function WorkspaceIde({
   const [busy, setBusy] = React.useState(false);
   const [actionError, setActionError] = React.useState<string | null>(null);
   const [tabsRevision, setTabsRevision] = React.useState(0);
-  const [refreshKey, setRefreshKey] = React.useState(0);
   const [draggingOver, setDraggingOver] = React.useState(false);
   const [uploadingDrop, setUploadingDrop] = React.useState(false);
   const [editorStatus, setEditorStatus] = React.useState<DocxSurfaceStatus>({
@@ -226,7 +225,9 @@ export function WorkspaceIde({
     setUploadingDrop(true);
     try {
       const result = await uploadOfficeFiles(workspaceId, files);
-      setRefreshKey((value) => value + 1);
+      void queryClient.invalidateQueries({
+        queryKey: queryKeys.workspaceDocuments(workspaceId),
+      });
       if (result.uploaded.length > 0) {
         toast({
           tone: "success",
@@ -307,7 +308,6 @@ export function WorkspaceIde({
         queryKey: queryKeys.workspaceDocuments(workspaceId),
       });
       setTabsRevision((value) => value + 1);
-      setRefreshKey((value) => value + 1);
       if (href) router.push(href);
     } catch (error) {
       setActionError(userFacingError(error, "Could not move file to Trash."));
@@ -413,7 +413,6 @@ export function WorkspaceIde({
           activeDocumentId={documentId ?? activeDocument?.id ?? null}
           collapsed={navCollapsed}
           width={explorerWidth}
-          refreshKey={refreshKey}
           onToggle={() => setNavCollapsed((value) => !value)}
           onRequestNavigate={requestNavigate}
           onDocumentRenamed={(updated) => {
@@ -428,7 +427,6 @@ export function WorkspaceIde({
             setActiveDocument((current) =>
               current?.id === trashedId ? null : current,
             );
-            setRefreshKey((value) => value + 1);
             setTabsRevision((value) => value + 1);
           }}
         />
@@ -478,7 +476,6 @@ export function WorkspaceIde({
                 void queryClient.invalidateQueries({
                   queryKey: queryKeys.workspaceDocuments(workspaceId),
                 });
-                setRefreshKey((value) => value + 1);
               }}
             />
           ) : documentId || documentPending ? (
@@ -522,12 +519,10 @@ export function WorkspaceIde({
             void queryClient.invalidateQueries({
               queryKey: queryKeys.workspaceDocuments(workspaceId),
             });
-            setRefreshKey((value) => value + 1);
             setActiveDocument(created);
           }}
           onDocumentUploaded={() => {
             void queryClient.invalidateQueries({ queryKey: queryKeys.workspaceDocuments(workspaceId) });
-            setRefreshKey((value) => value + 1);
           }}
           onWorkingDocumentUpdated={setWorkingPreview}
         />
@@ -660,7 +655,6 @@ export function WorkspaceIde({
                     queryKey: queryKeys.workspaceDocuments(workspaceId),
                   });
                   setTabsRevision((value) => value + 1);
-                  setRefreshKey((value) => value + 1);
                   if (href) router.push(href);
                 } catch (error) {
                   toast({

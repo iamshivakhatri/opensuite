@@ -356,36 +356,10 @@ export function DocxSurface({
   }, [document.id, loadVersion]);
 
   // After document identity is stable, keep latestVersionId in sync with parent.
+  // Newer versions arrive via onDocumentUpdated (agent SSE / save), not focus refetch.
   React.useEffect(() => {
     setLatestVersionId(document.latestVersion.id);
   }, [document.latestVersion.id]);
-
-  // Soft metadata refresh on window focus — detects newer versions without polling.
-  React.useEffect(() => {
-    async function refreshLatest() {
-      try {
-        const fresh = await getDocument(document.id);
-        setLatestVersionId(fresh.latestVersion.id);
-        onDocumentUpdated?.(fresh);
-      } catch {
-        // Ignore focus-refresh failures; editor remains usable.
-      }
-    }
-
-    function onFocus() {
-      void refreshLatest();
-    }
-    function onVisibility() {
-      if (window.document.visibilityState === "visible") void refreshLatest();
-    }
-
-    window.addEventListener("focus", onFocus);
-    window.document.addEventListener("visibilitychange", onVisibility);
-    return () => {
-      window.removeEventListener("focus", onFocus);
-      window.document.removeEventListener("visibilitychange", onVisibility);
-    };
-  }, [document.id, onDocumentUpdated]);
 
   // Auto-refresh when a newer immutable version appears (agent/server).
   React.useEffect(() => {

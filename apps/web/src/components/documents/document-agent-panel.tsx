@@ -2,6 +2,7 @@
 
 import * as React from "react";
 import { useRouter } from "next/navigation";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { DocumentFormatIcon } from "@/components/files/document-format-icon";
 import { userFacingError } from "@/components/files/format";
@@ -37,7 +38,6 @@ import {
   getAgentRun,
   getDocument,
   isActiveAgentRunStatus,
-  listDocuments,
   listWorkspaceAgentThreads,
   renameAgentThread,
   startAgentRun,
@@ -54,15 +54,16 @@ import {
   OPENSUITE_DOCUMENT_DRAG_MIME,
   readComposerDrop,
 } from "@/lib/document-drag";
-import {
-  fetchAiPreference,
-  listProviderCredentials,
-} from "@/lib/ai-settings-api";
 import { agentPanelByokModelLabel } from "@/lib/ai-settings-model";
 import { Button } from "@/components/ui/button";
 import { Dialog } from "@/components/ui/dialog";
 import { documentPath } from "@/lib/paths";
 import { focusRingClass } from "@/lib/focus-scope";
+import {
+  aiPreferenceQuery,
+  providerCredentialsQuery,
+  workspaceDocumentsQuery,
+} from "@/lib/query-keys";
 import { cn } from "@/lib/utils";
 
 type PanelPhase =
@@ -251,6 +252,24 @@ export function DocumentAgentPanel({
   onWorkingDocumentUpdated?: (preview: { runId: string; documentId: string; baseVersionId: string; revision: number } | null) => void;
 }) {
   const router = useRouter();
+  const queryClient = useQueryClient();
+  const preferenceQuery = useQuery(aiPreferenceQuery());
+  const credentialsQuery = useQuery(providerCredentialsQuery());
+  const byokModelLabel = React.useMemo(() => {
+    if (preferenceQuery.isError || credentialsQuery.isError) return null;
+    if (preferenceQuery.data === undefined || credentialsQuery.data === undefined) {
+      return null;
+    }
+    return agentPanelByokModelLabel({
+      preference: preferenceQuery.data,
+      credentials: credentialsQuery.data,
+    });
+  }, [
+    credentialsQuery.data,
+    credentialsQuery.isError,
+    preferenceQuery.data,
+    preferenceQuery.isError,
+  ]);
   const [phase, setPhase] = React.useState<PanelPhase>({ kind: "loading" });
   const [threads, setThreads] = React.useState<AgentThread[]>([]);
   const [threadId, setThreadId] = React.useState<string | null>(null);
@@ -327,10 +346,6 @@ export function DocumentAgentPanel({
     documentId: string;
     versionNumber: number;
   } | null>(null);
-  /** BYOK model id for composer footer; null when managed. */
-  const [byokModelLabel, setByokModelLabel] = React.useState<string | null>(
-    null,
-  );
   const [submitting, setSubmitting] = React.useState(false);
   const [cancelling, setCancelling] = React.useState(false);
   const [creatingChat, setCreatingChat] = React.useState(false);
@@ -888,7 +903,9 @@ export function DocumentAgentPanel({
     try {
       const [listed, files] = await Promise.all([
         listWorkspaceAgentThreads(workspaceId),
-        listDocuments(workspaceId).catch(() => [] as ListedDocument[]),
+        queryClient
+          .fetchQuery(workspaceDocumentsQuery(workspaceId))
+          .catch(() => [] as ListedDocument[]),
       ]);
       setThreads(listed);
       setWorkspaceFiles(files);
@@ -947,7 +964,7 @@ export function DocumentAgentPanel({
         message: userFacingError(error, "Could not load the agent conversation."),
       });
     }
-  }, [refreshMessages, saveRunTranscript, stopSse, workspaceId]);
+  }, [queryClient, refreshMessages, saveRunTranscript, stopSse, workspaceId]);
 
   React.useEffect(() => {
     void load();
@@ -955,33 +972,6 @@ export function DocumentAgentPanel({
       stopSse();
     };
   }, [load, stopSse]);
-
-  React.useEffect(() => {
-    let cancelled = false;
-    async function loadByokModel() {
-      try {
-        const [preference, credentials] = await Promise.all([
-          fetchAiPreference(),
-          listProviderCredentials(),
-        ]);
-        if (cancelled) return;
-        setByokModelLabel(
-          agentPanelByokModelLabel({ preference, credentials }),
-        );
-      } catch {
-        if (!cancelled) setByokModelLabel(null);
-      }
-    }
-    void loadByokModel();
-    function onFocus() {
-      void loadByokModel();
-    }
-    window.addEventListener("focus", onFocus);
-    return () => {
-      cancelled = true;
-      window.removeEventListener("focus", onFocus);
-    };
-  }, []);
 
   React.useEffect(() => {
     const el = scrollRef.current;
