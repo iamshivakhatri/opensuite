@@ -14,6 +14,8 @@ _Read this before starting any work. Keep it a concise current-state handoff, no
 
 ## Just Completed
 
+* **Cleanup Phase 3A (readability)** — extracted first-turn/context prep from `apps/api/src/agent/execution.ts` into `agent-context.ts` (`loadHistory`, `prepareContext`, retrieval load, `firstTurnContextProjection`, `composeProjectMessages`). Run lifecycle orchestration stays in `execution.ts`. Behavior-preserving; no agent-core-v3 / retrieval semantics / AGENTS.md changes. Next seam candidate: event relay + terminal settlement inside `runExecution`.
+
 * **Cleanup Phase 2 (dead code only)** — removed unused symbols/helpers across web+api+engine-client fixtures (orphan poll helper, tab/storage/AI wrappers, superseded agent-progress helpers, unused log formatters, unused execution `.execute` wrapper, unused DOCX fixture). Trimmed matching tests. No architecture/agent/document behavior changes. Deferred: agent-core-v2, mock engine/contracts, `/dev/agent-panel-ux`, auth CLI, wasm emission, public Cloud API aliases. Remaining findings are mostly MEDIUM/LOW — stop further dead-code sweeps; next passes should be readability.
 
 * **Cleanup Phase 1 (dead code only)** — removed unused `document-canvas.tsx` re-export, unused `tab-overflow` (+ its test), and four unreferenced symbols (`ResolvedV2ExecutionModel`, `SAFE_INPUT_FRACTION`, `summarizeAgentActivities`, `readStoredTheme`). No architecture/agent/document behavior changes. Deferred: agent-core-v2, mock engine transport, `/dev/agent-panel-ux`, auth CLI, wasm emission.
@@ -123,6 +125,8 @@ _Read this before starting any work. Keep it a concise current-state handoff, no
 
 ## Verification Status
 
+* Cleanup Phase 3A: API focused agent context/retrieval/isolation/version/report/operating-instruction tests (127), API typecheck, `git diff --check` pass. No behavior change intended.
+
 * Cleanup Phase 2: web focused (65), API agent-run-log/report (20), web+api+engine-client typechecks, `git diff --check` pass. No behavior change intended.
 
 * Cleanup Phase 1: web agent-progress/theme-model/open-tabs tests (40), API context-projection tests (9), web+API typechecks, `git diff --check` pass. No behavior change intended.
@@ -183,7 +187,7 @@ _Read this before starting any work. Keep it a concise current-state handoff, no
 
 ## Recommended Next Step
 
-Stop dead-code sweeps. Start readability passes on large active modules (`agent/execution.ts`, `document-agent-panel.tsx`, `workspace-ide.tsx`, `routes/agent.ts`) — no architecture moves yet. Update `AGENTS.md` only after the full cleanup series finishes.
+Continue readability on `execution.ts` (event relay / terminal settlement) or start `document-agent-panel.tsx` / `workspace-ide.tsx` / `routes/agent.ts`. Update `AGENTS.md` only after the full cleanup series finishes.
 
 
 
