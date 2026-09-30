@@ -68,6 +68,11 @@ export async function streamTurn(input: {
 
   const seenStreamParts = new Set<"reasoning" | "text" | "tool">();
   for await (const part of response.fullStream) {
+    if (part.type === "error") {
+      throw part.error instanceof Error
+        ? part.error
+        : new Error(typeof part.error === "string" ? part.error : "Model provider error");
+    }
     if (part.type === "reasoning-delta" && part.text.length > 0) {
       if (!seenStreamParts.has("reasoning")) {
         seenStreamParts.add("reasoning");

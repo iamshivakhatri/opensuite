@@ -185,6 +185,10 @@ export async function runAgent(input: RunAgentInput): Promise<RunAgentResult> {
       lastText = turn.text;
       lastFinishReason = turn.finishReason;
 
+      if (turn.finishReason === "error") {
+        throw new Error(turn.text.trim() || "Model provider returned an error");
+      }
+
       const calls = turn.toolCalls as readonly ToolCall[];
       await input.onEvent?.({
         type: "model_turn_completed",
@@ -195,14 +199,15 @@ export async function runAgent(input: RunAgentInput): Promise<RunAgentResult> {
         outputTokens: turn.outputTokens,
         reasoningTokens: turn.reasoningTokens,
         finishReason: turn.finishReason,
-        toolNames: calls.map((call) => call.toolName),
+        toolNames: calls.map((call) => resolveToolName(input.tools, call.toolName)),
         ...(turn.routedProvider !== undefined
           ? { routedProvider: turn.routedProvider }
           : {}),
       });
 
+      if (turn.finishReason === "length") return finish("output_limit", turn.text);
+
       if (calls.length === 0) {
-        if (turn.finishReason === "length") return finish("output_limit", turn.text);
         await input.onEvent?.({
           type: "completed",
           text: turn.text,
@@ -219,7 +224,7 @@ export async function runAgent(input: RunAgentInput): Promise<RunAgentResult> {
       const reads: ToolCall[] = [];
       const mutations: ToolCall[] = [];
       for (const call of calls) {
-        const kind = input.tools?.[call.toolName]?.kind;
+        const kind = resolveTool(input.tools, call.toolName)?.kind;
         if (kind === "mutate") mutations.push(call);
         else reads.push(call);
       }
@@ -304,8 +309,11 @@ async function runCall(args: {
   readonly now: NowFn;
 }): Promise<CallOutcome> {
   const { input, call, fuse, results, metrics, turn, now } = args;
-  const { toolName, toolCallId } = call;
-  const tool = input.tools?.[toolName] as AgentTool | undefined;
+  const { toolCallId } = call;
+  // Provider-facing name stays on results (must match assistant tool-call parts).
+  const providerToolName = call.toolName;
+  const toolName = resolveToolName(input.tools, providerToolName);
+  const tool = resolveTool(input.tools, providerToolName);
 
   if (fuse.tripped(toolName, call.input)) {
     metrics.recordFuseEvent({
@@ -340,7 +348,7 @@ async function runCall(args: {
     });
 
     const softFailure = readSoftFailure(output);
-    results.set(toolCallId, toResultPart(toolCallId, toolName, output));
+    results.set(toolCallId, toResultPart(toolCallId, providerToolName, output));
 
     if (softFailure) {
       fuse.record(toolName, call.input);
@@ -401,7 +409,7 @@ async function runCall(args: {
     results.set(toolCallId, {
       type: "tool-result",
       toolCallId,
-      toolName,
+      toolName: providerToolName,
       output: { type: "error-text", value: message },
     });
     await input.onEvent?.({ type: "tool_failed", toolCallId, toolName, error: message });
@@ -440,7 +448,7 @@ function recordSkip(args: {
   void args.input.onEvent?.({
     type: "tool_skipped",
     toolCallId: call.toolCallId,
-    toolName: call.toolName,
+    toolName: resolveToolName(args.input.tools, call.toolName),
     reason,
   });
 }
@@ -487,7 +495,7 @@ function findTerminalText(
 ): string | undefined {
   if (!tools) return undefined;
   for (const call of calls) {
-    if (!tools[call.toolName]?.terminal) continue;
+    if (!resolveTool(tools, call.toolName)?.terminal) continue;
     const part = results.get(call.toolCallId);
     if (!part) continue;
     const output = part.output;
@@ -498,6 +506,25 @@ function findTerminalText(
   return undefined;
 }
 
+/** OpenAI-compatible providers reject names outside [a-zA-Z0-9_-]. */
+export function providerSafeToolName(name: string): string {
+  return name.replace(/[^a-zA-Z0-9_-]/g, "_");
+}
+
+function resolveToolName(tools: AgentToolSet | undefined, name: string): string {
+  if (!tools) return name;
+  if (tools[name]) return name;
+  for (const internal of Object.keys(tools)) {
+    if (providerSafeToolName(internal) === name) return internal;
+  }
+  return name;
+}
+
+function resolveTool(tools: AgentToolSet | undefined, name: string): AgentTool | undefined {
+  if (!tools) return undefined;
+  return tools[resolveToolName(tools, name)];
+}
+
 /** AI SDK only needs schemas for the model call; the loop executes tools itself. */
 function schemaOnlyTools(tools: AgentToolSet): ToolSet {
   const out: Record<string, unknown> = {};
@@ -506,7 +533,7 @@ function schemaOnlyTools(tools: AgentToolSet): ToolSet {
     delete rest.execute;
     delete rest.kind;
     delete rest.terminal;
-    out[name] = rest;
+    out[providerSafeToolName(name)] = rest;
   }
   return out as ToolSet;
 }

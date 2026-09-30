@@ -3,6 +3,7 @@ import {
   defineTool,
   getRunMetricsFromError,
   isSuccessfulStop,
+  providerSafeToolName,
   runAgent,
   runModel,
   type AgentRunMetrics,
@@ -414,6 +415,7 @@ async function runExecution(input: {
   let flushAttempted = false;
   let persistenceFailure = false;
   const flushWorking = async () => {
+    boundTools?.setModelTurn(null);
     if (flushAttempted) return;
     flushAttempted = true;
     try {
@@ -544,14 +546,16 @@ async function runExecution(input: {
       false,
       () => boundTools?.getWorkingRevision() ?? 0,
     );
-    const system = buildAgentOperatingInstruction(Object.keys(tools)) +
+    const system = buildAgentOperatingInstruction(
+      Object.keys(tools).map(providerSafeToolName),
+    ) +
       (input.primaryDocumentId && /\b(?:update|edit|revise|refresh|modify)\b/i.test(input.instruction)
         ? `\n\n${buildDocumentUpdateInstruction()}`
         : "") +
       (!boundTools?.getActiveDocumentId() && tools["workspace.create_blank_document"]
         ? "\n\nNo document is active. If the user requests a new document, create it before calling any document tool."
         : "") +
-      "\n\nFor requests involving several documents, identify the editable target before mutating. The active document is the default target only when it matches the request. Use workspace.select_document to bind another working-set DOCX before editing. Read source documents with workspace.inspect_document when the supplied context lacks their details. Keep edits narrow and preserve unrelated structure and formatting.";
+      "\n\nFor requests involving several documents, identify the editable target before mutating. The active document is the default target only when it matches the request. Use workspace_select_document to bind another working-set DOCX before editing. Read source documents with workspace_inspect_document when the supplied context lacks their details. Keep edits narrow and preserve unrelated structure and formatting.";
 
     const { messages, context, retrieval, reportRetrieval } = await prepareContext({
       checkpoint,
@@ -660,6 +664,14 @@ async function runExecution(input: {
       }
     };
     let result;
+    const handleRunEvent = createRunEventHandler({
+      liveEvents: input.liveEvents,
+      runId: input.run.id,
+      messageId,
+      transcript,
+      modelLabel,
+      maxOutputTokens: input.model.outputTokenLimit,
+    });
     try {
       result = await executeAgent({
         model: input.model.model,
@@ -673,14 +685,10 @@ async function runExecution(input: {
         ...(input.model.outputTokenLimit !== undefined
           ? { maxOutputTokens: input.model.outputTokenLimit }
           : {}),
-        onEvent: createRunEventHandler({
-          liveEvents: input.liveEvents,
-          runId: input.run.id,
-          messageId,
-          transcript,
-          modelLabel,
-          maxOutputTokens: input.model.outputTokenLimit,
-        }),
+        onEvent: (event) => {
+          if (event.type === "model_turn_started") boundTools?.setModelTurn(event.turn);
+          return handleRunEvent(event);
+        },
       });
       await flushWorking();
       await verifySavedDocument(result.metrics);

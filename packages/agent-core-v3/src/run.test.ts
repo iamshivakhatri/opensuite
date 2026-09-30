@@ -6,7 +6,7 @@ import { MockLanguageModelV4, simulateReadableStream } from "ai/test";
 
 import { createFinishTool } from "./finish-tool.js";
 import { runModel } from "./model.js";
-import { runAgent } from "./run.js";
+import { providerSafeToolName, runAgent } from "./run.js";
 import { getRunMetricsFromError } from "./run-metrics.js";
 import { defineTool, isSuccessfulStop, type AgentToolSet } from "./types.js";
 
@@ -99,9 +99,11 @@ test("runModel streams text and returns the final response", async () => {
 
 test("no tool call: one model invocation, completed stop reason", async () => {
   let invocations = 0;
+  let requestedLimit: number | undefined;
   const model = new MockLanguageModelV4({
-    doStream: async () => {
+    doStream: async (options) => {
       invocations += 1;
+      requestedLimit = options.maxOutputTokens;
       return { stream: simulateReadableStream({ chunks: textChunks("done") }) };
     },
   });
@@ -114,6 +116,7 @@ test("no tool call: one model invocation, completed stop reason", async () => {
     },
   });
   assert.equal(invocations, 1);
+  assert.equal(requestedLimit, undefined);
   assert.equal(result.turns, 1);
   assert.equal(result.stopReason, "completed");
   assert.equal(result.text, "done");
@@ -216,6 +219,162 @@ test("length stop without a tool is an unsuccessful output limit", async () => {
   assert.equal(result.stopReason, "output_limit");
   assert.equal(result.metrics.modelTurns[0]?.finishReason, "length");
   assert.equal(isSuccessfulStop(result.stopReason), false);
+});
+
+test("length stop discards valid tool calls and does not start another turn", async () => {
+  for (const names of [["read"], ["read", "write"]]) {
+    let modelTurns = 0;
+    const executed: string[] = [];
+    const events: string[] = [];
+    const completedToolNames: (readonly string[])[] = [];
+    const model = new MockLanguageModelV4({
+      doStream: async () => {
+        modelTurns += 1;
+        return {
+          stream: simulateReadableStream({
+            chunks: toolCallChunks(names.map((name, index) => ({ id: `t${index}`, name, input: {} })))
+              .map((chunk) => chunk.type === "finish"
+                ? { ...chunk, finishReason: { unified: "length", raw: "length" } }
+                : chunk),
+          }),
+        };
+      },
+    });
+    const tools: AgentToolSet = Object.fromEntries(names.map((name) => [name,
+      defineTool<Record<string, never>, { ok: true }>({
+        kind: name === "write" ? "mutate" : "read",
+        description: name,
+        inputSchema: emptyObjectSchema,
+        execute: async () => { executed.push(name); return { ok: true }; },
+      }),
+    ]));
+    const result = await runAgent({
+      model,
+      messages: [{ role: "user", content: "go" }],
+      tools,
+      onEvent: (event) => {
+        events.push(event.type);
+        if (event.type === "model_turn_completed") completedToolNames.push(event.toolNames);
+      },
+    });
+    assert.equal(result.stopReason, "output_limit");
+    assert.equal(result.finishReason, "length");
+    assert.equal(result.turns, 1);
+    assert.equal(result.toolCalls, 0);
+    assert.equal(result.metrics.modelTurns.length, 1);
+    assert.equal(modelTurns, 1);
+    assert.deepEqual(executed, []);
+    assert.equal(events.filter((event) => event === "tool_started").length, 0);
+    assert.equal(events.filter((event) => event === "model_turn_completed").length, 1);
+    assert.deepEqual(completedToolNames, [names]);
+  }
+});
+
+test("provider-safe tool names: dotted internal tools are exposed without dots", async () => {
+  assert.equal(providerSafeToolName("document.inspect"), "document_inspect");
+  let sawSchemaName: string | undefined;
+  let executed = false;
+  const events: string[] = [];
+  const finish = createFinishTool();
+  let turn = 0;
+  const model = new MockLanguageModelV4({
+    doStream: async (options) => {
+      turn += 1;
+      if (turn === 1) {
+        const tools = options.tools as ReadonlyArray<{ name?: string }> | undefined;
+        sawSchemaName = tools?.find((t) => t.name?.startsWith("document"))?.name;
+        return {
+          stream: simulateReadableStream({
+            chunks: toolCallChunks([{ id: "t1", name: "document_inspect", input: {} }]),
+          }),
+        };
+      }
+      return {
+        stream: simulateReadableStream({
+          chunks: toolCallChunks([{ id: "f", name: finish.name, input: {} }]),
+        }),
+      };
+    },
+  });
+  const result = await runAgent({
+    model,
+    messages: [{ role: "user", content: "go" }],
+    tools: {
+      "document.inspect": defineTool<Record<string, never>, { ok: true }>({
+        kind: "read",
+        description: "inspect",
+        inputSchema: emptyObjectSchema,
+        execute: async () => {
+          executed = true;
+          return { ok: true };
+        },
+      }),
+      [finish.name]: finish.tool,
+    },
+    onEvent: (event) => {
+      if (event.type === "tool_started" || event.type === "tool_completed") {
+        events.push(`${event.type}:${event.toolName}`);
+      }
+    },
+  });
+  assert.equal(sawSchemaName, "document_inspect");
+  assert.equal(executed, true);
+  assert.deepEqual(events, [
+    "tool_started:document.inspect",
+    "tool_completed:document.inspect",
+    "tool_started:finish",
+    "tool_completed:finish",
+  ]);
+  assert.equal(result.stopReason, "finish_tool");
+});
+
+test("finishReason error fails the run instead of completing empty", async () => {
+  const model = new MockLanguageModelV4({
+    doStream: async () => ({
+      stream: simulateReadableStream({
+        chunks: [
+          { type: "stream-start", warnings: [] },
+          {
+            type: "finish",
+            finishReason: { unified: "error", raw: "error" },
+            usage: emptyUsage,
+          },
+        ],
+      }),
+    }),
+  });
+  await assert.rejects(
+    () => runAgent({ model, messages: [{ role: "user", content: "hi" }] }),
+    /Model provider returned an error/,
+  );
+});
+
+test("ordinary tool-call turn executes its tool and continues", async () => {
+  let modelTurns = 0;
+  let executed = 0;
+  const model = new MockLanguageModelV4({
+    doStream: async () => ({
+      stream: simulateReadableStream({
+        chunks: ++modelTurns === 1
+          ? toolCallChunks([{ id: "t1", name: "read", input: {} }])
+          : textChunks("done"),
+      }),
+    }),
+  });
+  const result = await runAgent({
+    model,
+    messages: [{ role: "user", content: "go" }],
+    tools: { read: defineTool<Record<string, never>, { ok: true }>({
+      kind: "read",
+      description: "read",
+      inputSchema: emptyObjectSchema,
+      execute: async () => { executed += 1; return { ok: true }; },
+    }) },
+  });
+  assert.equal(result.stopReason, "completed");
+  assert.equal(result.toolCalls, 1);
+  assert.equal(modelTurns, 2);
+  assert.equal(executed, 1);
 });
 
 test("system prompt is prepended to the model messages", async () => {

@@ -72,6 +72,7 @@ export function DocxSurface({
   const selectionRef = React.useRef<unknown>(null);
   const savingRef = React.useRef(false);
   const reloadingRef = React.useRef(false);
+  const editorReadyRef = React.useRef(false);
   const previewBusyRef = React.useRef(false);
   const previewTargetRef = React.useRef(workingPreview);
   const appliedPreviewRef = React.useRef<{ runId: string; revision: number } | null>(null);
@@ -120,6 +121,12 @@ export function DocxSurface({
     }, 1200);
   }, []);
 
+  const handleEditorReady = React.useCallback(() => {
+    editorReadyRef.current = true;
+    beginSuppressDirty();
+    if (previewTargetRef.current) setPreviewTick((value) => value + 1);
+  }, [beginSuppressDirty]);
+
   React.useEffect(() => {
     return () => {
       if (suppressDirtyTimerRef.current !== null) {
@@ -156,6 +163,7 @@ export function DocxSurface({
    */
   const loadVersion = React.useCallback(
     async (versionId: string) => {
+      editorReadyRef.current = false;
       beginSuppressDirty();
       setPhase("loading");
       setLoadError(null);
@@ -246,6 +254,7 @@ export function DocxSurface({
         }
 
         // Fallback remount without blanking the whole surface into phase=loading.
+        editorReadyRef.current = false;
         setBuffer(copy);
         setLoadedVersionId(versionId);
         setDirty(false);
@@ -615,8 +624,9 @@ export function DocxSurface({
         </div>
       ) : null}
 
-      <div className="min-h-0 flex-1 overflow-hidden" onInputCapture={() => {
-        if (phaseRef.current === "ready") {
+      <div className="min-h-0 flex-1 overflow-hidden" onInputCapture={(event) => {
+        if (phaseRef.current === "ready" && event.nativeEvent.isTrusted &&
+            event.target instanceof Element && event.target.closest('[contenteditable="true"]')) {
           dirtyRef.current = true;
           setDirty(true);
         }
@@ -629,8 +639,9 @@ export function DocxSurface({
           documentBuffer={buffer}
           documentName={document.name}
           resolvedTheme={resolvedTheme}
+          onReady={handleEditorReady}
           onDirtyChange={(next) => {
-            if (suppressDirtyRef.current && next) {
+            if (next && (!editorReadyRef.current || suppressDirtyRef.current)) {
               return;
             }
             dirtyRef.current = next;

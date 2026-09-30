@@ -116,7 +116,9 @@ export function formatModelTurnCompleted(input: {
         ? ` reasoning=${formatCompactTokens(input.reasoningTokens)}`
         : ""),
   ];
-  if (tools.length === 0) {
+  if (input.finishReason === "length") {
+    lines.push(`  discardedTools=${input.toolNames.length}`);
+  } else if (tools.length === 0) {
     lines.push(
       input.toolNames.includes("finish")
         ? "  tools=0 finish"

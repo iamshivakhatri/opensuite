@@ -500,7 +500,8 @@ test("OpenRouter tool responses use provider-safe names without changing the raw
   const result = (projected[2]!.content as { toolName: string }[])[0]!;
   assert.equal(result.toolName, "document_insert_paragraphs");
   assert.equal((messages[2]!.content as { toolName: string }[])[0]!.toolName, "document.insert_paragraphs");
-  assert.equal((projected[1]!.content as { toolName: string }[])[0]!.toolName, "document.insert_paragraphs");
+  assert.equal((projected[1]!.content as { toolName: string }[])[0]!.toolName, "document_insert_paragraphs");
+  assert.equal((messages[1]!.content as { toolName: string }[])[0]!.toolName, "document.insert_paragraphs");
 });
 
 test("firstTurnContextProjection still injects once", () => {

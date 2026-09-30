@@ -33,6 +33,7 @@ export interface PrimaryDocxToolsResult {
   readonly getWorkingRevision: () => number;
   readonly getWorkingDocument: () => { documentId: string; baseVersionId: string; revision: number; bytes: Uint8Array } | null;
   readonly getWorkingMutationCount: () => number;
+  readonly setModelTurn: (turn: number | null) => void;
   readonly flush: () => Promise<void>;
   readonly getTransitions: () => readonly DocumentTransition[];
 }
@@ -52,7 +53,9 @@ function collectHandles(value: unknown, handles: Set<string>): void {
     for (const item of value) collectHandles(item, handles);
     return;
   }
-  for (const [key, item] of Object.entries(value)) {
+  const record = value as Record<string, unknown>;
+  for (const [key, item] of Object.entries(record)) {
+    if (key === "handle" && item === "" && (record.kind === "start" || record.kind === "end")) continue;
     if (/(^handle$|Handle$)/.test(key) && typeof item === "string") handles.add(item);
     else if (key.endsWith("Handles") && Array.isArray(item)) {
       for (const handle of item) if (typeof handle === "string") handles.add(handle);
@@ -60,6 +63,14 @@ function collectHandles(value: unknown, handles: Set<string>): void {
     else collectHandles(item, handles);
   }
 }
+
+// Rust patches properties (or splits ordinary text runs) without changing
+// body blocks, pictures, tables, rows, or cells. Everything else expires handles.
+const HANDLE_PRESERVING_MUTATIONS = new Set([
+  "set_table_formatting", "set_table_column_widths", "set_table_cell_shading",
+  "set_table_cells_formatting", "set_paragraph_formatting", "set_text_formatting",
+  "set_paragraph_style",
+]);
 
 /**
  * Mutable active DOCX binding for one agent run.
@@ -96,9 +107,28 @@ function createActiveDocxSession(input: {
   let workingRevision = 0;
   let workingMutationCount = 0;
   const currentHandles = new Set<string>();
+  let lastHandleEvent = "none";
+  let modelTurn: number | null = null;
+  let documentChangedThisTurn = false;
+  let sameTurnMutations = 0;
+  let compatibleMutations = 0;
+  let handleReuses = 0;
   const mutationFailures = new Map<string, number>();
   const transitions: DocumentTransition[] = [];
   const workingDocumentIds = new Set(input.workingDocumentIds);
+
+  function setModelTurn(turn: number | null): void {
+    if (modelTurn !== null && sameTurnMutations) {
+      console.info(`[agent] mutation_turn turn=${modelTurn} sameTurnMutations=${sameTurnMutations} compatibleMutations=${compatibleMutations} handleReuses=${handleReuses}`);
+    }
+    if (documentChangedThisTurn) {
+      currentHandles.clear();
+      lastHandleEvent = "model_turn";
+    }
+    documentChangedThisTurn = false;
+    modelTurn = turn;
+    sameTurnMutations = compatibleMutations = handleReuses = 0;
+  }
 
   function noteMutationFailure(capability: string, result: unknown): unknown {
     if (!result || typeof result !== "object" || (result as { ok?: unknown }).ok !== false) return result;
@@ -160,6 +190,7 @@ function createActiveDocxSession(input: {
     dirty = false;
     workingRevision = 0;
     currentHandles.clear();
+    lastHandleEvent = "rebind";
     mutationFailures.clear();
   }
 
@@ -170,12 +201,17 @@ function createActiveDocxSession(input: {
     return host;
   }
 
-  function advanceWorkingState(applied: number): void {
+  function advanceWorkingState(applied: number, capability: string): void {
     if (!applied) return;
     dirty = true;
     workingRevision += 1;
     workingMutationCount += applied;
-    currentHandles.clear();
+    documentChangedThisTurn = true;
+    const preserveHandles = modelTurn !== null && HANDLE_PRESERVING_MUTATIONS.has(capability);
+    if (!preserveHandles) currentHandles.clear();
+    lastHandleEvent = preserveHandles ? "compatible_mutation" : "mutation";
+    sameTurnMutations += applied;
+    if (preserveHandles) compatibleMutations += applied;
     if (documentId && versionId) {
       try {
         input.onWorkingUpdated?.({ documentId, baseVersionId: versionId, revision: workingRevision });
@@ -190,6 +226,7 @@ function createActiveDocxSession(input: {
     inspect: async (request) => {
       const result = await requireHost().inspect(request);
       collectHandles(result, currentHandles);
+      lastHandleEvent = "inspect";
       return result;
     },
     find: (request) => requireHost().find(request),
@@ -205,13 +242,30 @@ function createActiveDocxSession(input: {
       }
       const handles = new Set<string>();
       collectHandles(operation, handles);
-      if ([...handles].some((handle) => !currentHandles.has(handle))) {
+      const rejectedHandle = [...handles].find((handle) => !currentHandles.has(handle));
+      if (rejectedHandle !== undefined) {
+        const selector = operation.placement ?? operation.target;
+        const selectorKind = selector && typeof selector === "object" && "kind" in selector && typeof selector.kind === "string"
+          ? selector.kind.slice(0, 32) : null;
+        console.info(`[agent] stale_handle ${JSON.stringify({
+          tool: `document.${capability}`,
+          documentId,
+          versionId,
+          workingRevision,
+          selectorKind,
+          providedHandle: rejectedHandle.slice(0, 80),
+          registeredHandleCount: currentHandles.size,
+          providedHandleRegistered: currentHandles.has(rejectedHandle),
+          lastHandleEvent,
+          modelTurn,
+        })}`);
         return noteMutationFailure(capability, { ok: false, reasonCode: "STALE_HANDLE", status: "error", capability,
           diagnostics: [{ code: "STALE_HANDLE", severity: "error", message: "Inspect the current document again before using this handle." }] });
       }
       const result = await host.mutate(capability, operation);
       if (result.ok) {
-        advanceWorkingState(1);
+        if (modelTurn !== null && lastHandleEvent === "compatible_mutation" && handles.size) handleReuses++;
+        advanceWorkingState(1, capability);
         mutationFailures.delete(capability);
       }
       return noteMutationFailure(capability, result);
@@ -224,7 +278,7 @@ function createActiveDocxSession(input: {
       for (let index = 0; index < operations.length; index++) {
         const result = await host.mutate(capability, operations[index]!);
         if (!result.ok) {
-          advanceWorkingState(index);
+          advanceWorkingState(index, capability);
           if (index) mutationFailures.delete(capability);
           return noteMutationFailure(capability, {
             ok: false, capability, applied: index, failedIndex: index,
@@ -233,7 +287,7 @@ function createActiveDocxSession(input: {
           });
         }
       }
-      advanceWorkingState(operations.length);
+      advanceWorkingState(operations.length, capability);
       mutationFailures.delete(capability);
       return { ok: true, capability, applied: operations.length, workingRevision };
     },
@@ -281,6 +335,7 @@ function createActiveDocxSession(input: {
       ? { documentId, baseVersionId: versionId, revision: workingRevision, bytes: host.currentBytes() }
       : null,
     getWorkingMutationCount: () => workingMutationCount,
+    setModelTurn,
     flush,
     getTransitions: () => transitions,
     rebind,
@@ -531,6 +586,7 @@ export async function createPrimaryDocxTools(input: {
     getWorkingRevision: session.getWorkingRevision,
     getWorkingDocument: session.getWorkingDocument,
     getWorkingMutationCount: session.getWorkingMutationCount,
+    setModelTurn: session.setModelTurn,
     flush: session.flush,
     getTransitions: session.getTransitions,
   };

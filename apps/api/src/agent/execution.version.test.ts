@@ -47,6 +47,63 @@ test("V3 document mutation tool advances immutable version via host persist", as
   assert.ok(result);
 });
 
+test("blank DOCX uses semantic placement and logs rejected handles without changing stale rules", async () => {
+  const binding = await createNapiDocxEngineBinding();
+  const blank = Buffer.from(binding.createBlankDocx());
+  const tools = await createPrimaryDocxTools({
+    binding, ownerUserId: "user-1", workspaceId: "ws-1", documentId: "doc-1", versionId: "v1",
+    documents: {
+      getOwnedDocument: async () => ({ format: "docx" }) as never,
+      readExactVersionBytes: async () => blank,
+      appendDocumentVersion: async () => { throw new Error("unused"); },
+      createBlankDocxDocument: async () => { throw new Error("unused"); },
+      createOfficeDocumentFromBytes: async () => { throw new Error("unused"); },
+    },
+  });
+  assert.ok(tools);
+  const call = { toolCallId: "blank", messages: [], context: undefined as never };
+  const inspect = () => tools.tools["document.inspect"]!.execute!({ kind: "body_blocks" }, call) as Promise<{
+    bodyBlocks: { items: { handle: string; text: string }[] };
+  }>;
+  const insert = (texts: string[], placement: Record<string, string>) =>
+    tools.tools["document.insert_paragraphs"]!.execute!({ texts, placement }, call) as Promise<{ ok: boolean; reasonCode?: string }>;
+
+  assert.deepEqual((await inspect()).bodyBlocks.items, []);
+  const logs: string[] = [];
+  const originalInfo = console.info;
+  console.info = (message?: unknown) => { logs.push(String(message)); };
+  let rejected;
+  try {
+    rejected = await insert(["Wrong"], { kind: "before", handle: "b999" });
+  } finally {
+    console.info = originalInfo;
+  }
+  assert.equal(rejected.reasonCode, "STALE_HANDLE");
+  const diagnostic = JSON.parse(logs.find((line) => line.startsWith("[agent] stale_handle "))!.slice("[agent] stale_handle ".length));
+  assert.equal(diagnostic.tool, "document.insert_paragraphs");
+  assert.equal(diagnostic.documentId, "doc-1");
+  assert.equal(diagnostic.versionId, "v1");
+  assert.equal(diagnostic.selectorKind, "before");
+  assert.equal(diagnostic.providedHandle, "b999");
+  assert.equal(diagnostic.registeredHandleCount, 0);
+  assert.equal(diagnostic.providedHandleRegistered, false);
+  assert.equal(diagnostic.lastHandleEvent, "inspect");
+
+  assert.equal((await insert(["Still wrong"], { kind: "before", handle: "" })).reasonCode, "STALE_HANDLE");
+  assert.deepEqual((await inspect()).bodyBlocks.items, []);
+  assert.equal((await insert(["First", "Second"], { kind: "end", handle: "" })).ok, true);
+  assert.equal((await insert(["Third"], { kind: "end" })).ok, true);
+  assert.equal((await tools.tools["document.insert_paragraph"]!.execute!({
+    text: "Opening", placement: { kind: "start", handle: "" },
+  }, call) as { ok: boolean }).ok, true);
+  const firstHandle = (await inspect()).bodyBlocks.items[0]!.handle;
+  assert.equal((await insert(["Before"], { kind: "before", handle: firstHandle })).ok, true);
+  assert.equal((await insert(["Stale"], { kind: "before", handle: firstHandle })).reasonCode, "STALE_HANDLE");
+  assert.equal((await tools.tools["document.create_table"]!.execute!({
+    rows: [["Header"], ["Value"]], placement: { kind: "end", handle: "" },
+  }, call) as { ok: boolean }).ok, true);
+});
+
 test("run-local mutations persist and emit one version at flush", async () => {
   const binding = await createNapiDocxEngineBinding();
   const initial = Buffer.from(buildMinimalDocx(["Primary"]));

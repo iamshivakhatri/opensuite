@@ -365,11 +365,18 @@ export function composeProjectMessages(input: {
       ? [...projected.messages, { role: "user" as const, content: "The complete unchanged document is already above. Repeated reads were skipped. Stop inspecting and perform the requested document changes using the available mutation tools." }]
       : projected.messages;
     if (!input.safeToolResultNames) return withReadReminder;
-    return withReadReminder.map((message) => message.role === "tool" && Array.isArray(message.content)
-      ? { ...message, content: message.content.map((part) => part.type === "tool-result"
-        ? { ...part, toolName: part.toolName.replace(/[^a-zA-Z0-9_-]/g, "_") }
-        : part) } as ModelMessage
-      : message);
+    return withReadReminder.map((message) => {
+      if (!Array.isArray(message.content)) return message;
+      if (message.role !== "tool" && message.role !== "assistant") return message;
+      return {
+        ...message,
+        content: message.content.map((part) =>
+          part.type === "tool-result" || part.type === "tool-call"
+            ? { ...part, toolName: part.toolName.replace(/[^a-zA-Z0-9_-]/g, "_") }
+            : part,
+        ),
+      } as ModelMessage;
+    });
   };
 }
 

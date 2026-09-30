@@ -81,11 +81,12 @@ exact immutable version N
 * Structural arg mistakes return `VALIDATION_FAILED`; Rust semantic failures (`TARGET_NOT_FOUND`, …) pass through. `DISPATCH_FAILED` is only for unexpected adapter/runtime errors.
 * Occurrence/order from inspect is VERSION-LOCAL — never persist as durable identity.
 * Table inspect returns opaque artifact-local handles (table/column/row/cell). Mutations accept those
-  handles alongside semantic selectors. Prefer handles for blank/duplicate targets; re-inspect after N→N+1.
+  handles alongside semantic selectors. Prefer handles for blank/duplicate targets; after an edited model turn, re-inspect before using handles again.
 * Retrieval table selectors use exact first-row `headerCells` plus zero-based occurrence among identical headers. They are valid for the current document version; retrieval `tN` references are not registered mutation handles.
 * Table/cell inspect may include format-neutral `affordances[]` from Rust (capability + supported + optional reason).
   Adapter transport only — TypeScript does not recompute editability. Absence ≠ supported/unsupported.
-* Application records handles from the latest run-local inspect. A successful mutation clears them; stale/unknown handles never reach Rust.
+* Application records handles from run-local inspect. Within one model turn, seven verified operations preserve them: `set_table_formatting`, `set_table_column_widths`, `set_table_cell_shading`, `set_table_cells_formatting`, `set_paragraph_formatting`, `set_text_formatting`, and `set_paragraph_style`. Rust patches properties or ordinary text runs without changing handle positions. All other successful edits clear handles immediately; after any edited turn, the API clears handles before the next model call or terminal save. Calls outside a model turn still clear handles after every successful mutation. Stale/unknown handles never reach Rust through individual mutation tools.
+* Handles contain structural positions, not document/version/revision identities. The registry enforces their lifetime; there is no rebind/remapping or hidden retry. Rust N-API executes and serializes one operation at a time, and API text/format batches call that primitive in order. Atomic multi-cell operations resolve all targets against one input and emit no output on failure. Separate calls retain earlier successful working bytes and stop later mutations after a failure (`PRIOR_MUTATION_FAILED`).
 * Engine diagnostics may include optional `reasonCode` / `operation` / `targetHandle` (transport-only).
   Same reason id can appear on affordance `reason` and mutation `reasonCode`. Never parse `message` for control flow.
 * Proven blank-row path: inspect(tables) → cell handles → one atomic `set_table_cells_text` → persist N+1.

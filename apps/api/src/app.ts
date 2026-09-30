@@ -103,6 +103,15 @@ export interface AppDependencies {
   readonly managedUsagePolicy?: ManagedUsagePolicy;
 }
 
+export function agentOutputTokenLimit(
+  configuredLimit?: number,
+  providerLimit?: number,
+): number | undefined {
+  return configuredLimit === undefined
+    ? undefined
+    : Math.min(configuredLimit, providerLimit ?? configuredLimit);
+}
+
 /**
  * Builds a fully configured Fastify instance without starting to listen.
  */
@@ -313,6 +322,10 @@ export async function buildApp(
         if (resolved.provider !== "openrouter") {
           throw new Error("Agent Core V3 currently requires OpenRouter");
         }
+        const outputTokenLimit = agentOutputTokenLimit(
+          config.agent.maxOutputTokens,
+          resolved.maxOutputTokens,
+        );
         return {
           model: createOpenRouterModel(resolved),
           usageAttribution: {
@@ -326,8 +339,8 @@ export async function buildApp(
           ...(resolved.maxOutputTokens !== undefined
             ? { maxOutputTokens: resolved.maxOutputTokens }
             : {}),
-          ...(config.agent.maxOutputTokens !== undefined
-            ? { outputTokenLimit: Math.min(config.agent.maxOutputTokens, resolved.maxOutputTokens ?? config.agent.maxOutputTokens) }
+          ...(outputTokenLimit !== undefined
+            ? { outputTokenLimit }
             : {}),
         };
       },

@@ -13,11 +13,11 @@ test("update policy preserves source-silent facts and flags missing input", () =
   assert.doesNotMatch(buildAgentOperatingInstruction(["finish"]), /DOCUMENT UPDATE RULE/);
 });
 
-test("operating instruction acts on safe edits before planning later work", () => {
+test("operating instruction starts useful tools without a narrated full plan", () => {
   const system = buildAgentOperatingInstruction(["document.replace_text", "finish"]);
-  assert.match(system, /safe concrete edit, issue it immediately/);
-  assert.match(system, /do not plan every later edit first/);
-  assert.match(system, /next mutation needs missing or ambiguous information/);
+  assert.match(system, /use a tool as soon as you can act safely/);
+  assert.match(system, /make only the read needed for the next action/);
+  assert.match(system, /Do not spend a model turn narrating or completing a full plan before the first useful tool call/);
   assert.doesNotMatch(system, /plan a coherent set of edits/);
 });
 
@@ -97,8 +97,10 @@ test("table guidance delays handle inspection and groups stable table edits", ()
   const system = buildAgentOperatingInstruction(["document.inspect", "document.set_table_cell_shading"]);
   assert.match(system, /Finish content, paragraph, and structural edits before inspecting for exact table\/cell handles/);
   assert.match(system, /inspect the table once, do related table formatting together/);
-  assert.match(system, /use stable text selectors when unambiguous/);
-  assert.match(system, /Do not reuse old handles after another mutation/);
+  assert.match(system, /prefer exact semantic selectors when unambiguous/);
+  assert.match(system, /Inspected handles can be reused within one model turn/);
+  assert.match(system, /Other successful edits invalidate handles immediately/);
+  assert.match(system, /inspect again before using handles in a later turn/);
   assert.match(system, /set_table_cells_formatting to set fill and bold\/color in one call/);
   assert.match(system, /one batch or multi-target operation when it covers several known edits/);
   assert.match(system, /exact table headerCells\/occurrence from retrieval when available/);
@@ -120,10 +122,28 @@ test("table tool descriptions favor exact selectors and one call per logical edi
   assert.match(String(tools["document.set_table_cells_formatting"]?.description), /current cell handles from one inspect\(tables\)/);
   assert.match(String(tools["document.set_table_cells_formatting"]?.description), /all relevant cells in one call/);
   assert.match(String(tools["document.set_table_cells_formatting"]?.description), /fill and direct text formatting together/);
-  assert.match(String(tools["document.set_table_cells_formatting"]?.description), /handles expire after a successful mutation/);
+  assert.match(String(tools["document.set_table_cells_formatting"]?.description), /handles expire before the next model turn or after other edits/);
   assert.match(String(tools["document.set_table_cell_shading"]?.description), /use set_table_cells_formatting for fill and text together/);
   assert.match(String(tools["document.insert_table_rows"]?.description), /prefer this over repeated insert_table_row calls/);
   assert.match(String(tools["document.insert_table_row"]?.description), /use insert_table_rows when several contiguous rows are known/);
+});
+
+test("paragraph insertion tools explain blank document placement and inspected handles", () => {
+  const tools = createDocumentTools({
+    capabilities: () => ({ formats: [{ format: "docx", capabilities: ["insert_paragraph", "insert_paragraphs"] }] }),
+    inspect: async () => ({}),
+    find: async () => ({}),
+    mutate: async () => ({}),
+  });
+  for (const name of ["document.insert_paragraph", "document.insert_paragraphs"]) {
+    const tool = tools[name]!;
+    assert.match(String(tool.description), /blank document.*kind: "end".*kind: "start".*without a handle/);
+    const schema = (tool.inputSchema as { jsonSchema: { properties: { placement: { description: string; properties: { handle: { description: string } } } } } }).jsonSchema;
+    assert.match(schema.properties.placement.description, /blank document \(which has no handles\)/);
+    assert.match(schema.properties.placement.description, /latest relevant document\.inspect; never invent one/);
+    assert.match(schema.properties.placement.description, /expire before the next model turn or after other edits/);
+    assert.match(schema.properties.placement.properties.handle.description, /Omit for start\/end\. Required for before\/after/);
+  }
 });
 
 test("recovered failure guidance does not require narrating internal errors", () => {

@@ -14,6 +14,20 @@ _Read this before starting any work. Keep it a concise current-state handoff, no
 
 ## Just Completed
 
+* **Same-turn DOCX handle reuse (Phase 1)** — the API now preserves inspected handles within one model turn across table formatting/widths/shading/cell formatting and paragraph formatting/style/text formatting. All other successful edits still clear handles immediately; an edited turn expires handles before the next model call or terminal save. Rust stays authoritative, V3 scheduling/failure skipping stays unchanged, and earlier successful bytes still save once after partial failure. Log: `[agent] mutation_turn turn=… sameTurnMutations=… compatibleMutations=… handleReuses=…`; stale diagnostics now include `modelTurn` and distinguish `model_turn` expiry from immediate `mutation` expiry.
+
+* **Live DOCX preview after blank creation** — successful agent mutations were invisible because the new editor showed a false `Unsaved` state, which blocks both working previews and later version reloads. Initial imports now ignore dirty events until the editor is ready; captured input marks a local edit only when it is a real input in editable document content. Editor readiness retries a pending preview. Real unsaved edits still block agent reloads.
+
+* **Blank-document STALE_HANDLE fix** — a Luna rerun showed `placement.kind: "start"` or `"end"` with `placement.handle: ""`. The shared stale check incorrectly treated the empty string as an opaque handle, even after inspect. It now ignores that field only for start/end; before/after still require an inspected handle. Paragraph tool descriptions explain the boundary placement, and bounded stale diagnostics remain available.
+
+* **Provider-safe tool names** — OpenAI-compatible models (e.g. `gpt-5.6-luna`) reject dotted tool names (`document.inspect`). Schema names sent to the model now use `_` instead of `.`; the runtime maps calls back to internal dotted names for execution/events. Stream `error` parts and `finishReason: error` fail the run (UI shows failure) instead of silently completing empty. `describeRunFailure` also recognizes `tools[N].name` rejections.
+
+* **Agent action follow-up** — removed the DeepSeek V4.1 Flash 8,192-token default after two Northstar reruns spent the entire cap on reasoning before any tool call. Agent turns have no forced output cap unless `AGENT_MAX_OUTPUT_TOKENS` is set; explicit caps still respect the provider ceiling. The existing operating instruction now asks for the first useful tool call without a narrated full plan. Phase A `length` safety and discarded-tool logging remain.
+
+* **Phase A reasoning-budget follow-up** — two live Northstar reruns ended correctly at `output_limit` after ~19–20s with ~8.2k output, nearly all reasoning, and no tool calls. The installed OpenRouter adapter forwards `reasoning.max_tokens`, but OpenRouter's current DeepSeek V4.1 Flash catalog advertises effort levels without direct token-budget support; its docs say token budgets on effort-only models are converted to effort. `reasoning.effort: low` stays in place; no 4,096-token budget was added because it would not reliably reserve output for tools.
+
+* **Agent runtime reliability Phase A** — any `length` finish stops as `output_limit` before emitted tools run or another turn starts. Turn logs show configured effective caps and `discardedTools` count; same-run reasoning replay is unchanged.
+
 * **Final cleanup review** — confirmed API/V3/engine and web ownership, kept current production file locations and names, removed `execution.ts` test-only re-exports and unused panel prop type exports, and updated `AGENTS.md` to describe the live paths and commands. No runtime or document behavior change.
 
 * **Cleanup Phase 5B (API agent route readability)** — moved abandoned-run durable repair (`RUN_ABANDONED` status write + orphan lease release) from SSE `GET …/events` into `run-manager.repairAbandonedRun`. Route keeps auth/validate/subscribe/stream/SSE terminal synthesis; DB/status-repair details no longer dominate. Behavior-preserving; AGENTS.md unchanged.
@@ -32,7 +46,7 @@ _Read this before starting any work. Keep it a concise current-state handoff, no
 
 * **Cleanup Phase 1 (dead code only)** — removed unused `document-canvas.tsx` re-export, unused `tab-overflow` (+ its test), and four unreferenced symbols (`ResolvedV2ExecutionModel`, `SAFE_INPUT_FRACTION`, `summarizeAgentActivities`, `readStoredTheme`). No architecture/agent/document behavior changes. Deferred: agent-core-v2, mock engine transport, `/dev/agent-panel-ux`, auth CLI, wasm emission.
 
-* **Agent latency pass** — V3 turn metrics/logs now separate first reasoning, visible text, and tool-input timing; completion logs include finish reason. A length-stopped turn without a tool fails as `AGENT_OUTPUT_LIMIT`. Small action-first/DIRECT wording edits. Optional `AGENT_MAX_OUTPUT_TOKENS` (1–16,384) caps the actual model request and its input reserve; unset by default. Catalog maximum remains a capability ceiling, not a generation cap.
+* **Agent latency pass** — V3 turn metrics/logs now separate first reasoning, visible text, and tool-input timing; completion logs include finish reason. Small action-first/DIRECT wording edits. Optional `AGENT_MAX_OUTPUT_TOKENS` (1–16,384) caps the actual model request and its input reserve. Catalog maximum remains a capability ceiling, not a generation cap.
 
 * **Frontend request noise** — idle click/focus no longer re-hits AI prefs, provider credentials, or document metadata. Shared React Query keys (5m AI settings, existing doc/list staleTimes); agent panel reuses workspace docs cache; removed DOCX focus/visibility soft-refresh and agent BYOK focus refetch; dropped redundant `refreshKey` double-invalidate. Mutations still invalidate/setQueryData. Focused cache tests + web typecheck pass.
 
@@ -137,6 +151,18 @@ _Read this before starting any work. Keep it a concise current-state handoff, no
 
 ## Verification Status
 
+* Phase 1 same-turn handles: real scheduler + Rust binding regressions cover three-table presentation, all seven allowed formatting operations, structural/content invalidation, old-turn stale handles, genuine failure, and partial saves. API build/typecheck, 73 focused API tests, full 306-test suite (286 passed, 20 DB integration tests skipped), V3 typecheck and 33 tests, engine-client 13 tests, and `git diff --check` pass. No paid model call; DeepSeek dogfood remains the next check.
+
+* Live DOCX preview after blank creation: web typecheck, 41 focused preview/activity tests, and `git diff --check` pass. User-run Luna check is still needed to verify editor behavior in the browser.
+
+* Blank-document STALE_HANDLE fix: focused version/lifecycle/operating-instruction tests, API build/typecheck, and `git diff --check` pass. No paid model call after the fix; manual Luna rerun awaits user testing.
+
+* Agent action follow-up: agent-core-v3 typecheck and 31 tests; API typecheck, full 295-test suite (275 passed, 20 skipped), and focused operating-instruction tests (10) pass; `git diff --check` passes. No paid model call in this pass.
+
+* Phase A reasoning-budget follow-up: captured installed adapter requests with a fake fetch (no paid model call). The former capped request was `max_tokens: 8192` and `reasoning: { effort: "low" }`; the adapter can serialize `reasoning: { max_tokens: 4096 }`, but model support for an exact budget is not advertised. Core 31 tests, focused API 74 tests, API typecheck, and `git diff --check` pass. No reasoning budget was added.
+
+* Agent runtime reliability Phase A: agent-core-v3 typecheck and 31 tests; API typecheck, 74 focused tests, and full 295-test suite (275 passed, 20 skipped); `git diff --check` pass. No paid model call in that pass.
+
 * Final cleanup: API build/typecheck, web and agent-core-v3 typechecks, 85 focused API tests, and `git diff --check HEAD` pass. No paid model call.
 
 * Cleanup Phase 5B: `run-manager.repair` (4) + working-document route (1) + execution.isolation (38), API typecheck, `git diff --check` pass. No behavior change intended.
@@ -211,4 +237,4 @@ _Read this before starting any work. Keep it a concise current-state handoff, no
 
 ## Recommended Next Step
 
-Stop architecture/readability cleanup. Resume product or agent work only for a concrete user goal.
+Run DeepSeek dogfood with one table inspect followed by several table formatting/width/shading calls in one turn. Check `mutation_turn` for multiple applied mutations and positive `handleReuses`, with no sibling `stale_handle` after `compatible_mutation`. Confirm one saved version and the expected table formatting.

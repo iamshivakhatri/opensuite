@@ -113,12 +113,12 @@ const textTarget = {
 const placement = {
   type: "object",
   description:
-    "Paragraph placement. before/after require a body_blocks handle from inspect.",
+    "Use start/end without a handle at document boundaries, including initial content in a blank document (which has no handles). For before/after, use only a handle from the latest relevant document.inspect; never invent one. Formatting preserves handles within one model turn; handles expire before the next model turn or after other edits.",
   properties: {
-    kind: { type: "string", enum: ["start", "end", "before", "after"] },
+    kind: { type: "string", enum: ["start", "end", "before", "after"], description: "start/end need no handle; before/after need an inspected body_blocks handle." },
     handle: {
       type: "string",
-      description: "Required when kind is before or after",
+      description: "Omit for start/end. Required for before/after; copy from the latest relevant document.inspect.",
     },
   },
   required: ["kind"],
@@ -128,7 +128,7 @@ const placement = {
 const tableTarget = {
   type: "object",
   description:
-    "Use exact headerCells and occurrence from current retrieval when shown; never guess or shorten headers. Use document.inspect for a needed cell/row handle or missing selector. Inspect handles expire after a successful mutation; occurrence is zero-based.",
+    "Use exact headerCells and occurrence from current retrieval when shown; never guess or shorten headers. Use document.inspect for a needed cell/row handle or missing selector. Formatting preserves handles within one model turn; handles expire before the next model turn or after other edits. Occurrence is zero-based.",
   properties: {
     handle: { type: "string" },
     headerCells: { type: "array", items: { type: "string" } },
@@ -190,7 +190,7 @@ const MUTATION_DEFS: Record<string, MutDef> = {
   },
   insert_paragraph: {
     description:
-      "Insert one paragraph at a placement (start/end/before/after). before/after require a body_blocks handle.",
+      "Insert one paragraph. For a blank document, use placement {kind: \"end\"} or {kind: \"start\"} without a handle.",
     inputSchema: op({ text: { type: "string" }, placement }, [
       "text",
       "placement",
@@ -198,7 +198,7 @@ const MUTATION_DEFS: Record<string, MutDef> = {
   },
   insert_paragraphs: {
     description:
-      "Insert multiple paragraphs at a placement (start/end/before/after). before/after require a body_blocks handle.",
+      "Insert multiple paragraphs. For a blank document, use placement {kind: \"end\"} or {kind: \"start\"} without a handle.",
     inputSchema: op({ texts: strings, placement }, ["texts", "placement"]),
   },
   delete_paragraph: {
@@ -390,7 +390,7 @@ const MUTATION_DEFS: Record<string, MutDef> = {
   },
   set_table_cells_formatting: {
     description:
-      "Use current cell handles from one inspect(tables), then format all relevant cells in one call. Set fill and direct text formatting together when needed; handles expire after a successful mutation. Supports fill (6-digit RGB), bold, italic, font family, font size in half-points, and text color.",
+      "Use current cell handles from one inspect(tables), then format all relevant cells in one call. Set fill and direct text formatting together when needed; formatting preserves handles within one model turn, and handles expire before the next model turn or after other edits. Supports fill (6-digit RGB), bold, italic, font family, font size in half-points, and text color.",
     inputSchema: op(
       {
         table: tableTarget,

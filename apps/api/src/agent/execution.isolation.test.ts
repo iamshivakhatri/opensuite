@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 
 import type { RunAgentResult, RunModelResult, V3Model } from "@opensuite/agent-core-v3";
-import { buildMinimalDocx, createNapiDocxEngineBinding } from "@opensuite/engine-client";
+import { bindDocxDocument, buildMinimalDocx, createNapiDocxEngineBinding } from "@opensuite/engine-client";
 import type { AgentRunReport } from "./agent-run-report.js";
 
 import {
@@ -442,6 +442,7 @@ test("known document and provider failures have specific safe explanations", () 
     { kind: "tool", status: "failed", name: "document.insert_paragraphs", summary: "Failed: NO_ACTIVE_DOCUMENT" },
   ]), { code: "NO_ACTIVE_DOCUMENT", message: "No document was active, and the agent tried to edit before creating one. Retry the request or open a document first." });
   assert.equal(describeRunFailure(new Error("Invalid 'input[3].name': bad"), [])?.code, "MODEL_TOOL_NAME_REJECTED");
+  assert.equal(describeRunFailure(new Error("Invalid 'tools[0].name': string does not match pattern"), [])?.code, "MODEL_TOOL_NAME_REJECTED");
   assert.equal(describeRunFailure(new Error("database password is secret"), []), null);
 });
 
@@ -1235,6 +1236,56 @@ test("terminal runs flush valid working changes once, including partial and canc
     }
     if (appends && mode !== "append_fail") assert.match(JSON.stringify(await binding.inspectDocx(bytes, { focus: { kind: "body_blocks" } })), /Edit 2/);
   }
+});
+
+test("execution scopes compatible handle reuse to the model turn and saves one version", async () => {
+  const binding = await createNapiDocxEngineBinding();
+  const seed = bindDocxDocument({ binding, bytes: buildMinimalDocx(["Start"]) });
+  assert.equal((await seed.mutate("create_table", {
+    rows: [["Item", "Owner"], ["Plan", "Alice"]], placement: { kind: "end" },
+  })).ok, true);
+  let bytes = Buffer.from(seed.currentBytes());
+  let versionId = "v1";
+  let appends = 0;
+  const persistence = memoryPersistence("user-1");
+  const deps = baseDeps(persistence, async (input) => {
+    const call = { toolCallId: "test", messages: [], context: undefined as never };
+    await input.onEvent?.({ type: "model_turn_started", turn: 1 });
+    const inspected = await input.tools!["document.inspect"]!.execute!({ kind: "tables" }, call) as {
+      tables: { items: { handle: string }[] };
+    };
+    const table = { handle: inspected.tables.items[0]!.handle };
+    await input.onEvent?.({ type: "model_turn_started", turn: 2 });
+    assert.equal((await input.tools!["document.set_table_formatting"]!.execute!({ table, borders: "grid" }, call) as { ok: boolean }).ok, true);
+    assert.equal((await input.tools!["document.set_table_column_widths"]!.execute!({ table, widthsTwips: [3000, 3000] }, call) as { ok: boolean }).ok, true);
+    await input.onEvent?.({ type: "model_turn_started", turn: 3 });
+    assert.equal((await input.tools!["document.set_table_column_widths"]!.execute!({ table, widthsTwips: [2000, 4000] }, call) as { reasonCode: string }).reasonCode, "STALE_HANDLE");
+    return softResult("completed");
+  });
+  const reports: AgentRunReport[] = [];
+  const execution = createAgentExecutionService({
+    ...deps, docxBinding: binding,
+    agentRunReportSink: (report) => { reports.push(report); },
+    documents: {
+      ...deps.documents,
+      getOwnedDocument: async () => ({ id: "doc-1", workspaceId: "ws-1", format: "docx", latestVersion: { id: versionId } }) as never,
+      readExactVersionBytes: async () => bytes,
+      appendDocumentVersion: async (input) => {
+        assert.equal(input.baseVersionId, "v1");
+        bytes = Buffer.from(input.bytes);
+        versionId = "v2";
+        appends++;
+        return { version: { id: "v2", versionNumber: 2 } } as never;
+      },
+    },
+  });
+  const result = await (await execution.start({
+    userId: "user-1", threadId: "thread-1", activeDocumentId: "doc-1", instruction: "format",
+  })).result;
+  assert.equal(result.run.status, "completed");
+  assert.equal(appends, 1);
+  assert.equal(reports[0]?.document?.workingMutationCount, 2);
+  assert.equal(reports[0]?.document?.finalVersionId, "v2");
 });
 
 test("max_turns reports preserved changes only after a version advance", () => {

@@ -21,6 +21,11 @@ test("lifecycle helpers format scannable model and tool lines", () => {
     "[agent] TURN 1\n  → LLM start\n  model=deepseek/deepseek-v4.1-flash",
   );
   assert.match(formatModelTurnStarted({ turn: 1, model: "test", maxOutputTokens: 8_192 }), /model=test cap=8192/);
+  assert.match(formatModelTurnCompleted({
+    turn: 1, durationMs: 1, inputTokens: 1, cachedInputTokens: 0,
+    outputTokens: 8_192, reasoningTokens: 8_000,
+    toolNames: ["document.inspect", "document.find"], finishReason: "length",
+  }), /finish=length[\s\S]*discardedTools=2/);
   assert.equal(
     formatModelTurnFirstStreamPart({ turn: 1, kind: "reasoning", elapsedMs: 420 }),
     "[agent] TURN 1\n  … reasoning 420ms",

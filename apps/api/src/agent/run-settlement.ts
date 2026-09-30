@@ -225,8 +225,8 @@ export function describeRunFailure(error: unknown, transcript: readonly Transcri
   if (transcript.some((entry) => entry.status === "failed" && entry.summary.includes("NO_ACTIVE_DOCUMENT"))) {
     return { code: "NO_ACTIVE_DOCUMENT", message: "No document was active, and the agent tried to edit before creating one. Retry the request or open a document first." };
   }
-  if (error instanceof Error && /Invalid 'input\[\d+\]\.name'/.test(error.message)) {
-    return { code: "MODEL_TOOL_NAME_REJECTED", message: "The AI provider rejected a document tool response. Please try another model or contact support." };
+  if (error instanceof Error && /Invalid '(?:input|tools)\[\d+\]\.name'/.test(error.message)) {
+    return { code: "MODEL_TOOL_NAME_REJECTED", message: "The AI provider rejected a document tool name. Please try another model or contact support." };
   }
   return null;
 }
