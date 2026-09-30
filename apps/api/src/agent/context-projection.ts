@@ -13,9 +13,6 @@ export const MAX_OUTPUT_RESERVE_TOKENS = 16_384;
 export const DEFAULT_CONTINUATION_RESERVE_TOKENS = 4_096;
 export const DEFAULT_SAFETY_MARGIN_TOKENS = 1_024;
 
-/** @deprecated Prefer explicit reserves via safeInputTokenBudget; kept for callers. */
-export const SAFE_INPUT_FRACTION = 0.6;
-
 const TRUNCATION_MARKER = "\n\n[Historical message truncated for model context]";
 const TOKEN_TRUNCATION_MARKER = "\n\n[Context truncated for model input]";
 

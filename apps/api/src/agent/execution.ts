@@ -207,9 +207,6 @@ export interface ResolvedV3ExecutionModel {
   readonly outputTokenLimit?: number;
 }
 
-/** @deprecated Use ResolvedV3ExecutionModel — alias during V3 cutover. */
-export type ResolvedV2ExecutionModel = ResolvedV3ExecutionModel;
-
 export type AgentExecutionErrorCode =
   | "THREAD_NOT_FOUND"
   | "DOCUMENT_NOT_FOUND"

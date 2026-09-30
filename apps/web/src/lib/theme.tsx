@@ -99,8 +99,3 @@ export function useTheme(): ThemeContextValue {
   }
   return ctx;
 }
-
-/** @deprecated Use themePreference / setThemePreference. */
-export function readStoredTheme(): ThemePreference {
-  return readStoredPreference();
-}

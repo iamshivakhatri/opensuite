@@ -14,6 +14,8 @@ _Read this before starting any work. Keep it a concise current-state handoff, no
 
 ## Just Completed
 
+* **Cleanup Phase 1 (dead code only)** — removed unused `document-canvas.tsx` re-export, unused `tab-overflow` (+ its test), and four unreferenced symbols (`ResolvedV2ExecutionModel`, `SAFE_INPUT_FRACTION`, `summarizeAgentActivities`, `readStoredTheme`). No architecture/agent/document behavior changes. Deferred: agent-core-v2, mock engine transport, `/dev/agent-panel-ux`, auth CLI, wasm emission.
+
 * **Agent latency pass** — V3 turn metrics/logs now separate first reasoning, visible text, and tool-input timing; completion logs include finish reason. A length-stopped turn without a tool fails as `AGENT_OUTPUT_LIMIT`. Small action-first/DIRECT wording edits. Optional `AGENT_MAX_OUTPUT_TOKENS` (1–16,384) caps the actual model request and its input reserve; unset by default. Catalog maximum remains a capability ceiling, not a generation cap.
 
 * **Frontend request noise** — idle click/focus no longer re-hits AI prefs, provider credentials, or document metadata. Shared React Query keys (5m AI settings, existing doc/list staleTimes); agent panel reuses workspace docs cache; removed DOCX focus/visibility soft-refresh and agent BYOK focus refetch; dropped redundant `refreshKey` double-invalidate. Mutations still invalidate/setQueryData. Focused cache tests + web typecheck pass.
@@ -119,6 +121,8 @@ _Read this before starting any work. Keep it a concise current-state handoff, no
 
 ## Verification Status
 
+* Cleanup Phase 1: web agent-progress/theme-model/open-tabs tests (40), API context-projection tests (9), web+API typechecks, `git diff --check` pass. No behavior change intended.
+
 * Agent latency pass: focused V3 and API tests/typechecks pass; no paid model benchmark or manual dogfood run yet.
 
 * Agent tool ergonomics: 40 focused API operating-instruction, retrieval, and mutation tests pass; API TypeScript build/typecheck passes. No model or browser test.
@@ -175,4 +179,4 @@ _Read this before starting any work. Keep it a concise current-state handoff, no
 
 ## Recommended Next Step
 
-Run the same real document edit with `AGENT_MAX_OUTPUT_TOKENS` unset, then 8k/12k/16k, and compare turn timings, length stops, and task quality.
+Continue codebase cleanup Phase 2 only after Phase 1 is reviewed — still high-confidence obsolete internals only; no architecture moves yet.

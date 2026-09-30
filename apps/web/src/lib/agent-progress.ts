@@ -1116,13 +1116,6 @@ export function projectActivityRows(
   return rows;
 }
 
-/** @deprecated Prefer projectActivityRows — kept for callers/tests during transition. */
-export function summarizeAgentActivities(
-  lines: readonly AgentProgressLine[],
-): AgentActivity[] {
-  return projectActivityRows(lines);
-}
-
 /**
  * Live headline = newest active activity label (Thinking / tool).
  * Never say Finishing up unless the answer is actually streaming.
