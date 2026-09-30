@@ -87,7 +87,7 @@ describe("storage API client", () => {
     await assert.rejects(
       () => api.purgeTrashedDocument("11111111-1111-4111-8111-111111111111"),
       (error: unknown) => {
-        assert.ok(error instanceof api.StorageApiError);
+        assert.ok(error instanceof api.ApiError);
         assert.equal(error.code, "DOCUMENT_NOT_TRASHED");
         return true;
       },
@@ -111,7 +111,7 @@ describe("storage API client", () => {
     await assert.rejects(
       () => api.purgeTrashedWorkspace("22222222-2222-4222-8222-222222222222"),
       (error: unknown) => {
-        assert.ok(error instanceof api.StorageApiError);
+        assert.ok(error instanceof api.ApiError);
         assert.equal(error.code, "WORKSPACE_NOT_TRASHED");
         return true;
       },

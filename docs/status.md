@@ -14,6 +14,10 @@ _Read this before starting any work. Keep it a concise current-state handoff, no
 
 ## Just Completed
 
+* **Cleanup Phase 5A (web API client)** — shared `api-client.ts` (`ApiError`, `apiFetch`, `parseApiError`) used by `api.ts`, `ai-settings-api.ts`, `storage-api.ts`. One error model; AI/storage now get `API_UNREACHABLE` + `DATABASE_UNAVAILABLE` like the main client. Feature operation files stay separate. `api-health` unchanged (soft-fail). AGENTS.md unchanged.
+
+* **Cleanup Phase 4B (readability)** — extracted agent composer UI from `document-agent-panel.tsx` into nearby `agent-composer.tsx` (`AgentComposer`; local mention/keyboard/resize). Panel keeps draft/tags/attachments state + submit/stop/SSE/run ownership. Behavior-preserving; AGENTS.md unchanged. Panel is mostly orchestration now; optional next: run/SSE attach block, or stop frontend splits.
+
 * **Cleanup Phase 4A (readability)** — extracted agent transcript/display from `document-agent-panel.tsx` into nearby `agent-transcript.tsx` (`AgentTranscript`, `RunTranscript`, `CompletedRunTranscript`, `WorkingDots`). Panel keeps thread/run/SSE/submit/continue/cancel/composer ownership. Behavior-preserving; AGENTS.md unchanged. Next seam: composer UI, or run/SSE attach block.
 
 * **Cleanup Phase 3B (readability)** — extracted event relay/report logging (`run-events.ts`: transcript, `createRunEventHandler`, `emitRunReport`, `summarizeError`) and terminal settlement (`run-settlement.ts`: finalize/settle failure, lease keep/release, `boundedStopMessage`/`describeRunFailure`) from `execution.ts`. Restored Phase 3A `workspace_retrieval_skipped` sanitization via `summarizeError`. Behavior-preserving; AGENTS.md unchanged. Next seam: tool construction / DIRECT wiring, or frontend panel files.
@@ -129,6 +133,10 @@ _Read this before starting any work. Keep it a concise current-state handoff, no
 
 ## Verification Status
 
+* Cleanup Phase 5A: `api-client` + `api-base-url` tests (8), web typecheck, `git diff --check` pass. AI/storage feature tests still hit pre-existing Node strip-types extensionless-import failures when loading the module graph; shared transport covered by `api-client.test.ts`.
+
+* Cleanup Phase 4B: web agent-progress/messages/markdown/prompt-attachments tests (54), web typecheck, `git diff --check` pass. No behavior change intended.
+
 * Cleanup Phase 4A: web agent-progress/messages/markdown tests (51), web typecheck, `git diff --check` pass. No behavior change intended.
 
 * Cleanup Phase 3B: API focused lifecycle/isolation/version/report/retrieval/projection/operating-instruction tests (133), API typecheck, `git diff --check` pass. Restored `workspace_retrieval_skipped` summarizeError sanitization. No behavior change intended.
@@ -195,7 +203,7 @@ _Read this before starting any work. Keep it a concise current-state handoff, no
 
 ## Recommended Next Step
 
-Frontend readability continues: extract composer from `document-agent-panel.tsx` (~1.7k lines), or further split run/SSE attach. Optional API: tool construction / DIRECT wiring from `execution.ts`. Update `AGENTS.md` only after the full cleanup series finishes.
+Optional: split large `api.ts` operation groups only if navigation still hurts. Else continue API cleanup (`execution.ts` tool/DIRECT wiring, `routes/agent.ts`) or commit Phase 4B+5A frontend cleanup. Update `AGENTS.md` only after the full cleanup series finishes.
 
 
 

@@ -2,67 +2,19 @@
  * Authenticated storage + trash purge API helpers.
  */
 
+import { apiFetch, parseApiError } from "./api-client";
+
+export { ApiError } from "./api-client";
+
 export interface StorageStatus {
   readonly usedBytes: number;
   readonly quotaBytes: number;
   readonly remainingBytes: number;
 }
 
-export class StorageApiError extends Error {
-  readonly statusCode: number;
-  readonly code: string;
-
-  constructor(statusCode: number, code: string, message: string) {
-    super(message);
-    this.name = "StorageApiError";
-    this.statusCode = statusCode;
-    this.code = code;
-  }
-}
-
-import { resolveApiBaseUrl } from "./api-base-url";
-
-function requireApiBaseUrl(): string {
-  const apiBaseUrl = resolveApiBaseUrl();
-  if (!apiBaseUrl) {
-    throw new StorageApiError(
-      500,
-      "MISSING_API_URL",
-      "OpenSuite API URL is not configured",
-    );
-  }
-  return apiBaseUrl;
-}
-
-async function parseError(response: Response): Promise<StorageApiError> {
-  try {
-    const body = (await response.json()) as {
-      error?: { statusCode?: number; code?: string; message?: string };
-    };
-    return new StorageApiError(
-      body.error?.statusCode ?? response.status,
-      body.error?.code ?? "REQUEST_FAILED",
-      body.error?.message ?? "Something went wrong. Please try again.",
-    );
-  } catch {
-    return new StorageApiError(
-      response.status,
-      "REQUEST_FAILED",
-      "Something went wrong. Please try again.",
-    );
-  }
-}
-
-async function apiFetch(path: string, init?: RequestInit): Promise<Response> {
-  return fetch(`${requireApiBaseUrl()}${path}`, {
-    ...init,
-    credentials: "include",
-  });
-}
-
 export async function fetchStorageStatus(): Promise<StorageStatus> {
   const response = await apiFetch("/api/storage");
-  if (!response.ok) throw await parseError(response);
+  if (!response.ok) throw await parseApiError(response);
   return (await response.json()) as StorageStatus;
 }
 
@@ -74,7 +26,7 @@ export async function purgeTrashedDocument(documentId: string): Promise<void> {
   const response = await apiFetch(`/api/trash/documents/${documentId}`, {
     method: "DELETE",
   });
-  if (!response.ok) throw await parseError(response);
+  if (!response.ok) throw await parseApiError(response);
 }
 
 /**
@@ -85,5 +37,5 @@ export async function purgeTrashedWorkspace(workspaceId: string): Promise<void> 
   const response = await apiFetch(`/api/trash/workspaces/${workspaceId}`, {
     method: "DELETE",
   });
-  if (!response.ok) throw await parseError(response);
+  if (!response.ok) throw await parseApiError(response);
 }

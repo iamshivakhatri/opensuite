@@ -1,7 +1,7 @@
-import { resolveApiBaseUrl } from "./api-base-url";
+import { ApiError, apiFetch, parseApiError } from "./api-client";
 import { filenameFromContentDisposition } from "./filename-from-content-disposition";
 
-const apiBaseUrl = resolveApiBaseUrl();
+export { ApiError } from "./api-client";
 
 export interface Me {
   readonly id: string;
@@ -59,93 +59,6 @@ export interface LibraryDocument {
   readonly starredAt: string | null;
 }
 
-export class ApiError extends Error {
-  readonly statusCode: number;
-  readonly code: string;
-  readonly details: Record<string, unknown> | undefined;
-
-  constructor(
-    statusCode: number,
-    code: string,
-    message: string,
-    details?: Record<string, unknown>,
-  ) {
-    super(message);
-    this.name = "ApiError";
-    this.statusCode = statusCode;
-    this.code = code;
-    this.details = details;
-  }
-}
-
-function requireApiBaseUrl(): string {
-  if (!apiBaseUrl) {
-    throw new ApiError(
-      500,
-      "MISSING_API_URL",
-      "OpenSuite API URL is not configured",
-    );
-  }
-  return apiBaseUrl;
-}
-
-async function parseError(response: Response): Promise<ApiError> {
-  try {
-    const body = (await response.json()) as {
-      error?: {
-        statusCode?: number;
-        code?: string;
-        message?: string;
-        activeRunId?: string;
-        activeThreadId?: string;
-      };
-    };
-    const error = body.error;
-    const details: Record<string, unknown> = {};
-    if (typeof error?.activeRunId === "string") {
-      details.activeRunId = error.activeRunId;
-    }
-    if (typeof error?.activeThreadId === "string") {
-      details.activeThreadId = error.activeThreadId;
-    }
-    if (error?.code === "DATABASE_UNAVAILABLE") {
-      return new ApiError(
-        error.statusCode ?? response.status,
-        "DATABASE_UNAVAILABLE",
-        "No connection with the database",
-        Object.keys(details).length > 0 ? details : undefined,
-      );
-    }
-    return new ApiError(
-      error?.statusCode ?? response.status,
-      error?.code ?? "REQUEST_FAILED",
-      error?.message ?? "Something went wrong. Please try again.",
-      Object.keys(details).length > 0 ? details : undefined,
-    );
-  } catch {
-    return new ApiError(
-      response.status,
-      "REQUEST_FAILED",
-      "Something went wrong. Please try again.",
-    );
-  }
-}
-
-async function apiFetch(path: string, init?: RequestInit): Promise<Response> {
-  try {
-    return await fetch(`${requireApiBaseUrl()}${path}`, {
-      ...init,
-      credentials: "include",
-    });
-  } catch {
-    throw new ApiError(
-      503,
-      "API_UNREACHABLE",
-      "Can't reach the API. Try again in a moment.",
-    );
-  }
-}
-
 /**
  * Calls the OpenSuite-owned `GET /api/me` (not a Better Auth endpoint) to
  * prove the backend recognizes the current session. `credentials: "include"`
@@ -159,7 +72,7 @@ export async function fetchMe(): Promise<Me | null> {
   }
 
   if (!response.ok) {
-    throw await parseError(response);
+    throw await parseApiError(response);
   }
 
   const body = (await response.json()) as { user: Me };
@@ -169,7 +82,7 @@ export async function fetchMe(): Promise<Me | null> {
 export async function listWorkspaces(): Promise<Workspace[]> {
   const response = await apiFetch("/api/workspaces");
   if (!response.ok) {
-    throw await parseError(response);
+    throw await parseApiError(response);
   }
   const body = (await response.json()) as { workspaces: Workspace[] };
   return body.workspaces.map((workspace) => ({
@@ -186,7 +99,7 @@ export async function createWorkspace(name: string): Promise<Workspace> {
     body: JSON.stringify({ name }),
   });
   if (!response.ok) {
-    throw await parseError(response);
+    throw await parseApiError(response);
   }
   const body = (await response.json()) as { workspace: Workspace };
   return {
@@ -206,7 +119,7 @@ export async function renameWorkspace(
     body: JSON.stringify({ name }),
   });
   if (!response.ok) {
-    throw await parseError(response);
+    throw await parseApiError(response);
   }
   const body = (await response.json()) as { workspace: Workspace };
   return {
@@ -221,7 +134,7 @@ export async function deleteWorkspace(workspaceId: string): Promise<void> {
     method: "DELETE",
   });
   if (!response.ok) {
-    throw await parseError(response);
+    throw await parseApiError(response);
   }
 }
 
@@ -230,7 +143,7 @@ export async function restoreWorkspace(workspaceId: string): Promise<Workspace> 
     method: "POST",
   });
   if (!response.ok) {
-    throw await parseError(response);
+    throw await parseApiError(response);
   }
   const body = (await response.json()) as { workspace: Workspace };
   return {
@@ -264,7 +177,7 @@ export async function listTrash(): Promise<{
 }> {
   const response = await apiFetch("/api/trash");
   if (!response.ok) {
-    throw await parseError(response);
+    throw await parseApiError(response);
   }
   return (await response.json()) as {
     workspaces: TrashedWorkspace[];
@@ -282,7 +195,7 @@ export async function renameDocument(
     body: JSON.stringify({ name }),
   });
   if (!response.ok) {
-    throw await parseError(response);
+    throw await parseApiError(response);
   }
   const body = (await response.json()) as { document: ListedDocument };
   return body.document;
@@ -293,7 +206,7 @@ export async function deleteDocument(documentId: string): Promise<void> {
     method: "DELETE",
   });
   if (!response.ok) {
-    throw await parseError(response);
+    throw await parseApiError(response);
   }
 }
 
@@ -304,7 +217,7 @@ export async function restoreDocument(
     method: "POST",
   });
   if (!response.ok) {
-    throw await parseError(response);
+    throw await parseApiError(response);
   }
   const body = (await response.json()) as { document: ListedDocument };
   return body.document;
@@ -335,7 +248,7 @@ export async function searchMetadata(query: string): Promise<{
     `/api/search?q=${encodeURIComponent(query)}`,
   );
   if (!response.ok) {
-    throw await parseError(response);
+    throw await parseApiError(response);
   }
   return (await response.json()) as {
     documents: SearchDocumentHit[];
@@ -346,7 +259,7 @@ export async function searchMetadata(query: string): Promise<{
 export async function listRecentDocuments(): Promise<LibraryDocument[]> {
   const response = await apiFetch("/api/documents/recent");
   if (!response.ok) {
-    throw await parseError(response);
+    throw await parseApiError(response);
   }
   const body = (await response.json()) as { documents: LibraryDocument[] };
   return body.documents;
@@ -355,7 +268,7 @@ export async function listRecentDocuments(): Promise<LibraryDocument[]> {
 export async function listStarredDocuments(): Promise<LibraryDocument[]> {
   const response = await apiFetch("/api/documents/starred");
   if (!response.ok) {
-    throw await parseError(response);
+    throw await parseApiError(response);
   }
   const body = (await response.json()) as { documents: LibraryDocument[] };
   return body.documents;
@@ -371,7 +284,7 @@ export async function setDocumentStarred(
     body: JSON.stringify({ starred }),
   });
   if (!response.ok) {
-    throw await parseError(response);
+    throw await parseApiError(response);
   }
   return (await response.json()) as {
     starred: boolean;
@@ -384,7 +297,7 @@ export async function listDocuments(
 ): Promise<ListedDocument[]> {
   const response = await apiFetch(`/api/workspaces/${workspaceId}/documents`);
   if (!response.ok) {
-    throw await parseError(response);
+    throw await parseApiError(response);
   }
   const body = (await response.json()) as { documents: ListedDocument[] };
   return body.documents;
@@ -393,7 +306,7 @@ export async function listDocuments(
 export async function getDocument(documentId: string): Promise<ListedDocument> {
   const response = await apiFetch(`/api/documents/${documentId}`);
   if (!response.ok) {
-    throw await parseError(response);
+    throw await parseApiError(response);
   }
   const body = (await response.json()) as { document: ListedDocument };
   return body.document;
@@ -411,7 +324,7 @@ export async function uploadDocument(
     body: form,
   });
   if (!response.ok) {
-    throw await parseError(response);
+    throw await parseApiError(response);
   }
 
   const body = (await response.json()) as {
@@ -479,7 +392,7 @@ export async function createBlankDocument(
     },
   );
   if (!response.ok) {
-    throw await parseError(response);
+    throw await parseApiError(response);
   }
 
   const body = (await response.json()) as {
@@ -551,14 +464,14 @@ export async function fetchDocumentVersionContent(
     `/api/documents/${documentId}/versions/${versionId}/content`,
   );
   if (!response.ok) {
-    throw await parseError(response);
+    throw await parseApiError(response);
   }
   return response.arrayBuffer();
 }
 
 export async function fetchWorkingDocument(runId: string): Promise<{ bytes: ArrayBuffer; revision: number; baseVersionId: string }> {
   const response = await apiFetch(`/api/agent/runs/${runId}/working-document`);
-  if (!response.ok) throw await parseError(response);
+  if (!response.ok) throw await parseApiError(response);
   const revision = Number(response.headers.get("X-Working-Revision"));
   const baseVersionId = response.headers.get("X-Base-Version-Id");
   if (!Number.isSafeInteger(revision) || revision < 1 || !baseVersionId) {
@@ -597,7 +510,7 @@ export async function saveDocumentVersion(
     body: form,
   });
   if (!response.ok) {
-    throw await parseError(response);
+    throw await parseApiError(response);
   }
 
   return (await response.json()) as {
@@ -682,7 +595,7 @@ export async function listWorkspaceAgentThreads(
     `/api/workspaces/${workspaceId}/agent/threads`,
   );
   if (!response.ok) {
-    throw await parseError(response);
+    throw await parseApiError(response);
   }
   const body = (await response.json()) as { threads: AgentThread[] };
   return body.threads;
@@ -705,7 +618,7 @@ export async function createWorkspaceAgentThread(
     },
   );
   if (!response.ok) {
-    throw await parseError(response);
+    throw await parseApiError(response);
   }
   const body = (await response.json()) as { thread: AgentThread };
   return body.thread;
@@ -720,7 +633,7 @@ export async function renameAgentThread(
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ title }),
   });
-  if (!response.ok) throw await parseError(response);
+  if (!response.ok) throw await parseApiError(response);
   return ((await response.json()) as { thread: AgentThread }).thread;
 }
 
@@ -756,7 +669,7 @@ export async function getAgentMessages(
     `/api/agent/threads/${threadId}/messages${query ? `?${query}` : ""}`,
   );
   if (!response.ok) {
-    throw await parseError(response);
+    throw await parseApiError(response);
   }
   const body = (await response.json()) as {
     messages: AgentMessage[];
@@ -797,7 +710,7 @@ export async function startAgentRun(
     }),
   });
   if (!response.ok) {
-    throw await parseError(response);
+    throw await parseApiError(response);
   }
   const body = (await response.json()) as { run: AgentRun };
   return body.run;
@@ -809,7 +722,7 @@ export async function getAgentRun(runId: string): Promise<{
 }> {
   const response = await apiFetch(`/api/agent/runs/${runId}`);
   if (!response.ok) {
-    throw await parseError(response);
+    throw await parseApiError(response);
   }
   return (await response.json()) as { run: AgentRun; steps: AgentStep[] };
 }
@@ -822,7 +735,7 @@ export async function cancelAgentRun(runId: string): Promise<{
     method: "POST",
   });
   if (!response.ok) {
-    throw await parseError(response);
+    throw await parseApiError(response);
   }
   return (await response.json()) as { run: AgentRun; steps: AgentStep[] };
 }
@@ -854,7 +767,7 @@ export function subscribeAgentRunEvents(
         signal: controller.signal,
       });
       if (!response.ok) {
-        throw await parseError(response);
+        throw await parseApiError(response);
       }
       if (!response.body) {
         throw new ApiError(500, "SSE_UNAVAILABLE", "SSE stream unavailable");
@@ -977,7 +890,7 @@ export async function downloadDocument(
 ): Promise<void> {
   const response = await apiFetch(`/api/documents/${documentId}/download`);
   if (!response.ok) {
-    throw await parseError(response);
+    throw await parseApiError(response);
   }
 
   const blob = await response.blob();

@@ -217,7 +217,7 @@ describe("AI settings API client", () => {
     await assert.rejects(
       () => api.fetchManagedAiModels(),
       (error: unknown) => {
-        assert.ok(error instanceof api.AiApiError);
+        assert.ok(error instanceof api.ApiError);
         assert.equal(error.code, "CATALOG_UNAVAILABLE");
         return true;
       },

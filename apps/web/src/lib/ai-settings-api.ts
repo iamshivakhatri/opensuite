@@ -3,6 +3,7 @@
  * Secrets are sent only in PUT bodies and never stored by these helpers.
  */
 
+import { apiFetch, parseApiError } from "./api-client";
 import type {
   AiPreference,
   AiProvider,
@@ -19,61 +20,11 @@ export type {
   PublicProviderCredential,
 } from "./ai-settings-model";
 
-export class AiApiError extends Error {
-  readonly statusCode: number;
-  readonly code: string;
-
-  constructor(statusCode: number, code: string, message: string) {
-    super(message);
-    this.name = "AiApiError";
-    this.statusCode = statusCode;
-    this.code = code;
-  }
-}
-
-import { resolveApiBaseUrl } from "./api-base-url";
-
-function requireApiBaseUrl(): string {
-  const apiBaseUrl = resolveApiBaseUrl();
-  if (!apiBaseUrl) {
-    throw new AiApiError(
-      500,
-      "MISSING_API_URL",
-      "OpenSuite API URL is not configured",
-    );
-  }
-  return apiBaseUrl;
-}
-
-async function parseError(response: Response): Promise<AiApiError> {
-  try {
-    const body = (await response.json()) as {
-      error?: { statusCode?: number; code?: string; message?: string };
-    };
-    return new AiApiError(
-      body.error?.statusCode ?? response.status,
-      body.error?.code ?? "REQUEST_FAILED",
-      body.error?.message ?? "Something went wrong. Please try again.",
-    );
-  } catch {
-    return new AiApiError(
-      response.status,
-      "REQUEST_FAILED",
-      "Something went wrong. Please try again.",
-    );
-  }
-}
-
-async function apiFetch(path: string, init?: RequestInit): Promise<Response> {
-  return fetch(`${requireApiBaseUrl()}${path}`, {
-    ...init,
-    credentials: "include",
-  });
-}
+export { ApiError } from "./api-client";
 
 export async function fetchAiPreference(): Promise<AiPreference | null> {
   const response = await apiFetch("/api/ai-preferences");
-  if (!response.ok) throw await parseError(response);
+  if (!response.ok) throw await parseApiError(response);
   const body = (await response.json()) as { preference: AiPreference | null };
   return body.preference;
 }
@@ -88,7 +39,7 @@ export async function saveAiPreference(input: {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(input),
   });
-  if (!response.ok) throw await parseError(response);
+  if (!response.ok) throw await parseApiError(response);
   const body = (await response.json()) as { preference: AiPreference };
   return body.preference;
 }
@@ -97,7 +48,7 @@ export async function listProviderCredentials(): Promise<
   PublicProviderCredential[]
 > {
   const response = await apiFetch("/api/provider-credentials");
-  if (!response.ok) throw await parseError(response);
+  if (!response.ok) throw await parseApiError(response);
   const body = (await response.json()) as {
     credentials: PublicProviderCredential[];
   };
@@ -116,7 +67,7 @@ export async function connectProviderCredential(input: {
       apiKey: input.apiKey,
     }),
   });
-  if (!response.ok) throw await parseError(response);
+  if (!response.ok) throw await parseApiError(response);
   const body = (await response.json()) as {
     credential: PublicProviderCredential;
   };
@@ -129,18 +80,18 @@ export async function deleteProviderCredential(
   const response = await apiFetch(`/api/provider-credentials/${provider}`, {
     method: "DELETE",
   });
-  if (!response.ok) throw await parseError(response);
+  if (!response.ok) throw await parseApiError(response);
 }
 
 export async function fetchManagedAiModels(): Promise<ManagedAiModel[]> {
   const response = await apiFetch("/api/ai-models/managed");
-  if (!response.ok) throw await parseError(response);
+  if (!response.ok) throw await parseApiError(response);
   const body = (await response.json()) as { models: ManagedAiModel[] };
   return body.models;
 }
 
 export async function fetchAiTrial(): Promise<AiTrialStatus> {
   const response = await apiFetch("/api/ai-trial");
-  if (!response.ok) throw await parseError(response);
+  if (!response.ok) throw await parseApiError(response);
   return (await response.json()) as AiTrialStatus;
 }
