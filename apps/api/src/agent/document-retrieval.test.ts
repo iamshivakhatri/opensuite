@@ -16,7 +16,7 @@ import {
   SlimDocumentStructureCache,
   type SlimDocumentStructure,
 } from "./document-retrieval.js";
-import { firstTurnContextProjection } from "./execution.js";
+import { firstTurnContextProjection } from "./agent-context.js";
 import { createDocumentTools } from "./document-tools.js";
 
 const structure: SlimDocumentStructure = {

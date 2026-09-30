@@ -141,7 +141,7 @@ function CompletedRunTranscript({
   );
 }
 
-export type AgentTranscriptProps = {
+type AgentTranscriptProps = {
   showEmpty: boolean;
   pagination: {
     hasMore: boolean;

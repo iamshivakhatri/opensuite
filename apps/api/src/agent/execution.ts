@@ -67,9 +67,6 @@ import {
   type AgentExecutionLeaseService,
 } from "./execution-lease.js";
 
-export { composeProjectMessages, firstTurnContextProjection } from "./agent-context.js";
-export { boundedStopMessage, describeRunFailure } from "./run-settlement.js";
-
 const isFinishTool = (name: string | undefined) => name === "finish" || name === "finish_with_input_needed";
 
 export type AgentEvent =

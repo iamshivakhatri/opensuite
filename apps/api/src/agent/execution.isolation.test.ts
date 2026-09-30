@@ -6,12 +6,11 @@ import { buildMinimalDocx, createNapiDocxEngineBinding } from "@opensuite/engine
 import type { AgentRunReport } from "./agent-run-report.js";
 
 import {
-  boundedStopMessage,
   createAgentExecutionService,
-  describeRunFailure,
   type AgentEvent,
   type AgentExecutionServiceDeps,
 } from "./execution.js";
+import { boundedStopMessage, describeRunFailure } from "./run-settlement.js";
 import { compactThreadContext } from "./context-compaction.js";
 import type {
   AgentMessage,

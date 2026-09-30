@@ -14,15 +14,17 @@ _Read this before starting any work. Keep it a concise current-state handoff, no
 
 ## Just Completed
 
+* **Final cleanup review** — confirmed API/V3/engine and web ownership, kept current production file locations and names, removed `execution.ts` test-only re-exports and unused panel prop type exports, and updated `AGENTS.md` to describe the live paths and commands. No runtime or document behavior change.
+
 * **Cleanup Phase 5B (API agent route readability)** — moved abandoned-run durable repair (`RUN_ABANDONED` status write + orphan lease release) from SSE `GET …/events` into `run-manager.repairAbandonedRun`. Route keeps auth/validate/subscribe/stream/SSE terminal synthesis; DB/status-repair details no longer dominate. Behavior-preserving; AGENTS.md unchanged.
 
 * **Cleanup Phase 5A (web API client)** — shared `api-client.ts` (`ApiError`, `apiFetch`, `parseApiError`) used by `api.ts`, `ai-settings-api.ts`, `storage-api.ts`. One error model; AI/storage now get `API_UNREACHABLE` + `DATABASE_UNAVAILABLE` like the main client. Feature operation files stay separate. `api-health` unchanged (soft-fail). AGENTS.md unchanged.
 
-* **Cleanup Phase 4B (readability)** — extracted agent composer UI from `document-agent-panel.tsx` into nearby `agent-composer.tsx` (`AgentComposer`; local mention/keyboard/resize). Panel keeps draft/tags/attachments state + submit/stop/SSE/run ownership. Behavior-preserving; AGENTS.md unchanged. Panel is mostly orchestration now; optional next: run/SSE attach block, or stop frontend splits.
+* **Cleanup Phase 4B (readability)** — extracted agent composer UI from `document-agent-panel.tsx` into nearby `agent-composer.tsx` (`AgentComposer`; local mention/keyboard/resize). Panel keeps draft/tags/attachments state + submit/stop/SSE/run ownership. Behavior-preserving.
 
-* **Cleanup Phase 4A (readability)** — extracted agent transcript/display from `document-agent-panel.tsx` into nearby `agent-transcript.tsx` (`AgentTranscript`, `RunTranscript`, `CompletedRunTranscript`, `WorkingDots`). Panel keeps thread/run/SSE/submit/continue/cancel/composer ownership. Behavior-preserving; AGENTS.md unchanged. Next seam: composer UI, or run/SSE attach block.
+* **Cleanup Phase 4A (readability)** — extracted agent transcript/display from `document-agent-panel.tsx` into nearby `agent-transcript.tsx` (`AgentTranscript`, `RunTranscript`, `CompletedRunTranscript`, `WorkingDots`). Panel keeps thread/run/SSE/submit/continue/cancel/composer ownership. Behavior-preserving.
 
-* **Cleanup Phase 3B (readability)** — extracted event relay/report logging (`run-events.ts`: transcript, `createRunEventHandler`, `emitRunReport`, `summarizeError`) and terminal settlement (`run-settlement.ts`: finalize/settle failure, lease keep/release, `boundedStopMessage`/`describeRunFailure`) from `execution.ts`. Restored Phase 3A `workspace_retrieval_skipped` sanitization via `summarizeError`. Behavior-preserving; AGENTS.md unchanged. Next seam: tool construction / DIRECT wiring, or frontend panel files.
+* **Cleanup Phase 3B (readability)** — extracted event relay/report logging (`run-events.ts`: transcript, `createRunEventHandler`, `emitRunReport`, `summarizeError`) and terminal settlement (`run-settlement.ts`: finalize/settle failure, lease keep/release, `boundedStopMessage`/`describeRunFailure`) from `execution.ts`. Restored Phase 3A `workspace_retrieval_skipped` sanitization via `summarizeError`. Behavior-preserving.
 
 * **Cleanup Phase 3A (readability)** — extracted first-turn/context prep from `apps/api/src/agent/execution.ts` into `agent-context.ts` (`loadHistory`, `prepareContext`, retrieval load, `firstTurnContextProjection`, `composeProjectMessages`). Run lifecycle orchestration stays in `execution.ts`. Behavior-preserving; no agent-core-v3 / retrieval semantics / AGENTS.md changes.
 
@@ -135,6 +137,8 @@ _Read this before starting any work. Keep it a concise current-state handoff, no
 
 ## Verification Status
 
+* Final cleanup: API build/typecheck, web and agent-core-v3 typechecks, 85 focused API tests, and `git diff --check HEAD` pass. No paid model call.
+
 * Cleanup Phase 5B: `run-manager.repair` (4) + working-document route (1) + execution.isolation (38), API typecheck, `git diff --check` pass. No behavior change intended.
 
 * Cleanup Phase 5A: `api-client` + `api-base-url` tests (8), web typecheck, `git diff --check` pass. AI/storage feature tests still hit pre-existing Node strip-types extensionless-import failures when loading the module graph; shared transport covered by `api-client.test.ts`.
@@ -207,8 +211,4 @@ _Read this before starting any work. Keep it a concise current-state handoff, no
 
 ## Recommended Next Step
 
-Optional: stop agent-route splits — file is mostly HTTP routing now. Else continue API cleanup (`execution.ts` tool/DIRECT wiring) or commit Phase 4B+5A+5B. Update `AGENTS.md` only after the full cleanup series finishes.
-
-
-
-GIT_AUTHOR_DATE="YYYY-MM-DD 17:05:08 -0400" GIT_COMMITTER_DATE="YYYY-MM-DD 17:05:08 -0400" git commit -m "chore: remove unused code"
+Stop architecture/readability cleanup. Resume product or agent work only for a concrete user goal.

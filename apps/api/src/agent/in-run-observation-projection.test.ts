@@ -4,7 +4,8 @@ import { test } from "node:test";
 import type { ModelMessage } from "@opensuite/agent-core-v3";
 
 import { estimateTokens } from "./context-projection.js";
-import { composeProjectMessages, firstTurnContextProjection, guardRepeatedReads } from "./execution.js";
+import { composeProjectMessages, firstTurnContextProjection } from "./agent-context.js";
+import { guardRepeatedReads } from "./execution.js";
 import {
   createInRunObservationStats,
   projectInRunObservations,

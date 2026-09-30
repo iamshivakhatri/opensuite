@@ -40,7 +40,7 @@ export async function persistTranscript(
   }
 }
 
-function failureCodeForStopReason(stopReason: StopReason): string {
+export function failureCodeForStopReason(stopReason: StopReason): string {
   if (stopReason === "max_turns") return "AGENT_MAX_TURNS";
   if (stopReason === "deadline") return "AGENT_DEADLINE";
   if (stopReason === "output_limit") return "AGENT_OUTPUT_LIMIT";
@@ -58,8 +58,6 @@ export function boundedStopMessage(
     : "Stopped before the task could be completed.";
   return hasVersionAdvance ? `${stopped} Changes made so far were preserved.` : stopped;
 }
-
-export { failureCodeForStopReason };
 
 export async function finalizeCompletedRun(input: {
   readonly persistence: AgentPersistenceService;

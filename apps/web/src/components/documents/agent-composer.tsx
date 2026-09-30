@@ -10,13 +10,13 @@ import type { ListedDocument } from "@/lib/api";
 import { focusRingClass } from "@/lib/focus-scope";
 import { cn } from "@/lib/utils";
 
-export type ComposerTag = {
+type ComposerTag = {
   readonly id: string;
   readonly name: string;
   readonly format: string;
 };
 
-export type AgentComposerProps = {
+type AgentComposerProps = {
   byokModelLabel: string | null;
   draft: string;
   onDraftChange: (value: string) => void;
