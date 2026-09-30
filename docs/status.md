@@ -14,7 +14,9 @@ _Read this before starting any work. Keep it a concise current-state handoff, no
 
 ## Just Completed
 
-* **Cleanup Phase 3A (readability)** — extracted first-turn/context prep from `apps/api/src/agent/execution.ts` into `agent-context.ts` (`loadHistory`, `prepareContext`, retrieval load, `firstTurnContextProjection`, `composeProjectMessages`). Run lifecycle orchestration stays in `execution.ts`. Behavior-preserving; no agent-core-v3 / retrieval semantics / AGENTS.md changes. Next seam candidate: event relay + terminal settlement inside `runExecution`.
+* **Cleanup Phase 3B (readability)** — extracted event relay/report logging (`run-events.ts`: transcript, `createRunEventHandler`, `emitRunReport`, `summarizeError`) and terminal settlement (`run-settlement.ts`: finalize/settle failure, lease keep/release, `boundedStopMessage`/`describeRunFailure`) from `execution.ts`. Restored Phase 3A `workspace_retrieval_skipped` sanitization via `summarizeError`. Behavior-preserving; AGENTS.md unchanged. Next seam: tool construction / DIRECT wiring, or frontend panel files.
+
+* **Cleanup Phase 3A (readability)** — extracted first-turn/context prep from `apps/api/src/agent/execution.ts` into `agent-context.ts` (`loadHistory`, `prepareContext`, retrieval load, `firstTurnContextProjection`, `composeProjectMessages`). Run lifecycle orchestration stays in `execution.ts`. Behavior-preserving; no agent-core-v3 / retrieval semantics / AGENTS.md changes.
 
 * **Cleanup Phase 2 (dead code only)** — removed unused symbols/helpers across web+api+engine-client fixtures (orphan poll helper, tab/storage/AI wrappers, superseded agent-progress helpers, unused log formatters, unused execution `.execute` wrapper, unused DOCX fixture). Trimmed matching tests. No architecture/agent/document behavior changes. Deferred: agent-core-v2, mock engine/contracts, `/dev/agent-panel-ux`, auth CLI, wasm emission, public Cloud API aliases. Remaining findings are mostly MEDIUM/LOW — stop further dead-code sweeps; next passes should be readability.
 
@@ -125,6 +127,8 @@ _Read this before starting any work. Keep it a concise current-state handoff, no
 
 ## Verification Status
 
+* Cleanup Phase 3B: API focused lifecycle/isolation/version/report/retrieval/projection/operating-instruction tests (133), API typecheck, `git diff --check` pass. Restored `workspace_retrieval_skipped` summarizeError sanitization. No behavior change intended.
+
 * Cleanup Phase 3A: API focused agent context/retrieval/isolation/version/report/operating-instruction tests (127), API typecheck, `git diff --check` pass. No behavior change intended.
 
 * Cleanup Phase 2: web focused (65), API agent-run-log/report (20), web+api+engine-client typechecks, `git diff --check` pass. No behavior change intended.
@@ -187,7 +191,7 @@ _Read this before starting any work. Keep it a concise current-state handoff, no
 
 ## Recommended Next Step
 
-Continue readability on `execution.ts` (event relay / terminal settlement) or start `document-agent-panel.tsx` / `workspace-ide.tsx` / `routes/agent.ts`. Update `AGENTS.md` only after the full cleanup series finishes.
+`execution.ts` is much more readable (~900 lines). Optional further split: tool construction / DIRECT read-guard wiring. Or start frontend readability (`document-agent-panel.tsx`, `workspace-ide.tsx`) / `routes/agent.ts`. Update `AGENTS.md` only after the full cleanup series finishes.
 
 
 

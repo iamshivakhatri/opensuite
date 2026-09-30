@@ -28,6 +28,7 @@ import type {
   AgentPersistenceService,
   AgentThreadContextCheckpoint,
 } from "./persistence.js";
+import { summarizeError } from "./run-events.js";
 
 export type PreparedContext = {
   readonly messages: ModelMessage[];
@@ -311,11 +312,7 @@ async function loadRetrievedContext(input: {
       },
     };
   } catch (error) {
-    const reason =
-      error instanceof Error
-        ? `${error.name || "Error"}: ${error.message}`.slice(0, 400)
-        : String(error).slice(0, 400);
-    console.warn(`[agent-v3] workspace_retrieval_skipped reason=${reason}`);
+    console.warn(`[agent-v3] workspace_retrieval_skipped reason=${summarizeError(error)}`);
     return undefined;
   }
 }

@@ -5,10 +5,8 @@ import {
   isSuccessfulStop,
   runAgent,
   runModel,
-  type AgentEvent as CoreAgentEvent,
   type AgentRunMetrics,
   type AgentToolSet,
-  type StopReason,
   type V3Model,
 } from "@opensuite/agent-core-v3";
 import { jsonSchema } from "ai";
@@ -19,26 +17,14 @@ import type { CredentialSource } from "../ai-preferences/types.js";
 import type { ProviderCredentialProvider } from "../credentials/types.js";
 import type { DocumentService } from "../documents/service.js";
 import type { ManagedUsagePolicy } from "../managed-usage-policy.js";
-import {
-  productionModelPricingRegistry,
-} from "../model-usage/pricing.js";
 import type { ModelUsageService } from "../model-usage/service.js";
-import {
-  composeAgentRunReport,
-  logAgentRunReport,
-  type AgentRunReport,
-  type AgentRunReportSink,
-  type AgentRunReportRetrieval,
-  type DocumentTransition,
-  type DocumentVersionAdvance,
+import type {
+  AgentRunReportSink,
+  DocumentVersionAdvance,
 } from "./agent-run-report.js";
 import {
   formatDocumentSaved,
   formatDocumentTarget,
-  formatModelTurnCompleted,
-  formatModelTurnFirstStreamPart,
-  formatModelTurnStarted,
-  formatToolFinished,
   formatValidationChecks,
   logAgentLine,
   logAgentRunBanner,
@@ -48,8 +34,23 @@ import {
   loadHistory,
   prepareContext,
 } from "./agent-context.js";
+import {
+  createRunEventHandler,
+  createTranscriptCollector,
+  emitRunReport,
+} from "./run-events.js";
+import {
+  MAX_MODEL_TURNS,
+  boundedStopMessage,
+  failureCodeForStopReason,
+  finalizeCompletedRun,
+  keepLeaseUntilFinished,
+  persistTranscript,
+  releaseLease,
+  settleTerminalRunFailure,
+} from "./run-settlement.js";
 import { createPrimaryDocxTools } from "./docx-tools.js";
-import { verifyDocumentUpdate, type DocumentCheck } from "./document-verification.js";
+import { verifyDocumentUpdate } from "./document-verification.js";
 import { SlimDocumentStructureCache } from "./document-retrieval.js";
 import { generateThreadTitle } from "./thread-title.js";
 import { estimateTokens } from "./context-projection.js";
@@ -60,91 +61,16 @@ import {
   type AgentMessage,
   type AgentPersistenceService,
   type AgentRun,
-  type AgentStepKind,
-  type AgentStepStatus,
   type AgentThread,
 } from "./persistence.js";
 import {
-  AGENT_EXECUTION_LEASE_RENEW_MS,
-  type AgentExecutionLease,
   type AgentExecutionLeaseService,
 } from "./execution-lease.js";
 
 export { composeProjectMessages, firstTurnContextProjection } from "./agent-context.js";
+export { boundedStopMessage, describeRunFailure } from "./run-settlement.js";
 
-const MAX_MODEL_TURNS = 20;
 const isFinishTool = (name: string | undefined) => name === "finish" || name === "finish_with_input_needed";
-
-type TranscriptEntry = {
-  readonly kind: AgentStepKind;
-  readonly status: AgentStepStatus;
-  readonly name: string;
-  readonly summary: string;
-  readonly output?: Record<string, unknown>;
-};
-
-function createTranscriptCollector() {
-  const entries: TranscriptEntry[] = [];
-  let narration = "";
-  const flushNarration = () => {
-    const summary = narration.trim();
-    narration = "";
-    if (summary) entries.push({ kind: "narration", status: "completed", name: "Assistant narration", summary });
-  };
-  return {
-    text(delta: string) {
-      narration += delta;
-    },
-    toolStarted(toolName?: string) {
-      // Final answer text before `finish` stays buffered so finish(finalText)
-      // can drop it; flushing here would duplicate agent_message content.
-      if (isFinishTool(toolName)) return;
-      flushNarration();
-    },
-    toolFinished(toolName: string, status: AgentStepStatus, skipped = false, error?: string) {
-      entries.push({
-        kind: toolName === "document.inspect" ? "inspect" : "tool",
-        status,
-        name: toolName,
-        summary: skipped ? "Skipped" : status === "completed" ? "Completed" : `Failed${error ? `: ${error.slice(0, 120)}` : ""}`,
-      });
-    },
-    finish(finalText?: string) {
-      const remaining = narration.trim();
-      narration = "";
-      if (
-        remaining &&
-        remaining.replace(/\s+/g, " ") !== (finalText ?? "").trim().replace(/\s+/g, " ")
-      ) {
-        entries.push({ kind: "narration", status: "completed", name: "Assistant narration", summary: remaining });
-      }
-    },
-    validation(checks: readonly DocumentCheck[]) {
-      entries.push({ kind: "validation", status: "completed", name: "Document validation", summary: "Document validation", output: { checks } });
-    },
-    entries() {
-      return entries;
-    },
-  };
-}
-
-async function persistTranscript(
-  persistence: AgentPersistenceService,
-  ownerUserId: string,
-  runId: string,
-  entries: readonly TranscriptEntry[],
-): Promise<void> {
-  if (entries.length === 0) return;
-  try {
-    await persistence.appendSteps({
-      runId,
-      ownerUserId,
-      steps: entries.map((entry, sequence) => ({ ...entry, sequence })),
-    });
-  } catch (error) {
-    console.error(`[agent] run=${runId.slice(0, 8)} transcript_persist_failed reason=${summarizeError(error)}`);
-  }
-}
 
 export type AgentEvent =
   | { readonly type: "agent.started"; readonly runId: string; readonly at: string }
@@ -738,8 +664,6 @@ async function runExecution(input: {
     };
     let result;
     try {
-      const toolStartedAt = new Map<string, number>();
-      let turnSawStreamPart = false;
       result = await executeAgent({
         model: input.model.model,
         system,
@@ -752,70 +676,14 @@ async function runExecution(input: {
         ...(input.model.outputTokenLimit !== undefined
           ? { maxOutputTokens: input.model.outputTokenLimit }
           : {}),
-        onEvent: (event) => {
-          if (event.type === "model_turn_started") {
-            turnSawStreamPart = false;
-            logAgentLine(formatModelTurnStarted({
-              turn: event.turn,
-              model: modelLabel,
-              maxOutputTokens: input.model.outputTokenLimit,
-            }));
-          } else if (event.type === "model_turn_first_stream_part") {
-            turnSawStreamPart = true;
-            logAgentLine(
-              formatModelTurnFirstStreamPart({ turn: event.turn, kind: event.kind, elapsedMs: event.elapsedMs }),
-            );
-          } else if (event.type === "model_turn_completed") {
-            logAgentLine(
-              formatModelTurnCompleted({
-                turn: event.turn,
-                durationMs: event.durationMs,
-                inputTokens: event.inputTokens,
-                cachedInputTokens: event.cachedInputTokens,
-                outputTokens: event.outputTokens,
-                reasoningTokens: event.reasoningTokens,
-                toolNames: event.toolNames,
-                finishReason: event.finishReason,
-                sawStreamPart: turnSawStreamPart,
-              }),
-            );
-          } else if (event.type === "tool_started") {
-            if (!isFinishTool(event.toolName)) {
-              toolStartedAt.set(event.toolCallId, Date.now());
-            }
-          } else if (
-            event.type === "tool_completed" ||
-            event.type === "tool_failed" ||
-            event.type === "tool_skipped"
-          ) {
-            if (!isFinishTool(event.toolName)) {
-              const elapsed = Date.now() - (toolStartedAt.get(event.toolCallId) ?? Date.now());
-              const code =
-                event.type === "tool_failed"
-                  ? event.error
-                  : event.type === "tool_skipped"
-                    ? event.reason
-                    : undefined;
-              logAgentLine(
-                formatToolFinished({
-                  toolName: event.toolName,
-                  ok: event.type === "tool_completed",
-                  durationMs: elapsed,
-                  skipped: event.type === "tool_skipped",
-                  ...(code && /^[A-Z][A-Z0-9_]{2,63}$/.test(code)
-                    ? { code }
-                    : event.type === "tool_failed"
-                      ? { code: "TOOL_FAILED" }
-                      : code
-                        ? { code }
-                        : {}),
-                }),
-              );
-              toolStartedAt.delete(event.toolCallId);
-            }
-          }
-          return relayEvent(event, input.liveEvents, input.run.id, messageId, transcript);
-        },
+        onEvent: createRunEventHandler({
+          liveEvents: input.liveEvents,
+          runId: input.run.id,
+          messageId,
+          transcript,
+          modelLabel,
+          maxOutputTokens: input.model.outputTokenLimit,
+        }),
       });
       await flushWorking();
       await verifySavedDocument(result.metrics);
@@ -1027,482 +895,6 @@ export function guardRepeatedReads(
     };
   }
   return { setCompleteDirect(value: boolean) { direct = value; directVersion = value ? currentState() : null; }, suppressedCount() { return suppressed; } };
-}
-
-function failureCodeForStopReason(stopReason: StopReason): string {
-  if (stopReason === "max_turns") return "AGENT_MAX_TURNS";
-  if (stopReason === "deadline") return "AGENT_DEADLINE";
-  if (stopReason === "output_limit") return "AGENT_OUTPUT_LIMIT";
-  return "AGENT_EXECUTION_FAILED";
-}
-
-export function boundedStopMessage(
-  stopReason: StopReason,
-  hasVersionAdvance: boolean,
-): string {
-  const stopped = stopReason === "max_turns"
-    ? `Reached the ${MAX_MODEL_TURNS} AI-turn limit before completing the task.`
-    : stopReason === "output_limit"
-      ? "The AI response reached its output limit before completing the task."
-    : "Stopped before the task could be completed.";
-  return hasVersionAdvance ? `${stopped} Changes made so far were preserved.` : stopped;
-}
-
-async function emitRunReport(input: {
-  readonly runId: string;
-  readonly instruction: string;
-  readonly model: ResolvedV3ExecutionModel;
-  readonly metrics: AgentRunMetrics | undefined;
-  readonly stopReason?: StopReason;
-  readonly cancelled: boolean;
-  readonly thrown: boolean;
-  readonly initialDocumentId?: string | null;
-  readonly finalDocumentId?: string | null;
-  readonly initialVersionId: string | null;
-  readonly finalVersionId?: string | null;
-  readonly workingMutationCount?: number;
-  readonly versionAdvances: readonly DocumentVersionAdvance[];
-  readonly documentTransitions?: readonly DocumentTransition[];
-  readonly retrieval?: AgentRunReportRetrieval;
-  readonly context: {
-    readonly checkpointUsed: boolean;
-    readonly checkpointThroughMessageId?: string;
-    readonly historyQueryMode: "recent" | "post_checkpoint";
-    readonly historicalMessagesLoaded: number;
-    readonly historicalMessagesAfterCheckpoint: number;
-    readonly historicalMessagesProjected: number;
-    readonly historicalCharactersLoaded: number;
-    readonly historicalCharactersProjected: number;
-    readonly estimatedHistoricalTokens: number;
-    readonly historyWasTrimmed: boolean;
-    readonly modelContextLength?: number;
-    readonly outputReserveTokens?: number;
-    readonly continuationReserveTokens?: number;
-    readonly safetyMarginTokens?: number;
-    readonly safeInputBudgetTokens?: number;
-    readonly estimatedInputTokens: number;
-    readonly approximateTokenBudgetApplied: boolean;
-    readonly historyTrimmedByTokenBudget: boolean;
-    readonly inRunObservationsCompacted?: number;
-    readonly estimatedInRunTokensBefore?: number;
-    readonly estimatedInRunTokensAfter?: number;
-    readonly maxProjectedInputTokens?: number;
-    readonly redundantReadSuppressedCount?: number;
-    readonly continuationPreviousRunId?: string;
-  };
-  readonly sink?: AgentRunReportSink;
-}): Promise<void> {
-  if (!input.metrics) return;
-  let report: AgentRunReport;
-  try {
-    const attribution = input.model.usageAttribution;
-    const pricing =
-      attribution !== undefined
-        ? productionModelPricingRegistry.lookup(
-            attribution.provider,
-            attribution.model,
-          )
-        : null;
-    report = composeAgentRunReport({
-      runId: input.runId,
-      instruction: input.instruction,
-      ...(attribution !== undefined
-        ? { provider: attribution.provider, model: attribution.model }
-        : {}),
-      metrics: input.metrics,
-      ...(input.stopReason !== undefined
-        ? { stopReason: input.stopReason }
-        : {}),
-      cancelled: input.cancelled,
-      thrown: input.thrown,
-      initialDocumentId: input.initialDocumentId,
-      finalDocumentId: input.finalDocumentId,
-      initialVersionId: input.initialVersionId,
-      finalVersionId: input.finalVersionId,
-      workingMutationCount: input.workingMutationCount,
-      versionAdvances: input.versionAdvances,
-      documentTransitions: input.documentTransitions ?? [],
-      ...(input.retrieval !== undefined ? { retrieval: input.retrieval } : {}),
-      context: input.context,
-      pricing,
-      ...(attribution !== undefined
-        ? { pricingProvider: attribution.provider }
-        : {}),
-    });
-  } catch (error) {
-    console.error(
-      `[agent] run=${input.runId.slice(0, 8)} run_report_failed reason=${summarizeError(error)}`,
-    );
-    return;
-  }
-  try {
-    logAgentRunReport(report);
-  } catch (error) {
-    console.error(
-      `[agent] run=${input.runId.slice(0, 8)} run_report_log_failed reason=${summarizeError(error)}`,
-    );
-  }
-  try {
-    void Promise.resolve(input.sink?.(report)).catch((error: unknown) => {
-      console.error(
-        `[agent] run=${input.runId.slice(0, 8)} run_report_sink_failed reason=${summarizeError(error)}`,
-      );
-    });
-  } catch (error) {
-    console.error(
-      `[agent] run=${input.runId.slice(0, 8)} run_report_sink_failed reason=${summarizeError(error)}`,
-    );
-  }
-}
-
-async function relayEvent(
-  event: CoreAgentEvent,
-  sink: AgentEventSink | undefined,
-  runId: string,
-  messageId: string,
-  transcript: ReturnType<typeof createTranscriptCollector>,
-): Promise<void> {
-  if (event.type === "text_delta") transcript.text(event.delta);
-  if (event.type === "tool_started") transcript.toolStarted(event.toolName);
-  if (event.type === "tool_completed") transcript.toolFinished(event.toolName, "completed");
-  if (event.type === "tool_failed") transcript.toolFinished(event.toolName, "failed", false, event.error);
-  if (event.type === "tool_skipped") transcript.toolFinished(event.toolName, "cancelled", true);
-  if (!sink) return;
-  const at = new Date().toISOString();
-  if (event.type === "started") return sink.emit({ type: "agent.started", runId, at });
-  if (event.type === "text_delta") return sink.emit({ type: "message.delta", runId, messageId, delta: event.delta, at });
-  if (event.type === "tool_started") {
-    return sink.emit({
-      type: "tool.started",
-      runId,
-      at,
-      toolCallId: event.toolCallId,
-      toolName: event.toolName,
-    });
-  }
-  if (event.type === "tool_completed") {
-    return sink.emit({
-      type: "tool.completed",
-      runId,
-      at,
-      toolCallId: event.toolCallId,
-      toolName: event.toolName,
-    });
-  }
-  if (event.type === "tool_failed") {
-    return sink.emit({
-      type: "tool.failed",
-      runId,
-      at,
-      toolCallId: event.toolCallId,
-      toolName: event.toolName,
-      error: event.error,
-    });
-  }
-  // Map skips onto the existing tool.failed product event (no frontend change).
-  if (event.type === "tool_skipped") {
-    return sink.emit({
-      type: "tool.failed",
-      runId,
-      at,
-      toolCallId: event.toolCallId,
-      toolName: event.toolName,
-      error: event.reason,
-    });
-  }
-  if (event.type === "completed") return sink.emit({ type: "message.completed", runId, messageId, content: event.text, at });
-}
-
-async function finalizeCompletedRun(input: {
-  readonly persistence: AgentPersistenceService;
-  readonly ownerUserId: string;
-  readonly threadId: string;
-  readonly runId: string;
-  readonly content: string;
-  readonly inputNeeded?: boolean;
-}): Promise<{ run: AgentRun; assistantMessage: AgentMessage | null }> {
-  return input.persistence.withTransaction(async (tx) => {
-    const content = input.content.trim();
-    const assistantMessage = content
-      ? await input.persistence.appendMessage({ threadId: input.threadId, ownerUserId: input.ownerUserId, role: "assistant", content }, tx)
-      : null;
-    const run = await input.persistence.updateRunStatus(
-      {
-        runId: input.runId,
-        ownerUserId: input.ownerUserId,
-        status: input.inputNeeded ? "completed_with_input_needed" : "completed",
-        resultMessageId: assistantMessage?.id ?? null,
-      },
-      tx,
-    );
-    return { run, assistantMessage };
-  });
-}
-
-async function settleTerminalRunFailure(input: {
-  readonly error?: unknown;
-  /** A normal runtime boundary, not an unexpected exception. */
-  readonly expectedStop?: StopReason;
-  readonly cancelled: boolean;
-  readonly persistence: AgentPersistenceService;
-  readonly ownerUserId: string;
-  readonly thread: AgentThread;
-  readonly userMessage: AgentMessage;
-  readonly run: AgentRun;
-  readonly liveEvents?: AgentEventSink;
-  readonly failureCode?: string;
-  readonly failureMessage?: string;
-  readonly transcript?: readonly TranscriptEntry[];
-}): Promise<AgentExecutionResult> {
-  const runShort = input.run.id.slice(0, 8);
-  const knownFailure = describeRunFailure(input.error, input.transcript ?? []);
-  const failureCode = input.failureCode ?? knownFailure?.code ?? "AGENT_EXECUTION_FAILED";
-  const failureMessage = input.failureMessage ?? knownFailure?.message ?? "Agent execution failed. Please try again.";
-
-  // Idempotent: if already terminal (e.g. outer safety net after settle),
-  // do not attempt another status transition or duplicate terminal SSE.
-  let alreadyTerminal = false;
-  let assistantMessage: AgentMessage | null = null;
-  try {
-    const current = await input.persistence.getRun({
-      runId: input.run.id,
-      ownerUserId: input.ownerUserId,
-    });
-    if (
-      current &&
-      (current.status === "completed" ||
-        current.status === "completed_with_input_needed" ||
-        current.status === "failed" ||
-        current.status === "cancelled")
-    ) {
-      alreadyTerminal = true;
-    }
-  } catch {
-    // fall through and attempt settle
-  }
-
-  if (!alreadyTerminal) {
-    try {
-      if (input.expectedStop && !input.cancelled) {
-        assistantMessage = await input.persistence.withTransaction(async (tx) => {
-          const message = await input.persistence.appendMessage({
-            threadId: input.thread.id,
-            ownerUserId: input.ownerUserId,
-            role: "assistant",
-            content: failureMessage,
-          }, tx);
-          await input.persistence.updateRunStatus({
-            runId: input.run.id,
-            ownerUserId: input.ownerUserId,
-            status: "failed",
-            errorCode: failureCode,
-            errorMessage: failureMessage,
-            resultMessageId: message.id,
-          }, tx);
-          return message;
-        });
-      } else {
-        await updateRunAfterError(
-          input.persistence,
-          input.ownerUserId,
-          input.run.id,
-          input.cancelled,
-          failureCode,
-          failureMessage,
-        );
-      }
-    } catch (finalizeError) {
-      console.error(
-        `[agent] run=${runShort} terminal_finalize_failed reason=${summarizeError(finalizeError)}`,
-      );
-    }
-
-    await persistTranscript(
-      input.persistence,
-      input.ownerUserId,
-      input.run.id,
-      input.transcript ?? [],
-    );
-
-    try {
-      await input.liveEvents?.emit(
-        input.cancelled
-          ? { type: "agent.cancelled", runId: input.run.id, at: new Date().toISOString() }
-          : {
-              type: "agent.failed",
-              runId: input.run.id,
-              at: new Date().toISOString(),
-              code: failureCode,
-            },
-      );
-    } catch (emitError) {
-      console.error(
-        `[agent] run=${runShort} terminal_emit_failed reason=${summarizeError(emitError)}`,
-      );
-    }
-  }
-
-  if (!input.cancelled && input.expectedStop === undefined) {
-    console.error(`[agent] run=${runShort} failed reason=${summarizeError(input.error)}`);
-  }
-
-  return {
-    thread: input.thread,
-    userMessage: input.userMessage,
-    run: await loadTerminalRun(
-      input.persistence,
-      input.ownerUserId,
-      input.run,
-      input.cancelled,
-      failureCode,
-      failureMessage,
-    ),
-    assistantMessage,
-  };
-}
-
-/** Only known, safe reasons reach persisted run status and the Agent Panel. */
-export function describeRunFailure(error: unknown, transcript: readonly TranscriptEntry[]): { code: string; message: string } | null {
-  const code = error && typeof error === "object" && "code" in error ? error.code : undefined;
-  if (code === "AGENT_PERSISTENCE_FAILED") {
-    return { code, message: "Could not save agent document changes. The previous version is unchanged." };
-  }
-  if (code === "MANAGED_USAGE_DISABLED" || code === "MANAGED_TRIAL_DISABLED") {
-    return { code: String(code), message: "Managed AI is unavailable. Add your own API key in AI & Models settings." };
-  }
-  if (code === "MANAGED_USAGE_EXHAUSTED" || code === "MANAGED_TRIAL_EXHAUSTED") {
-    return { code: String(code), message: "Managed AI credits are exhausted. Add your own API key in AI & Models settings." };
-  }
-  if (code === "MANAGED_USAGE_ACCOUNTING_FAILED" || code === "MANAGED_TRIAL_ACCOUNTING_FAILED") {
-    return { code: String(code), message: "Managed AI is temporarily unavailable. Use your own API key or try again later." };
-  }
-  if (transcript.some((entry) => entry.status === "failed" && entry.summary.includes("NO_ACTIVE_DOCUMENT"))) {
-    return { code: "NO_ACTIVE_DOCUMENT", message: "No document was active, and the agent tried to edit before creating one. Retry the request or open a document first." };
-  }
-  if (error instanceof Error && /Invalid 'input\[\d+\]\.name'/.test(error.message)) {
-    return { code: "MODEL_TOOL_NAME_REJECTED", message: "The AI provider rejected a document tool response. Please try another model or contact support." };
-  }
-  return null;
-}
-
-function summarizeError(error: unknown): string {
-  const parts: string[] = [];
-  let current: unknown = error;
-  let depth = 0;
-  while (current !== undefined && current !== null && depth < 4) {
-    depth += 1;
-    if (current instanceof Error) {
-      const name = current.name || "Error";
-      // Prefer the underlying DB/driver message over Drizzle's "Failed query: …"
-      // wrapper (which dumps SQL). Never include the full query text.
-      const message = sanitizeErrorMessage(current.message);
-      const code =
-        "code" in current &&
-        (typeof (current as { code?: unknown }).code === "string" ||
-          typeof (current as { code?: unknown }).code === "number")
-          ? String((current as { code: string | number }).code)
-          : undefined;
-      parts.push(
-        code ? `${name}: ${message} (code=${code})` : `${name}: ${message}`,
-      );
-      current = current.cause;
-      continue;
-    }
-    if (typeof current === "object") {
-      const record = current as Record<string, unknown>;
-      const code =
-        typeof record.code === "string" || typeof record.code === "number"
-          ? String(record.code)
-          : undefined;
-      const detail =
-        typeof record.detail === "string"
-          ? sanitizeErrorMessage(record.detail)
-          : typeof record.message === "string"
-            ? sanitizeErrorMessage(record.message)
-            : undefined;
-      if (code || detail) {
-        parts.push([code ? `code=${code}` : null, detail].filter(Boolean).join(" "));
-      }
-      current = "cause" in record ? record.cause : undefined;
-      continue;
-    }
-    parts.push(sanitizeErrorMessage(String(current)));
-    break;
-  }
-  const summary = parts.join(" | ");
-  return summary.slice(0, 400) || "unknown error";
-}
-
-/** Strip SQL bodies / connection strings from loggable error text. */
-function sanitizeErrorMessage(message: string): string {
-  let text = message;
-  // Drizzle wraps: "Failed query: select …\nparams: …"
-  if (/^Failed query:/i.test(text)) {
-    const relation =
-      text.match(/\b(?:relation|table)\s+"?([a-zA-Z0-9_.]+)"?/i)?.[1] ??
-      text.match(/\bfrom\s+"([a-zA-Z0-9_]+)"/i)?.[1];
-    text = relation
-      ? `Failed query involving ${relation}`
-      : "Failed database query";
-  }
-  text = text.replace(/postgresql:\/\/[^\s]+/gi, "postgresql://***");
-  text = text.replace(/\nparams:[\s\S]*$/i, "");
-  return text.slice(0, 200);
-}
-
-async function updateRunAfterError(
-  persistence: AgentPersistenceService,
-  ownerUserId: string,
-  runId: string,
-  cancelled: boolean,
-  failureCode: string,
-  failureMessage: string,
-): Promise<void> {
-  await persistence.updateRunStatus({
-    runId,
-    ownerUserId,
-    status: cancelled ? "cancelled" : "failed",
-    ...(cancelled
-      ? {}
-      : { errorCode: failureCode, errorMessage: failureMessage }),
-  });
-}
-
-async function loadTerminalRun(
-  persistence: AgentPersistenceService,
-  ownerUserId: string,
-  fallback: AgentRun,
-  cancelled: boolean,
-  failureCode: string,
-  failureMessage: string,
-): Promise<AgentRun> {
-  const terminalStatus = cancelled ? "cancelled" : "failed";
-  try {
-    const run = await persistence.getRun({ runId: fallback.id, ownerUserId });
-    if (run?.status === terminalStatus) return run;
-  } catch {
-    // fall through to in-memory terminal snapshot
-  }
-  return {
-    ...fallback,
-    status: terminalStatus,
-    completedAt: new Date().toISOString(),
-    errorCode: cancelled ? null : failureCode,
-    errorMessage: cancelled ? null : failureMessage,
-  };
-}
-
-function keepLeaseUntilFinished<T>(leases: AgentExecutionLeaseService, lease: AgentExecutionLease, result: Promise<T>): Promise<T> {
-  const timer = setInterval(() => void leases.renew(lease).catch(() => undefined), AGENT_EXECUTION_LEASE_RENEW_MS);
-  timer.unref?.();
-  return result.finally(async () => {
-    clearInterval(timer);
-    await releaseLease(leases, lease);
-  });
-}
-
-async function releaseLease(leases: AgentExecutionLeaseService, lease: AgentExecutionLease): Promise<void> {
-  await leases.release(lease).catch(() => undefined);
 }
 
 export type AgentExecutionService = ReturnType<typeof createAgentExecutionService>;
