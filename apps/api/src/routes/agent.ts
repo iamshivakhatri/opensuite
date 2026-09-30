@@ -624,53 +624,28 @@ export function registerAgentRoutes(
     });
 
     if (sub.status === "not_found") {
-        reply.raw.write(
-          formatSseEvent({
-            id: 0,
-            runId: run.id,
-            type: "agent.failed",
-            at: new Date().toISOString(),
-            data: { code: "RUN_NOT_FOUND", message: "Agent run not found" },
-          }),
-        );
-        cleanup("not_found");
-        return;
-      }
+      reply.raw.write(
+        formatSseEvent({
+          id: 0,
+          runId: run.id,
+          type: "agent.failed",
+          at: new Date().toISOString(),
+          data: { code: "RUN_NOT_FOUND", message: "Agent run not found" },
+        }),
+      );
+      cleanup("not_found");
+      return;
+    }
 
-      if (sub.status === "not_live") {
-      // Live hub gone (API restart / process crash). If durable status is still
-      // non-terminal, mark the run failed and emit a terminal event so the UI
-      // stops reconnecting / polling.
-      if (
-        run.status !== "completed" &&
-        run.status !== "completed_with_input_needed" &&
-        run.status !== "failed" &&
-        run.status !== "cancelled"
-      ) {
-        let durable = run;
-        try {
-          durable = await persistence.updateRunStatus({
-            runId: run.id,
-            ownerUserId: user.id,
-            status: "failed",
-            errorCode: "RUN_ABANDONED",
-            errorMessage:
-              "Agent run is no longer live (process exit or restart)",
-          });
-          // Lease outlives the in-memory run after crash/restart; drop it when
-          // nothing else is live for this user so new runs are not blocked.
-          if (lease && !runManager.hasLiveForOwner(user.id)) {
-            await lease.releaseUser(user.id).catch(() => undefined);
-          }
-        } catch {
-          const refreshed = await persistence.getRun({
-            runId: run.id,
-            ownerUserId: user.id,
-          });
-          if (refreshed) {
-            durable = refreshed;
-          }
-        }
+    if (sub.status === "not_live") {
+      // Live hub gone (API restart / process crash). Repair durable status if
+      // still non-terminal, then emit a terminal event so the UI stops retrying.
+      if (!terminalStatuses.has(run.status)) {
+        const durable = await runManager.repairAbandonedRun({
+          run,
+          ownerUserId: user.id,
+          ...(lease ? { lease } : {}),
+        });
         reply.raw.write(
           formatSseEvent({
             id: 0,

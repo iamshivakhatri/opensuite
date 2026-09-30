@@ -14,6 +14,8 @@ _Read this before starting any work. Keep it a concise current-state handoff, no
 
 ## Just Completed
 
+* **Cleanup Phase 5B (API agent route readability)** — moved abandoned-run durable repair (`RUN_ABANDONED` status write + orphan lease release) from SSE `GET …/events` into `run-manager.repairAbandonedRun`. Route keeps auth/validate/subscribe/stream/SSE terminal synthesis; DB/status-repair details no longer dominate. Behavior-preserving; AGENTS.md unchanged.
+
 * **Cleanup Phase 5A (web API client)** — shared `api-client.ts` (`ApiError`, `apiFetch`, `parseApiError`) used by `api.ts`, `ai-settings-api.ts`, `storage-api.ts`. One error model; AI/storage now get `API_UNREACHABLE` + `DATABASE_UNAVAILABLE` like the main client. Feature operation files stay separate. `api-health` unchanged (soft-fail). AGENTS.md unchanged.
 
 * **Cleanup Phase 4B (readability)** — extracted agent composer UI from `document-agent-panel.tsx` into nearby `agent-composer.tsx` (`AgentComposer`; local mention/keyboard/resize). Panel keeps draft/tags/attachments state + submit/stop/SSE/run ownership. Behavior-preserving; AGENTS.md unchanged. Panel is mostly orchestration now; optional next: run/SSE attach block, or stop frontend splits.
@@ -133,6 +135,8 @@ _Read this before starting any work. Keep it a concise current-state handoff, no
 
 ## Verification Status
 
+* Cleanup Phase 5B: `run-manager.repair` (4) + working-document route (1) + execution.isolation (38), API typecheck, `git diff --check` pass. No behavior change intended.
+
 * Cleanup Phase 5A: `api-client` + `api-base-url` tests (8), web typecheck, `git diff --check` pass. AI/storage feature tests still hit pre-existing Node strip-types extensionless-import failures when loading the module graph; shared transport covered by `api-client.test.ts`.
 
 * Cleanup Phase 4B: web agent-progress/messages/markdown/prompt-attachments tests (54), web typecheck, `git diff --check` pass. No behavior change intended.
@@ -203,7 +207,7 @@ _Read this before starting any work. Keep it a concise current-state handoff, no
 
 ## Recommended Next Step
 
-Optional: split large `api.ts` operation groups only if navigation still hurts. Else continue API cleanup (`execution.ts` tool/DIRECT wiring, `routes/agent.ts`) or commit Phase 4B+5A frontend cleanup. Update `AGENTS.md` only after the full cleanup series finishes.
+Optional: stop agent-route splits — file is mostly HTTP routing now. Else continue API cleanup (`execution.ts` tool/DIRECT wiring) or commit Phase 4B+5A+5B. Update `AGENTS.md` only after the full cleanup series finishes.
 
 
 

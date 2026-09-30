@@ -4,6 +4,7 @@ import type {
   AgentExecutionResult,
   AgentExecutionService,
 } from "./execution.js";
+import type { AgentExecutionLeaseService } from "./execution-lease.js";
 import type {
   AgentMessage,
   AgentPersistenceService,
@@ -381,6 +382,43 @@ export function createAgentRunManager(deps: AgentRunManagerDeps) {
     await Promise.all(pending);
   }
 
+  /**
+   * Durable repair when SSE finds a non-terminal run with no live hub
+   * (API restart / process crash). Marks failed as RUN_ABANDONED and
+   * releases the owner lease when nothing else is live for that user.
+   */
+  async function repairAbandonedRun(input: {
+    run: AgentRun;
+    ownerUserId: string;
+    lease?: AgentExecutionLeaseService;
+  }): Promise<AgentRun> {
+    let durable = input.run;
+    try {
+      durable = await deps.persistence.updateRunStatus({
+        runId: input.run.id,
+        ownerUserId: input.ownerUserId,
+        status: "failed",
+        errorCode: "RUN_ABANDONED",
+        errorMessage:
+          "Agent run is no longer live (process exit or restart)",
+      });
+      // Lease outlives the in-memory run after crash/restart; drop it when
+      // nothing else is live for this user so new runs are not blocked.
+      if (input.lease && !hasLiveForOwner(input.ownerUserId)) {
+        await input.lease.releaseUser(input.ownerUserId).catch(() => undefined);
+      }
+    } catch {
+      const refreshed = await deps.persistence.getRun({
+        runId: input.run.id,
+        ownerUserId: input.ownerUserId,
+      });
+      if (refreshed) {
+        durable = refreshed;
+      }
+    }
+    return durable;
+  }
+
   return {
     startRun,
     subscribeEvents,
@@ -391,6 +429,7 @@ export function createAgentRunManager(deps: AgentRunManagerDeps) {
     cancel,
     waitForRun,
     waitForIdle,
+    repairAbandonedRun,
     /** Test helper */
     _activeCount: () => active.size,
   };
