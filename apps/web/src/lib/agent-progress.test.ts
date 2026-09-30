@@ -7,18 +7,12 @@ import {
   agentRunDurationMs,
   detailsAffordanceLabel,
   formatProgressElapsed,
-  groupProgressLines,
   latestProgressHeadline,
   presentAgentRun,
-  progressElapsedLabel,
-  progressMarker,
-  progressSummaryLabel,
   projectActivityRows,
   reduceAgentProgress,
   reduceLiveTranscript,
-  reduceLiveWorking,
   technicalProgressLines,
-  thoughtForLabel,
   visibleAgentProgress,
   type AgentProgressLine,
   type LiveTranscriptEntry,
@@ -86,22 +80,6 @@ test("live transcript keeps narration and tool activity interleaved", () => {
     ],
   );
   assert.equal(new Set(transcript.map((entry) => entry.id)).size, transcript.length);
-});
-
-test("Working stays local to an active run and clears on visible or terminal events", () => {
-  let working = reduceLiveWorking(false, event("agent.started"));
-  assert.equal(working, true);
-
-  working = reduceLiveWorking(working, event("tool.completed"));
-  assert.equal(working, true);
-  working = reduceLiveWorking(working, event("message.delta", { delta: "Next step" }));
-  assert.equal(working, false);
-
-  working = reduceLiveWorking(true, event("tool.started"));
-  assert.equal(working, false);
-  assert.equal(reduceLiveWorking(true, event("agent.completed")), false);
-  assert.equal(reduceLiveWorking(true, event("agent.failed")), false);
-  assert.equal(reduceLiveWorking(true, event("agent.cancelled")), false);
 });
 
 test("1. active run shows Thinking when model-active", () => {
@@ -411,7 +389,6 @@ test("visibleAgentProgress includes done rows", () => {
     visibleAgentProgress(lines).map((line) => line.id),
     ["a", "b", "c"],
   );
-  assert.equal(progressMarker("done"), "✓");
   assert.equal(latestProgressHeadline(lines)?.id, "b");
 });
 
@@ -419,37 +396,11 @@ test("formatProgressElapsed helpers", () => {
   assert.equal(formatProgressElapsed(800), "0.8s");
   assert.equal(formatProgressElapsed(12_400), "12s");
   assert.equal(
-    progressElapsedLabel(
-      { id: "t", label: "x", status: "done", startedAt: 1000, endedAt: 2500 },
-      3000,
-    ),
-    "1.5s",
-  );
-  assert.equal(
     agentRunDurationMs(
       "2020-01-01T00:00:00.000Z",
       "2020-01-01T00:00:12.500Z",
     ),
     12_500,
-  );
-  assert.equal(thoughtForLabel(12_000), "Done in 12s");
-});
-
-test("groupProgressLines collapses repeated inserts", () => {
-  const lines: AgentProgressLine[] = [
-    { id: "t1", label: "Inspected document", status: "done", startedAt: 1, endedAt: 2 },
-    { id: "t2", label: "Inspected document", status: "done", startedAt: 3, endedAt: 4 },
-    { id: "t3", label: "Added content", status: "done", startedAt: 5, endedAt: 6 },
-    { id: "t4", label: "Added content", status: "done", startedAt: 7, endedAt: 8 },
-    { id: "thinking", label: "Thinking", status: "active", startedAt: 11 },
-  ];
-  const groups = groupProgressLines(lines);
-  assert.deepEqual(
-    groups.map((g) => ({ label: g.label, count: g.count })),
-    [
-      { label: "Inspected document", count: 2 },
-      { label: "Added content", count: 2 },
-    ],
   );
 });
 
@@ -727,7 +678,7 @@ test("activityFamilyForTool still classifies layout", () => {
   assert.equal(activityFamilyForTool("document.set_page_number"), "layout");
 });
 
-test("progressSummaryLabel live tracks active tool", () => {
+test("presentAgentRun live tracks active tool headline", () => {
   const lines = reduceAll([
     {
       type: "tool.started",
@@ -735,11 +686,14 @@ test("progressSummaryLabel live tracks active tool", () => {
       at: 4,
     },
   ]);
-  assert.match(progressSummaryLabel(lines, { live: true }), /Formatting paragraph/);
+  assert.match(presentAgentRun(lines, { live: true }).headline, /Formatting paragraph/);
 });
 
 test("input-needed completion has a distinct neutral headline", () => {
-  assert.equal(progressSummaryLabel([], { outcome: "completed_with_input_needed", durationMs: 1000 }), "Needs your input · 1.0s");
+  assert.equal(
+    presentAgentRun([], { outcome: "completed_with_input_needed", durationMs: 1000 }).headline,
+    "Needs your input · 1.0s",
+  );
   assert.equal(activityKindForTool("finish_with_input_needed"), "finish");
 });
 

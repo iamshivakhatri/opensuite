@@ -2,12 +2,10 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
 import {
-  PERMANENT_DELETE_SURFACE,
   TRASH_PATH,
   formatStorageBytes,
   notifyStorageChanged,
   permanentDeleteConfirmBody,
-  permanentWorkspaceDeleteConfirmBody,
   permanentWorkspaceDeleteConfirmCopy,
   removePurgedTrashItem,
   STORAGE_CHANGED_EVENT,
@@ -17,7 +15,6 @@ import {
   storageUsageRatio,
   storageUsedOfQuotaLabel,
   trashDocumentActions,
-  trashPurgePath,
   trashWorkspaceActions,
   type StorageStatus,
 } from "./storage-model.ts";
@@ -100,10 +97,6 @@ describe("trash navigation and actions", () => {
     assert.equal(workspace.canPermanentlyDelete, true);
   });
 
-  it("keeps permanent-delete surface limited to Trash", () => {
-    assert.equal(PERMANENT_DELETE_SURFACE, "trash");
-  });
-
   it("builds clear document permanent-delete confirmation copy", () => {
     const body = permanentDeleteConfirmBody("Q3 Report.docx");
     assert.match(body, /permanently deleted/);
@@ -126,24 +119,6 @@ describe("trash navigation and actions", () => {
     ]);
     assert.match(copy.footer, /Storage used by this workspace will be reclaimed/);
     assert.match(copy.footer, /cannot be undone/);
-
-    const body = permanentWorkspaceDeleteConfirmBody("Acme HQ");
-    assert.match(body, /all documents inside it/);
-    assert.match(body, /workspace conversation history/);
-    assert.equal(body.includes("agent_run"), false);
-    assert.equal(body.includes("S3"), false);
-    assert.equal(body.includes("model_usage_event"), false);
-  });
-
-  it("maps purge kinds to the correct trash endpoints", () => {
-    assert.equal(
-      trashPurgePath("document", "doc-1"),
-      "/api/trash/documents/doc-1",
-    );
-    assert.equal(
-      trashPurgePath("workspace", "ws-1"),
-      "/api/trash/workspaces/ws-1",
-    );
   });
 
   it("removes a purged workspace from the trash list on success", () => {

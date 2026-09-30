@@ -95,22 +95,6 @@ export function buildByokPreferencePayload(
 }
 
 /** Map API credential list onto the three supported providers. */
-export function credentialStatusByProvider(
-  credentials: readonly PublicProviderCredential[],
-): Record<AiProvider, PublicProviderCredential | null> {
-  const map: Record<AiProvider, PublicProviderCredential | null> = {
-    openai: null,
-    anthropic: null,
-    openrouter: null,
-  };
-  for (const row of credentials) {
-    if ((AI_PROVIDERS as readonly string[]).includes(row.provider)) {
-      map[row.provider] = row;
-    }
-  }
-  return map;
-}
-
 export function isProviderConnected(
   credentials: readonly PublicProviderCredential[],
   provider: AiProvider,
@@ -148,15 +132,6 @@ export function isManagedModelUnavailable(
 ): boolean {
   if (!catalogLoaded || !savedModelId) return false;
   return findManagedModel(models, savedModelId) === null;
-}
-
-/** Micro-USD → display dollars; negatives clamp to $0.00 for overshoot. */
-export function formatUsdFromMicros(micros: number): string {
-  const dollars = Math.max(0, micros) / 1_000_000;
-  return new Intl.NumberFormat("en-US", {
-    style: "currency",
-    currency: "USD",
-  }).format(dollars);
 }
 
 export type TrialDisplay = {
@@ -324,28 +299,4 @@ export function byokActiveOptionLabel(input: {
  */
 export function clearedApiKeyAfterSuccess(): string {
   return "";
-}
-
-/** Public credential payloads must never include secret fields. */
-export function assertSafeCredentialPayload(
-  value: unknown,
-): asserts value is PublicProviderCredential {
-  if (!value || typeof value !== "object") {
-    throw new Error("Invalid credential payload");
-  }
-  const row = value as Record<string, unknown>;
-  for (const forbidden of [
-    "apiKey",
-    "secret",
-    "ciphertext",
-    "encrypted",
-    "key",
-  ]) {
-    if (forbidden in row) {
-      throw new Error(`Credential payload leaked secret field: ${forbidden}`);
-    }
-  }
-  if (typeof row.provider !== "string" || typeof row.connected !== "boolean") {
-    throw new Error("Invalid credential payload shape");
-  }
 }

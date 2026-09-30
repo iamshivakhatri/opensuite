@@ -1,8 +1,6 @@
 import { resolveApiBaseUrl } from "./api-base-url";
 import { filenameFromContentDisposition } from "./filename-from-content-disposition";
 
-export { filenameFromContentDisposition } from "./filename-from-content-disposition";
-
 const apiBaseUrl = resolveApiBaseUrl();
 
 export interface Me {
@@ -814,37 +812,6 @@ export async function getAgentRun(runId: string): Promise<{
     throw await parseError(response);
   }
   return (await response.json()) as { run: AgentRun; steps: AgentStep[] };
-}
-
-/**
- * Poll durable run snapshot until terminal (or timeout).
- * Prefer SSE for live progress — this is a short recovery helper only.
- * Uses backoff so a stuck non-terminal run cannot flood GET /runs.
- */
-export async function waitForAgentRunTerminal(
-  runId: string,
-  options?: { timeoutMs?: number; intervalMs?: number; signal?: AbortSignal },
-): Promise<{ run: AgentRun }> {
-  const timeoutMs = options?.timeoutMs ?? 15_000;
-  const baseIntervalMs = options?.intervalMs ?? 500;
-  const started = Date.now();
-  let last = await getAgentRun(runId);
-  let attempt = 0;
-
-  while (isActiveAgentRunStatus(last.run.status)) {
-    if (options?.signal?.aborted) {
-      return last;
-    }
-    if (Date.now() - started >= timeoutMs) {
-      return last;
-    }
-    const delay = Math.min(5_000, baseIntervalMs * 2 ** attempt);
-    attempt += 1;
-    await new Promise((resolve) => setTimeout(resolve, delay));
-    last = await getAgentRun(runId);
-  }
-
-  return last;
 }
 
 export async function cancelAgentRun(runId: string): Promise<{

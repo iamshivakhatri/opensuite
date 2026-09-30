@@ -82,30 +82,6 @@ export type LiveTranscriptEntry =
   | { readonly kind: "narration"; readonly id: string; readonly content: string }
   | { readonly kind: "activity"; readonly id: string; readonly line: AgentProgressLine };
 
-/** Local-only cursor state; it is deliberately not part of the transcript. */
-export function reduceLiveWorking(
-  working: boolean,
-  event: AgentLiveEvent,
-): boolean {
-  switch (event.type) {
-    case "agent.started":
-    case "tool.completed":
-      return true;
-    case "message.delta":
-    case "message.completed":
-    case "tool.started":
-    case "tool.failed":
-    case "document.created":
-    case "document.version.advanced":
-    case "agent.completed":
-    case "agent.failed":
-    case "agent.cancelled":
-      return false;
-    default:
-      return working;
-  }
-}
-
 /**
  * Keep narration beside the tool rows that bound it. Deltas append to one
  * entry; activity rows retain their existing ids as they move active → done.
@@ -513,17 +489,6 @@ export function formatProgressElapsed(ms: number): string {
   return `${minutes}m ${String(seconds).padStart(2, "0")}s`;
 }
 
-export function progressElapsedLabel(
-  line: AgentProgressLine,
-  nowMs: number = Date.now(),
-): string | null {
-  if (line.startedAt === undefined) return null;
-  const end = line.endedAt ?? (line.status === "active" ? nowMs : line.startedAt);
-  const ms = Math.max(0, end - line.startedAt);
-  if (line.status === "active" && ms < 100) return null;
-  return formatProgressElapsed(ms);
-}
-
 /** Duration from agent_run startedAt/completedAt ISO strings. */
 export function agentRunDurationMs(
   startedAt: string | null | undefined,
@@ -770,22 +735,6 @@ export function reduceAgentProgress(
   }
 }
 
-/** Cursor-style summary for a finished turn. */
-export function thoughtForLabel(
-  durationMs: number,
-  outcome: AgentTurnProgress["outcome"] = "completed",
-  stepCount?: number,
-): string {
-  const elapsed = formatProgressElapsed(durationMs);
-  if (outcome === "cancelled") return `Stopped after ${elapsed}`;
-  if (outcome === "failed") return `Couldn't complete · ${elapsed}`;
-  if (outcome === "completed_with_input_needed") return `Needs your input · ${elapsed}`;
-  if (stepCount !== undefined && stepCount > 0) {
-    return `Done in ${elapsed}`;
-  }
-  return `Done in ${elapsed}`;
-}
-
 /**
  * Group consecutive same-label steps (Perplexity-style) so 13× "Inserted
  * paragraph" becomes one row: "Inserted paragraphs · 13".
@@ -837,63 +786,6 @@ export function technicalProgressLines(
   lines: readonly AgentProgressLine[],
 ): AgentProgressLine[] {
   return lines.filter((line) => !isThoughtLine(line));
-}
-
-export function groupProgressLines(
-  lines: readonly AgentProgressLine[],
-): ProgressGroup[] {
-  const groups: ProgressGroup[] = [];
-  for (const line of lines) {
-    if (line.id === "writing" || line.id === "thinking") continue;
-
-    const baseLabel = line.label
-      .replace(/…$/, "")
-      .replace(/^Inserting /, "Inserted ")
-      .replace(/^Inspecting /, "Inspected ")
-      .replace(/^Searching /, "Searched ")
-      .replace(/^Updating /, "Updated ")
-      .replace(/^Replacing /, "Replaced ")
-      .replace(/^Creating /, "Created ")
-      .replace(/^Duplicating /, "Duplicated ")
-      .replace(/^Adding /, "Added ")
-      .replace(/^Setting /, "Set ")
-      .replace(/^Formatting /, "Formatted ")
-      .replace(/^Removing /, "Removed ")
-      .replace(/^Sizing /, "Sized ")
-      .replace(/^Shading /, "Shaded ")
-      .replace(/^Completing /, "Completed ")
-      .trim();
-
-    const last = groups[groups.length - 1];
-    if (
-      last &&
-      last.key === baseLabel &&
-      last.status !== "active" &&
-      line.status !== "active"
-    ) {
-      groups[groups.length - 1] = {
-        ...last,
-        count: last.count + 1,
-        label: normalizeGroupLabel(baseLabel, last.count + 1),
-        status: line.status === "error" ? "error" : last.status,
-        endedAt: line.endedAt ?? last.endedAt,
-      };
-      continue;
-    }
-
-    groups.push({
-      key: baseLabel,
-      label:
-        line.status === "active"
-          ? line.label
-          : normalizeGroupLabel(baseLabel, 1),
-      count: 1,
-      status: line.status,
-      ...(line.startedAt !== undefined ? { startedAt: line.startedAt } : {}),
-      ...(line.endedAt !== undefined ? { endedAt: line.endedAt } : {}),
-    });
-  }
-  return groups;
 }
 
 export function activityFamilyForTool(toolName: string): ActivityFamily {
@@ -1354,19 +1246,6 @@ export function presentAgentRun(
   };
 }
 
-/** Compact headline for live or finished progress (panel status row). */
-export function progressSummaryLabel(
-  lines: readonly AgentProgressLine[],
-  options?: {
-    readonly live?: boolean;
-    readonly durationMs?: number | null;
-    readonly outcome?: AgentTurnProgress["outcome"];
-    readonly streamingAnswer?: boolean;
-  },
-): string {
-  return presentAgentRun(lines, options).headline;
-}
-
 /** Details affordance — no noisy activity-row count (that is not toolCalls). */
 export function detailsAffordanceLabel(_actionCount?: number): string {
   return "View details";
@@ -1382,17 +1261,4 @@ export function visibleAgentProgress(
       line.status === "error" ||
       line.status === "done",
   );
-}
-
-export function progressMarker(status: ProgressLineStatus): string {
-  switch (status) {
-    case "done":
-      return "✓";
-    case "active":
-      return "●";
-    case "error":
-      return "!";
-    case "pending":
-      return "·";
-  }
 }

@@ -31,8 +31,6 @@ export function AgentMarkdown({
   );
 }
 
-export { parseBlocks } from "./agent-markdown-parse";
-
 function Block({ block }: { block: MdBlock }) {
   switch (block.kind) {
     case "hr":

@@ -156,26 +156,6 @@ export function buildNameRoleTableDocx(
   return buildTableDocx(rows, options);
 }
 
-/**
- * Executive Role / Meeting Access Level table with a blank trailing row —
- * used for artifact-local cell-handle mutation proofs.
- */
-export function buildExecutiveAccessTableDocx(
-  options: { readonly withGrid?: boolean } = {},
-): Buffer {
-  const rows: readonly (readonly (string | null)[])[] = [
-    ["Executive Role", "Meeting Access Level"],
-    ["CFO", "Full access"],
-    ["CTO", "Full access"],
-    ["COO", "Limited"],
-    ["CISO", "Limited"],
-    ["General Counsel", "Full access"],
-    ["CHRO", "Limited"],
-    [null, null],
-  ];
-  return buildTableDocx(rows, options);
-}
-
 function buildTableDocx(
   rows: readonly (readonly (string | null)[])[],
   options: { readonly withGrid?: boolean } = {},

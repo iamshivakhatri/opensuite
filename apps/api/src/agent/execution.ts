@@ -391,11 +391,7 @@ export function createAgentExecutionService(deps: AgentExecutionServiceDeps) {
     }
   }
 
-  async function execute(input: AgentExecutionInput): Promise<AgentExecutionResult> {
-    return (await start(input)).result;
-  }
-
-  return { start, execute };
+  return { start };
 }
 
 function namesEditTarget(instruction: string, filename: string): boolean {

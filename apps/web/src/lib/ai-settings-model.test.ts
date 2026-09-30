@@ -2,17 +2,14 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
 import {
-  assertSafeCredentialPayload,
   buildByokPreferencePayload,
   buildManagedPreferencePayload,
   byokActiveOptionLabel,
   byokDraftReady,
   agentPanelByokModelLabel,
   clearedApiKeyAfterSuccess,
-  credentialStatusByProvider,
   filterManagedModels,
   findManagedModel,
-  formatUsdFromMicros,
   isManagedModelUnavailable,
   isProviderConnected,
   managedModelMetaLine,
@@ -52,22 +49,8 @@ describe("credential status", () => {
         updatedAt: "2026-01-01T00:00:00.000Z",
       },
     ];
-    const byProvider = credentialStatusByProvider(credentials);
-    assert.equal(byProvider.openai?.connected, true);
-    assert.equal(byProvider.anthropic, null);
     assert.equal(isProviderConnected(credentials, "openai"), true);
     assert.equal(isProviderConnected(credentials, "anthropic"), false);
-    assertSafeCredentialPayload(credentials[0]!);
-  });
-
-  it("rejects leaked secret fields in credential payloads", () => {
-    assert.throws(() =>
-      assertSafeCredentialPayload({
-        provider: "openai",
-        connected: true,
-        apiKey: "sk-secret",
-      }),
-    );
   });
 });
 
@@ -206,7 +189,6 @@ describe("trial status", () => {
     assert.equal(display.totalCredits, 100);
     assert.equal(display.fillPercent, 52);
     assert.match(display.balanceLabel, /52 of 100 credits remaining/);
-    assert.equal(formatUsdFromMicros(1_000_000), "$1.00");
   });
 
   it("renders exhausted / overshoot as 0 credits", () => {

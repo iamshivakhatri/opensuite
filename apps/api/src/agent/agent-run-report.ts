@@ -1,5 +1,4 @@
 import {
-  getRunMetricsFromError,
   type AgentRunMetrics,
   type FuseEventMetric,
   type MetricsStopReason,
@@ -425,16 +424,6 @@ function collectFailures(
   }
 
   return failures;
-}
-
-/** Resolve metrics from a normal result or a thrown error. */
-export function resolveRunMetrics(input: {
-  readonly metrics?: AgentRunMetrics;
-  readonly error?: unknown;
-}): AgentRunMetrics | undefined {
-  if (input.metrics) return input.metrics;
-  if (input.error !== undefined) return getRunMetricsFromError(input.error);
-  return undefined;
 }
 
 function formatMs(ms: number): string {

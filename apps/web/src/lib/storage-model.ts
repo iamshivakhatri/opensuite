@@ -111,25 +111,6 @@ export function permanentWorkspaceDeleteConfirmCopy(workspaceName: string): {
   };
 }
 
-/** Flat body string for tests / non-React consumers. */
-export function permanentWorkspaceDeleteConfirmBody(
-  workspaceName: string,
-): string {
-  const copy = permanentWorkspaceDeleteConfirmCopy(workspaceName);
-  return `${copy.lead} ${copy.items.join("; ")}. ${copy.footer}`;
-}
-
-export type TrashPurgeKind = "document" | "workspace";
-
-/** Permanent delete is only offered from Trash — never active library surfaces. */
-export const PERMANENT_DELETE_SURFACE = "trash" as const;
-
-export function trashPurgePath(kind: TrashPurgeKind, id: string): string {
-  return kind === "document"
-    ? `/api/trash/documents/${id}`
-    : `/api/trash/workspaces/${id}`;
-}
-
 /** Success-path list update after a permanent purge (failure must not call this). */
 export function removePurgedTrashItem<T extends { readonly id: string }>(
   items: readonly T[],

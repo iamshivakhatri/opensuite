@@ -133,11 +133,6 @@ export function formatModelTurnCompleted(input: {
   return lines.join("\n");
 }
 
-/** @deprecated Prefer single-line formatToolFinished; kept for call-site clarity. */
-export function formatToolStarted(toolName: string): string {
-  return `[agent] TOOL ${toolName} →`;
-}
-
 export function formatToolFinished(input: {
   readonly toolName: string;
   readonly ok: boolean;
@@ -153,10 +148,6 @@ export function formatToolFinished(input: {
     return `[agent] TOOL ${input.toolName} ✓ ${dur}`;
   }
   return `[agent] TOOL ${input.toolName} ✗ ${input.code ?? "TOOL_FAILED"} ${dur}`;
-}
-
-export function formatMutationsApplied(count: number): string {
-  return `[agent] EDITS ${count}`;
 }
 
 export function formatDocumentSaved(name: string, versionNumber: number): string {

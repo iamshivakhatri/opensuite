@@ -11,7 +11,6 @@ export {
 } from "./bound-docx.js";
 export {
   buildDocxBody,
-  buildExecutiveAccessTableDocx,
   buildMinimalDocx,
   buildNameRoleTableDocx,
 } from "./__fixtures__/minimal-docx.js";

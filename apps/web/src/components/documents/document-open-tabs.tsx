@@ -47,11 +47,6 @@ export function writeStoredTabs(
   window.sessionStorage.setItem(storageKey(workspaceId), JSON.stringify(tabs));
 }
 
-export function removeStoredTab(workspaceId: string, documentId: string): void {
-  const next = readStoredTabs(workspaceId).filter((tab) => tab.id !== documentId);
-  writeStoredTabs(workspaceId, next);
-}
-
 /**
  * Close a tab and return the next navigation target (neighbor, or workspace root).
  */

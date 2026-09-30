@@ -31,6 +31,3 @@ export function extractEmailActionUrl(message: EmailMessage): string {
   }
   return match[1];
 }
-
-/** @deprecated Prefer {@link extractEmailActionUrl}. */
-export const extractVerificationUrl = extractEmailActionUrl;
