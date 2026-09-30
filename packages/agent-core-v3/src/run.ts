@@ -60,7 +60,7 @@ export async function runAgent(input: RunAgentInput): Promise<RunAgentResult> {
 
   // Mutable working transcript (never includes the system prompt).
   const transcript: ModelMessage[] = [...input.messages];
-  const schemaTools = input.tools ? schemaOnlyTools(input.tools) : undefined;
+  const fixedSchemaTools = input.tools ? schemaOnlyTools(input.tools) : undefined;
 
   let turns = 0;
   let toolCallCount = 0;
@@ -109,6 +109,17 @@ export async function runAgent(input: RunAgentInput): Promise<RunAgentResult> {
         ? [...input.projectMessages(transcript)]
         : transcript;
 
+      // Snapshot the selection: loading more tools cannot widen this turn.
+      const turnTools = input.projectTools
+        ? { ...input.projectTools({ tools: input.tools ?? {}, turn: turns, messages: transcript }) }
+        : input.tools;
+      const turnInput = { ...input, tools: turnTools };
+      const schemaTools = input.projectTools ? schemaOnlyTools(turnTools!) : fixedSchemaTools;
+      const toolSurface = {
+        exposedToolCount: Object.keys(schemaTools ?? {}).length,
+        exposedToolSchemaChars: JSON.stringify(schemaTools ?? {}).length,
+      };
+
       await input.onEvent?.({ type: "model_turn_started", turn: turns });
       const turnStarted = now();
 
@@ -138,6 +149,7 @@ export async function runAgent(input: RunAgentInput): Promise<RunAgentResult> {
         const turnCompleted = now();
         metrics.recordModelTurn({
           turn: turns,
+          ...toolSurface,
           startedAtMs: turnStarted,
           completedAtMs: turnCompleted,
           durationMs: turnCompleted - turnStarted,
@@ -155,6 +167,7 @@ export async function runAgent(input: RunAgentInput): Promise<RunAgentResult> {
       const turnDurationMs = turnCompleted - turnStarted;
       metrics.recordModelTurn({
         turn: turns,
+        ...toolSurface,
         startedAtMs: turnStarted,
         completedAtMs: turnCompleted,
         durationMs: turnDurationMs,
@@ -199,7 +212,8 @@ export async function runAgent(input: RunAgentInput): Promise<RunAgentResult> {
         outputTokens: turn.outputTokens,
         reasoningTokens: turn.reasoningTokens,
         finishReason: turn.finishReason,
-        toolNames: calls.map((call) => resolveToolName(input.tools, call.toolName)),
+        toolNames: calls.map((call) => resolveToolName(turnTools, call.toolName)),
+        ...toolSurface,
         ...(turn.routedProvider !== undefined
           ? { routedProvider: turn.routedProvider }
           : {}),
@@ -217,14 +231,18 @@ export async function runAgent(input: RunAgentInput): Promise<RunAgentResult> {
       }
 
       // The assistant message (with its tool calls) must precede tool results.
-      transcript.push(...turn.responseMessages);
+      // The SDK supplies error results for unknown tools. With projection the
+      // loop owns those rejections too, so keep exactly one result per call.
+      transcript.push(...(input.projectTools
+        ? turn.responseMessages.filter((message) => message.role !== "tool")
+        : turn.responseMessages));
       toolCallCount += calls.length;
 
       const results = new Map<string, ToolResultPart>();
       const reads: ToolCall[] = [];
       const mutations: ToolCall[] = [];
       for (const call of calls) {
-        const kind = resolveTool(input.tools, call.toolName)?.kind;
+        const kind = resolveTool(turnTools, call.toolName)?.kind;
         if (kind === "mutate") mutations.push(call);
         else reads.push(call);
       }
@@ -233,7 +251,7 @@ export async function runAgent(input: RunAgentInput): Promise<RunAgentResult> {
       await Promise.all(
         reads.map((call) =>
           runCall({
-            input,
+            input: turnInput,
             call,
             fuse,
             results,
@@ -250,11 +268,11 @@ export async function runAgent(input: RunAgentInput): Promise<RunAgentResult> {
       for (const call of mutations) {
         if (input.signal?.aborted) throw abortReason(input.signal);
         if (mutationFailed) {
-          recordSkip({ input, call, results, reason: "PRIOR_MUTATION_FAILED" });
+          recordSkip({ input: turnInput, call, results, reason: "PRIOR_MUTATION_FAILED" });
           continue;
         }
         const outcome = await runCall({
-          input,
+          input: turnInput,
           call,
           fuse,
           results,
@@ -273,7 +291,7 @@ export async function runAgent(input: RunAgentInput): Promise<RunAgentResult> {
       });
 
       // Finish signal: honour only when the batch's mutations all succeeded.
-      const terminalText = findTerminalText(input.tools, calls, results);
+      const terminalText = findTerminalText(turnTools, calls, results);
       if (terminalText !== undefined && !mutationFailed) {
         const text = terminalText || lastText;
         await input.onEvent?.({ type: "completed", text, stopReason: "finish_tool" });

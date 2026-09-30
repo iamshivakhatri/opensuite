@@ -98,6 +98,8 @@ export type AgentEvent =
       readonly reasoningTokens: number;
       readonly finishReason: string;
       readonly toolNames: readonly string[];
+      readonly exposedToolCount?: number;
+      readonly exposedToolSchemaChars?: number;
       readonly routedProvider?: string;
     }
   | { readonly type: "text_delta"; readonly delta: string }
@@ -169,6 +171,15 @@ export interface RunModelResult {
 
 export interface RunAgentInput extends RunModelInput {
   readonly tools?: AgentToolSet;
+  /**
+   * Select tools before each model call. Only this turn's selection can execute.
+   * Default: the full tool set. Return a new subset; do not change the registry.
+   */
+  readonly projectTools?: (state: {
+    readonly tools: Readonly<AgentToolSet>;
+    readonly turn: number;
+    readonly messages: readonly ModelMessage[];
+  }) => AgentToolSet;
   /** Max model invocations. Default 12. */
   readonly maxTurns?: number;
   /** Wall-clock budget for the whole run in ms. Default: none. */

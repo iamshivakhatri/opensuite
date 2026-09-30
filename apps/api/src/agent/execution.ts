@@ -50,6 +50,7 @@ import {
   releaseLease,
   settleTerminalRunFailure,
 } from "./run-settlement.js";
+import { createToolSurface } from "./tool-groups.js";
 import { createPrimaryDocxTools } from "./docx-tools.js";
 import { verifyDocumentUpdate } from "./document-verification.js";
 import { SlimDocumentStructureCache } from "./document-retrieval.js";
@@ -546,8 +547,10 @@ async function runExecution(input: {
       false,
       () => boundTools?.getWorkingRevision() ?? 0,
     );
+    const toolSurface = createToolSurface(tools);
     const system = buildAgentOperatingInstruction(
-      Object.keys(tools).map(providerSafeToolName),
+      Object.keys(toolSurface.initialTools).map(providerSafeToolName),
+      toolSurface.capabilityIndex,
     ) +
       (input.primaryDocumentId && /\b(?:update|edit|revise|refresh|modify)\b/i.test(input.instruction)
         ? `\n\n${buildDocumentUpdateInstruction()}`
@@ -678,7 +681,8 @@ async function runExecution(input: {
         system,
         messages,
         projectMessages,
-        tools,
+        projectTools: toolSurface.projectTools,
+        tools: toolSurface.tools,
         signal: input.signal,
         runId: runShort,
         maxTurns: MAX_MODEL_TURNS,
@@ -687,6 +691,7 @@ async function runExecution(input: {
           : {}),
         onEvent: (event) => {
           if (event.type === "model_turn_started") boundTools?.setModelTurn(event.turn);
+          if (event.type === "model_turn_completed") toolSurface.recordTurn(event, runShort);
           return handleRunEvent(event);
         },
       });
@@ -724,6 +729,8 @@ async function runExecution(input: {
         sink: input.deps.agentRunReportSink,
       });
       throw terminalError;
+    } finally {
+      console.info(`[agent] tool_surface_summary run=${runShort} ${JSON.stringify(toolSurface.summary())}`);
     }
 
     await emitRunReport({

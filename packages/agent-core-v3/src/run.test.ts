@@ -926,3 +926,111 @@ test("metrics: cancellation attaches metrics with cancelled stop reason", async 
   assert.ok(metrics);
   assert.equal(metrics!.stopReason, "cancelled");
 });
+
+test("without projectTools the full registry remains exposed and executable", async () => {
+  const executed: string[] = [];
+  const tools = Object.fromEntries(["first", "second"].map((name) => [name, defineTool({
+    kind: "read", description: name, inputSchema: emptyObjectSchema,
+    execute: () => { executed.push(name); return { ok: true }; },
+  })]));
+  let turn = 0;
+  const model = new MockLanguageModelV4({ doStream: async (options) => {
+    assert.deepEqual(options.tools?.map((tool) => tool.name), ["first", "second"]);
+    return { stream: simulateReadableStream({ chunks: ++turn === 1
+      ? toolCallChunks([{ id: "a", name: "second", input: {} }]) : textChunks("done") }) };
+  } });
+  const result = await runAgent({ model, tools, messages: [{ role: "user", content: "go" }] });
+  assert.deepEqual(executed, ["second"]);
+  assert.deepEqual(result.metrics.modelTurns.map((turn) => turn.exposedToolCount), [2, 2]);
+});
+
+test("projection grows next turn; hidden mutations and terminal tools cannot execute in the loading turn", async () => {
+  let loaded = false;
+  let edited = 0;
+  let finished = 0;
+  const tools: AgentToolSet = {
+    load: defineTool({ kind: "read", description: "load", inputSchema: emptyObjectSchema,
+      execute: () => { loaded = true; return { ok: true }; } }),
+    "special.edit": defineTool({ kind: "mutate", description: "edit", inputSchema: emptyObjectSchema,
+      execute: () => { edited++; return { ok: true }; } }),
+    "special.finish": defineTool({ kind: "read", terminal: true, description: "finish", inputSchema: emptyObjectSchema,
+      execute: () => { finished++; return "done"; } }),
+  };
+  let turn = 0;
+  const selected: AgentToolSet = { load: tools.load! };
+  const model = new MockLanguageModelV4({ doStream: async (options) => {
+    turn++;
+    assert.deepEqual(options.tools?.map((tool) => tool.name), turn === 1 ? ["load"] : ["load", "special_edit", "special_finish"]);
+    if (turn === 2) {
+      assert.equal(edited, 0);
+      assert.equal(finished, 0);
+      const assistant = options.prompt.find((message) => message.role === "assistant");
+      const results = options.prompt.find((message) => message.role === "tool");
+      assert.ok(assistant && results);
+      const resultParts = results.content.filter((part) => part.type === "tool-result");
+      assert.deepEqual(assistant.content.filter((part) => part.type === "tool-call").map((part) => [part.toolCallId, part.toolName]),
+        resultParts.map((part) => [part.toolCallId, part.toolName]));
+      assert.deepEqual(resultParts.map((part) => part.output.type), ["json", "error-text", "error-text"]);
+    }
+    return { stream: simulateReadableStream({ chunks: toolCallChunks(turn === 1 ? [
+      { id: "load", name: "load", input: {} },
+      { id: "hidden-edit", name: "special_edit", input: {} },
+      { id: "hidden-finish", name: "special_finish", input: {} },
+    ] : [
+      { id: "edit", name: "special_edit", input: {} },
+      { id: "finish", name: "special_finish", input: {} },
+    ]) }) };
+  } });
+  const result = await runAgent({ model, tools, messages: [{ role: "user", content: "go" }],
+    projectTools: (state) => {
+      assert.equal(state.tools, tools);
+      assert.equal(state.turn, turn + 1);
+      assert.equal(state.messages.length, state.turn === 1 ? 1 : 3);
+      return selected;
+    },
+    // Even changing the returned map while tools run must not widen the snapshot.
+    onEvent: (event) => {
+      if (event.type === "tool_completed" && loaded) Object.assign(selected, tools);
+    },
+  });
+  assert.equal(result.stopReason, "finish_tool");
+  assert.equal(edited, 1);
+  assert.equal(finished, 1);
+  assert.deepEqual(result.metrics.modelTurns.map((turn) => turn.exposedToolCount), [1, 3]);
+  assert.ok(result.metrics.modelTurns[1]!.exposedToolSchemaChars! > result.metrics.modelTurns[0]!.exposedToolSchemaChars!);
+  assert.deepEqual(result.metrics.toolCalls.filter((call) => call.turn === 1).map((call) => call.outcome), ["success", "failure", "failure"]);
+});
+
+test("projection preserves concurrent reads, sequential mutations, failure skipping and finish containment", async () => {
+  let activeReads = 0;
+  let peakReads = 0;
+  const order: string[] = [];
+  const tools: AgentToolSet = {};
+  for (const name of ["read1", "read2"]) tools[name] = defineTool({
+    kind: "read", description: name, inputSchema: emptyObjectSchema, execute: async () => {
+      peakReads = Math.max(peakReads, ++activeReads);
+      await delay(10);
+      activeReads--;
+      order.push(name);
+      return { ok: true };
+    },
+  });
+  for (const name of ["edit1", "edit2", "edit3"]) tools[name] = defineTool({
+    kind: "mutate", description: name, inputSchema: emptyObjectSchema, execute: () => {
+      assert.equal(activeReads, 0);
+      order.push(name);
+      return { ok: name !== "edit2" };
+    },
+  });
+  const finish = createFinishTool();
+  tools[finish.name] = finish.tool;
+  let turn = 0;
+  const model = new MockLanguageModelV4({ doStream: async () => ({ stream: simulateReadableStream({
+    chunks: ++turn === 1 ? toolCallChunks(Object.keys(tools).map((name) => ({ id: name, name, input: {} }))) : textChunks("recovered"),
+  }) }) });
+  const result = await runAgent({ model, tools, projectTools: ({ tools }) => ({ ...tools }), messages: [{ role: "user", content: "go" }] });
+  assert.equal(peakReads, 2);
+  assert.deepEqual(order.slice(2), ["edit1", "edit2"]);
+  assert.equal(result.turns, 2);
+  assert.equal(result.stopReason, "completed");
+});

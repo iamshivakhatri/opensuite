@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import type { RunAgentResult, RunModelResult, V3Model } from "@opensuite/agent-core-v3";
+import { runAgent, type RunAgentResult, type RunModelResult, type V3Model } from "@opensuite/agent-core-v3";
+import { MockLanguageModelV4, simulateReadableStream } from "ai/test";
 import { bindDocxDocument, buildMinimalDocx, createNapiDocxEngineBinding } from "@opensuite/engine-client";
 import type { AgentRunReport } from "./agent-run-report.js";
 
@@ -1248,19 +1249,39 @@ test("execution scopes compatible handle reuse to the model turn and saves one v
   let versionId = "v1";
   let appends = 0;
   const persistence = memoryPersistence("user-1");
+  let turn = 0;
+  let table: { handle: string };
+  const model = new MockLanguageModelV4({ doStream: async (options) => {
+    const names = options.tools!.map((tool) => tool.name);
+    assert.equal(names.includes("document_set_table_formatting"), turn > 0);
+    if (turn === 1) {
+      const results = options.prompt.filter((message) => message.role === "tool")
+        .flatMap((message) => message.content).filter((part) => part.type === "tool-result");
+      const inspected = results.find((part) => part.toolName === "document_inspect")!.output as {
+        type: "json"; value: { tables: { items: { handle: string }[] } };
+      };
+      table = { handle: inspected.value.tables.items[0]!.handle };
+    }
+    const calls = [
+      [{ name: "tools_load_group", input: { groups: ["table_styling"] } }, { name: "document_inspect", input: { kind: "tables" } }],
+      [{ name: "document_set_table_formatting", input: { table, borders: "grid" } }, { name: "document_set_table_column_widths", input: { table, widthsTwips: [3000, 3000] } }],
+      [{ name: "document_set_table_column_widths", input: { table, widthsTwips: [2000, 4000] } }, { name: "finish", input: {} }],
+      [{ name: "finish", input: {} }],
+    ][turn++]!;
+    return { stream: simulateReadableStream({ chunks: [
+      { type: "stream-start" as const, warnings: [] },
+      ...calls.map((call, index) => ({ type: "tool-call" as const, toolCallId: `${turn}-${index}`, toolName: call.name, input: JSON.stringify(call.input) })),
+      { type: "finish" as const, finishReason: { unified: "tool-calls" as const, raw: "tool-calls" },
+        usage: { inputTokens: { total: 1, noCache: 1, cacheRead: 0, cacheWrite: 0 }, outputTokens: { total: 1, text: 1, reasoning: 0 } } },
+    ] }) };
+  } });
+  let runtimeResult: RunAgentResult;
   const deps = baseDeps(persistence, async (input) => {
-    const call = { toolCallId: "test", messages: [], context: undefined as never };
-    await input.onEvent?.({ type: "model_turn_started", turn: 1 });
-    const inspected = await input.tools!["document.inspect"]!.execute!({ kind: "tables" }, call) as {
-      tables: { items: { handle: string }[] };
-    };
-    const table = { handle: inspected.tables.items[0]!.handle };
-    await input.onEvent?.({ type: "model_turn_started", turn: 2 });
-    assert.equal((await input.tools!["document.set_table_formatting"]!.execute!({ table, borders: "grid" }, call) as { ok: boolean }).ok, true);
-    assert.equal((await input.tools!["document.set_table_column_widths"]!.execute!({ table, widthsTwips: [3000, 3000] }, call) as { ok: boolean }).ok, true);
-    await input.onEvent?.({ type: "model_turn_started", turn: 3 });
-    assert.equal((await input.tools!["document.set_table_column_widths"]!.execute!({ table, widthsTwips: [2000, 4000] }, call) as { reasonCode: string }).reasonCode, "STALE_HANDLE");
-    return softResult("completed");
+    assert.ok(input.projectTools);
+    assert.match(input.system!, /table_styling: Change table/);
+    assert.doesNotMatch(input.system!, /- document_set_table_formatting/);
+    runtimeResult = await runAgent({ ...input, model });
+    return runtimeResult;
   });
   const reports: AgentRunReport[] = [];
   const execution = createAgentExecutionService({
@@ -1286,6 +1307,9 @@ test("execution scopes compatible handle reuse to the model turn and saves one v
   assert.equal(appends, 1);
   assert.equal(reports[0]?.document?.workingMutationCount, 2);
   assert.equal(reports[0]?.document?.finalVersionId, "v2");
+  assert.equal(runtimeResult!.stopReason, "finish_tool");
+  assert.deepEqual(runtimeResult!.metrics.modelTurns.map((turn) => turn.exposedToolCount), [16, 20, 20, 20]);
+  assert.deepEqual(runtimeResult!.metrics.toolCalls.map((call) => call.failureCode), [undefined, undefined, undefined, undefined, undefined, "STALE_HANDLE", undefined]);
 });
 
 test("max_turns reports preserved changes only after a version advance", () => {

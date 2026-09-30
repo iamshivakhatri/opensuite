@@ -20,6 +20,8 @@ export type MetricsStopReason =
   | "model_error";
 
 export interface ModelTurnMetric {
+  readonly exposedToolCount?: number;
+  readonly exposedToolSchemaChars?: number;
   readonly turn: number;
   readonly startedAtMs?: number;
   readonly completedAtMs?: number;

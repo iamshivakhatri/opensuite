@@ -1,9 +1,10 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { MockLanguageModelV4, simulateReadableStream } from "ai/test";
-import { runAgent, type AgentEvent } from "@opensuite/agent-core-v3";
+import { createFinishTool, runAgent, type AgentEvent } from "@opensuite/agent-core-v3";
 import { bindDocxDocument, buildMinimalDocx, createNapiDocxEngineBinding } from "@opensuite/engine-client";
 import { createPrimaryDocxTools } from "./docx-tools.js";
+import { createToolSurface } from "./tool-groups.js";
 
 type Call = { name: string; input: Record<string, unknown> };
 const inspect: Call = { name: "document.inspect", input: { kind: "tables" } };
@@ -43,7 +44,7 @@ async function createSession() {
 }
 
 // Exercise the real generic scheduler and N-API engine; only the model is fake.
-async function runTurns(session: NonNullable<Awaited<ReturnType<typeof createPrimaryDocxTools>>>, turns: Call[][]) {
+async function runTurns(session: NonNullable<Awaited<ReturnType<typeof createPrimaryDocxTools>>>, turns: Call[][], surface?: ReturnType<typeof createToolSurface>) {
   let turn = 0;
   const events: AgentEvent[] = [];
   const model = new MockLanguageModelV4({
@@ -70,9 +71,10 @@ async function runTurns(session: NonNullable<Awaited<ReturnType<typeof createPri
   });
   try {
     const result = await runAgent({
-      model, tools: session.tools, messages: [{ role: "user", content: "Format the tables" }],
+      model, tools: surface?.tools ?? session.tools, projectTools: surface?.projectTools, messages: [{ role: "user", content: "Format the tables" }],
       onEvent: (event) => {
         if (event.type === "model_turn_started") session.setModelTurn(event.turn);
+        if (event.type === "model_turn_completed") surface?.recordTurn(event, "report-test");
         events.push(event);
       },
     });
@@ -229,4 +231,34 @@ test("a failed operation without applied changes does not expire otherwise curre
   const { result } = await runTurns(run.session, [[inspect], [widths(handle, [3000])], [widths(handle)]]);
   assert.deepEqual(result.metrics.toolCalls.map((call) => call.failureCode), [undefined, "INVALID_OPERATION", undefined]);
   assert.deepEqual(run.revisions, [1]);
+});
+
+
+test("recurring report edits complete on the common surface with zero discovery turns", async () => {
+  const run = await createSession();
+  const finish = createFinishTool();
+  const surface = createToolSurface({ ...run.session.tools, [finish.name]: finish.tool });
+  const table = { headerCells: ["Item 0", "Owner"] };
+  const { result } = await runTurns(run.session, [
+    [{ name: "document.batch_replace_text", input: { operations: [{ target: { text: "Status" }, expectedCurrentText: "Status", replacement: "October" }] } }],
+    [inspect],
+    [{ name: "document.delete_table_row", input: { table, row: { handle: run.tables[0]!.rows[2]!.handle } } }],
+    [{ name: "document.set_table_cells_text", input: { table, updates: [{ target: { rowLabel: "Plan", columnHeader: "Owner" }, expectedCurrentText: "Alice", replacement: "Alicia" }] } }],
+    [{ name: "document.replace_text", input: { target: { text: "October" }, expectedCurrentText: "October", replacement: "October Report" } }],
+    [{ name: "finish", input: {} }],
+  ], surface);
+  assert.equal(result.stopReason, "finish_tool");
+  assert.ok(result.metrics.toolCalls.every((call) => call.outcome === "success"));
+  assert.equal(run.session.getWorkingMutationCount(), 4);
+  assert.equal(surface.summary().discoveryTurnCount, 0);
+  assert.deepEqual(surface.summary().groupsLoaded, []);
+  assert.ok(result.metrics.modelTurns.every((turn) => turn.exposedToolCount === 15));
+  await run.session.flush();
+  assert.equal(run.appends(), 1);
+  const binding = await createNapiDocxEngineBinding();
+  const saved = await binding.inspectDocx(run.stored(), { focus: { kind: "body_blocks" } });
+  assert.match(JSON.stringify(saved), /October Report/);
+  const tables = (await binding.inspectDocx(run.stored(), { focus: { kind: "tables" } })).tables!.items;
+  assert.equal(tables[0]!.rows.length, 2);
+  assert.match(JSON.stringify(tables[0]), /Alicia/);
 });

@@ -14,6 +14,8 @@ _Read this before starting any work. Keep it a concise current-state handoff, no
 
 ## Just Completed
 
+* **Dynamic model-facing tools** — optional, generic V3 `projectTools({ tools, turn, messages })` snapshots schemas and executors each turn; hidden tools cannot execute in the loading turn. API keeps 15 existing tools + `tools.load_group` common and places 26 specialists in six run-local, monotonic groups. Installed engine inventory: 41 → 16 initial tools; serialized schema size 36,248 → 11,831 chars (67.4% smaller). Logs: `tool_surface` per turn and `tool_surface_summary` per run. Model configuration, scheduler, handles, retrieval, C7, validation, aliases, and Rust unchanged. Full inventory and metrics are in `docs/agent_core.md`.
+
 * **Same-turn DOCX handle reuse (Phase 1)** — the API now preserves inspected handles within one model turn across table formatting/widths/shading/cell formatting and paragraph formatting/style/text formatting. All other successful edits still clear handles immediately; an edited turn expires handles before the next model call or terminal save. Rust stays authoritative, V3 scheduling/failure skipping stays unchanged, and earlier successful bytes still save once after partial failure. Log: `[agent] mutation_turn turn=… sameTurnMutations=… compatibleMutations=… handleReuses=…`; stale diagnostics now include `modelTurn` and distinguish `model_turn` expiry from immediate `mutation` expiry.
 
 * **Live DOCX preview after blank creation** — successful agent mutations were invisible because the new editor showed a false `Unsaved` state, which blocks both working previews and later version reloads. Initial imports now ignore dirty events until the editor is ready; captured input marks a local edit only when it is a real input in editable document content. Editor readiness retries a pending preview. Real unsaved edits still block agent reloads.
@@ -151,6 +153,8 @@ _Read this before starting any work. Keep it a concise current-state handoff, no
 
 ## Verification Status
 
+* Dynamic tool surface: V3 typecheck + 36 tests; API typecheck/build, 106 focused tests, full 313 tests (293 passed, 20 DB integration tests skipped), and `git diff --check` pass. Real Rust + fake-model integration covers loading, handle reuse/expiry, finish containment and one saved version; a recurring-update regression completes all six required tool calls with zero discovery turns. No paid model call.
+
 * Phase 1 same-turn handles: real scheduler + Rust binding regressions cover three-table presentation, all seven allowed formatting operations, structural/content invalidation, old-turn stale handles, genuine failure, and partial saves. API build/typecheck, 73 focused API tests, full 306-test suite (286 passed, 20 DB integration tests skipped), V3 typecheck and 33 tests, engine-client 13 tests, and `git diff --check` pass. No paid model call; DeepSeek dogfood remains the next check.
 
 * Live DOCX preview after blank creation: web typecheck, 41 focused preview/activity tests, and `git diff --check` pass. User-run Luna check is still needed to verify editor behavior in the browser.
@@ -237,4 +241,4 @@ _Read this before starting any work. Keep it a concise current-state handoff, no
 
 ## Recommended Next Step
 
-Run DeepSeek dogfood with one table inspect followed by several table formatting/width/shading calls in one turn. Check `mutation_turn` for multiple applied mutations and positive `handleReuses`, with no sibling `stale_handle` after `compatible_mutation`. Confirm one saved version and the expected table formatting.
+Rerun the recurring-report update with DeepSeek V4.1 Flash. Compare turn-1 first-tool latency, reasoning/output tokens, model/total duration, and `tool_surface` (16 tools initially, no discovery needed for the six report-edit capabilities) against the previous baseline. Check `tool_surface_summary` for peak tools, groups loaded, and discovery turns.

@@ -6,6 +6,7 @@
 
 export function buildAgentOperatingInstruction(
   toolNames: readonly string[],
+  capabilityIndex?: string,
 ): string {
   const exposed = [...toolNames].sort();
   const capabilitySummary =
@@ -19,8 +20,12 @@ Your job is to understand the user's latest request and complete it accurately, 
 
 The available tools are authoritative. Do not claim, attempt, or imply capabilities that are not available.
 
-AVAILABLE CAPABILITIES
-${capabilitySummary}
+${capabilityIndex ? "INITIAL TOOLS" : "AVAILABLE CAPABILITIES"}
+${capabilitySummary}${capabilityIndex ? `
+
+TOOL GROUPS (load with tools_load_group)
+${capabilityIndex}
+If a needed capability is unavailable, load its tool group before concluding it is unsupported.` : ""}
 
 OPERATING PRINCIPLES
 
