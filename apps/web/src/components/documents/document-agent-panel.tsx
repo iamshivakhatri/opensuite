@@ -10,21 +10,16 @@ import {
   agentRunDurationMs,
   formatProgressElapsed,
   latestProgressHeadline,
-  presentAgentRun,
   reduceAgentProgress,
   reduceLiveTranscript,
-  toolLabels,
   visibleAgentProgress,
   type AgentProgressLine,
   type AgentTurnProgress,
   type LiveTranscriptEntry,
 } from "@/lib/agent-progress";
-import { AgentRunProgress } from "@/components/documents/agent-run-progress";
-import { AgentMarkdown } from "@/lib/agent-markdown";
+import { AgentTranscript } from "@/components/documents/agent-transcript";
 import {
   mergeMessagePage,
-  messageTaggedDocuments,
-  presentationStepsForAssistantMessage,
   prependOlderMessages,
   shouldClearLiveTranscript,
 } from "@/lib/agent-messages";
@@ -77,16 +72,6 @@ type TaggedDocument = {
   readonly format: string;
 };
 
-function stepProgressLine(step: AgentStep): AgentProgressLine | null {
-  if (step.kind === "narration" || step.kind === "validation" || step.status === "cancelled") return null;
-  return {
-    id: `step:${step.id}`,
-    label: step.summary === "Completed" ? toolLabels(step.name).done : step.summary ?? step.name,
-    status: step.status === "failed" ? "error" : "done",
-    toolName: step.name,
-  };
-}
-
 function runOutcome(run: AgentRun): AgentTurnProgress["outcome"] {
   if (run.status === "completed_with_input_needed") return "completed_with_input_needed";
   if (run.status === "cancelled") return "cancelled";
@@ -95,121 +80,6 @@ function runOutcome(run: AgentRun): AgentTurnProgress["outcome"] {
       ? "paused" : "failed";
   }
   return "completed";
-}
-
-type TranscriptEntry =
-  | { readonly kind: "narration"; readonly id: string; readonly content: string }
-  | { readonly kind: "activity"; readonly id: string; readonly line: AgentProgressLine };
-
-function durableTranscript(steps: readonly AgentStep[]): TranscriptEntry[] {
-  return steps.reduce<TranscriptEntry[]>((entries, step) => {
-    if (step.kind === "narration") {
-      if (step.summary) entries.push({ kind: "narration", id: step.id, content: step.summary });
-      return entries;
-    }
-    const line = stepProgressLine(step);
-    if (line) entries.push({ kind: "activity", id: step.id, line });
-    return entries;
-  }, []);
-}
-
-function RunTranscript({
-  entries,
-  streaming = false,
-}: {
-  entries: readonly TranscriptEntry[];
-  streaming?: boolean;
-}) {
-  const parts: React.ReactNode[] = [];
-  let activities: AgentProgressLine[] = [];
-  const flushActivities = () => {
-    if (activities.length === 0) return;
-    const lines = activities;
-    activities = [];
-    parts.push(
-      <AgentRunProgress
-        key={`activities:${lines.map((line) => line.id).join(":")}`}
-        presentation={presentAgentRun(lines, { live: streaming })}
-        status={lines.some((line) => line.status === "active") ? "active" : "done"}
-        expanded={false}
-        onToggle={() => undefined}
-        showDetails={false}
-        live={streaming}
-      />,
-    );
-  };
-  entries.forEach((entry, index) => {
-    if (entry.kind === "activity") {
-      activities.push(entry.line);
-      return;
-    }
-    flushActivities();
-    const isCurrent = streaming && index === entries.length - 1;
-    parts.push(
-      <div key={entry.id} className={isCurrent ? "relative" : undefined}>
-        <AgentMarkdown text={entry.content} streaming={isCurrent} />
-        {isCurrent ? (
-          <span aria-hidden className="ml-0.5 inline-block h-[0.85em] w-[2px] translate-y-[2px] animate-pulse bg-primary align-baseline" />
-        ) : null}
-      </div>,
-    );
-  });
-  flushActivities();
-  return <div className="flex flex-col gap-2">{parts}</div>;
-}
-
-function WorkingDots({ connectionStale, stopping }: { connectionStale: boolean; stopping: boolean }) {
-  if (connectionStale || stopping) {
-    return <p role="status" className="pl-1 text-[length:var(--text-2xs)] text-ink-faint">{stopping ? "Stopping…" : "Checking connection…"}</p>;
-  }
-  return (
-    <div role="status" aria-label="Agent working" className="flex items-center gap-1.5 py-1 pl-1">
-      <span aria-hidden className="h-1.5 w-1.5 rounded-full bg-primary motion-safe:animate-pulse [animation-delay:-800ms]" />
-      <span aria-hidden className="h-1.5 w-1.5 rounded-full bg-primary motion-safe:animate-pulse [animation-delay:-400ms]" />
-      <span aria-hidden className="h-1.5 w-1.5 rounded-full bg-primary motion-safe:animate-pulse" />
-    </div>
-  );
-}
-
-function CompletedRunTranscript({
-  steps,
-  summary,
-  omitFinishNarration = false,
-}: {
-  steps: readonly AgentStep[];
-  /** Compact completion line (includes total elapsed). */
-  summary?: string | null;
-  /** When true, narration immediately before `finish` is omitted (answer is message.content). */
-  omitFinishNarration?: boolean;
-}) {
-  const visibleSteps = omitFinishNarration
-    ? presentationStepsForAssistantMessage(steps, true)
-    : steps;
-  const checks = steps.find((step) => step.kind === "validation")?.output?.checks;
-  return (
-    <div className="flex flex-col gap-1.5">
-      {summary ? (
-        <p className="flex items-center gap-1.5 text-[length:var(--text-xs)] text-ink-faint">
-          <span className="shrink-0 text-[length:var(--text-2xs)]" aria-hidden>
-            ✓
-          </span>
-          <span className="min-w-0 truncate font-medium">{summary}</span>
-        </p>
-      ) : null}
-      <RunTranscript entries={durableTranscript(visibleSteps)} />
-      {checks?.length ? (
-        <div className="mt-1 text-[length:var(--text-2xs)] text-ink-soft" aria-label="Document validation">
-          <p className="font-medium">Validation</p>
-          <ul className="mt-1 space-y-0.5">
-            {checks.map((check) => <li key={check.id} title={check.evidence}>
-              <span aria-hidden>{check.status === "pass" ? "✓" : check.status === "warning" ? "⚠" : check.status === "fail" ? "!" : "–"}</span> {check.message}
-              {check.evidence ? <span className="block truncate pl-3 text-ink-faint">{check.evidence}</span> : null}
-            </li>)}
-          </ul>
-        </div>
-      ) : null}
-    </div>
-  );
 }
 
 function threadLabel(thread: AgentThread): string {
@@ -1471,8 +1341,12 @@ export function DocumentAgentPanel({
     !runNotice &&
     !versionNotice &&
     !canRetryRun;
-  const needsAiSettings = activeRun?.status === "failed" &&
-    (activeRun.errorCode?.startsWith("MANAGED_USAGE_") || activeRun.errorCode?.startsWith("MANAGED_TRIAL_"));
+  const needsAiSettings =
+    activeRun?.status === "failed" &&
+    Boolean(
+      activeRun.errorCode?.startsWith("MANAGED_USAGE_") ||
+        activeRun.errorCode?.startsWith("MANAGED_TRIAL_"),
+    );
   const documentsForTags = React.useMemo(() => {
     const byId = new Map<string, { id: string; name: string }>();
     for (const [id, name] of Object.entries(documentNamesById)) {
@@ -1625,215 +1499,48 @@ export function DocumentAgentPanel({
         ) : null}
 
         {phase.kind === "ready" ? (
-          <>
-            {showEmpty ? (
-              <div className="flex h-full min-h-[120px] items-center justify-center px-2 text-center">
-                <p className="max-w-[240px] text-[length:var(--text-panel)] leading-relaxed text-ink-faint">
-                  Ask OpenSuite to create or edit documents. Use @ to tag files,
-                  or drag them from the explorer.
-                </p>
-              </div>
-            ) : null}
-
-            {hasMoreMessages ? (
-              <div className="mb-3 flex flex-col items-center gap-1">
-                <button
-                  type="button"
-                  onClick={() => void loadOlderMessages()}
-                  disabled={loadingOlderMessages}
-                  aria-label="Load earlier messages"
-                  className={cn(
-                    focusRingClass,
-                    "rounded-[var(--radius-sm)] px-2.5 py-1 text-[length:var(--text-xs)] font-medium text-link hover:text-link-hover hover:underline disabled:cursor-not-allowed disabled:opacity-60",
-                  )}
-                >
-                  {loadingOlderMessages
-                    ? "Loading earlier messages…"
-                    : "Load earlier messages"}
-                </button>
-                {loadOlderMessagesError ? (
-                  <p className="text-[length:var(--text-xs)] text-danger">
-                    {loadOlderMessagesError}
-                  </p>
-                ) : null}
-              </div>
-            ) : null}
-
-            <div className="flex flex-col gap-4">
-              {messages.map((message, index) => {
-                const isLast = index === messages.length - 1;
-                const transcriptSteps = runStepsByMessageId[message.id];
-                if (message.role === "user") {
-                  const messageTags = messageTaggedDocuments(message, documentsForTags);
-                  const isContinue = message.content.trim() === "Continue";
-                  return (
-                    <div
-                      key={message.id}
-                      className={cn(
-                        "text-ink",
-                        isContinue
-                          ? "self-start rounded-[var(--radius-sm)] border border-stroke px-2 py-0.5 text-[length:var(--text-xs)] font-medium"
-                          : "rounded-[var(--radius-md)] bg-secondary-soft px-2.5 py-2 text-[length:var(--text-panel)] leading-[1.55]",
-                      )}
-                    >
-                      {!isContinue && messageTags.length > 0 ? (
-                        <div className="mb-1.5 flex flex-wrap gap-1">
-                          {messageTags.map((file) => (
-                            <span
-                              key={file.id}
-                              className="inline-flex max-w-full rounded-[var(--radius-sm)] bg-primary-soft px-1.5 py-0.5 text-[length:var(--text-2xs)] font-medium text-primary-hover"
-                            >
-                              @{file.name}
-                            </span>
-                          ))}
-                        </div>
-                      ) : null}
-                      {message.content}
-                    </div>
-                  );
-                }
-                return (
-                  <div key={message.id} className="flex flex-col gap-1.5">
-                    {transcriptSteps ? (
-                      <CompletedRunTranscript
-                        steps={transcriptSteps}
-                        omitFinishNarration={message.content.length > 0}
-                        summary={
-                          isLast && lastTurn && lastTurn.outcome !== "paused"
-                            ? presentAgentRun(lastTurn.lines, {
-                                durationMs: lastTurn.durationMs,
-                                outcome: lastTurn.outcome,
-                              }).headline
-                            : null
-                        }
-                      />
-                    ) : isLast && showRunProgressOnLastAssistant && lastTurn ? (
-                      <AgentRunProgress
-                        presentation={presentAgentRun(lastTurn.lines, {
-                          durationMs: lastTurn.durationMs,
-                          outcome: lastTurn.outcome,
-                        })}
-                        status={
-                          lastTurn.outcome === "failed" ? "error" : "done"
-                        }
-                        expanded={timelineOpen}
-                        onToggle={() => setTimelineOpen((open) => !open)}
-                        showCompletedSummary
-                      />
-                    ) : null}
-                    {!(isLast && activeRun?.resultMessageId === message.id && runError === message.content) ? (
-                      <AgentMarkdown text={message.content} />
-                    ) : null}
-                    {isLast && continueRunId ? (
-                      <button
-                        type="button"
-                        onClick={() => void handleContinue()}
-                        disabled={busy}
-                        className={cn(focusRingClass, "self-start rounded-[var(--radius-sm)] border border-stroke px-2 py-0.5 text-[length:var(--text-xs)] font-medium text-ink-soft hover:border-primary disabled:opacity-50")}
-                      >
-                        {submitting ? "Starting…" : "Continue"}
-                      </button>
-                    ) : null}
-                  </div>
-                );
-              })}
-
-              {/* Live narration and tool rows keep their observed order. */}
-              {isLiveTurn ? (
-                <div className="flex flex-col gap-2">
-                  {liveTranscript.length > 0 ? <RunTranscript entries={liveTranscript} streaming /> : null}
-                  <WorkingDots connectionStale={connectionStale} stopping={cancelling} />
-                </div>
-              ) : null}
-
-              {/* Finished turn with no assistant text yet (cancel / fail). */}
-              {!isLiveTurn && terminalRunTranscript ? (
-                <CompletedRunTranscript
-                  steps={terminalRunTranscript.steps}
-                  summary={
-                    lastTurn
-                      ? presentAgentRun(lastTurn.lines, {
-                          durationMs: lastTurn.durationMs,
-                          outcome: lastTurn.outcome,
-                        }).headline
-                      : null
-                  }
-                />
-              ) : null}
-              {!isLiveTurn &&
-              lastTurn &&
-              showFinishedProgress &&
-              !showRunProgressOnLastAssistant ? (
-                <AgentRunProgress
-                  presentation={presentAgentRun(lastTurn.lines, {
-                    durationMs: lastTurn.durationMs,
-                    outcome: lastTurn.outcome,
-                  })}
-                  status={lastTurn.outcome === "failed" ? "error" : "done"}
-                  expanded={timelineOpen}
-                  onToggle={() => setTimelineOpen((open) => !open)}
-                  showCompletedSummary
-                />
-              ) : null}
-
-              {versionNotice ? (
-                <p className="flex items-center gap-1.5 text-[length:var(--text-2xs)] text-ink-faint">
-                  <span
-                    aria-hidden
-                    className="h-1 w-1 shrink-0 rounded-full bg-ink-faint/70"
-                  />
-                  Document updated to{" "}
-                  <span className="font-medium tabular-nums text-ink-soft">
-                    v{versionNotice.versionNumber}
-                  </span>
-                </p>
-              ) : null}
-
-              {runNotice ? (
-                <p className="text-[length:var(--text-2xs)] text-ink-faint">
-                  {runNotice}
-                </p>
-              ) : null}
-
-              {runError ? (
-                <div className="flex items-start gap-2 border-l-2 border-danger bg-danger-soft/50 px-2.5 py-2 text-[length:var(--text-panel)] text-danger">
-                  <p className="min-w-0 flex-1 leading-snug">{runError}</p>
-                  {needsAiSettings ? (
-                    <Button type="button" variant="outline" size="sm" onClick={() => router.push("/app/settings#ai")}
-                      className="h-6 shrink-0 border-danger/30 px-2 text-[length:var(--text-xs)] text-danger hover:bg-danger-soft">
-                      AI settings
-                    </Button>
-                  ) : canRetryRun ? (
-                    <Button
-                      type="button"
-                      variant="outline"
-                      size="sm"
-                      onClick={() => void handleRetry()}
-                      disabled={busy}
-                      className="h-6 shrink-0 border-danger/30 px-2 text-[length:var(--text-xs)] text-danger hover:bg-danger-soft"
-                    >
-                      Retry
-                    </Button>
-                  ) : null}
-                </div>
-              ) : null}
-
-              {!runError && canRetryRun ? (
-                <button
-                  type="button"
-                  onClick={() => void handleRetry()}
-                  disabled={busy}
-                  className={cn(
-                    focusRingClass,
-                    "self-start rounded-[var(--radius-sm)] text-[length:var(--text-xs)] font-medium text-link hover:text-link-hover hover:underline disabled:opacity-50",
-                  )}
-                >
-                  Retry last request
-                </button>
-              ) : null}
-
-            </div>
-          </>
+          <AgentTranscript
+            showEmpty={showEmpty}
+            pagination={{
+              hasMore: hasMoreMessages,
+              loading: loadingOlderMessages,
+              error: loadOlderMessagesError,
+              onLoadOlder: () => void loadOlderMessages(),
+            }}
+            messages={messages}
+            runStepsByMessageId={runStepsByMessageId}
+            documentsForTags={documentsForTags}
+            live={{
+              active: isLiveTurn,
+              entries: liveTranscript,
+              connectionStale,
+              stopping: cancelling,
+            }}
+            turn={{
+              last: lastTurn,
+              terminalSteps: terminalRunTranscript?.steps ?? null,
+              showProgressOnLastAssistant: showRunProgressOnLastAssistant,
+              showFinishedProgress,
+              timelineOpen,
+              onToggleTimeline: () => setTimelineOpen((open) => !open),
+            }}
+            actions={{
+              continueRunId,
+              canRetry: canRetryRun,
+              busy,
+              submitting,
+              onContinue: () => void handleContinue(),
+              onRetry: () => void handleRetry(),
+              onOpenAiSettings: () => router.push("/app/settings#ai"),
+            }}
+            notices={{
+              versionNumber: versionNotice?.versionNumber ?? null,
+              run: runNotice,
+              error: runError,
+              needsAiSettings,
+              hideErrorContentMessageId: activeRun?.resultMessageId ?? null,
+            }}
+          />
         ) : null}
       </div>
 

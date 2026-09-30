@@ -14,6 +14,8 @@ _Read this before starting any work. Keep it a concise current-state handoff, no
 
 ## Just Completed
 
+* **Cleanup Phase 4A (readability)** — extracted agent transcript/display from `document-agent-panel.tsx` into nearby `agent-transcript.tsx` (`AgentTranscript`, `RunTranscript`, `CompletedRunTranscript`, `WorkingDots`). Panel keeps thread/run/SSE/submit/continue/cancel/composer ownership. Behavior-preserving; AGENTS.md unchanged. Next seam: composer UI, or run/SSE attach block.
+
 * **Cleanup Phase 3B (readability)** — extracted event relay/report logging (`run-events.ts`: transcript, `createRunEventHandler`, `emitRunReport`, `summarizeError`) and terminal settlement (`run-settlement.ts`: finalize/settle failure, lease keep/release, `boundedStopMessage`/`describeRunFailure`) from `execution.ts`. Restored Phase 3A `workspace_retrieval_skipped` sanitization via `summarizeError`. Behavior-preserving; AGENTS.md unchanged. Next seam: tool construction / DIRECT wiring, or frontend panel files.
 
 * **Cleanup Phase 3A (readability)** — extracted first-turn/context prep from `apps/api/src/agent/execution.ts` into `agent-context.ts` (`loadHistory`, `prepareContext`, retrieval load, `firstTurnContextProjection`, `composeProjectMessages`). Run lifecycle orchestration stays in `execution.ts`. Behavior-preserving; no agent-core-v3 / retrieval semantics / AGENTS.md changes.
@@ -127,6 +129,8 @@ _Read this before starting any work. Keep it a concise current-state handoff, no
 
 ## Verification Status
 
+* Cleanup Phase 4A: web agent-progress/messages/markdown tests (51), web typecheck, `git diff --check` pass. No behavior change intended.
+
 * Cleanup Phase 3B: API focused lifecycle/isolation/version/report/retrieval/projection/operating-instruction tests (133), API typecheck, `git diff --check` pass. Restored `workspace_retrieval_skipped` summarizeError sanitization. No behavior change intended.
 
 * Cleanup Phase 3A: API focused agent context/retrieval/isolation/version/report/operating-instruction tests (127), API typecheck, `git diff --check` pass. No behavior change intended.
@@ -191,7 +195,7 @@ _Read this before starting any work. Keep it a concise current-state handoff, no
 
 ## Recommended Next Step
 
-`execution.ts` is much more readable (~900 lines). Optional further split: tool construction / DIRECT read-guard wiring. Or start frontend readability (`document-agent-panel.tsx`, `workspace-ide.tsx`) / `routes/agent.ts`. Update `AGENTS.md` only after the full cleanup series finishes.
+Frontend readability continues: extract composer from `document-agent-panel.tsx` (~1.7k lines), or further split run/SSE attach. Optional API: tool construction / DIRECT wiring from `execution.ts`. Update `AGENTS.md` only after the full cleanup series finishes.
 
 
 
