@@ -20,7 +20,7 @@ export function presentationStepsForAssistantMessage(
   if (!hasAssistantContent) return steps;
   return steps.filter((step, index) => {
     if (step.kind !== "narration") return true;
-    return steps[index + 1]?.name !== "finish" && steps[index + 1]?.name !== "finish_with_input_needed";
+    return steps[index + 1]?.name !== "finish" && steps[index + 1]?.name !== "finish_with_input_needed" && steps[index + 1]?.name !== "request_clarification";
   });
 }
 

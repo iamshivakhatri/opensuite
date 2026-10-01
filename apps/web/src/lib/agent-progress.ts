@@ -283,6 +283,10 @@ const TOOL_LABELS: Record<string, { active: string; done: string }> = {
     active: "Completing task",
     done: "Needs your input",
   },
+  request_clarification: {
+    active: "Asking for clarification",
+    done: "Needs your input",
+  },
   "slides.update_text": {
     active: "Updating slide text",
     done: "Updated slide text",
@@ -326,7 +330,7 @@ export function toolLabels(toolName: string): { active: string; done: string } {
 }
 
 export function activityKindForTool(toolName: string): ActivityKind {
-  if (toolName === "finish" || toolName === "finish_with_input_needed") return "finish";
+  if (toolName === "finish" || toolName === "finish_with_input_needed" || toolName === "request_clarification") return "finish";
   if (READ_TOOLS.has(toolName)) return "read";
   if (LIFECYCLE_TOOLS.has(toolName)) return "lifecycle";
   if (toolName.startsWith("document.") || toolName.startsWith("workspace.")) {
@@ -1049,7 +1053,7 @@ function completionSummaryLabel(lines: readonly AgentProgressLine[]): string {
       }
     } else if (READ_TOOLS.has(line.toolName)) {
       hasRead = true;
-    } else if (line.toolName !== "finish" && line.toolName !== "finish_with_input_needed") {
+    } else if (line.toolName !== "finish" && line.toolName !== "finish_with_input_needed" && line.toolName !== "request_clarification") {
       hasMutation = true;
     }
   }

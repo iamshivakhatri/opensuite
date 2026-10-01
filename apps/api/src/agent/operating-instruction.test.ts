@@ -4,6 +4,21 @@ import { test } from "node:test";
 import { buildAgentOperatingInstruction, buildDocumentUpdateInstruction } from "./operating-instruction.js";
 import { createDocumentTools } from "./document-tools.js";
 
+test("clarification requires material ambiguity and excludes cheap recovery and delegated choices", () => {
+  const system = buildAgentOperatingInstruction(["request_clarification", "finish"]);
+  assert.match(system, /only when BOTH \(1\).*materially conflicts.*required information is genuinely missing, AND \(2\) two or more plausible interpretations/);
+  assert.match(system, /meaningfully different document facts, structure, or requested outcomes/);
+  assert.match(system, /one narrow read.*do not repeat reads to avoid asking/);
+  assert.match(system, /call request_clarification alone.*before further edits/);
+  assert.match(system, /Stop speculative reasoning; do not choose an unsupported interpretation merely to avoid asking/);
+  assert.match(system, /Keep internal tool details out of the question/);
+  assert.match(system, /Do not request clarification for capitalization, punctuation, obvious spelling mistakes, singular\/plural differences, obvious abbreviations, a unique high-confidence semantic match, cosmetic uncertainty/);
+  assert.match(system, /choices the user delegated.*use your judgment.*choose reasonable values/);
+  assert.match(system, /Missing handles or selectors call for a cheap document.inspect/);
+  assert.match(system, /normal tool failures with a deterministic recovery path call for recovery/);
+  assert.match(buildDocumentUpdateInstruction(), /If the clarification rule above does not apply/);
+});
+
 test("update policy preserves source-silent facts and flags missing input", () => {
   const policy = buildDocumentUpdateInstruction();
   assert.match(policy, /source is silent, carry forward existing metrics, table rows/);

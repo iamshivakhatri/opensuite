@@ -10,6 +10,7 @@ import {
   MAX_HISTORY_MESSAGES,
   projectHistoricalMessages,
   truncateToTokenBudget,
+  type HistoricalMessage,
 } from "./context-projection.js";
 import {
   retrieveWorkspaceContext,
@@ -17,18 +18,14 @@ import {
   formatDocumentMap,
   type DocumentMap,
   type WorkspaceArtifact,
+  type WorkspaceRetrieval,
 } from "./document-retrieval.js";
-import {
-  accumulateInRunObservationStats,
-  createInRunObservationStats,
-  projectInRunObservations,
-} from "./in-run-observation-projection.js";
 import type {
-  AgentMessage,
   AgentPersistenceService,
   AgentThreadContextCheckpoint,
 } from "./persistence.js";
-import { summarizeError } from "./run-events.js";
+import { isFinishTool, summarizeError } from "./run-events.js";
+import type { RunTrace } from "./run-trace.js";
 
 export type PreparedContext = {
   readonly messages: ModelMessage[];
@@ -58,6 +55,7 @@ export type PreparedContext = {
 
 export type RetrievedContext = {
   readonly message?: string;
+  readonly refreshDirectMessage?: WorkspaceRetrieval["refreshDirectMessage"];
   readonly workingSet: readonly WorkspaceArtifact[];
   readonly documentMaps: readonly DocumentMap[];
   readonly observation: {
@@ -88,20 +86,78 @@ export async function loadHistory(input: {
   readonly excludeMessageId: string;
 }): Promise<{
   readonly checkpoint: AgentThreadContextCheckpoint | null;
-  readonly priorMessages: readonly AgentMessage[];
+  readonly priorMessages: readonly HistoricalMessage[];
+  readonly historyLoad: { completedHumanTurnsLoaded: number; userMessagesLoaded: number;
+    assistantFinalMessagesLoaded: number; compactRunSummariesLoaded: number; orphanHistoricalMessagesOmitted: number };
 }> {
   const checkpoint = await input.persistence.getLatestThreadContextCheckpoint({
     threadId: input.threadId,
     ownerUserId: input.ownerUserId,
   });
-  const priorMessages = await input.persistence.listRecentMessagesForContext({
+  const recent = await input.persistence.listRecentMessagesForContext({
     threadId: input.threadId,
     ownerUserId: input.ownerUserId,
     checkpoint,
     excludeMessageId: input.excludeMessageId,
     limit: MAX_HISTORY_MESSAGES,
   });
-  return { checkpoint, priorMessages };
+  const users = recent.filter((message) => message.role === "user");
+  const runs = await input.persistence.listRunsForTriggerMessages({
+    threadId: input.threadId, ownerUserId: input.ownerUserId,
+    messageIds: users.map((message) => message.id),
+  });
+  const terminal = new Set(["completed", "completed_with_input_needed", "failed", "cancelled"]);
+  const runByUser = new Map<string, (typeof runs)[number]>();
+  for (const run of runs) if (run.triggeringMessageId && terminal.has(run.status) && !runByUser.has(run.triggeringMessageId)) {
+    runByUser.set(run.triggeringMessageId, run);
+  }
+  const messagesById = new Map(recent.map((message) => [message.id, message]));
+  const missingResults = await Promise.all([...runByUser.values()]
+    .filter((run) => run.resultMessageId && !messagesById.has(run.resultMessageId))
+    .map((run) => input.persistence.getMessageForThread({
+        threadId: input.threadId, ownerUserId: input.ownerUserId, messageId: run.resultMessageId!,
+      })));
+  for (const result of missingResults) if (result) messagesById.set(result.id, result);
+  const toolRows = await input.persistence.listToolNamesForRuns({
+    threadId: input.threadId, ownerUserId: input.ownerUserId,
+    runIds: [...runByUser.values()].map((run) => run.id),
+  });
+  const toolNames = new Map<string, Set<string>>();
+  for (const row of toolRows) {
+    if (isFinishTool(row.name)) continue;
+    if (!toolNames.has(row.runId)) toolNames.set(row.runId, new Set());
+    toolNames.get(row.runId)!.add(row.name);
+  }
+  const priorMessages: HistoricalMessage[] = [];
+  const used = new Set<string>();
+  let completedHumanTurnsLoaded = 0;
+  let assistantFinalMessagesLoaded = 0;
+  let compactRunSummariesLoaded = 0;
+  for (const user of users) {
+    const run = runByUser.get(user.id);
+    const following = recent[recent.indexOf(user) + 1];
+    const linked = run?.resultMessageId ? messagesById.get(run.resultMessageId) : undefined;
+    const assistant = linked?.role === "assistant" ? linked : following?.role === "assistant" ? following : undefined;
+    if (!run && !assistant) continue;
+    completedHumanTurnsLoaded++;
+    used.add(user.id);
+    if (assistant) used.add(assistant.id);
+    const status = run?.status === "completed_with_input_needed" ? "needs_input" : run?.status;
+    const names = run ? [...(toolNames.get(run.id) ?? [])] : [];
+    const summary = run ? ["RUN RESULT", `status: ${status}`,
+      `tools used: ${names.length ? names.join(", ") : "none"}`,
+      ...(!assistant && run.status === "failed" ? [`reason: ${(run.errorMessage ?? run.errorCode ?? "Run failed").slice(0, 200)}`] : []),
+    ].join("\n") : "";
+    if (summary) compactRunSummariesLoaded++;
+    priorMessages.push({ role: "user", content: assistant ? user.content : `${summary}\n\nUSER REQUEST\n${user.content}` });
+    if (assistant) {
+      assistantFinalMessagesLoaded++;
+      priorMessages.push({ role: "assistant", content: summary ? `${summary}\n\n${assistant.content}` : assistant.content });
+    }
+  }
+  return { checkpoint, priorMessages, historyLoad: { completedHumanTurnsLoaded,
+    userMessagesLoaded: completedHumanTurnsLoaded, assistantFinalMessagesLoaded,
+    compactRunSummariesLoaded, orphanHistoricalMessagesOmitted: recent.filter((message) => !used.has(message.id)).length } };
 }
 
 /**
@@ -109,8 +165,9 @@ export async function loadHistory(input: {
  * Call after tools/system exist so required token reserves include tool schemas.
  */
 export async function prepareContext(input: {
+  readonly trace?: RunTrace;
   readonly checkpoint: AgentThreadContextCheckpoint | null;
-  readonly priorMessages: readonly AgentMessage[];
+  readonly priorMessages: readonly HistoricalMessage[];
   readonly system: string;
   readonly tools: AgentToolSet;
   readonly instruction: string;
@@ -177,6 +234,7 @@ export async function prepareContext(input: {
     input.model.outputTokenLimit ?? input.model.maxOutputTokens,
   );
   const retrieval = await loadRetrievedContext({
+    trace: input.trace,
     cache: input.cache,
     binding: input.binding,
     documents: input.documents,
@@ -254,6 +312,7 @@ function toolContext(tools: AgentToolSet): string {
 }
 
 async function loadRetrievedContext(input: {
+  readonly trace?: RunTrace;
   readonly cache: SlimDocumentStructureCache;
   readonly binding: DocxEngineBinding | undefined;
   readonly documents: Pick<DocumentService, "listInWorkspace" | "readExactVersionBytes">;
@@ -270,6 +329,10 @@ async function loadRetrievedContext(input: {
   const startedAt = Date.now();
   try {
     const documents = await input.documents.listInWorkspace(input.workspaceId, input.ownerUserId);
+    input.trace?.write("## Retrieval — Artifact Metadata", documents.map((document) => ({
+      documentId: document.id, versionId: document.id === input.primaryDocumentId && input.primaryVersionId ? input.primaryVersionId : document.latestVersion.id,
+      name: document.name, format: document.format,
+    })));
     const retrieved = await retrieveWorkspaceContext({
       artifacts: documents.map((document) => ({
         documentId: document.id,
@@ -293,8 +356,10 @@ async function loadRetrievedContext(input: {
       })),
     });
     const message = retrieved.message;
+    input.trace?.write("## Retrieval — Document Evidence / Injected Context", retrieved);
     return {
       ...(message ? { message } : {}),
+      ...(retrieved.refreshDirectMessage ? { refreshDirectMessage: retrieved.refreshDirectMessage } : {}),
       workingSet: retrieved.workingSet,
       documentMaps: retrieved.documentMaps,
       observation: {
@@ -312,6 +377,7 @@ async function loadRetrievedContext(input: {
       },
     };
   } catch (error) {
+    input.trace?.write("## Retrieval — Error", error);
     console.warn(`[agent-v3] workspace_retrieval_skipped reason=${summarizeError(error)}`);
     return undefined;
   }
@@ -331,39 +397,43 @@ export function firstTurnContextProjection(context: string): (messages: readonly
 }
 
 /**
- * Compose Phase 6 first-turn retrieval with C7 in-run observation projection.
- * Retrieval injects once; C7 runs every turn on the model-facing view only.
+ * Compose first-turn retrieval with the current DIRECT view.
+ * Retrieval injects once, or DIRECT supplies the current view every turn.
+ * Keep the same-run assistant/tool exchange intact for provider continuation.
  */
 export function composeProjectMessages(input: {
   readonly retrievalMessage?: string;
+  readonly currentDirectMessage?: () => string | undefined;
   readonly safeToolResultNames?: boolean;
   readonly directVersionId?: string | null | (() => string | null);
   readonly currentVersionId?: () => string | null;
   readonly suppressedReadCount?: () => number;
-  readonly tools: AgentToolSet;
-  readonly stats: ReturnType<typeof createInRunObservationStats>;
 }): (messages: readonly ModelMessage[]) => readonly ModelMessage[] {
   const firstTurn = input.retrievalMessage
     ? firstTurnContextProjection(input.retrievalMessage)
     : (messages: readonly ModelMessage[]) => messages;
-  const isMutateTool = (toolName: string) =>
-    input.tools[toolName]?.kind === "mutate";
   let projectedOnce = false;
+  let directPosition = 0;
 
   return (messages) => {
     const first = !projectedOnce;
+    if (first) directPosition = messages.at(-1)?.role === "user" ? messages.length - 1 : messages.length;
     projectedOnce = true;
     const currentVersion = input.currentVersionId?.();
     const directVersionId = typeof input.directVersionId === "function" ? input.directVersionId() : input.directVersionId;
     const directCurrent = directVersionId && currentVersion === directVersionId;
-    const afterFirstTurn = !first && directCurrent && input.retrievalMessage
+    let afterFirstTurn = !first && directCurrent && input.retrievalMessage
       ? [...messages, { role: "user" as const, content: input.retrievalMessage }]
       : firstTurn(messages);
-    const projected = projectInRunObservations(afterFirstTurn, { isMutateTool });
-    accumulateInRunObservationStats(input.stats, projected);
+    if (input.currentDirectMessage) {
+      const current = input.currentDirectMessage();
+      afterFirstTurn = directCurrent && current
+        ? [...messages.slice(0, directPosition), { role: "user" as const, content: current }, ...messages.slice(directPosition)]
+        : messages;
+    }
     const withReadReminder = directCurrent && input.suppressedReadCount?.()
-      ? [...projected.messages, { role: "user" as const, content: "The complete unchanged document is already above. Repeated reads were skipped. Stop inspecting and perform the requested document changes using the available mutation tools." }]
-      : projected.messages;
+      ? [...afterFirstTurn, { role: "user" as const, content: "The complete unchanged document is already above. Repeated reads were skipped. Stop inspecting and perform the requested document changes using the available mutation tools." }]
+      : afterFirstTurn;
     if (!input.safeToolResultNames) return withReadReminder;
     return withReadReminder.map((message) => {
       if (!Array.isArray(message.content)) return message;

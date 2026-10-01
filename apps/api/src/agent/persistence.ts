@@ -792,6 +792,32 @@ export function createAgentPersistenceService(db: Db) {
     return rows.map(toRun);
   }
 
+  async function listRunsForTriggerMessages(
+    input: { threadId: string; ownerUserId: string; messageIds: readonly string[] },
+  ): Promise<AgentRun[]> {
+    if (input.messageIds.length === 0) return [];
+    await requireOwnedThread(db, input.threadId, input.ownerUserId);
+    const rows = await db.select(runSelect).from(schema.agentRun).where(and(
+      eq(schema.agentRun.threadId, input.threadId),
+      inArray(schema.agentRun.triggeringMessageId, [...input.messageIds]),
+    )).orderBy(desc(schema.agentRun.createdAt), desc(schema.agentRun.id));
+    return rows.map(toRun);
+  }
+
+  async function listToolNamesForRuns(
+    input: { threadId: string; ownerUserId: string; runIds: readonly string[] },
+  ): Promise<{ runId: string; name: string }[]> {
+    if (input.runIds.length === 0) return [];
+    await requireOwnedThread(db, input.threadId, input.ownerUserId);
+    return db.select({ runId: schema.agentStep.runId, name: schema.agentStep.name })
+      .from(schema.agentStep)
+      .innerJoin(schema.agentRun, eq(schema.agentStep.runId, schema.agentRun.id))
+      .where(and(eq(schema.agentRun.threadId, input.threadId),
+        inArray(schema.agentStep.runId, [...input.runIds]),
+        inArray(schema.agentStep.kind, ["tool", "inspect"])))
+      .orderBy(asc(schema.agentStep.runId), asc(schema.agentStep.sequence));
+  }
+
   return {
     /**
      * Run multiple persistence writes in one transaction.
@@ -1494,6 +1520,8 @@ export function createAgentPersistenceService(db: Db) {
     updateStepStatus,
     listStepsForRun,
     listRunsForResultMessages,
+    listRunsForTriggerMessages,
+    listToolNamesForRuns,
   };
 }
 

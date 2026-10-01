@@ -7,6 +7,7 @@ const COMMON_TOOLS = new Set([
   "document.set_table_cells_text", "document.delete_table_row",
   "workspace.create_blank_document", "workspace.duplicate_current_document",
   "workspace.select_document", "workspace.inspect_document", "finish", "finish_with_input_needed",
+  "request_clarification",
 ]);
 
 const TOOL_GROUPS = {

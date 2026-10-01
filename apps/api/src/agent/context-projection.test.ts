@@ -53,14 +53,14 @@ test("truncates one huge historical message deterministically", () => {
   assert.equal(history[0]?.content.length, MAX_SINGLE_HISTORY_MESSAGE_CHARACTERS + 1);
 });
 
-test("drops a leading assistant whose user request was omitted", () => {
+test("keeps a complete user and assistant turn when an orphan assistant follows", () => {
   const history = [
     message("user", "x".repeat(MAX_SINGLE_HISTORY_MESSAGE_CHARACTERS)),
     message("assistant", "y".repeat(MAX_SINGLE_HISTORY_MESSAGE_CHARACTERS)),
     message("assistant", "z".repeat(MAX_SINGLE_HISTORY_MESSAGE_CHARACTERS)),
   ];
   const projected = projectHistoricalMessages(history);
-  assert.deepEqual(projected.messages, []);
+  assert.deepEqual(projected.messages, history.slice(0, 2));
 });
 
 test("returns an empty projection for empty history", () => {

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { bindDocxDocument, buildDocxBody, createNapiDocxEngineBinding, type DocxEngineBinding } from "@opensuite/engine-client";
+import { bindDocxDocument, buildDocxBody, buildMinimalDocx, createNapiDocxEngineBinding, type DocxEngineBinding } from "@opensuite/engine-client";
 
 import {
   formatRetrievedDocumentContext,
@@ -526,4 +526,65 @@ test("first-turn projection places retrieval context before the latest user inst
     messages[2],
   ]);
   assert.deepEqual(project(messages), messages);
+});
+
+test("DIRECT refresh keeps source documents, drops stale target evidence, and uses new table selectors", async () => {
+  const binding = await createNapiDocxEngineBinding();
+  const target = buildDocxBody([{ kind: "paragraph", text: "Old heading" },
+    { kind: "table", rows: [["Old header"], ["Old value"]] }]);
+  const source = buildMinimalDocx(["Source facts"]);
+  let reads = 0;
+  const retrieved = await retrieveWorkspaceContext({
+    artifacts: [{ documentId: "target", versionId: "t1", name: "Target.docx", format: "docx" },
+      { documentId: "source", versionId: "s1", name: "Source.docx", format: "docx" }],
+    instruction: "Tell me about Old heading", primaryDocumentId: "target", taggedDocumentIds: ["source"],
+    binding, cache: new SlimDocumentStructureCache(), availableEvidenceTokens: 100_000,
+    readBytes: async (artifact) => { reads++; return artifact.documentId === "target" ? target : source; },
+  });
+  assert.equal(retrieved.contextStrategy, "direct");
+  assert.match(retrieved.message!, /Old heading/);
+  assert.ok(retrieved.evidence.some((item) => item.artifact.documentId === "target"));
+  const changed = buildDocxBody([{ kind: "paragraph", text: "New heading" },
+    { kind: "table", rows: [["New header"], ["New value"]] }]);
+  const message = await retrieved.refreshDirectMessage!({ documentId: "target", baseVersionId: "t1", revision: 2, bytes: changed, name: "Target.docx" });
+  assert.equal(reads, 2);
+  assert.match(message, /New heading/);
+  assert.match(message, /New value/);
+  assert.match(message, /Current table selector: {"headerCells":\["New header"\],"occurrence":0}/);
+  assert.match(message, /working revision 2/);
+  assert.match(message, /Source facts/);
+  assert.doesNotMatch(message, /Old heading|Old header|Old value/);
+  assert.match(retrieved.message!, /Old heading/, "initial retrieval stays unchanged");
+
+  const copyMessage = await retrieved.refreshDirectMessage!({ documentId: "copy", baseVersionId: "c1", revision: 1,
+    bytes: buildMinimalDocx(["Copy content"]), name: "Copy.docx" });
+  assert.match(copyMessage, /ID copy; version c1; working revision 1/);
+  assert.match(copyMessage, /New heading/);
+  assert.match(copyMessage, /Source facts/);
+});
+
+test("DIRECT refresh enforces the original shared token limit and completeness checks", async () => {
+  const realBinding = await createNapiDocxEngineBinding();
+  let incomplete = false;
+  const binding = { ...realBinding, inspectDocx: async (...args: Parameters<typeof realBinding.inspectDocx>) => {
+    const result = await realBinding.inspectDocx(...args);
+    return incomplete && result.overview ? { ...result, overview: { ...result.overview, paragraphCount: result.overview.paragraphCount + 1 } } : result;
+  } };
+  const input = { artifacts: [{ documentId: "doc", versionId: "v1", name: "Small.docx", format: "docx" }],
+    instruction: "Read this document", primaryDocumentId: "doc", taggedDocumentIds: [],
+    binding, cache: new SlimDocumentStructureCache(), availableEvidenceTokens: 100_000,
+    readBytes: async () => buildMinimalDocx(["Small content"]),
+  };
+  const retrieved = await retrieveWorkspaceContext(input);
+  const working = { documentId: "doc", baseVersionId: "v1", revision: 1, name: "Small.docx" };
+  await assert.rejects(retrieved.refreshDirectMessage!({ ...working, bytes: buildMinimalDocx(["x".repeat(30_000)]) }), /token limit/);
+  incomplete = true;
+  await assert.rejects(retrieved.refreshDirectMessage!({ ...working, bytes: buildMinimalDocx(["Small content"]) }), /every paragraph/);
+  incomplete = false;
+  const recovered = await retrieved.refreshDirectMessage!({ ...working, revision: 3, bytes: buildMinimalDocx(["Recovered"]) });
+  assert.match(recovered, /Recovered/);
+  assert.doesNotMatch(recovered, /Small content/);
+  const nonDirect = await retrieveWorkspaceContext({ ...input, cache: new SlimDocumentStructureCache(), availableEvidenceTokens: undefined });
+  assert.equal(nonDirect.contextStrategy, "hierarchical");
+  assert.equal(nonDirect.refreshDirectMessage, undefined);
 });

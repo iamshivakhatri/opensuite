@@ -174,30 +174,26 @@ export function projectHistoricalMessages(
   let estimatedHistoricalTokens = 0;
   let historyTrimmedByTokenBudget = false;
 
-  for (let index = messages.length - 1; index >= 0; index -= 1) {
-    if (selected.length >= MAX_HISTORY_MESSAGES) break;
-    const message = messages[index]!;
-    const content = projectContent(message.content);
-    if (historicalCharactersProjected + content.length > MAX_HISTORY_CHARACTERS) {
-      break;
-    }
-    const tokens = estimateTokens(content);
-    if (options.maxTokens !== undefined && estimatedHistoricalTokens + tokens > options.maxTokens) {
+  const turns: HistoricalMessage[][] = [];
+  for (let index = 0; index < messages.length; index++) {
+    if (messages[index]!.role !== "user") continue;
+    const turn = [messages[index]!];
+    if (messages[index + 1]?.role === "assistant") turn.push(messages[++index]!);
+    turns.push(turn);
+  }
+  for (let index = turns.length - 1; index >= 0; index--) {
+    const turn = turns[index]!.map((message) => ({ role: message.role, content: projectContent(message.content) }));
+    const turnCharacters = characters(turn);
+    const turnTokens = turn.reduce((total, message) => total + estimateTokens(message.content), 0);
+    if (selected.length + turn.length > MAX_HISTORY_MESSAGES ||
+      historicalCharactersProjected + turnCharacters > MAX_HISTORY_CHARACTERS) break;
+    if (options.maxTokens !== undefined && estimatedHistoricalTokens + turnTokens > options.maxTokens) {
       historyTrimmedByTokenBudget = true;
       break;
     }
-    selected.push({ role: message.role, content });
-    historicalCharactersProjected += content.length;
-    estimatedHistoricalTokens += tokens;
-  }
-
-  selected.reverse();
-  while (selected[0]?.role === "assistant") {
-    historicalCharactersProjected -= selected.shift()!.content.length;
-    estimatedHistoricalTokens = selected.reduce(
-      (total, message) => total + estimateTokens(message.content),
-      0,
-    );
+    selected.unshift(...turn);
+    historicalCharactersProjected += turnCharacters;
+    estimatedHistoricalTokens += turnTokens;
   }
 
   return {

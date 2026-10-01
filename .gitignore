@@ -29,6 +29,9 @@ coverage/
 # developer agent benchmark JSON output
 .agent-bench/
 
+# opt-in local full agent traces (contain user/document/model content)
+.agent-traces/
+
 # local verification / scratch artifacts
 .tmp/
 
@@ -76,3 +79,5 @@ notes.txt
 .gstack/
 
 *.json
+
+.agent-traces

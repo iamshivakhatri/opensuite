@@ -39,6 +39,9 @@ import {
   createRunEventHandler,
   createTranscriptCollector,
   emitRunReport,
+  isFinishTool,
+  isInputNeededTool,
+  summarizeError,
 } from "./run-events.js";
 import {
   MAX_MODEL_TURNS,
@@ -51,13 +54,13 @@ import {
   settleTerminalRunFailure,
 } from "./run-settlement.js";
 import { createToolSurface } from "./tool-groups.js";
+import { createRunTrace, traceModelSettings, type RunTrace } from "./run-trace.js";
 import { createPrimaryDocxTools } from "./docx-tools.js";
 import { verifyDocumentUpdate } from "./document-verification.js";
 import { SlimDocumentStructureCache } from "./document-retrieval.js";
 import { generateThreadTitle } from "./thread-title.js";
 import { estimateTokens } from "./context-projection.js";
 import { compactThreadContext, logContextCompaction } from "./context-compaction.js";
-import { createInRunObservationStats } from "./in-run-observation-projection.js";
 import { buildAgentOperatingInstruction, buildDocumentUpdateInstruction } from "./operating-instruction.js";
 import {
   type AgentMessage,
@@ -68,8 +71,6 @@ import {
 import {
   type AgentExecutionLeaseService,
 } from "./execution-lease.js";
-
-const isFinishTool = (name: string | undefined) => name === "finish" || name === "finish_with_input_needed";
 
 export type AgentEvent =
   | { readonly type: "agent.started"; readonly runId: string; readonly at: string }
@@ -268,9 +269,18 @@ export function createAgentExecutionService(deps: AgentExecutionServiceDeps) {
       });
 
       // Banner logged once retrieval resolves (target/sources known).
+      const trace = process.env.AGENT_RUN_TRACE === "full" ? createRunTrace({
+        runId: started.run.id, threadId: thread.id,
+        metadata: { model: typeof model.model === "string" ? model.model : model.model.modelId,
+          provider: typeof model.model === "string" ? undefined : model.model.provider, modelSettings: traceModelSettings(model.model),
+          workspaceId: thread.workspaceId, documentId: primaryDocument?.documentId ?? null,
+          startingVersionId: started.run.baseDocumentVersionId, contextLength: model.contextLength,
+          maxOutputTokens: model.outputTokenLimit, maxTurns: MAX_MODEL_TURNS },
+      }) : undefined;
       let getWorkingDocument = () => null as ReturnType<AgentExecutionHandle["getWorkingDocument"]>;
-      const result = runExecution({
+      const execution = runExecution({
         deps,
+        trace,
         model,
         thread,
         userMessage: started.userMessage,
@@ -293,6 +303,13 @@ export function createAgentExecutionService(deps: AgentExecutionServiceDeps) {
         liveEvents: input.liveEvents,
         setWorkingDocumentGetter: (getter) => { getWorkingDocument = getter; },
       });
+      const result = trace ? execution.then((result) => {
+        trace?.write("## Settlement", { run: result.run, assistantMessage: result.assistantMessage });
+        return result;
+      }, (error: unknown) => {
+        trace?.write("## Settlement — Error", error);
+        throw error;
+      }) : execution;
       // Background observation/ownership lives in run-manager (not here).
       const protectedResult = lease
         ? keepLeaseUntilFinished(deps.lease!, lease, result)
@@ -392,6 +409,7 @@ async function resolvePrimaryDocument(
 }
 
 async function runExecution(input: {
+  readonly trace?: RunTrace;
   readonly deps: AgentExecutionServiceDeps;
   readonly model: ResolvedV3ExecutionModel;
   readonly thread: AgentThread;
@@ -427,11 +445,16 @@ async function runExecution(input: {
     }
   };
   try {
-    const { checkpoint, priorMessages } = await loadHistory({
+    const { checkpoint, priorMessages, historyLoad } = await loadHistory({
       persistence: input.deps.persistence,
       threadId: input.thread.id,
       ownerUserId: input.ownerUserId,
       excludeMessageId: input.userMessage.id,
+    });
+    input.trace?.write("## Context — Checkpoint / Loaded History", { checkpoint, priorMessages });
+    input.trace?.write("## Context — Human Turn Counts", {
+      ...historyLoad, estimatedHistoricalTokens: estimateTokens(priorMessages.map((message) => message.content).join("\n")),
+      latestDocumentVersionId: input.run.baseDocumentVersionId,
     });
     const messageId = `v3-${input.run.id}`;
     await input.deps.persistence.updateRunStatus({
@@ -454,6 +477,10 @@ async function runExecution(input: {
     const initialDocumentId = input.primaryDocumentId;
     let directVersionId: string | null = null;
     let directWorkingVersions = new Map<string, string>();
+    let directMessage: string | undefined;
+    let directSnapshotRevision: number | null = 0;
+    let directAttemptedRevision = 0;
+    let documentView: Record<string, unknown> | undefined;
     const documentNames = new Map<string, string>();
     let updateDirectReadGuard = (_complete: boolean) => {};
     boundTools = await createPrimaryDocxTools({
@@ -466,6 +493,7 @@ async function runExecution(input: {
       workingDocumentIds: input.workingDocumentIds,
       ...(input.editableDocumentId ? { editableDocumentId: input.editableDocumentId } : {}),
       onDocumentSelected: ({ documentId, versionId }) => {
+        input.trace?.write("## Document Target", { documentId, versionId });
         logAgentLine(
           formatDocumentTarget(documentNames.get(documentId) ?? documentId.slice(0, 8)),
         );
@@ -473,6 +501,9 @@ async function runExecution(input: {
         updateDirectReadGuard(directVersionId !== null);
       },
       onWorkingUpdated: (working) => {
+        if (directVersionId) input.trace?.write("### Document View — Dirtied", {
+          ...working, snapshotRevision: directSnapshotRevision, dirty: true,
+        });
         void input.liveEvents?.emit({
           type: "document.working.updated",
           runId: input.run.id,
@@ -483,6 +514,7 @@ async function runExecution(input: {
         });
       },
       onVersionAdvanced: async (advanced) => {
+        input.trace?.write("## Document Version Created", advanced);
         logAgentLine(
           formatDocumentSaved(
             documentNames.get(advanced.documentId) ?? advanced.documentId.slice(0, 8),
@@ -504,10 +536,13 @@ async function runExecution(input: {
         });
       },
       onDocumentCreated: async (created) => {
+        documentNames.set(created.documentId, created.name);
+        input.trace?.write("## Document Created", created);
         if (created.kind === "created") createdDocumentId = created.documentId;
         // Duplication preserves DIRECT context only when the source was unchanged.
         if (created.kind === "duplicated" && directVersionId && boundTools?.getWorkingMutationCount() === 0) {
           directVersionId = created.versionId;
+          directSnapshotRevision = directAttemptedRevision = 0;
           updateDirectReadGuard(true);
         } else {
           directVersionId = null;
@@ -540,6 +575,16 @@ async function runExecution(input: {
         inputSchema: jsonSchema({ type: "object", properties: { missingInformation: { type: "string", minLength: 1 } }, required: ["missingInformation"], additionalProperties: false }),
         execute: () => "",
       }),
+      request_clarification: defineTool<{ question: string }, string>({
+        kind: "read",
+        terminal: true,
+        description: "Ask one concise, actionable question and end the run when a material contradiction or missing information leaves meaningfully different possible edits. Call this alone, before further edits; the question becomes the user-facing response. Do not include internal tool details.",
+        inputSchema: jsonSchema({ type: "object", properties: { question: { type: "string", minLength: 1 } }, required: ["question"], additionalProperties: false }),
+        execute: ({ question }) => {
+          if (typeof question !== "string" || !question.trim()) throw new Error("A clarification question is required.");
+          return question.trim();
+        },
+      }),
     };
     const readGuard = guardRepeatedReads(
       tools,
@@ -561,6 +606,7 @@ async function runExecution(input: {
       "\n\nFor requests involving several documents, identify the editable target before mutating. The active document is the default target only when it matches the request. Use workspace_select_document to bind another working-set DOCX before editing. Read source documents with workspace_inspect_document when the supplied context lacks their details. Keep edits narrow and preserve unrelated structure and formatting.";
 
     const { messages, context, retrieval, reportRetrieval } = await prepareContext({
+      trace: input.trace,
       checkpoint,
       priorMessages,
       system,
@@ -581,6 +627,7 @@ async function runExecution(input: {
       submittedDocumentIds: input.submittedDocumentIds,
       workingDocumentIds: input.workingDocumentIds,
     });
+    input.trace?.write("## Retrieval — Mode / Constructed Context", { retrievalMode: retrieval?.observation.contextStrategy ?? "skipped", retrieval, context, messages });
     for (const document of retrieval?.workingSet ?? []) documentNames.set(document.documentId, document.name);
     const targetId = boundTools?.getActiveDocumentId();
     const sources = (retrieval?.workingSet ?? []).filter((document) => document.documentId !== targetId);
@@ -601,6 +648,7 @@ async function runExecution(input: {
     });
     readGuard.setCompleteDirect(retrieval?.observation.contextStrategy === "direct");
     if (retrieval?.observation.contextStrategy === "direct") {
+      directMessage = retrieval.message;
       directWorkingVersions = new Map(retrieval.workingSet.map((document) => [document.documentId, document.versionId]));
       directVersionId = input.run.baseDocumentVersionId;
       updateDirectReadGuard = (complete) => readGuard.setCompleteDirect(complete);
@@ -623,16 +671,61 @@ async function runExecution(input: {
         });
     }
 
-    const inRunStats = createInRunObservationStats();
-    const projectMessages = composeProjectMessages({
+    const initialMessageCount = messages.length;
+    let modelTurn = 0;
+    let continuation: Record<string, unknown> | undefined;
+    const project = composeProjectMessages({
       retrievalMessage: retrieval?.message,
+      ...(retrieval?.refreshDirectMessage ? { currentDirectMessage: () => directMessage } : {}),
       safeToolResultNames: input.model.usageAttribution?.provider === "openrouter",
       directVersionId: () => directVersionId,
-      currentVersionId: () => boundTools?.getWorkingRevision() ? null : boundTools?.getActiveVersionId() ?? null,
+      currentVersionId: () => directMessage ? boundTools?.getActiveVersionId() ?? null : null,
       suppressedReadCount: () => readGuard.suppressedCount(),
-      tools,
-      stats: inRunStats,
     });
+    const projectMessages: NonNullable<Parameters<typeof runAgent>[0]["projectMessages"]> = async (messages) => {
+      if (directVersionId && retrieval?.refreshDirectMessage) {
+        const workingRevision = boundTools?.getWorkingRevision() ?? 0;
+        const dirty = workingRevision !== directAttemptedRevision;
+        const startedAt = performance.now();
+        let refreshError: string | undefined;
+        if (dirty) {
+          directAttemptedRevision = workingRevision;
+          // Clear first: a failed refresh must never re-inject the old snapshot.
+          directMessage = undefined;
+          directSnapshotRevision = null;
+          readGuard.setCompleteDirect(false);
+          try {
+            const working = boundTools?.getWorkingDocument();
+            if (!working) throw new Error("Current working document is unavailable");
+            directMessage = await retrieval.refreshDirectMessage({ ...working, name: documentNames.get(working.documentId) ?? working.documentId });
+            directSnapshotRevision = workingRevision;
+            readGuard.setCompleteDirect(true);
+          } catch (error) {
+            refreshError = summarizeError(error);
+            console.warn(`[agent] direct_view_refresh_failed revision=${workingRevision} reason=${refreshError}`);
+          }
+        }
+        documentView = { strategy: "direct", workingRevision, snapshotRevision: directSnapshotRevision,
+          dirty, refreshed: dirty && directMessage !== undefined, available: directMessage !== undefined,
+          characters: directMessage?.length ?? 0, estimatedTokens: estimateTokens(directMessage ?? ""),
+          durationMs: dirty ? performance.now() - startedAt : 0, ...(refreshError ? { refreshError } : {}) };
+      } else documentView = undefined;
+      const workingRevision = boundTools?.getWorkingRevision() ?? 0;
+      const projected = project(messages);
+      const inRunMessages = projected.slice(initialMessageCount);
+      continuation = { turn: ++modelTurn, mode: "provider",
+        priorAssistantReasoningReplayed: inRunMessages.some((message) => message.role === "assistant" &&
+          Array.isArray(message.content) && message.content.some((part) => part.type === "reasoning")),
+        priorSuccessfulToolExchangesReplayed: inRunMessages.some((message) => message.role === "tool" &&
+          Array.isArray(message.content) && message.content.some((part) => part.type === "tool-result" &&
+            part.output.type !== "error-text" && part.output.type !== "error-json" && part.output.type !== "execution-denied" &&
+            !("value" in part.output && part.output.value && typeof part.output.value === "object" && (part.output.value as { ok?: unknown }).ok === false))),
+        estimatedInRunTokens: estimateTokens(JSON.stringify(inRunMessages)),
+        workingRevision, snapshotRevision: directSnapshotRevision,
+        };
+      input.trace?.write(`## Turn ${modelTurn} — Continuation`, continuation);
+      return projected;
+    };
 
     // The one API → agent-core-v3 execution call.
     const executeAgent = input.deps.runAgent ?? runAgent;
@@ -651,7 +744,7 @@ async function runExecution(input: {
           before: new Uint8Array(before), after: new Uint8Array(after), instruction: input.instruction,
           successfulMutations: metrics?.toolCalls.filter((tool) => tool.kind === "mutate" && tool.outcome === "success").map((tool) => tool.toolName),
           created: createdDocumentId === target.documentId,
-          inputNeeded: metrics?.toolCalls.filter((tool) => tool.outcome === "success" && isFinishTool(tool.toolName)).at(-1)?.toolName === "finish_with_input_needed",
+          inputNeeded: isInputNeededTool(metrics?.toolCalls.filter((tool) => tool.outcome === "success" && isFinishTool(tool.toolName)).at(-1)?.toolName),
           targetAdvanced: target.fromVersionId !== target.versionId,
           sourcesUnchanged: input.workingDocumentIds.every((id) => id === target.documentId)
             ? true
@@ -660,8 +753,10 @@ async function runExecution(input: {
               : null,
         });
         transcript.validation(checks);
+        input.trace?.write("## Validation", checks);
         logAgentLine(formatValidationChecks(checks));
       } catch {
+        input.trace?.write("## Validation", [{ id: "verification", status: "fail", message: "Saved document could not be verified" }]);
         transcript.validation([{ id: "verification", status: "fail", message: "Saved document could not be verified" }]);
         logAgentLine(formatValidationChecks([{ status: "fail", message: "Saved document could not be verified" }]));
       }
@@ -686,10 +781,13 @@ async function runExecution(input: {
         signal: input.signal,
         runId: runShort,
         maxTurns: MAX_MODEL_TURNS,
+        ...(input.trace ? { onDiagnostic: (event, data) => input.trace!.diagnostic(event, data,
+          toolSurface.summary().groupsLoaded, event === "model_request" ? { ...context, ...(documentView ? { documentView } : {}), continuation } : undefined) } : {}),
         ...(input.model.outputTokenLimit !== undefined
           ? { maxOutputTokens: input.model.outputTokenLimit }
           : {}),
         onEvent: (event) => {
+          input.trace?.event(event);
           if (event.type === "model_turn_started") boundTools?.setModelTurn(event.turn);
           if (event.type === "model_turn_completed") toolSurface.recordTurn(event, runShort);
           return handleRunEvent(event);
@@ -702,6 +800,7 @@ async function runExecution(input: {
       try { await flushWorking(); } catch (flushError) { terminalError = flushError; }
       await verifySavedDocument(result?.metrics ?? getRunMetricsFromError(error));
       await emitRunReport({
+        trace: input.trace,
         runId: input.run.id,
         instruction: input.instruction,
         model: input.model,
@@ -719,10 +818,6 @@ async function runExecution(input: {
         retrieval: reportRetrieval,
         context: {
           ...context,
-          inRunObservationsCompacted: inRunStats.observationsCompacted,
-          estimatedInRunTokensBefore: inRunStats.estimatedInRunTokensBefore,
-          estimatedInRunTokensAfter: inRunStats.estimatedInRunTokensAfter,
-          maxProjectedInputTokens: inRunStats.maxProjectedInputTokens,
           redundantReadSuppressedCount: readGuard.suppressedCount(),
           continuationPreviousRunId: input.continuationPreviousRunId,
         },
@@ -734,6 +829,7 @@ async function runExecution(input: {
     }
 
     await emitRunReport({
+      trace: input.trace,
       runId: input.run.id,
       instruction: input.instruction,
       model: input.model,
@@ -751,10 +847,6 @@ async function runExecution(input: {
       retrieval: reportRetrieval,
       context: {
         ...context,
-        inRunObservationsCompacted: inRunStats.observationsCompacted,
-        estimatedInRunTokensBefore: inRunStats.estimatedInRunTokensBefore,
-        estimatedInRunTokensAfter: inRunStats.estimatedInRunTokensAfter,
-        maxProjectedInputTokens: inRunStats.maxProjectedInputTokens,
         redundantReadSuppressedCount: readGuard.suppressedCount(),
         continuationPreviousRunId: input.continuationPreviousRunId,
       },
@@ -809,8 +901,8 @@ async function runExecution(input: {
       runId: input.run.id,
       content: result.text,
       inputNeeded: result.stopReason === "finish_tool" &&
-        result.metrics.toolCalls.filter((call) => call.outcome === "success" && isFinishTool(call.toolName))
-          .at(-1)?.toolName === "finish_with_input_needed",
+        isInputNeededTool(result.metrics.toolCalls.filter((call) => call.outcome === "success" && isFinishTool(call.toolName))
+          .at(-1)?.toolName),
     });
     transcript.finish(result.text);
     await persistTranscript(input.deps.persistence, input.ownerUserId, input.run.id, transcript.entries());
@@ -831,6 +923,7 @@ async function runExecution(input: {
       .catch(() => console.warn("[context-compaction] maintenance failed"));
     return { thread: input.thread, userMessage: input.userMessage, ...finalized };
   } catch (error) {
+    input.trace?.write("## Run Error", { error, metrics: getRunMetricsFromError(error), cancelled: input.signal?.aborted === true });
     // Convert every run failure into terminal product state and settle normally.
     // Includes pre-model setup (checkpoint/history load). Re-throwing here used
     // to reject the background promise and leave the run non-terminal forever.

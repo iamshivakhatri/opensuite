@@ -143,6 +143,16 @@ it("still shows a chip when the document id is not in the workspace list yet", (
 });
 
 describe("assistant transcript reconciliation (finish narration vs message)", () => {
+  it("clarification question renders once through the existing assistant message", () => {
+    const question = "Which reporting period should I use?";
+    const steps = [
+      step("n1", "narration", "Assistant narration", question, 0),
+      step("c1", "tool", "request_clarification", "Completed", 1),
+    ];
+    assert.deepEqual(renderedAssistantBodies(steps, question), [question]);
+    assert.deepEqual(presentationStepsForAssistantMessage(steps, false), steps);
+  });
+
   it("A: one-turn final answer renders Hello world exactly once", () => {
     const steps = [
       step("n1", "narration", "Assistant narration", "Hello world", 0),

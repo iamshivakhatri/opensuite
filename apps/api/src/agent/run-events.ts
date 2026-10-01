@@ -32,8 +32,10 @@ import type {
   AgentEventSink,
   ResolvedV3ExecutionModel,
 } from "./execution.js";
+import type { RunTrace } from "./run-trace.js";
 
-const isFinishTool = (name: string | undefined) => name === "finish" || name === "finish_with_input_needed";
+export const isInputNeededTool = (name: string | undefined) => name === "finish_with_input_needed" || name === "request_clarification";
+export const isFinishTool = (name: string | undefined) => name === "finish" || isInputNeededTool(name);
 
 export type TranscriptEntry = {
   readonly kind: AgentStepKind;
@@ -231,6 +233,7 @@ export function createRunEventHandler(input: {
 }
 
 export async function emitRunReport(input: {
+  readonly trace?: RunTrace;
   readonly runId: string;
   readonly instruction: string;
   readonly model: ResolvedV3ExecutionModel;
@@ -317,6 +320,7 @@ export async function emitRunReport(input: {
     );
     return;
   }
+  input.trace?.write("## Run Report — Outcome / Versions / Total Usage / Cost / Timing", report);
   try {
     logAgentRunReport(report);
   } catch (error) {

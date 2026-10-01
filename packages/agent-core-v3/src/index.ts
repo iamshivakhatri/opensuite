@@ -25,6 +25,7 @@ export {
   type AgentTool,
   type AgentToolSet,
   type DefineToolSpec,
+  type DiagnosticHook,
   type InfraRetryPolicy,
   type ModelMessage,
   type RunAgentInput,

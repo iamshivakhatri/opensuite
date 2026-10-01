@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import type { ModelMessage } from "@opensuite/agent-core-v3";
+import type { AgentToolSet, ModelMessage } from "@opensuite/agent-core-v3";
 
 import { estimateTokens } from "./context-projection.js";
 import { composeProjectMessages, firstTurnContextProjection } from "./agent-context.js";
@@ -447,17 +447,9 @@ test("C7 policies: failed inspect outside window keeps failure signal when compa
 
 // --- Phase 6 composition ---
 
-test("C7 + Phase 6: first-turn retrieval appears once; later turns only apply C7", () => {
-  const stats = createInRunObservationStats();
-  const tools = {
-    "document.inspect": { kind: "read" as const, description: "i", inputSchema: {} },
-    "document.find": { kind: "read" as const, description: "f", inputSchema: {} },
-    "document.replace_text": { kind: "mutate" as const, description: "m", inputSchema: {} },
-  };
+test("first-turn retrieval appears once; later turns preserve provider exchanges", () => {
   const project = composeProjectMessages({
     retrievalMessage: "Relevant document structure:\n- Table t0",
-    tools: tools as never,
-    stats,
   });
 
   const seed: ModelMessage[] = [{ role: "user", content: "Add milestones" }];
@@ -485,8 +477,7 @@ test("C7 + Phase 6: first-turn retrieval appears once; later turns only apply C7
   ];
   const turn2 = project(afterTools);
   assert.ok(!JSON.stringify(turn2).includes("Relevant document structure"));
-  assert.equal(resultValue(turn2[2]!).compacted, true);
-  assert.ok(stats.observationsCompacted >= 1);
+  assert.deepEqual(resultValue(turn2[2]!), largeInspectPayload());
 });
 
 test("OpenRouter tool responses use provider-safe names without changing the raw transcript", () => {
@@ -495,7 +486,7 @@ test("OpenRouter tool responses use provider-safe names without changing the raw
     assistantTurn(toolCall("c1", "document.insert_paragraphs")),
     toolTurn(toolResult("c1", "document.insert_paragraphs", { ok: false, reasonCode: "NO_ACTIVE_DOCUMENT" })),
   ];
-  const project = composeProjectMessages({ tools: {} as never, stats: createInRunObservationStats(), safeToolResultNames: true });
+  const project = composeProjectMessages({ safeToolResultNames: true });
   const projected = project(messages);
   const result = (projected[2]!.content as { toolName: string }[])[0]!;
   assert.equal(result.toolName, "document_insert_paragraphs");
@@ -517,8 +508,6 @@ test("DIRECT content stays available while its version is current", () => {
     retrievalMessage: "COMPLETE CURRENT DOCUMENT CONTENT (v1)",
     directVersionId: "v1",
     currentVersionId: () => version,
-    tools: {} as never,
-    stats: createInRunObservationStats(),
   });
   const messages: ModelMessage[] = [{ role: "user", content: "Continue" }];
   assert.match(JSON.stringify(project(messages)), /COMPLETE CURRENT DOCUMENT CONTENT/);
@@ -539,8 +528,6 @@ test("DIRECT content follows an exact document copy, then expires after editing"
     retrievalMessage: "COMPLETE DOCUMENT CONTENT",
     directVersionId: () => directVersion,
     currentVersionId: () => workingRevision ? null : version,
-    tools: {} as never,
-    stats: createInRunObservationStats(),
   });
   const messages: ModelMessage[] = [{ role: "user", content: "Rewrite the copy" }];
   project(messages);
@@ -549,6 +536,45 @@ test("DIRECT content follows an exact document copy, then expires after editing"
   assert.match(JSON.stringify(project(messages)), /COMPLETE DOCUMENT CONTENT/);
   workingRevision = 1;
   assert.doesNotMatch(JSON.stringify(project(messages)), /COMPLETE DOCUMENT CONTENT/);
+});
+
+test("current DIRECT projection replaces its snapshot at a fixed position and omits an unavailable view", () => {
+  let snapshot: string | undefined = "CURRENT INITIAL";
+  const project = composeProjectMessages({ retrievalMessage: snapshot, currentDirectMessage: () => snapshot,
+    directVersionId: "v1", currentVersionId: () => snapshot ? "v1" : null,
+    });
+  const messages: ModelMessage[] = [{ role: "user", content: "History" }, { role: "assistant", content: "Earlier reply" },
+    { role: "user", content: "Edit" }];
+  assert.equal(project(messages)[2]!.content, "CURRENT INITIAL");
+  const later: ModelMessage[] = [...messages, { role: "assistant", content: "Tool turn" }];
+  snapshot = "CURRENT UPDATED";
+  const refreshed = project(later);
+  assert.equal(refreshed[2]!.content, "CURRENT UPDATED");
+  assert.equal(refreshed.filter((message) => JSON.stringify(message).includes("CURRENT")).length, 1);
+  assert.doesNotMatch(JSON.stringify(refreshed), /CURRENT INITIAL/);
+  assert.deepEqual(later, [...messages, { role: "assistant", content: "Tool turn" }]);
+  snapshot = undefined;
+  assert.doesNotMatch(JSON.stringify(project(later)), /CURRENT/);
+  snapshot = "CURRENT RECOVERED";
+  assert.equal(project(later)[2]!.content, "CURRENT RECOVERED");
+});
+
+test("a refreshed DIRECT view restores the revision read budget and still allows fresh targets", async () => {
+  let revision = 0;
+  let reads = 0;
+  const tools = { "document.inspect": { kind: "read", execute: () => { reads++; return { ok: true }; } } } as never;
+  const guard = guardRepeatedReads(tools, () => "v1", true, () => revision);
+  const inspect = (tools as AgentToolSet)["document.inspect"]!.execute!;
+  const call = { toolCallId: "read", messages: [], context: undefined as never };
+  await inspect({ kind: "body_blocks" }, call);
+  revision++;
+  guard.setCompleteDirect(true);
+  await inspect({ kind: "body_blocks" }, call);
+  assert.equal(reads, 2, "fresh handles can still be inspected after refresh");
+  const suppressed = await inspect({ kind: "tables" }, call) as { redundantReadSuppressed: boolean };
+  assert.equal(suppressed.redundantReadSuppressed, true);
+  await inspect({ kind: "context", text: "exact target" }, call);
+  assert.equal(reads, 3);
 });
 
 test("read guard permits exact targets and resets on version advance", async () => {
@@ -613,8 +639,6 @@ test("DIRECT read budget covers distinct targeted inspections and prompts action
     directVersionId: "v1",
     currentVersionId: () => changed ? null : "v1",
     suppressedReadCount: () => guard.suppressedCount(),
-    tools,
-    stats: createInRunObservationStats(),
   });
   const messages: ModelMessage[] = [{ role: "user", content: "Rewrite the document" }];
   const projected = project(messages);

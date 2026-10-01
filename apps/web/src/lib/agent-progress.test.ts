@@ -13,6 +13,7 @@ import {
   reduceAgentProgress,
   reduceLiveTranscript,
   technicalProgressLines,
+  toolLabels,
   visibleAgentProgress,
   type AgentProgressLine,
   type LiveTranscriptEntry,
@@ -695,6 +696,8 @@ test("input-needed completion has a distinct neutral headline", () => {
     "Needs your input · 1.0s",
   );
   assert.equal(activityKindForTool("finish_with_input_needed"), "finish");
+  assert.equal(activityKindForTool("request_clarification"), "finish");
+  assert.deepEqual(toolLabels("request_clarification"), { active: "Asking for clarification", done: "Needs your input" });
 });
 
 test("shouldAcceptSubmit blocks empty and in-flight submits", () => {

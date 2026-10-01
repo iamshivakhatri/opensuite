@@ -1,5 +1,8 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
+import { mkdtempSync, readFileSync, readdirSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 import { runAgent, type RunAgentResult, type RunModelResult, type V3Model } from "@opensuite/agent-core-v3";
 import { MockLanguageModelV4, simulateReadableStream } from "ai/test";
@@ -12,6 +15,7 @@ import {
   type AgentExecutionServiceDeps,
 } from "./execution.js";
 import { boundedStopMessage, describeRunFailure } from "./run-settlement.js";
+import { loadHistory } from "./agent-context.js";
 import { compactThreadContext } from "./context-compaction.js";
 import type {
   AgentMessage,
@@ -24,6 +28,229 @@ import { createAgentRunManager } from "./run-manager.js";
 import { estimateTokens, MAX_HISTORY_MESSAGES, safeInputTokenBudget } from "./context-projection.js";
 
 const now = () => new Date().toISOString();
+
+test("new human run loads a prior final reply and keeps an empty-result run as a terminal status", async () => {
+  const persistence = memoryPersistence("user-1");
+  const first = await persistence.appendMessage({ threadId: "thread-1", ownerUserId: "user-1", role: "user", content: "Create a report" });
+  const firstRun = await persistence.createRun({ threadId: "thread-1", ownerUserId: "user-1", createdByUserId: "user-1", triggeringMessageId: first.id, baseDocumentVersionId: null, status: "running" });
+  const reply = await persistence.appendMessage({ threadId: "thread-1", ownerUserId: "user-1", role: "assistant", content: "Report created" });
+  await persistence.updateRunStatus({ runId: firstRun.id, ownerUserId: "user-1", status: "completed", resultMessageId: reply.id });
+  await persistence.appendSteps({ runId: firstRun.id, ownerUserId: "user-1", steps: [{ sequence: 0, kind: "tool", status: "completed", name: "document.create_table", summary: "Completed" }] });
+  const second = await persistence.appendMessage({ threadId: "thread-1", ownerUserId: "user-1", role: "user", content: "Update it" });
+  const secondRun = await persistence.createRun({ threadId: "thread-1", ownerUserId: "user-1", createdByUserId: "user-1", triggeringMessageId: second.id, baseDocumentVersionId: null, status: "running" });
+  await persistence.updateRunStatus({ runId: secondRun.id, ownerUserId: "user-1", status: "failed", errorMessage: "Stopped early" });
+  const history = await loadHistory({ persistence, threadId: "thread-1", ownerUserId: "user-1", excludeMessageId: "next-message" });
+  assert.deepEqual(history.priorMessages.map((message) => message.role), ["user", "assistant", "user"]);
+  assert.match(history.priorMessages[1]!.content, /document.create_table[\s\S]*Report created/);
+  assert.match(history.priorMessages[2]!.content, /status: failed[\s\S]*Stopped early/);
+  assert.equal(history.historyLoad.assistantFinalMessagesLoaded, 1);
+});
+
+test("API full trace records retrieval, saved version, validation and durable settlement; setup errors and cancellation also settle", async () => {
+  const previousMode = process.env.AGENT_RUN_TRACE;
+  const previousDir = process.env.AGENT_RUN_TRACE_DIR;
+  const dir = mkdtempSync(join(tmpdir(), "opensuite-api-trace-"));
+  process.env.AGENT_RUN_TRACE = "full";
+  process.env.AGENT_RUN_TRACE_DIR = dir;
+  try {
+    const persistence = memoryPersistence("user-1");
+    const binding = await createNapiDocxEngineBinding();
+    const versions = new Map([["v1", Buffer.from(buildMinimalDocx(["Before"]))]]);
+    let versionId = "v1";
+    let modelTurn = 0;
+    const model = new MockLanguageModelV4({ doStream: async () => ({ stream: simulateReadableStream({ chunks: [
+      { type: "stream-start", warnings: [] },
+      ...(modelTurn++ === 0 ? [{ type: "tool-call", toolCallId: "replace-1", toolName: "document_replace_text", input: JSON.stringify({ target: { text: "Before" }, expectedCurrentText: "Before", replacement: "After" }) }]
+        : [{ type: "text-start", id: "t" }, { type: "text-delta", id: "t", delta: "Done" }, { type: "text-end", id: "t" }]),
+      { type: "finish", finishReason: { unified: modelTurn === 1 ? "tool-calls" : "stop", raw: "stop" }, usage: { inputTokens: { total: 10, noCache: 10, cacheRead: 0, cacheWrite: 0 }, outputTokens: { total: 2, text: 2, reasoning: 0 } } },
+    ] as never[] }) }) });
+    const deps = baseDeps(persistence, (input) => runAgent({ ...input, model }), undefined, 128_000);
+    const document = () => ({ id: "doc-1", name: "Report.docx", workspaceId: "ws-1", format: "docx", latestVersion: { id: versionId } });
+    const execution = createAgentExecutionService({ ...deps, docxBinding: binding,
+      documents: { ...deps.documents, listInWorkspace: async () => [document()] as never,
+        getOwnedDocument: async () => document() as never,
+        readExactVersionBytes: async (input) => versions.get(input.versionId)!,
+        appendDocumentVersion: async (input) => { versionId = "v2"; versions.set(versionId, Buffer.from(input.bytes)); return { version: { id: versionId, versionNumber: 2 } } as never; },
+      },
+    });
+    const result = await (await execution.start({ userId: "user-1", threadId: "thread-1", activeDocumentId: "doc-1", instruction: "Replace Before with After" })).result;
+    assert.equal(result.run.status, "completed");
+    assert.equal(versionId, "v2");
+    assert.equal(readdirSync(dir).length, 1);
+    const content = readFileSync(join(dir, readdirSync(dir)[0]!), "utf8");
+    for (const expected of ["Artifact Metadata", "Document Evidence / Injected Context", "Before", "After", "Turn 1 — Request", "Raw", "Validation", "Run Report", "Settlement", "v1", "v2"]) assert.ok(content.includes(expected === "Raw" ? "rawResult" : expected), expected);
+    assert.match(content, /"status": "completed"/);
+    assert.match(content, /"outcome": "success"/);
+
+    persistence.getLatestThreadContextCheckpoint = async () => { throw new Error("setup failed"); };
+    const failure = await (await execution.start({ userId: "user-1", threadId: "thread-1", instruction: "test failure" })).result;
+    assert.equal(failure.run.status, "failed");
+    persistence.getLatestThreadContextCheckpoint = async () => null;
+    const controller = new AbortController();
+    controller.abort(new Error("cancelled by test"));
+    const cancellation = await (await execution.start({ userId: "user-1", threadId: "thread-1", instruction: "test cancellation", signal: controller.signal })).result;
+    assert.equal(cancellation.run.status, "cancelled");
+    const files = readdirSync(dir).map((file) => readFileSync(join(dir, file), "utf8"));
+    assert.equal(files.length, 3);
+    assert.ok(files.some((file) => file.includes("setup failed") && file.includes('"status": "failed"') && file.includes("Settlement")));
+    assert.ok(files.some((file) => file.includes('"status": "cancelled"') && file.includes("Settlement")));
+
+    process.env.AGENT_RUN_TRACE = "off";
+    await (await execution.start({ userId: "user-1", threadId: "thread-1", instruction: "disabled test", signal: controller.signal })).result;
+    assert.equal(readdirSync(dir).length, 3);
+  } finally {
+    if (previousMode === undefined) delete process.env.AGENT_RUN_TRACE; else process.env.AGENT_RUN_TRACE = previousMode;
+    if (previousDir === undefined) delete process.env.AGENT_RUN_TRACE_DIR; else process.env.AGENT_RUN_TRACE_DIR = previousDir;
+    rmSync(dir, { recursive: true });
+  }
+});
+
+for (const tracing of [false, true]) {
+  test(`DIRECT view refreshes working bytes once per edited turn; tracing=${tracing}`, async (t) => {
+    const previousMode = process.env.AGENT_RUN_TRACE;
+    const previousDir = process.env.AGENT_RUN_TRACE_DIR;
+    const dir = mkdtempSync(join(tmpdir(), "opensuite-direct-state-"));
+    process.env.AGENT_RUN_TRACE = tracing ? "full" : "off";
+    process.env.AGENT_RUN_TRACE_DIR = dir;
+    try {
+      const realBinding = await createNapiDocxEngineBinding();
+      let completeLoads = 0;
+      const binding = { ...realBinding, inspectDocx: async (...args: Parameters<typeof realBinding.inspectDocx>) => {
+        if (args[1].focus.kind === "body_blocks" && args[1].focus.limit === 100) completeLoads++;
+        return realBinding.inspectDocx(...args);
+      } };
+      const original = Buffer.from(buildMinimalDocx(["Old title", "First", "Second", "Third"]));
+      let saved = original;
+      let versionId = "v1";
+      let appends = 0;
+      let reads = 0;
+      let initialReads = 0;
+      let turn = 0;
+      const snapshots: string[] = [];
+      const persistence = memoryPersistence("user-1");
+      const model = new MockLanguageModelV4({ doStream: async (options) => {
+        const current = turn++;
+        assert.equal(appends, 0, "refresh must not persist a version");
+        if (!current) initialReads = reads;
+        assert.equal(reads, initialReads, "refresh must not read storage");
+        assert.equal(completeLoads, [1, 2, 2, 3][current], "one regeneration per edited turn");
+        const views = options.prompt.filter((message) => message.role === "user" && JSON.stringify(message).includes("COMPLETE CURRENT DOCUMENT CONTENT"));
+        assert.equal(views.length, 1);
+        assert.equal(options.prompt.indexOf(views[0]!), 1, "fixed position after the system message");
+        const snapshot = JSON.stringify(views[0]);
+        snapshots.push(snapshot);
+        if (!current) {
+          assert.match(snapshot, /First/);
+          assert.doesNotMatch(snapshot, /working revision/);
+        } else {
+          for (const text of ["One", "Two", "Three"]) assert.ok(snapshot.includes(text));
+          for (const text of ["First", "Second", "Third"]) assert.ok(!snapshot.includes(text));
+          assert.match(snapshot, new RegExp(`working revision ${current === 3 ? 4 : 3}`));
+        }
+        if (current === 2) assert.equal(snapshot, snapshots[1], "failed mutation and reads reuse the snapshot");
+        if (current === 3) assert.match(snapshot, /Inserted/);
+        const calls = [
+          [{ name: "document_inspect", input: { kind: "body_blocks" } },
+            ...[["First", "One"], ["Second", "Two"], ["Third", "Three"]].map(([text, replacement]) => ({ name: "document_replace_text", input: { target: { text }, expectedCurrentText: text, replacement } }))],
+          [{ name: "document_insert_paragraphs", input: { texts: ["Stale"], placement: { kind: "before", handle: "b0" } } },
+            { name: "document_find", input: { text: "One" } }],
+          [{ name: "document_inspect", input: { kind: "body_blocks" } },
+            { name: "document_insert_paragraphs", input: { texts: ["Inserted"], placement: { kind: "before", handle: "b0" } } }],
+          [{ name: "finish", input: {} }],
+        ][current]!;
+        return { stream: simulateReadableStream({ chunks: [
+          { type: "stream-start" as const, warnings: [] },
+          ...calls.map((call, index) => ({ type: "tool-call" as const, toolCallId: `${current}-${index}`, toolName: call.name, input: JSON.stringify(call.input) })),
+          { type: "finish" as const, finishReason: { unified: "tool-calls" as const, raw: "tool-calls" },
+            usage: { inputTokens: { total: 1, noCache: 1, cacheRead: 0, cacheWrite: 0 }, outputTokens: { total: 1, text: 1, reasoning: 0 } } },
+        ] }) };
+      } });
+      let runtime: RunAgentResult | undefined;
+      const deps = baseDeps(persistence, async (input) => runtime = await runAgent({ ...input, model }), undefined, 128_000);
+      const document = () => ({ id: "doc-1", name: "Report.docx", workspaceId: "ws-1", format: "docx", latestVersion: { id: versionId } });
+      const execution = createAgentExecutionService({ ...deps, docxBinding: binding,
+        documents: { ...deps.documents, listInWorkspace: async () => [document()] as never,
+          getOwnedDocument: async () => document() as never,
+          readExactVersionBytes: async ({ versionId: requested }) => { reads++; return requested === "v1" ? original : saved; },
+          appendDocumentVersion: async (input) => {
+            appends++; assert.equal(input.baseVersionId, "v1");
+            saved = Buffer.from(input.bytes); versionId = "v2";
+            return { version: { id: versionId, versionNumber: 2 } } as never;
+          },
+        },
+      });
+      const result = await (await execution.start({ userId: "user-1", threadId: "thread-1", activeDocumentId: "doc-1", instruction: "Replace First, Second and Third, then insert a paragraph" })).result;
+      assert.equal(result.run.status, "completed");
+      assert.equal(appends, 1);
+      assert.equal(runtime?.metrics.toolCalls.filter((call) => call.failureCode === "STALE_HANDLE").length, 1);
+      assert.equal(runtime?.metrics.toolCalls.filter((call) => call.kind === "mutate" && call.outcome === "success").length, 4);
+      assert.match(JSON.stringify(await realBinding.inspectDocx(saved, { focus: { kind: "body_blocks" } })), /Inserted/);
+      assert.equal(persistence.messages.some((message) => message.content.includes("COMPLETE CURRENT DOCUMENT CONTENT")), false);
+      if (tracing) {
+        const trace = readFileSync(join(dir, readdirSync(dir)[0]!), "utf8");
+        const views = [...trace.matchAll(/## Turn \d+ — Request\n\n```json\n([\s\S]*?)\n```/g)].map((match) => JSON.parse(match[1]!).contextCounts.documentView);
+        assert.deepEqual(views.map((view) => [view.workingRevision, view.snapshotRevision, view.dirty, view.refreshed]),
+          [[0, 0, false, false], [3, 3, true, true], [3, 3, false, false], [4, 4, true, true]]);
+        assert.ok(views.every((view) => view.characters > 0 && view.estimatedTokens > 0 && view.durationMs >= 0));
+        t.diagnostic(`DIRECT regeneration durationMs: ${views.filter((view) => view.refreshed).map((view) => view.durationMs.toFixed(3)).join(", ")}`);
+        assert.equal(trace.match(/Document View — Dirtied/g)?.length, 4);
+      } else assert.equal(readdirSync(dir).length, 0);
+    } finally {
+      if (previousMode === undefined) delete process.env.AGENT_RUN_TRACE; else process.env.AGENT_RUN_TRACE = previousMode;
+      if (previousDir === undefined) delete process.env.AGENT_RUN_TRACE_DIR; else process.env.AGENT_RUN_TRACE_DIR = previousDir;
+      rmSync(dir, { recursive: true });
+    }
+  });
+}
+
+test("a failed DIRECT refresh removes the stale view, retries only after another edit, and saves once", async () => {
+  const realBinding = await createNapiDocxEngineBinding();
+  let loads = 0;
+  const binding = { ...realBinding, inspectDocx: async (...args: Parameters<typeof realBinding.inspectDocx>) => {
+    if (args[1].focus.kind === "body_blocks" && args[1].focus.limit === 100) loads++;
+    return realBinding.inspectDocx(...args);
+  } };
+  const original = Buffer.from(buildMinimalDocx(["Small"]));
+  const large = "x".repeat(30_000);
+  const persistence = memoryPersistence("user-1");
+  let appends = 0;
+  const deps = baseDeps(persistence, async (input) => {
+    const project = () => input.projectMessages!(input.messages);
+    assert.match(JSON.stringify(await project()), /COMPLETE CURRENT DOCUMENT CONTENT/);
+    const call = { toolCallId: "limit", messages: [], context: undefined as never };
+    const replace = input.tools!["document.replace_text"]!.execute!;
+    assert.equal((await replace({ target: { text: "Small" }, expectedCurrentText: "Small", replacement: large }, call) as { ok: boolean }).ok, true);
+    assert.doesNotMatch(JSON.stringify(await project()), /COMPLETE CURRENT DOCUMENT CONTENT/);
+    assert.equal(loads, 2);
+    assert.doesNotMatch(JSON.stringify(await project()), /COMPLETE CURRENT DOCUMENT CONTENT/);
+    assert.equal(loads, 2, "do not regenerate a failed snapshot with no new edit");
+    const inspect = input.tools!["document.inspect"]!.execute!;
+    assert.equal((await inspect({ kind: "overview" }, call) as { redundantReadSuppressed?: boolean }).redundantReadSuppressed, undefined);
+    assert.equal((await inspect({ kind: "body_blocks" }, call) as { redundantReadSuppressed?: boolean }).redundantReadSuppressed, undefined);
+    assert.equal((await replace({ target: { text: large }, expectedCurrentText: large, replacement: "Recovered" }, call) as { ok: boolean }).ok, true);
+    assert.match(JSON.stringify(await project()), /Recovered/);
+    assert.equal(loads, 3);
+    assert.equal(appends, 0);
+    return softResult("completed", "Done");
+  }, undefined, 128_000);
+  let versionId = "v1";
+  let saved = original;
+  const document = () => ({ id: "doc-1", name: "Small.docx", workspaceId: "ws-1", format: "docx", latestVersion: { id: versionId } });
+  const execution = createAgentExecutionService({ ...deps, docxBinding: binding,
+    documents: { ...deps.documents, listInWorkspace: async () => [document()] as never,
+      getOwnedDocument: async () => document() as never,
+      readExactVersionBytes: async ({ versionId: requested }) => requested === "v1" ? original : saved,
+      appendDocumentVersion: async (input) => {
+        appends++; saved = Buffer.from(input.bytes); versionId = "v2";
+        return { version: { id: versionId, versionNumber: 2 } } as never;
+      },
+    },
+  });
+  const result = await (await execution.start({ userId: "user-1", threadId: "thread-1", activeDocumentId: "doc-1", instruction: "Replace Small" })).result;
+  assert.equal(result.run.status, "completed");
+  assert.equal(appends, 1);
+  assert.match(JSON.stringify(await realBinding.inspectDocx(saved, { focus: { kind: "body_blocks" } })), /Recovered/);
+});
 
 function stubThread(ownerUserId: string): AgentThread {
   return {
@@ -103,6 +330,13 @@ function memoryPersistence(ownerUserId: string): AgentPersistenceService & {
     },
     async getMessageForThread(input: { messageId: string; threadId: string }) {
       return messages.find((message) => message.id === input.messageId && message.threadId === input.threadId) ?? null;
+    },
+    async listRunsForTriggerMessages(input: { messageIds: readonly string[] }) {
+      return [...runs.values()].filter((run) => run.triggeringMessageId && input.messageIds.includes(run.triggeringMessageId)).reverse();
+    },
+    async listToolNamesForRuns(input: { runIds: readonly string[] }) {
+      return steps.filter((step) => input.runIds.includes(step.runId) && (step.kind === "tool" || step.kind === "inspect"))
+        .map((step) => ({ runId: step.runId, name: step.name }));
     },
     async listRecentMessagesForContext(input: {
       checkpoint?: AgentThreadContextCheckpoint | null;
@@ -400,9 +634,9 @@ test("successful V3 finish_tool settles completed + agent.completed", async () =
   assert.match(sawSystem!, /You are OpenSuite's document agent/);
   assert.match(sawSystem!, /AVAILABLE CAPABILITIES/);
   assert.match(sawSystem!, /Use the finish operation when the requested work is complete/);
-  // Isolation fixture has no bound DOCX → only finish is exposed.
+  // Isolation fixture has no bound DOCX → only terminal tools are exposed.
   assert.match(sawSystem!, /- finish/);
-  assert.equal(sawSystem!.includes("document."), false);
+  assert.doesNotMatch(sawSystem!.split("OPERATING PRINCIPLES")[0]!, /- document[._]/);
   assert.equal(sawSystem!.includes("document.capabilities"), false);
 });
 
@@ -423,6 +657,126 @@ test("missing requested data preserves work and settles as input needed", async 
   assert.match(result.assistantMessage?.content ?? "", /Budget unchanged/);
   assert.deepEqual(persistence.steps.map((step) => step.name), ["finish_with_input_needed"]);
 });
+
+for (const editFirst of [false, true]) {
+  test(`clarification ${editFirst ? "preserves earlier edits" : "leaves the document unchanged"}, traces input needed and accepts a normal follow-up`, async () => {
+    const previousMode = process.env.AGENT_RUN_TRACE;
+    const previousDir = process.env.AGENT_RUN_TRACE_DIR;
+    const dir = mkdtempSync(join(tmpdir(), "opensuite-clarification-"));
+    process.env.AGENT_RUN_TRACE = "full";
+    process.env.AGENT_RUN_TRACE_DIR = dir;
+    try {
+      const persistence = memoryPersistence("user-1");
+      const binding = await createNapiDocxEngineBinding();
+      const initialBytes = Buffer.from(buildMinimalDocx(["September 2026 Operating Review", "Priorities for October", "Draft"]));
+      const versions = new Map([["v1", initialBytes]]);
+      let versionId = "v1";
+      let turn = 0;
+      const question = "The report is for September with October priorities. Should I roll it to October with November priorities, or November with December priorities?";
+      const replace = (text: string, replacement: string) => ({ name: "document_replace_text", input: { target: { text }, expectedCurrentText: text, replacement } });
+      const calls = [
+        ...(editFirst ? [[replace("Draft", "Reviewed")]] : []),
+        [{ name: "request_clarification", input: { question } }],
+        [replace("September 2026", "October 2026"), replace("Priorities for October", "Priorities for November")],
+        [{ name: "finish", input: {} }],
+      ];
+      const model = new MockLanguageModelV4({ doStream: async (options) => {
+        const names = options.tools!.map((tool) => tool.name);
+        assert.ok(names.includes("request_clarification"));
+        assert.equal(names.includes("document_set_table_cells_formatting"), false);
+        const current = calls[turn++]!;
+        const text = current[0]!.name === "request_clarification" && editFirst ? question : current[0]!.name === "finish" ? "Updated to October." : null;
+        return { stream: simulateReadableStream({ chunks: [
+          { type: "stream-start" as const, warnings: [] },
+          ...(text ? [{ type: "text-start" as const, id: "text" }, { type: "text-delta" as const, id: "text", delta: text }, { type: "text-end" as const, id: "text" }] : []),
+          ...current.map((call, index) => ({ type: "tool-call" as const, toolCallId: `${turn}-${index}`, toolName: call.name, input: JSON.stringify(call.input) })),
+          { type: "finish" as const, finishReason: { unified: "tool-calls" as const, raw: "tool-calls" },
+            usage: { inputTokens: { total: 1, noCache: 1, cacheRead: 0, cacheWrite: 0 }, outputTokens: { total: 1, text: 1, reasoning: 0 } } },
+        ] }) };
+      } });
+      const runtimeResults: RunAgentResult[] = [];
+      const events: AgentEvent[] = [];
+      const reports: AgentRunReport[] = [];
+      const deps = baseDeps(persistence, async (input) => {
+        const clarification = input.tools!.request_clarification!;
+        assert.equal(clarification.kind, "read");
+        assert.equal(clarification.terminal, true);
+        const schema = (clarification.inputSchema as { jsonSchema: { required: string[]; additionalProperties: boolean; properties: Record<string, unknown> } }).jsonSchema;
+        assert.deepEqual(schema.required, ["question"]);
+        assert.deepEqual(Object.keys(schema.properties), ["question"]);
+        assert.equal(schema.additionalProperties, false);
+        const context = { toolCallId: "invalid", messages: [], context: undefined as never };
+        for (const question of ["", "  ", 3, undefined]) {
+          assert.throws(() => clarification.execute!({ question }, context), /A clarification question is required/);
+        }
+        assert.equal(clarification.execute!({ question: "  Which period?  " }, context), "Which period?");
+        if (runtimeResults.length) {
+          assert.ok(JSON.stringify(input.messages).includes(question), "follow-up includes the durable question");
+          assert.ok(JSON.stringify(input.messages).includes("Change October to November"), "follow-up includes the original request");
+        }
+        const result = await runAgent({ ...input, model });
+        runtimeResults.push(result);
+        return result;
+      });
+      const document = () => ({ id: "doc-1", name: "Report.docx", workspaceId: "ws-1", format: "docx", latestVersion: { id: versionId } });
+      const execution = createAgentExecutionService({ ...deps, docxBinding: binding,
+        agentRunReportSink: (report) => { reports.push(report); },
+        documents: { ...deps.documents, listInWorkspace: async () => [document()] as never,
+          getOwnedDocument: async () => document() as never,
+          readExactVersionBytes: async (input) => versions.get(input.versionId)!,
+          appendDocumentVersion: async (input) => {
+            assert.equal(input.baseVersionId, versionId);
+            versionId = `v${versions.size + 1}`;
+            versions.set(versionId, Buffer.from(input.bytes));
+            return { version: { id: versionId, versionNumber: versions.size } } as never;
+          },
+        },
+      });
+      const start = (instruction: string) => execution.start({ userId: "user-1", threadId: "thread-1", activeDocumentId: "doc-1", instruction, liveEvents: { emit: (event) => { events.push(event); } } });
+      const first = await (await start("Change October to November and replace Priorities for November with December priorities.")).result;
+      assert.equal(first.run.status, "completed_with_input_needed");
+      assert.equal(first.run.errorCode, null);
+      assert.equal(first.run.resultMessageId, first.assistantMessage?.id);
+      assert.equal(first.assistantMessage?.content, question);
+      assert.equal(runtimeResults[0]!.stopReason, "finish_tool");
+      assert.equal(runtimeResults[0]!.turns, editFirst ? 2 : 1);
+      assert.equal(reports[0]?.document?.workingMutationCount, editFirst ? 1 : 0);
+      assert.equal(reports[0]?.document?.versionAdvances.length, editFirst ? 1 : 0);
+      assert.equal(versions.size, editFirst ? 2 : 1);
+      if (!editFirst) assert.deepEqual(versions.get(versionId), initialBytes);
+      else assert.match(JSON.stringify(await binding.inspectDocx(versions.get(versionId)!, { focus: { kind: "body_blocks" } })), /Reviewed/);
+      assert.equal(runtimeResults[0]!.metrics.toolCalls.at(-1)?.kind, "read");
+      assert.equal(events.filter((event) => event.type === "document.working.updated").length, editFirst ? 1 : 0);
+      assert.equal(events.filter((event) => event.type === "document.version.advanced").length, editFirst ? 1 : 0);
+      assert.ok(events.some((event) => event.type === "message.completed" && event.content === question));
+      assert.ok(events.some((event) => event.type === "agent.completed"));
+      assert.equal(persistence.steps.filter((step) => step.kind === "narration").length, 0, "question is not duplicated as narration");
+      const trace = readFileSync(join(dir, readdirSync(dir)[0]!), "utf8");
+      assert.match(trace, /Tool — request_clarification/);
+      assert.match(trace, /"rawResult":/);
+      assert.match(trace, /"stopReason": "finish_tool"/);
+      assert.match(trace, /"status": "completed_with_input_needed"/);
+      assert.ok(trace.includes(question));
+      assert.equal(trace.includes("## Document Version Created"), editFirst);
+
+      const followUp = await (await start("Use October 2026 as the reporting period, with November priorities.")).result;
+      assert.equal(followUp.thread.id, first.thread.id);
+      assert.notEqual(followUp.run.id, first.run.id);
+      assert.equal(followUp.run.status, "completed");
+      assert.equal(followUp.assistantMessage?.content, "Updated to October.");
+      assert.equal(followUp.run.baseDocumentVersionId, editFirst ? "v2" : "v1");
+      assert.equal(versions.size, editFirst ? 3 : 2);
+      const saved = JSON.stringify(await binding.inspectDocx(versions.get(versionId)!, { focus: { kind: "body_blocks" } }));
+      assert.match(saved, /October 2026 Operating Review/);
+      assert.match(saved, /Priorities for November/);
+      if (editFirst) assert.match(saved, /Reviewed/);
+    } finally {
+      if (previousMode === undefined) delete process.env.AGENT_RUN_TRACE; else process.env.AGENT_RUN_TRACE = previousMode;
+      if (previousDir === undefined) delete process.env.AGENT_RUN_TRACE_DIR; else process.env.AGENT_RUN_TRACE_DIR = previousDir;
+      rmSync(dir, { recursive: true });
+    }
+  });
+}
 
 test("managed AI failure keeps a safe, actionable reason on the run", async () => {
   const persistence = memoryPersistence("user-1");
@@ -530,7 +884,7 @@ test("later runs restore durable working documents into model context", async ()
   let projected: readonly { readonly role: string; readonly content: unknown }[] = [];
   const deps = {
     ...baseDeps(persistence, async (input) => {
-      projected = input.projectMessages!(input.messages) as typeof projected;
+      projected = await input.projectMessages!(input.messages) as typeof projected;
       return softResult("completed", "done");
     }, undefined, 10_000),
     documents: {
@@ -612,7 +966,7 @@ test("recurring report refresh selects the target, reads the source, and saves o
   const call = { toolCallId: "refresh", messages: [], context: undefined as never };
   const execution = createAgentExecutionService({
     ...baseDeps(persistence, async (input) => {
-      const projected = input.projectMessages!(input.messages);
+      const projected = await input.projectMessages!(input.messages);
       assert.match(input.system ?? "", /DOCUMENT UPDATE RULE/);
       assert.match(input.system ?? "", /source is silent, carry forward/);
       assert.match(JSON.stringify(projected), /August report\.docx.*ID target/);
@@ -621,7 +975,7 @@ test("recurring report refresh selects the target, reads the source, and saves o
       assert.equal((await tools["workspace.select_document"]!.execute!({ documentId: "other" }, call) as { reasonCode: string }).reasonCode, "DOCUMENT_NOT_IN_WORKING_SET");
       assert.equal((await tools["workspace.select_document"]!.execute!({ documentId: "source" }, call) as { reasonCode: string }).reasonCode, "DOCUMENT_IS_REFERENCE");
       assert.equal((await tools["workspace.select_document"]!.execute!({ documentId: "target" }, call) as { ok: boolean }).ok, true);
-      assert.match(JSON.stringify(input.projectMessages!(input.messages)), /Revenue: 12/);
+      assert.match(JSON.stringify(await input.projectMessages!(input.messages)), /Revenue: 12/);
       const updates = await tools["workspace.inspect_document"]!.execute!({ documentId: "source", kind: "body_blocks" }, call);
       assert.match(JSON.stringify(updates), /Revenue: 12/);
       for (const [oldText, newText] of [["August report", "September report"], ["Revenue: 10", "Revenue: 12"]]) {
@@ -680,7 +1034,7 @@ test("creating a new report does not bind or retrieve a stale active document", 
     ...baseDeps(persistence, async (input) => {
       assert.match(input.system ?? "", /No document is active/);
       assert.doesNotMatch(input.system ?? "", /DOCUMENT UPDATE RULE/);
-      assert.doesNotMatch(JSON.stringify(input.projectMessages!(input.messages)), /Prior report/);
+      assert.doesNotMatch(JSON.stringify(await input.projectMessages!(input.messages)), /Prior report/);
       return softResult("completed", "Ready to create the report.");
     }),
     documents: {
@@ -1308,7 +1662,7 @@ test("execution scopes compatible handle reuse to the model turn and saves one v
   assert.equal(reports[0]?.document?.workingMutationCount, 2);
   assert.equal(reports[0]?.document?.finalVersionId, "v2");
   assert.equal(runtimeResult!.stopReason, "finish_tool");
-  assert.deepEqual(runtimeResult!.metrics.modelTurns.map((turn) => turn.exposedToolCount), [16, 20, 20, 20]);
+  assert.deepEqual(runtimeResult!.metrics.modelTurns.map((turn) => turn.exposedToolCount), [17, 21, 21, 21]);
   assert.deepEqual(runtimeResult!.metrics.toolCalls.map((call) => call.failureCode), [undefined, undefined, undefined, undefined, undefined, "STALE_HANDLE", undefined]);
 });
 

@@ -11,6 +11,13 @@ API resolves model + context + document tools
 
 The core has no database, HTTP, auth, storage, document semantics, checkpoints, retrieval, or compaction policy. `runModel` is its one-call primitive; `projectMessages` lets the API add first-turn request-local document context without teaching the core product rules.
 
+Within a human-triggered run, model turns retain the prior provider reasoning,
+tool calls, and results while the API refreshes the current working document view.
+At the next human prompt, the API instead loads bounded completed human turns:
+the request, final assistant reply when recorded, a small status/tool-name result,
+and the latest persisted document. Full model turns stay in local run traces;
+durable tool steps stay separate from later model-facing conversation history.
+
 ## Run telemetry vocabulary
 
 `AgentRunReport` (API) is the Cloud-neutral receipt. Canonical meanings:
@@ -28,6 +35,71 @@ The core has no database, HTTP, auth, storage, document semantics, checkpoints, 
 Do not mix working revisions with persisted versions, or tool errors with terminal run failure. Product UI shows a high-level summary only; detailed counts belong in logs/admin.
 
 Default server logs are a short human-readable run transcript (turn/LLM/tool/save/validation + DONE latency). Full JSON remains opt-in via `AGENT_RUN_REPORT_VERBOSE=1`.
+
+## Local full run traces
+
+Set `AGENT_RUN_TRACE=full` in the API environment to append one Markdown file per
+agent run. Optional `AGENT_RUN_TRACE_DIR` selects a directory; the default is
+`.agent-traces/` relative to the API process's working directory. Filenames contain
+the full run ID followed by a readable Eastern start time (EST/EDT automatically):
+`run-283b7bc5_10-01-2026_09-05-06-AM-EDT.md`. Unset the setting or use
+`AGENT_RUN_TRACE=off` to disable it. Disabled tracing creates no files or directories
+and performs no trace serialization.
+
+**Files may contain full user, document, and model content.** The default directory
+is gitignored and local only; there is no database, telemetry, storage upload, or UI
+connection. Keep custom directories outside version control. Files are created
+with owner-only permissions. Appends happen during execution, so partial files
+remain after failure, cancellation, or process exit. A failed diagnostic write
+prints a short warning and does not fail the agent run.
+
+The API owns `run-trace.ts`; V3 exposes only an optional `onDiagnostic` callback.
+Requests are captured in `streamTurn` immediately before `streamText`, **after**
+`projectMessages` and per-turn `projectTools` / schema-only provider-safe aliases.
+The request sections contain the actual system, message array, and schema map
+passed to the SDK. Metadata includes the current factory's allowlisted reasoning,
+provider routing, and usage settings, never the model object's credential config.
+Per model turn, SDK stream deltas (`reasoning-delta`, `text-delta`,
+`tool-input-*`) are accumulated in memory and flushed once as complete
+**Reasoning**, **Assistant Text**, and **Tool Calls** blocks — never as one
+Markdown section per token. Partial streams (error/cancel) flush whatever was
+accumulated under **Reasoning — Partial** / **Assistant Text — Partial** before
+the error. Usage/timing (including first reasoning/text/tool latency) is written
+once at turn completion. `responseMessages` and per-delta stream events are not
+duplicated in the Markdown; the canonical complete blocks are enough.
+
+Raw tool results are recorded as one **Tool Result** block per call (arguments,
+duration, outcome, rawResult, and the runtime observation wrapper). Each later
+request also labels projected tool results by `toolCallId`, so provider
+continuation can be compared with the original output. The **Model-Facing
+Observation** section is the actual next-turn projection (including C7
+compaction). Terminal tools have no next model turn. Retrieval, constructed
+context, version creation, validation, reports, and durable settlement are
+recorded without extra document reads. Error transport/config properties and
+causes are omitted because they can contain secrets; the trace labels this
+omission.
+
+This is the application-level request, not an HTTP wire dump. SDK normalization,
+adapter serialization/defaults, internal retries, transport headers and any
+reasoning the provider does not expose remain outside the trace. Prompts, replay,
+retrieval, compaction, tool selection and execution are unchanged.
+
+## Clarification escape hatch
+
+The API always exposes `request_clarification({ question: string })`, a read-kind
+terminal tool. Its nonblank question becomes the final response through the
+existing message event/persistence path; settlement uses
+`completed_with_input_needed` (the panel shows "Needs your input"). The tool does
+not edit a document or create a version. Earlier successful edits still flush at
+the run boundary. A reply starts a normal new run in the same thread, with the
+prior request and question in history; no pause/resume state is added.
+
+Policy asks early only when conflicting or genuinely missing information allows
+two or more interpretations with materially different facts, structure or
+outcomes. One narrow read may establish the conflict. Typos, casing, fuzzy matches,
+missing selectors, deterministic recovery and delegated judgment do not justify
+clarification. The schema is question-only; structured choices are deferred.
+The generic runtime, scheduling and both existing finish tools are unchanged.
 
 ## Dynamic tool surface experiment
 
@@ -49,10 +121,11 @@ tools are omitted from the compact prompt index and loader schema.
 With the installed engine 0.1.2, the previous run surface had **41 tools**:
 35 document tools, four workspace tools, and two finish tools. There were three
 reads, 36 mutations (including three workspace lifecycle actions), and two finish
-tools. The initial surface now has **16 tools**: 15 existing common tools plus the
+tools. The initial surface in that experiment had **16 tools**: 15 existing common tools plus the
 read-kind loader. `insert_paragraphs` covers both single and multiple paragraphs.
 Workspace duplicate/select/source-inspect remain common to preserve multi-document
 report workflows; both finish paths remain common for missing-source outcomes.
+The clarification escape hatch adds one common tool, making the current initial surface **17 tools**.
 The six reported recurring-update tools need no discovery turn.
 
 | Group | Hidden tools |

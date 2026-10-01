@@ -19,6 +19,7 @@ import type {
   StopReason,
   ToolSkipReason,
 } from "./types.js";
+import { emitDiagnostic } from "./types.js";
 
 const DEFAULT_MAX_TURNS = 12;
 const DEFAULT_MAX_ATTEMPTS_PER_CALL = 2;
@@ -106,7 +107,7 @@ export async function runAgent(input: RunAgentInput): Promise<RunAgentResult> {
 
       turns += 1;
       const projected = input.projectMessages
-        ? [...input.projectMessages(transcript)]
+        ? [...await input.projectMessages(transcript)]
         : transcript;
 
       // Snapshot the selection: loading more tools cannot widen this turn.
@@ -134,6 +135,7 @@ export async function runAgent(input: RunAgentInput): Promise<RunAgentResult> {
           ...(schemaTools ? { tools: schemaTools } : {}),
           signal: input.signal,
           retry,
+          ...(input.onDiagnostic ? { onDiagnostic: input.onDiagnostic } : {}),
           onStreamPart: async (kind) => {
             if (firstStreamMs[kind] !== undefined) return;
             const elapsedMs = now() - turnStarted;
@@ -146,6 +148,7 @@ export async function runAgent(input: RunAgentInput): Promise<RunAgentResult> {
           },
         });
       } catch (error) {
+        if (input.onDiagnostic) emitDiagnostic(input.onDiagnostic, "model_error", { turn: turns, error });
         const turnCompleted = now();
         metrics.recordModelTurn({
           turn: turns,
@@ -195,7 +198,8 @@ export async function runAgent(input: RunAgentInput): Promise<RunAgentResult> {
       if (turn.resolvedModelId !== undefined) {
         resolvedModelId = turn.resolvedModelId;
       }
-      lastText = turn.text;
+      // A later finish-only turn must not erase the last user-visible response.
+      if (turn.text.trim()) lastText = turn.text;
       lastFinishReason = turn.finishReason;
 
       if (turn.finishReason === "error") {
@@ -227,7 +231,7 @@ export async function runAgent(input: RunAgentInput): Promise<RunAgentResult> {
           text: turn.text,
           stopReason: "completed",
         });
-        return finish("completed", turn.text);
+        return finish("completed", lastText);
       }
 
       // The assistant message (with its tool calls) must precede tool results.
@@ -348,6 +352,9 @@ async function runCall(args: {
   const sequence = metrics.allocToolSequence();
   const kind = toolKindMetric(tool);
   const started = now();
+  if (input.onDiagnostic) emitDiagnostic(input.onDiagnostic, "tool_started", {
+    turn, toolCallId, toolName, modelFacingName: providerToolName, arguments: call.input, startedAtMs: started,
+  });
 
   try {
     if (call.invalid || !tool || typeof tool.execute !== "function") {
@@ -367,6 +374,12 @@ async function runCall(args: {
 
     const softFailure = readSoftFailure(output);
     results.set(toolCallId, toResultPart(toolCallId, providerToolName, output));
+    const completed = now();
+    if (input.onDiagnostic) emitDiagnostic(input.onDiagnostic, "tool_result", {
+      turn, toolCallId, toolName, modelFacingName: providerToolName, rawResult: output,
+      observation: results.get(toolCallId), startedAtMs: started, completedAtMs: completed, durationMs: completed - started,
+      outcome: softFailure ? "failure" : "success", reasonCode: softFailure?.reasonCode,
+    });
 
     if (softFailure) {
       fuse.record(toolName, call.input);
@@ -375,7 +388,7 @@ async function runCall(args: {
         turn,
         toolName,
         kind,
-        durationMs: now() - started,
+        durationMs: completed - started,
         outcome: "failure",
         ...(softFailure.reasonCode !== undefined
           ? { failureCode: softFailure.reasonCode }
@@ -395,13 +408,18 @@ async function runCall(args: {
       turn,
       toolName,
       kind,
-      durationMs: now() - started,
+      durationMs: completed - started,
       outcome: "success",
     });
     await input.onEvent?.({ type: "tool_completed", toolCallId, toolName });
     return "ok";
   } catch (error) {
     const durationMs = now() - started;
+    if (input.onDiagnostic) emitDiagnostic(input.onDiagnostic, "tool_error", {
+      turn, toolCallId, toolName, modelFacingName: providerToolName, error,
+      startedAtMs: started, completedAtMs: started + durationMs, durationMs,
+      outcome: input.signal?.aborted ? "cancelled" : "failure",
+    });
     if (input.signal?.aborted) {
       metrics.recordToolCall({
         sequence,
@@ -462,6 +480,10 @@ function recordSkip(args: {
       type: "json",
       value: { ok: false, status: "skipped", reason } as never,
     },
+  });
+  if (args.input.onDiagnostic) emitDiagnostic(args.input.onDiagnostic, "tool_skipped", {
+    toolCallId: call.toolCallId, toolName: resolveToolName(args.input.tools, call.toolName),
+    modelFacingName: call.toolName, arguments: call.input, reason, observation: results.get(call.toolCallId),
   });
   void args.input.onEvent?.({
     type: "tool_skipped",

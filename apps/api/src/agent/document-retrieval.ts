@@ -69,6 +69,10 @@ export interface WorkspaceRetrieval {
   readonly plannerEvidenceBudgetTokens?: number;
   readonly fullDocumentEstimatedTokens?: number;
   readonly message?: string;
+  /** Run-local refresh; reads only supplied working bytes, never storage. */
+  readonly refreshDirectMessage?: (working: {
+    documentId: string; baseVersionId: string; revision: number; bytes: Uint8Array; name: string;
+  }) => Promise<string>;
 }
 
 /** Current choice is compact maps when available; direct is reserved for tiny documents. */
@@ -174,6 +178,7 @@ export async function retrieveWorkspaceContext(input: {
   const evidence: RetrievedArtifactEvidence[] = [];
   const documentMaps: DocumentMap[] = [];
   let directContent: string | undefined;
+  let completeDocuments: { artifact: WorkspaceArtifact; content: string; revision?: number }[] = [];
   let fullDocumentEstimatedTokens: number | undefined;
   const loadedDocuments = new Map<string, Promise<{ readonly bytes: Uint8Array; readonly structure: SlimDocumentStructure }>>();
   const loadDocument = (artifact: WorkspaceArtifact) => {
@@ -194,7 +199,7 @@ export async function retrieveWorkspaceContext(input: {
       return { artifact, content: await formatCompleteDocument(artifact, structure, bytes, input.binding!) };
     }).map((task) => task.catch(() => undefined)));
     if (directDocuments.every((document) => document !== undefined)) {
-      const completeDocuments = directDocuments as { artifact: WorkspaceArtifact; content: string }[];
+      completeDocuments = directDocuments as typeof completeDocuments;
       const combinedTokens = completeDocuments.reduce((total, document) => total + estimateTokens(document.content), 0);
       fullDocumentEstimatedTokens = combinedTokens;
       if (combinedTokens <= directTokenLimit(plannerEvidenceBudgetTokens)) {
@@ -229,6 +234,25 @@ export async function retrieveWorkspaceContext(input: {
     evidence,
     ...(plannerEvidenceBudgetTokens !== undefined ? { plannerEvidenceBudgetTokens } : {}),
     ...(fullDocumentEstimatedTokens !== undefined ? { fullDocumentEstimatedTokens } : {}),
+    ...(directContent ? { refreshDirectMessage: async (working: {
+      documentId: string; baseVersionId: string; revision: number; bytes: Uint8Array; name: string;
+    }) => {
+      const artifact: WorkspaceArtifact = { documentId: working.documentId, versionId: working.baseVersionId, name: working.name, format: "docx" };
+      // Bypass the immutable-version structure cache: these bytes are run-local.
+      const structure = await loadStructure({ versionId: working.baseVersionId, bytes: working.bytes, binding: input.binding! });
+      const content = await formatCompleteDocument(artifact, structure, working.bytes, input.binding!);
+      const next = completeDocuments.filter((document) => document.artifact.documentId !== working.documentId);
+      const index = completeDocuments.findIndex((document) => document.artifact.documentId === working.documentId);
+      next.splice(index < 0 ? next.length : index, 0, { artifact, content, revision: working.revision });
+      if (next.reduce((total, document) => total + estimateTokens(document.content), 0) > directTokenLimit(plannerEvidenceBudgetTokens!)) {
+        throw new Error("Current DIRECT document content exceeds the existing token limit");
+      }
+      completeDocuments = next;
+      const currentIds = new Set(next.filter((document) => document.revision !== undefined).map((document) => document.artifact.documentId));
+      return formatWorkspaceRetrievedContext(selected, candidates,
+        evidence.filter((item) => !currentIds.has(item.artifact.documentId)), input.primaryDocumentId, input.taggedDocumentIds,
+        next.map((document) => document.artifact), [], formatCompleteWorkingDocuments(next));
+    } } : {}),
     ...(candidates.length > 0 ? { message: formatWorkspaceRetrievedContext(selected, candidates, evidence, input.primaryDocumentId, input.taggedDocumentIds, workingSet, directContent ? [] : documentMaps, directContent) } : {}),
   };
 }
@@ -281,10 +305,10 @@ async function formatCompleteDocument(
   return lines.join("\n\n");
 }
 
-function formatCompleteWorkingDocuments(documents: readonly { artifact: WorkspaceArtifact; content: string }[]): string {
+function formatCompleteWorkingDocuments(documents: readonly { artifact: WorkspaceArtifact; content: string; revision?: number }[]): string {
   return [
     "COMPLETE CURRENT DOCUMENT CONTENT. Each document below is complete at its stated version. An exact duplicate has the same content until edited. Issue known-safe mutations from this content together. Do not inspect or find merely to rediscover this content; read only for missing exact mutation targets, unsupported structure, changes after this snapshot, or targeted verification.",
-    ...documents.map((document) => `=== Document: ${document.artifact.name} (ID ${document.artifact.documentId}; version ${document.artifact.versionId}) ===\n${document.content}`),
+    ...documents.map((document) => `=== Document: ${document.artifact.name} (ID ${document.artifact.documentId}; version ${document.artifact.versionId}${document.revision !== undefined ? `; working revision ${document.revision}` : ""}) ===\n${document.content}`),
   ].join("\n\n");
 }
 

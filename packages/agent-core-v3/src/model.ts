@@ -2,7 +2,7 @@ import { streamText, type ModelMessage, type ToolSet } from "ai";
 import { createOpenRouter } from "@openrouter/ai-sdk-provider";
 
 import { DEFAULT_INFRA_RETRY } from "./retry.js";
-import type { InfraRetryPolicy, RunModelInput, RunModelResult, V3Model } from "./types.js";
+import { emitDiagnostic, type DiagnosticHook, type InfraRetryPolicy, type RunModelInput, type RunModelResult, type V3Model } from "./types.js";
 
 export function createOpenRouterModel(input: {
   apiKey: string;
@@ -55,8 +55,9 @@ export async function streamTurn(input: {
   readonly retry: InfraRetryPolicy;
   readonly onTextDelta?: (delta: string) => void | Promise<void>;
   readonly onStreamPart?: (kind: "reasoning" | "text" | "tool") => void | Promise<void>;
+  readonly onDiagnostic?: DiagnosticHook;
 }): Promise<StreamTurnResult> {
-  const response = streamText({
+  const request = {
     model: input.model,
     ...(input.system ? { system: input.system } : {}),
     messages: [...input.messages],
@@ -64,10 +65,23 @@ export async function streamTurn(input: {
     ...(input.maxOutputTokens !== undefined ? { maxOutputTokens: input.maxOutputTokens } : {}),
     abortSignal: input.signal,
     maxRetries: input.retry.maxRetries,
+  };
+  if (input.onDiagnostic) emitDiagnostic(input.onDiagnostic, "model_request", {
+    model: typeof input.model === "string" ? { modelId: input.model } : { modelId: input.model.modelId, provider: input.model.provider },
+    system: request.system,
+    messages: request.messages,
+    tools: request.tools,
+    maxOutputTokens: request.maxOutputTokens,
+    maxRetries: request.maxRetries,
   });
+  const response = streamText(request);
 
   const seenStreamParts = new Set<"reasoning" | "text" | "tool">();
   for await (const part of response.fullStream) {
+    if (input.onDiagnostic && (part.type === "reasoning-delta" || part.type === "text-delta" ||
+      part.type.startsWith("tool-input-") || part.type === "tool-call" || part.type === "error")) {
+      emitDiagnostic(input.onDiagnostic, "model_stream", part);
+    }
     if (part.type === "error") {
       throw part.error instanceof Error
         ? part.error
@@ -120,7 +134,7 @@ export async function streamTurn(input: {
         ? responseMeta.model
         : undefined;
 
-  return {
+  const result: StreamTurnResult = {
     text,
     finishReason,
     inputTokens: usage.inputTokens ?? 0,
@@ -135,6 +149,8 @@ export async function streamTurn(input: {
     toolCalls,
     responseMessages: response_.messages,
   };
+  if (input.onDiagnostic) emitDiagnostic(input.onDiagnostic, "model_response", result);
+  return result;
 }
 
 /** One streamed model call. No tool loop. */

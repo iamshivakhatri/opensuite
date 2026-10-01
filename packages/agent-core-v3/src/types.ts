@@ -11,6 +11,14 @@ import type { AgentRunMetrics, NowFn } from "./run-metrics.js";
 export type { ModelMessage, ToolSet } from "ai";
 export type V3Model = LanguageModel;
 
+/** Optional local diagnostics. Callbacks must observe, never mutate, payloads. */
+export type DiagnosticHook = (event: "model_request" | "model_stream" | "model_response" | "model_error" | "tool_started" | "tool_result" | "tool_error" | "tool_skipped", data: unknown) => void;
+
+/** Diagnostics cannot change the model/tool outcome when their sink fails. */
+export function emitDiagnostic(hook: DiagnosticHook, event: Parameters<DiagnosticHook>[0], data: unknown): void {
+  try { hook(event, data); } catch { /* Diagnostic failure is not a run failure. */ }
+}
+
 /** The schema shape `jsonSchema<T>()` produces; also what the AI SDK `tool()` accepts. */
 export type InputSchema<T> = ReturnType<typeof jsonSchema<T>>;
 
@@ -170,6 +178,7 @@ export interface RunModelResult {
 }
 
 export interface RunAgentInput extends RunModelInput {
+  readonly onDiagnostic?: DiagnosticHook;
   readonly tools?: AgentToolSet;
   /**
    * Select tools before each model call. Only this turn's selection can execute.
@@ -189,11 +198,12 @@ export interface RunAgentInput extends RunModelInput {
   /**
    * Optional context projection applied to the working transcript (never the
    * system prompt) before each model call. Lets the host compact observations
-   * without the runtime knowing their shape. Default: identity.
+   * or refresh context asynchronously without the runtime knowing its shape.
+   * Default: identity.
    */
   readonly projectMessages?: (
     messages: readonly ModelMessage[],
-  ) => readonly ModelMessage[];
+  ) => readonly ModelMessage[] | Promise<readonly ModelMessage[]>;
   readonly onEvent?: (event: AgentEvent) => void | Promise<void>;
   /** Short run id for backend logs (e.g. first 8 of a UUID). */
   readonly runId?: string;

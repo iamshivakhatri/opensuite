@@ -15,6 +15,32 @@ const emptyUsage = {
   outputTokens: { total: 1, text: 1, reasoning: 0 },
 } as const;
 
+test("diagnostic callback failures cannot change a model or tool outcome", async () => {
+  const model = new MockLanguageModelV4({ doStream: async () => ({ stream: simulateReadableStream({ chunks: textThenFinishChunks("done", "finish") }) }) });
+  const finish = createFinishTool();
+  const result = await runAgent({ model, tools: { [finish.name]: finish.tool }, messages: [{ role: "user", content: "go" }],
+    onDiagnostic: () => { throw new Error("diagnostic sink failed"); },
+  });
+  assert.equal(result.text, "done");
+  assert.equal(result.stopReason, "finish_tool");
+  assert.equal(result.metrics.toolCalls[0]?.outcome, "success");
+});
+
+test("a finish-only turn keeps the last assistant text for durable settlement", async () => {
+  let turn = 0;
+  const model = new MockLanguageModelV4({ doStream: async () => ({ stream: simulateReadableStream({ chunks:
+    ++turn === 1
+      ? [...textChunks("Report created", "tool-calls").slice(0, -1), ...toolCallChunks([{ id: "read", name: "read", input: {} }]).slice(1)]
+      : toolCallChunks([{ id: "finish", name: "finish", input: {} }]),
+  }) }) });
+  const finish = createFinishTool();
+  const result = await runAgent({ model, messages: [{ role: "user", content: "Create a report" }], tools: {
+    read: defineTool({ kind: "read", description: "Read", inputSchema: emptyObjectSchema, execute: () => "ok" }),
+    finish: finish.tool,
+  } });
+  assert.equal(result.text, "Report created");
+});
+
 function textChunks(text: string, finishReason: "stop" | "tool-calls" = "stop") {
   return [
     { type: "stream-start" as const, warnings: [] },
@@ -739,6 +765,28 @@ test("projectMessages can rewrite the transcript before each model call", async 
     ],
   });
   assert.equal(sawProjected, true);
+});
+
+test("async message projection finishes before every model call without entering the transcript", async () => {
+  let projections = 0;
+  let calls = 0;
+  const model = new MockLanguageModelV4({ doStream: async (options) => {
+    calls++;
+    const prompt = JSON.stringify(options.prompt);
+    assert.match(prompt, new RegExp(`current-${calls}`));
+    if (calls > 1) assert.doesNotMatch(prompt, /current-1/);
+    return { stream: simulateReadableStream({ chunks: calls === 1
+      ? toolCallChunks([{ id: "read", name: "noop", input: {} }]) : textChunks("done") }) };
+  } });
+  await runAgent({ model, messages: [{ role: "user", content: "go" }],
+    tools: { noop: defineTool({ kind: "read", description: "read", inputSchema: emptyObjectSchema, execute: () => ({ ok: true }) }) },
+    projectMessages: async (messages) => {
+      assert.doesNotMatch(JSON.stringify(messages), /current-/);
+      await Promise.resolve();
+      return [...messages, { role: "user", content: `current-${++projections}` }];
+    },
+  });
+  assert.equal(projections, 2);
 });
 
 test("metrics: successful and failed tool calls recorded once each", async () => {
