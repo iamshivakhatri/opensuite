@@ -128,7 +128,7 @@ const placement = {
 const tableTarget = {
   type: "object",
   description:
-    "Use exact headerCells and occurrence from current retrieval when shown; never guess or shorten headers. Use document.inspect for a needed cell/row handle or missing selector. Formatting preserves handles within one model turn; handles expire before the next model turn or after other edits. Occurrence is zero-based.",
+    "Use exact current headerCells and occurrence when known. Inspect for a missing selector or needed handle. Handles survive read-only turns; content/structure edits clear them immediately, while formatting edits may preserve them only within the edited turn. Occurrence is zero-based.",
   properties: {
     handle: { type: "string" },
     headerCells: { type: "array", items: { type: "string" } },
@@ -148,11 +148,24 @@ const rowAnchor = {
   additionalProperties: false,
 };
 
-const cellTarget = {
+const semanticCellTarget = {
   type: "object",
-  description:
-    "Cell selector: use a fresh inspect handle for header-row or first-column cells. rowLabel+columnHeader selects only data rows and non-first columns.",
+  description: "Prefer row + column. Use a handle only when these selectors cannot express the cell. Legacy rowLabel + columnHeader remains supported for data cells.",
   properties: {
+    row: { type: "object", properties: {
+      kind: { type: "string", enum: ["header", "label", "index"] },
+      text: { type: "string", description: "First-cell row label for kind=label." },
+      occurrence: occurrenceField,
+      index: { type: "integer", description: "Zero-based row position for kind=index." },
+      expectedFirstCellText: { type: "string", description: "Required for kind=index; prevents a shifted row from being edited." },
+    }, required: ["kind"], additionalProperties: false },
+    column: { type: "object", properties: {
+      kind: { type: "string", enum: ["first", "header", "index"] },
+      text: { type: "string", description: "First-row column header for kind=header." },
+      occurrence: occurrenceField,
+      index: { type: "integer", description: "Zero-based column position for kind=index." },
+      expectedHeaderText: { type: "string", description: "Required for kind=index; prevents a shifted column from being edited." },
+    }, required: ["kind"], additionalProperties: false },
     handle: { type: "string" },
     rowLabel: { type: "string" },
     columnHeader: { type: "string" },
@@ -240,7 +253,7 @@ const MUTATION_DEFS: Record<string, MutDef> = {
   },
   set_text_formatting: {
     description:
-      "Set bold/italic/size/color/other run formatting on ordinary direct body text or simple table-cell text. Occurrence is zero-based when ambiguous.",
+      "Format exact body text or partial text spans, including supported simple table-cell runs. For known whole table cells, use set_table_cells_formatting. Occurrence is zero-based when ambiguous.",
     inputSchema: op(
       {
         target: textTarget,
@@ -268,7 +281,7 @@ const MUTATION_DEFS: Record<string, MutDef> = {
   },
   set_table_cells_text: {
     description:
-      "Update all known cells in one table with one call. Use its exact headerCells/occurrence from retrieval; inspect only for needed cell handles. Each update needs expectedCurrentText and replacement.",
+      "Update known cells in one table. Select each by row (header, label, or checked index) and column (first, header, or checked index); use occurrence for duplicate labels. All selectors use the original table state, so headers and row labels can change in this call. Each update needs expectedCurrentText and replacement.",
     inputSchema: op(
       {
         table: tableTarget,
@@ -277,7 +290,7 @@ const MUTATION_DEFS: Record<string, MutDef> = {
           items: {
             type: "object",
             properties: {
-              target: cellTarget,
+              target: semanticCellTarget,
               expectedCurrentText: { type: "string" },
               replacement: { type: "string" },
             },
@@ -368,7 +381,7 @@ const MUTATION_DEFS: Record<string, MutDef> = {
     ),
   },
   set_table_cell_shading: {
-    description: "Set fill for one or more cells in one call (6-digit RGB, no #). Header-row cells require fresh cell handles from inspect(tables). If available, use set_table_cells_formatting for fill and text together. Omit fill to clear.",
+    description: "Shade known table cells in one call using table + row + column, including header and first-column cells. Fill is 6-digit RGB without #; omit fill to clear. Use set_table_cells_formatting for fill and text together.",
     inputSchema: op(
       {
         table: tableTarget,
@@ -377,7 +390,7 @@ const MUTATION_DEFS: Record<string, MutDef> = {
           items: {
             type: "object",
             properties: {
-              target: cellTarget,
+              target: semanticCellTarget,
               fill: { type: "string" },
             },
             required: ["target"],
@@ -390,7 +403,7 @@ const MUTATION_DEFS: Record<string, MutDef> = {
   },
   set_table_cells_formatting: {
     description:
-      "Use current cell handles from one inspect(tables), then format all relevant cells in one call. Set fill and direct text formatting together when needed; formatting preserves handles within one model turn, and handles expire before the next model turn or after other edits. Supports fill (6-digit RGB), bold, italic, font family, font size in half-points, and text color.",
+      "Format known whole table cells using table + row + column, including header and first-column cells, without find or inspect handles. Format all relevant cells in one call; set fill and direct text formatting together when needed. Supports fill (6-digit RGB), bold, italic, font family, font size in half-points, and text color. Handles remain available for cells that need them.",
     inputSchema: op(
       {
         table: tableTarget,
@@ -401,7 +414,7 @@ const MUTATION_DEFS: Record<string, MutDef> = {
           items: {
             type: "object",
             properties: {
-              target: cellTarget,
+              target: semanticCellTarget,
               fill: { type: "string" },
               textFormatting: {
                 type: "object",
@@ -622,7 +635,7 @@ export function createDocumentTools(document: BoundDocumentHost): AgentToolSet {
         kind: "mutate",
         description: `Apply several independent ${capability} operations in order. Stops on the first failure; earlier successful edits remain. Use known text targets only.${
           capability === "set_text_formatting"
-            ? " Supports ordinary body text and simple table-cell text."
+            ? " Supports body text, partial spans, and simple table-cell runs; use set_table_cells_formatting for known whole cells."
             : capability !== "replace_text"
               ? " Formatting targets direct body text, not table cells."
               : ""

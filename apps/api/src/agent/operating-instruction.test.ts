@@ -6,25 +6,28 @@ import { createDocumentTools } from "./document-tools.js";
 
 test("clarification requires material ambiguity and excludes cheap recovery and delegated choices", () => {
   const system = buildAgentOperatingInstruction(["request_clarification", "finish"]);
-  assert.match(system, /only when BOTH \(1\).*materially conflicts.*required information is genuinely missing, AND \(2\) two or more plausible interpretations/);
-  assert.match(system, /meaningfully different document facts, structure, or requested outcomes/);
-  assert.match(system, /one narrow read.*do not repeat reads to avoid asking/);
-  assert.match(system, /call request_clarification alone.*before further edits/);
-  assert.match(system, /Stop speculative reasoning; do not choose an unsupported interpretation merely to avoid asking/);
-  assert.match(system, /Keep internal tool details out of the question/);
-  assert.match(system, /Do not request clarification for capitalization, punctuation, obvious spelling mistakes, singular\/plural differences, obvious abbreviations, a unique high-confidence semantic match, cosmetic uncertainty/);
+  assert.match(system, /request_clarification alone, before further edits, only when a requested outcome requires choosing between two or more materially different unsupported interpretations/);
+  assert.match(system, /Ask one concise, actionable question; keep internal tool details out of it/);
+  assert.match(system, /Do not ask for capitalization, punctuation, obvious spelling mistakes, singular\/plural differences, obvious abbreviations, a unique high-confidence semantic match, cosmetic uncertainty/);
   assert.match(system, /choices the user delegated.*use your judgment.*choose reasonable values/);
+  assert.match(system, /merely because unrelated or source-silent content must remain unchanged/);
+  assert.match(system, /Do not choose an unsupported interpretation merely to avoid asking/);
   assert.match(system, /Missing handles or selectors call for a cheap document.inspect/);
   assert.match(system, /normal tool failures with a deterministic recovery path call for recovery/);
-  assert.match(buildDocumentUpdateInstruction(), /If the clarification rule above does not apply/);
+  assert.match(buildDocumentUpdateInstruction(), /finish normally/);
 });
 
 test("update policy preserves source-silent facts and flags missing input", () => {
   const policy = buildDocumentUpdateInstruction();
-  assert.match(policy, /source is silent, carry forward existing metrics, table rows/);
-  assert.match(policy, /Change only facts the new evidence supports/);
-  assert.match(policy, /never invent numbers, dates, status, owners, deadlines, events, or a breakdown from a total/);
+  assert.match(policy, /Current document state is authoritative/);
+  assert.match(policy, /Change only content the user's request or supplied\/source evidence supports/);
+  assert.match(policy, /Never invent unsupported facts, values, dates, statuses, owners, events/);
+  assert.match(policy, /Correct preservation is success for that part/);
+  assert.match(policy, /Related facts are not the same fact/);
+  assert.match(policy, /clearly expresses the same fact\/value/);
+  assert.match(policy, /remains factually valid as historical or prior state/);
   assert.match(policy, /finish_with_input_needed/);
+  assert.match(policy, /If preservation is the correct result, finish normally/);
   assert.doesNotMatch(buildAgentOperatingInstruction(["finish"]), /DOCUMENT UPDATE RULE/);
 });
 
@@ -51,7 +54,7 @@ test("operating instruction embeds general policy and only exposed tools", () =>
   assert.match(system, /- document\.inspect/);
   assert.match(system, /- document\.replace_text/);
   assert.match(system, /- finish/);
-  assert.match(system, /Use the finish operation when the requested work is complete/);
+  assert.match(system, /Use finish when the requested work is complete/);
   assert.equal(system.includes("document.capabilities"), false);
   assert.equal(system.includes("insert_picture"), false);
   assert.equal(system.includes("replace_picture"), false);
@@ -108,37 +111,42 @@ test("optional cosmetic polish: abandon after repeated failure; keep required wo
   assert.equal(/always skip shading/i.test(system), false);
 });
 
-test("table guidance delays handle inspection and groups stable table edits", () => {
+test("tool selection favors semantic targets, direct mutation, and deferred handle details", () => {
   const system = buildAgentOperatingInstruction(["document.inspect", "document.set_table_cell_shading"]);
-  assert.match(system, /Finish content, paragraph, and structural edits before inspecting for exact table\/cell handles/);
-  assert.match(system, /inspect the table once, do related table formatting together/);
-  assert.match(system, /prefer exact semantic selectors when unambiguous/);
-  assert.match(system, /Inspected handles can be reused within one model turn/);
-  assert.match(system, /Other successful edits invalidate handles immediately/);
-  assert.match(system, /inspect again before using handles in a later turn/);
-  assert.match(system, /set_table_cells_formatting to set fill and bold\/color in one call/);
-  assert.match(system, /one batch or multi-target operation when it covers several known edits/);
-  assert.match(system, /exact table headerCells\/occurrence from retrieval when available/);
-  assert.match(system, /inspect only for needed row\/cell handles, missing structure, or fresh handles after a structural change/);
-  assert.match(system, /Row\/column text selectors do not target header cells/);
-  assert.match(system, /Paragraph style\/formatting tools do not format table-cell text/);
+  assert.match(system, /Prefer semantic document\/table selectors over global text replacement/);
+  assert.match(system, /Use replace_text or batch_replace_text only when the target is genuinely text-level/);
+  assert.match(system, /mutate directly\. Do not inspect or search merely to rediscover content already available/);
+  assert.match(system, /Inspect only when an exact required target cannot already be expressed/);
+  assert.match(system, /Prefer exact semantic selectors from current context when unambiguous/);
+  assert.match(system, /Inspect for handles only when a required operation needs them/);
+  assert.match(system, /Use tool descriptions as the source of truth for handle lifetime/);
+  assert.match(system, /one batch or multi-target operation when it covers several known independent edits/);
+  assert.match(system, /Do not repeatedly reconsider a valid mutation plan/);
   assert.match(system, /TABLE_COLUMN_NOT_FOUND mean the selector missed the target/);
   assert.match(system, /state the unmet requirement in the final response/);
+  assert.match(system, /Correct preservation is success, not missing information/);
 });
 
 test("table tool descriptions favor exact selectors and one call per logical edit", () => {
-  const capabilities = ["set_table_cells_text", "set_table_cells_formatting", "set_table_cell_shading", "insert_table_rows", "insert_table_row"];
+  const capabilities = ["set_table_cells_text", "set_table_cells_formatting", "set_table_cell_shading", "set_text_formatting", "insert_table_rows", "insert_table_row"];
   const tools = createDocumentTools({
     capabilities: () => ({ formats: [{ format: "docx", capabilities }] }),
-    inspect: async () => ({}), find: async () => ({}), mutate: async () => ({}),
+    inspect: async () => ({}), find: async () => ({}), mutate: async () => ({}), mutateBatch: async () => ({}),
   });
-  assert.match(String(tools["document.set_table_cells_text"]?.description), /all known cells in one table with one call/);
-  assert.match(String(tools["document.set_table_cells_text"]?.description), /exact headerCells\/occurrence from retrieval/);
-  assert.match(String(tools["document.set_table_cells_formatting"]?.description), /current cell handles from one inspect\(tables\)/);
+  assert.match(String(tools["document.set_table_cells_text"]?.description), /Update known cells in one table/);
+  assert.match(String(tools["document.set_table_cells_text"]?.description), /original table state/);
+  assert.match(String(tools["document.set_table_cells_formatting"]?.description), /table \+ row \+ column/);
   assert.match(String(tools["document.set_table_cells_formatting"]?.description), /all relevant cells in one call/);
   assert.match(String(tools["document.set_table_cells_formatting"]?.description), /fill and direct text formatting together/);
-  assert.match(String(tools["document.set_table_cells_formatting"]?.description), /handles expire before the next model turn or after other edits/);
-  assert.match(String(tools["document.set_table_cell_shading"]?.description), /use set_table_cells_formatting for fill and text together/);
+  assert.match(String(tools["document.set_table_cell_shading"]?.description), /table \+ row \+ column/);
+  assert.match(String(tools["document.set_table_cell_shading"]?.description), /set_table_cells_formatting for fill and text together/);
+  const cellTargetSchema = (name: string) => (tools[`document.${name}`]?.inputSchema as {
+    jsonSchema: { properties: { updates: { items: { properties: { target: unknown } } } } };
+  }).jsonSchema.properties.updates.items.properties.target;
+  assert.deepEqual(cellTargetSchema("set_table_cells_formatting"), cellTargetSchema("set_table_cells_text"));
+  assert.deepEqual(cellTargetSchema("set_table_cell_shading"), cellTargetSchema("set_table_cells_text"));
+  assert.match(String(tools["document.set_text_formatting"]?.description), /known whole table cells, use set_table_cells_formatting/);
+  assert.match(String(tools["document.batch_text_formatting"]?.description), /set_table_cells_formatting for known whole cells/);
   assert.match(String(tools["document.insert_table_rows"]?.description), /prefer this over repeated insert_table_row calls/);
   assert.match(String(tools["document.insert_table_row"]?.description), /use insert_table_rows when several contiguous rows are known/);
 });

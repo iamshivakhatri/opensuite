@@ -16,11 +16,11 @@ const TOOL_GROUPS = {
     tools: ["insert_paragraph", "delete_paragraph", "set_paragraph_formatting", "set_paragraphs_list", "batch_paragraph_styles", "batch_paragraph_formatting"],
   },
   text_formatting: {
-    description: "Change text fonts, emphasis, colors, and other text appearance, individually or in batches.",
+    description: "Change body or partial text-span appearance, individually or in batches; use table_styling for known whole cells.",
     tools: ["set_text_formatting", "batch_text_formatting"],
   },
   table_styling: {
-    description: "Change table borders, alignment, margins, column widths, cell shading, and cell text appearance.",
+    description: "Change table borders, alignment, margins, widths, and known table-cell shading or text appearance.",
     tools: ["set_table_formatting", "set_table_column_widths", "set_table_cell_shading", "set_table_cells_formatting"],
   },
   table_structure: {

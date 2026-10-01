@@ -93,8 +93,21 @@ export type DocxTableCellTarget =
       readonly occurrence?: number;
     };
 
+export type DocxSemanticCellTarget = DocxTableCellTarget | {
+  readonly row:
+    | { readonly kind: "header" }
+    | { readonly kind: "label"; readonly text: string; readonly occurrence?: number }
+    | { readonly kind: "index"; readonly index: number; readonly expectedFirstCellText: string };
+  readonly column:
+    | { readonly kind: "first" }
+    | { readonly kind: "header"; readonly text: string; readonly occurrence?: number }
+    | { readonly kind: "index"; readonly index: number; readonly expectedHeaderText: string };
+};
+
+export type DocxTableCellTextTarget = DocxSemanticCellTarget;
+
 export interface DocxTableCellUpdate {
-  readonly target: DocxTableCellTarget;
+  readonly target: DocxSemanticCellTarget;
   readonly expectedCurrentText: string;
   readonly replacement: string;
 }
@@ -168,7 +181,7 @@ export interface DocxSetTableColumnWidthsOperation {
 export interface DocxSetTableCellShadingOperation {
   readonly table: DocxTableTarget;
   readonly updates: readonly {
-    readonly target: DocxTableCellTarget;
+    readonly target: DocxSemanticCellTarget;
     /** Omit to clear the cell fill. */
     readonly fill?: string;
   }[];
@@ -178,7 +191,7 @@ export interface DocxSetTableCellShadingOperation {
 export interface DocxSetTableCellsFormattingOperation {
   readonly table: DocxTableTarget;
   readonly updates: readonly {
-    readonly target: DocxTableCellTarget;
+    readonly target: DocxSemanticCellTarget;
     readonly fill?: string;
     readonly textFormatting?: {
       readonly bold?: boolean;
@@ -787,6 +800,15 @@ export async function createNapiDocxEngineBinding(): Promise<DocxEngineBinding> 
     }
   }
 
+  const supportsSemanticCellTargets = native.getDocxCapabilities().formats
+    .some((format) => format.format === "docx" && format.capabilities.includes("semantic_table_cell_targets"));
+  const requireSemanticCellTargets = (updates: readonly { readonly target: DocxSemanticCellTarget }[]) => {
+    if (!supportsSemanticCellTargets && updates.some((update) =>
+      update?.target && ("row" in update.target || "column" in update.target))) {
+      throw new Error("installed native engine does not support semantic table-cell targets");
+    }
+  };
+
   return {
     getDocxCapabilities() {
       return native.getDocxCapabilities();
@@ -945,6 +967,7 @@ export async function createNapiDocxEngineBinding(): Promise<DocxEngineBinding> 
       if (operation.updates.length === 0) {
         throw new MutationArgError("updates must be a non-empty array");
       }
+      requireSemanticCellTargets(operation.updates);
       const updates = operation.updates.map((update, index) => {
         if (!update || typeof update !== "object") {
           throw new MutationArgError(`updates[${index}] must be an object`);
@@ -960,7 +983,7 @@ export async function createNapiDocxEngineBinding(): Promise<DocxEngineBinding> 
           );
         }
         return {
-          target: toNativeCellTarget(update.target),
+          target: toNativeSemanticCellTarget(update.target),
           expectedCurrentText: update.expectedCurrentText,
           replacement: update.replacement,
         };
@@ -1112,6 +1135,7 @@ export async function createNapiDocxEngineBinding(): Promise<DocxEngineBinding> 
       if (!Array.isArray(operation.updates) || operation.updates.length === 0) {
         throw new MutationArgError("updates must be a non-empty array");
       }
+      requireSemanticCellTargets(operation.updates);
       const response = await native.executeDocxSetTableCellShading(
         Buffer.from(input),
         {
@@ -1121,7 +1145,7 @@ export async function createNapiDocxEngineBinding(): Promise<DocxEngineBinding> 
               throw new MutationArgError(`updates[${index}] must be an object`);
             }
             return {
-              target: toNativeCellTarget(update.target),
+              target: toNativeSemanticCellTarget(update.target),
               ...(update.fill !== undefined ? { fill: update.fill } : {}),
             };
           }),
@@ -1137,6 +1161,7 @@ export async function createNapiDocxEngineBinding(): Promise<DocxEngineBinding> 
       if (!Array.isArray(operation.updates) || operation.updates.length === 0) {
         throw new MutationArgError("updates must be a non-empty array");
       }
+      requireSemanticCellTargets(operation.updates);
       if (!native.executeDocxSetTableCellsFormatting) {
         throw new Error("@opensuitehq/engine is missing executeDocxSetTableCellsFormatting");
       }
@@ -1149,7 +1174,7 @@ export async function createNapiDocxEngineBinding(): Promise<DocxEngineBinding> 
               throw new MutationArgError(`updates[${index}] must be an object`);
             }
             return {
-              target: toNativeCellTarget(update.target),
+              target: toNativeSemanticCellTarget(update.target),
               ...(update.fill !== undefined ? { fill: update.fill } : {}),
               ...(update.textFormatting !== undefined
                 ? { textFormatting: update.textFormatting }
@@ -1246,6 +1271,42 @@ function toNativeRowAnchor(after: DocxTableRowAnchor): Record<string, unknown> {
     ...(after.occurrence !== undefined ? { occurrence: after.occurrence } : {}),
     ...(after.handle !== undefined ? { handle: after.handle } : {}),
   };
+}
+
+function toNativeSemanticCellTarget(target: DocxSemanticCellTarget): Record<string, unknown> {
+  if (target && typeof target === "object" && ("row" in target || "column" in target)) {
+    if (!("row" in target) || !("column" in target)) {
+      throw new MutationArgError("cell target needs both row and column");
+    }
+    if ("handle" in target || "rowLabel" in target || "columnHeader" in target || "occurrence" in target) {
+      throw new MutationArgError("use either row + column or a legacy cell target");
+    }
+    const row = target.row;
+    const column = target.column;
+    if (!row || !column || typeof row !== "object" || typeof column !== "object") {
+      throw new MutationArgError("cell target needs row and column objects");
+    }
+    if (row.kind === "label" && typeof row.text !== "string" ||
+        row.kind === "index" && (typeof row.expectedFirstCellText !== "string" || !validIndex(row.index)) ||
+        !["header", "label", "index"].includes(row.kind)) {
+      throw new MutationArgError("invalid cell row selector");
+    }
+    if (column.kind === "header" && typeof column.text !== "string" ||
+        column.kind === "index" && (typeof column.expectedHeaderText !== "string" || !validIndex(column.index)) ||
+        !["first", "header", "index"].includes(column.kind)) {
+      throw new MutationArgError("invalid cell column selector");
+    }
+    if (row.kind === "label" && row.occurrence !== undefined && !validIndex(row.occurrence) ||
+        column.kind === "header" && column.occurrence !== undefined && !validIndex(column.occurrence)) {
+      throw new MutationArgError("cell occurrence must be a non-negative integer");
+    }
+    return { row, column };
+  }
+  return toNativeCellTarget(target as DocxTableCellTarget);
+}
+
+function validIndex(value: unknown): value is number {
+  return typeof value === "number" && Number.isInteger(value) && value >= 0 && value <= 0xFFFFFFFF;
 }
 
 function toNativeCellTarget(target: DocxTableCellTarget): Record<string, unknown> {
