@@ -93,11 +93,13 @@ export type DocxTableCellTarget =
       readonly occurrence?: number;
     };
 
+export type DocxTableCellRow =
+  | { readonly kind: "header" }
+  | { readonly kind: "label"; readonly text: string; readonly occurrence?: number }
+  | { readonly kind: "index"; readonly index: number; readonly expectedFirstCellText: string };
+
 export type DocxSemanticCellTarget = DocxTableCellTarget | {
-  readonly row:
-    | { readonly kind: "header" }
-    | { readonly kind: "label"; readonly text: string; readonly occurrence?: number }
-    | { readonly kind: "index"; readonly index: number; readonly expectedFirstCellText: string };
+  readonly row: DocxTableCellRow;
   readonly column:
     | { readonly kind: "first" }
     | { readonly kind: "header"; readonly text: string; readonly occurrence?: number }
@@ -147,7 +149,7 @@ export interface DocxDeleteTableOperation {
 
 export interface DocxDeleteTableRowOperation {
   readonly table: DocxTableTarget;
-  readonly row: DocxTableRowAnchor;
+  readonly row: DocxTableCellRow | DocxTableRowAnchor;
   readonly baseRevision?: string;
 }
 
@@ -802,6 +804,8 @@ export async function createNapiDocxEngineBinding(): Promise<DocxEngineBinding> 
 
   const supportsSemanticCellTargets = native.getDocxCapabilities().formats
     .some((format) => format.format === "docx" && format.capabilities.includes("semantic_table_cell_targets"));
+  const supportsSemanticRowDeletion = native.getDocxCapabilities().formats
+    .some((format) => format.format === "docx" && format.capabilities.includes("semantic_table_row_deletion"));
   const requireSemanticCellTargets = (updates: readonly { readonly target: DocxSemanticCellTarget }[]) => {
     if (!supportsSemanticCellTargets && updates.some((update) =>
       update?.target && ("row" in update.target || "column" in update.target))) {
@@ -1059,11 +1063,14 @@ export async function createNapiDocxEngineBinding(): Promise<DocxEngineBinding> 
     },
 
     async executeDocxDeleteTableRow(input, operation) {
+      if (operation.row && typeof operation.row === "object" && "kind" in operation.row && !supportsSemanticRowDeletion) {
+        throw new Error("installed native engine does not support semantic table-row deletion");
+      }
       const response = await native.executeDocxDeleteTableRow(
         Buffer.from(input),
         {
           table: toNativeTableTarget(operation.table),
-          row: toNativeRowAnchor(operation.row),
+          row: toNativeDeleteRowTarget(operation.row),
           ...(operation.baseRevision !== undefined
             ? { baseRevision: operation.baseRevision }
             : {}),
@@ -1273,6 +1280,23 @@ function toNativeRowAnchor(after: DocxTableRowAnchor): Record<string, unknown> {
   };
 }
 
+function toNativeDeleteRowTarget(row: DocxTableCellRow | DocxTableRowAnchor): Record<string, unknown> {
+  if (!row || typeof row !== "object") {
+    throw new MutationArgError("row must be a semantic selector, firstCellText, or handle");
+  }
+  if ("kind" in row) {
+    if ("handle" in row || "firstCellText" in row) {
+      throw new MutationArgError("use either a semantic row selector or a legacy row target");
+    }
+    validateSemanticRow(row);
+    return row;
+  }
+  if (typeof row.handle !== "string" && typeof row.firstCellText !== "string") {
+    throw new MutationArgError("row needs kind, firstCellText, or handle");
+  }
+  return toNativeRowAnchor(row);
+}
+
 function toNativeSemanticCellTarget(target: DocxSemanticCellTarget): Record<string, unknown> {
   if (target && typeof target === "object" && ("row" in target || "column" in target)) {
     if (!("row" in target) || !("column" in target)) {
@@ -1286,23 +1310,27 @@ function toNativeSemanticCellTarget(target: DocxSemanticCellTarget): Record<stri
     if (!row || !column || typeof row !== "object" || typeof column !== "object") {
       throw new MutationArgError("cell target needs row and column objects");
     }
-    if (row.kind === "label" && typeof row.text !== "string" ||
-        row.kind === "index" && (typeof row.expectedFirstCellText !== "string" || !validIndex(row.index)) ||
-        !["header", "label", "index"].includes(row.kind)) {
-      throw new MutationArgError("invalid cell row selector");
-    }
+    validateSemanticRow(row);
     if (column.kind === "header" && typeof column.text !== "string" ||
         column.kind === "index" && (typeof column.expectedHeaderText !== "string" || !validIndex(column.index)) ||
         !["first", "header", "index"].includes(column.kind)) {
       throw new MutationArgError("invalid cell column selector");
     }
-    if (row.kind === "label" && row.occurrence !== undefined && !validIndex(row.occurrence) ||
-        column.kind === "header" && column.occurrence !== undefined && !validIndex(column.occurrence)) {
+    if (column.kind === "header" && column.occurrence !== undefined && !validIndex(column.occurrence)) {
       throw new MutationArgError("cell occurrence must be a non-negative integer");
     }
     return { row, column };
   }
   return toNativeCellTarget(target as DocxTableCellTarget);
+}
+
+function validateSemanticRow(row: DocxTableCellRow): void {
+  if (row.kind === "label" && (typeof row.text !== "string" ||
+      row.occurrence !== undefined && !validIndex(row.occurrence)) ||
+      row.kind === "index" && (typeof row.expectedFirstCellText !== "string" || !validIndex(row.index)) ||
+      !["header", "label", "index"].includes(row.kind)) {
+    throw new MutationArgError("invalid cell row selector");
+  }
 }
 
 function validIndex(value: unknown): value is number {

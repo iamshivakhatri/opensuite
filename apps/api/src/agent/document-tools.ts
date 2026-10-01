@@ -148,17 +148,31 @@ const rowAnchor = {
   additionalProperties: false,
 };
 
+const semanticRowTarget = {
+  type: "object",
+  properties: {
+    kind: { type: "string", enum: ["header", "label", "index"] },
+    text: { type: "string", description: "First-cell row label for kind=label." },
+    occurrence: occurrenceField,
+    index: { type: "integer", description: "Zero-based row position for kind=index." },
+    expectedFirstCellText: { type: "string", description: "Required for kind=index; prevents a shifted row from being edited." },
+  },
+  required: ["kind"],
+  additionalProperties: false,
+};
+
+const deleteRowTarget = {
+  type: "object",
+  description: "Prefer kind=label with text and occurrence when needed, or kind=index with expectedFirstCellText. Use a handle only when these cannot express the row. Older firstCellText + occurrence remains supported.",
+  properties: { ...semanticRowTarget.properties, ...rowAnchor.properties },
+  additionalProperties: false,
+};
+
 const semanticCellTarget = {
   type: "object",
   description: "Prefer row + column. Use a handle only when these selectors cannot express the cell. Legacy rowLabel + columnHeader remains supported for data cells.",
   properties: {
-    row: { type: "object", properties: {
-      kind: { type: "string", enum: ["header", "label", "index"] },
-      text: { type: "string", description: "First-cell row label for kind=label." },
-      occurrence: occurrenceField,
-      index: { type: "integer", description: "Zero-based row position for kind=index." },
-      expectedFirstCellText: { type: "string", description: "Required for kind=index; prevents a shifted row from being edited." },
-    }, required: ["kind"], additionalProperties: false },
+    row: semanticRowTarget,
     column: { type: "object", properties: {
       kind: { type: "string", enum: ["first", "header", "index"] },
       text: { type: "string", description: "First-row column header for kind=header." },
@@ -338,8 +352,8 @@ const MUTATION_DEFS: Record<string, MutDef> = {
     inputSchema: op({ table: tableTarget }, ["table"]),
   },
   delete_table_row: {
-    description: "Delete a table row.",
-    inputSchema: op({ table: tableTarget, row: rowAnchor }, ["table", "row"]),
+    description: "Delete a known table row using table + row. Prefer row {kind: 'label', text, occurrence?} or a checked index; a handle is only needed when these cannot express the row.",
+    inputSchema: op({ table: tableTarget, row: deleteRowTarget }, ["table", "row"]),
   },
   delete_table_column: {
     description: "Delete a table column by header or column handle.",

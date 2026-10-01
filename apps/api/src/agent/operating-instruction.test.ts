@@ -128,7 +128,7 @@ test("tool selection favors semantic targets, direct mutation, and deferred hand
 });
 
 test("table tool descriptions favor exact selectors and one call per logical edit", () => {
-  const capabilities = ["set_table_cells_text", "set_table_cells_formatting", "set_table_cell_shading", "set_text_formatting", "insert_table_rows", "insert_table_row"];
+  const capabilities = ["set_table_cells_text", "set_table_cells_formatting", "set_table_cell_shading", "set_text_formatting", "insert_table_rows", "insert_table_row", "delete_table_row"];
   const tools = createDocumentTools({
     capabilities: () => ({ formats: [{ format: "docx", capabilities }] }),
     inspect: async () => ({}), find: async () => ({}), mutate: async () => ({}), mutateBatch: async () => ({}),
@@ -145,6 +145,16 @@ test("table tool descriptions favor exact selectors and one call per logical edi
   }).jsonSchema.properties.updates.items.properties.target;
   assert.deepEqual(cellTargetSchema("set_table_cells_formatting"), cellTargetSchema("set_table_cells_text"));
   assert.deepEqual(cellTargetSchema("set_table_cell_shading"), cellTargetSchema("set_table_cells_text"));
+  const deleteRow = (tools["document.delete_table_row"]?.inputSchema as {
+    jsonSchema: { properties: { row: { properties: Record<string, unknown> } } };
+  }).jsonSchema.properties.row;
+  const cellRow = (cellTargetSchema("set_table_cells_text") as { properties: { row: { properties: Record<string, unknown> } } }).properties.row;
+  for (const key of ["kind", "text", "occurrence", "index", "expectedFirstCellText"]) {
+    assert.deepEqual(deleteRow.properties[key], cellRow.properties[key]);
+  }
+  assert.ok(deleteRow.properties.handle);
+  assert.ok(deleteRow.properties.firstCellText);
+  assert.match(String(tools["document.delete_table_row"]?.description), /Prefer row/);
   assert.match(String(tools["document.set_text_formatting"]?.description), /known whole table cells, use set_table_cells_formatting/);
   assert.match(String(tools["document.batch_text_formatting"]?.description), /set_table_cells_formatting for known whole cells/);
   assert.match(String(tools["document.insert_table_rows"]?.description), /prefer this over repeated insert_table_row calls/);

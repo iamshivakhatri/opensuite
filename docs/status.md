@@ -5,6 +5,7 @@ _Read this before starting any work. Keep it a concise current-state handoff, no
 ## What Exists
 
 * Workspace shell, Casual Docs DOCX, engine-backed inspect/mutate, blank create, workspace agent.
+* Semantic table-row deletion is wired in source through the Rust engine, Node bridge, and document tool; the pinned published engine still needs an update before this path is available in the installed app.
 * **Agent Core V3-2 (live)** — general policy + dynamic AVAILABLE CAPABILITIES; finish + soft stopReasons.
 * **V3 Phase 3 observability** — `AgentRunMetrics` + API `AgentRunReport` / compact log with stable vocabulary (`toolCalls`, `editsApplied`, `persistedVersions`, `toolErrors`; no DB/OTel; not shown in Agent Panel).
 * **V3 lifecycle tools** — `workspace.create_blank_document` + `workspace.duplicate_current_document` with same-run active rebind; `document.created` SSE; report `transitions[]`.
@@ -13,6 +14,8 @@ _Read this before starting any work. Keep it a concise current-state handoff, no
 * **API composition seam** — `@opensuite/api` now exports `createOpenSuiteRuntime`, `createOpenSuiteApp`, and config loading. The self-host server remains a thin wrapper; a future Cloud API can register routes on the same Fastify app, Better Auth instance, and DB client.
 
 ## Just Completed
+
+* **Turn-1 TRANS Experiment 1 (operating instruction only)** — replaced overlapping update/preserve/clarification/handle guidance with a short deterministic document-update decision policy: authoritative current state, change only supported content, consistent corresponding representations, preserve source-silent as success (not missing input), mutate known semantic targets directly, batch independent edits, clarify only for materially different unsupported interpretations, and `finish_with_input_needed` only for explicit incomplete requested outcomes. Top-level handle lifecycle details deferred to tool descriptions. No tool/schema/retrieval/runtime/engine change. Focused operating-instruction tests + API typecheck pass.
 
 * **Readable full-trace aggregation** — `AGENT_RUN_TRACE=full` Markdown no longer writes one section per `reasoning-delta` / `text-delta` / `tool-input-*` event. Stream fragments accumulate in memory per model turn and flush once as complete Reasoning, Assistant Text, and Tool Calls blocks (Partial-labeled on error/cancel). Tool started/result/error collapse into one Tool Result/Error/Skipped block; `responseMessages` and delta dumps are not repeated. Trace format version 2. Observability only; agent behavior unchanged.
 
@@ -263,4 +266,4 @@ _Read this before starting any work. Keep it a concise current-state handoff, no
 
 ## Recommended Next Step
 
-Re-run a local `AGENT_RUN_TRACE=full` document edit and confirm the Markdown is turn-scoped (one Reasoning / Assistant Text / Tool Calls / Tool Result / Usage block per turn) rather than per-token delta sections.
+Manual dogfood: re-run a representative existing-document update with `AGENT_RUN_TRACE=full` and compare Turn-1 reasoning tokens/latency and mutation correctness against the prior ~60k-reasoning baseline.
