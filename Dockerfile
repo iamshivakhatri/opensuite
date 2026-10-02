@@ -2,7 +2,7 @@
 #   docker build -t opensuite-api .
 # Atlas/Dokploy: docker-compose.atlas.yml (API only; external DB + MinIO).
 #
-# Native engine: @opensuitehq/engine@0.1.1 from npm (glibc platforms only).
+# Native engine: @opensuitehq/engine@0.1.3 from npm (glibc platforms only).
 # Base image is Debian bookworm (glibc) — Alpine/musl is incompatible.
 
 # syntax=docker/dockerfile:1.7
@@ -31,6 +31,7 @@ COPY apps/api ./apps/api
 COPY deploy ./deploy
 
 RUN pnpm --filter @opensuite/api... build
+RUN node --input-type=module -e "import { createNapiDocxEngineBinding } from './packages/engine-client/dist/index.js'; const caps = (await createNapiDocxEngineBinding()).getDocxCapabilities(); if (!caps.ok) throw new Error('DOCX engine capabilities unavailable')"
 
 FROM node:${NODE_VERSION}-bookworm-slim AS runtime
 RUN apt-get update \

@@ -1370,6 +1370,20 @@ packages:
     cpu: [x64]
     os: [darwin]
 
+  '@opensuitehq/engine-linux-arm64-gnu@0.1.3':
+    resolution: {integrity: sha512-9XqvW9SItZys15WugeMPw9DSrtskfVJ8QMMM5vmjGPHi+DgHPagw4KUO2MYptSm9F4W7oW9ycC8Rpcgdg5Z3Ew==}
+    engines: {node: '>=20'}
+    cpu: [arm64]
+    os: [linux]
+    libc: [glibc]
+
+  '@opensuitehq/engine-linux-x64-gnu@0.1.3':
+    resolution: {integrity: sha512-IsImiw9W9W3/fYELozg7ff5/9P0tMbqrbssjcuiuNxjmeu3N+wZZ5CWiByCrmZw1TaeUZniX/qNLAMS5z1H0mw==}
+    engines: {node: '>=20'}
+    cpu: [x64]
+    os: [linux]
+    libc: [glibc]
+
   '@opensuitehq/engine-win32-x64-msvc@0.1.3':
     resolution: {integrity: sha512-KoowL0rVe1+j6b/oYjnBSNNYVFVhTPe4Hu9axETK5UsEZ0eEb3DtlvRzvkP4xyD6xtblgwJ9ruDkSQqvLm6Rgw==}
     engines: {node: '>=20'}
@@ -3698,6 +3712,12 @@ snapshots:
   '@opensuitehq/engine-darwin-x64@0.1.3':
     optional: true
 
+  '@opensuitehq/engine-linux-arm64-gnu@0.1.3':
+    optional: true
+
+  '@opensuitehq/engine-linux-x64-gnu@0.1.3':
+    optional: true
+
   '@opensuitehq/engine-win32-x64-msvc@0.1.3':
     optional: true
 
@@ -3705,6 +3725,8 @@ snapshots:
     optionalDependencies:
       '@opensuitehq/engine-darwin-arm64': 0.1.3
       '@opensuitehq/engine-darwin-x64': 0.1.3
+      '@opensuitehq/engine-linux-arm64-gnu': 0.1.3
+      '@opensuitehq/engine-linux-x64-gnu': 0.1.3
       '@opensuitehq/engine-win32-x64-msvc': 0.1.3
 
   '@opentelemetry/semantic-conventions@1.43.0': {}

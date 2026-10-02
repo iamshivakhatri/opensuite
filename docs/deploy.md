@@ -22,7 +22,7 @@ Browser check (after API is routed): open `https://api.opensuite.tech/` → plai
 
 * Compose: `docker-compose.atlas.yml` (API only; your private Postgres + MinIO)
 * Image: `node:22-bookworm-slim` (glibc). Native `@opensuitehq/engine@0.1.3` — **not** Alpine/musl.
-* Soft-boot: API starts even if the native binding fails to load (auth etc. work; DOCX disabled)
+* The image build checks that the native binding loads. If a deployed binding later fails, the API still starts for auth/workspaces and DOCX edits return 503.
 
 1. Set `BETTER_AUTH_URL=https://api.opensuite.tech`, `WEB_ORIGIN=https://www.opensuite.tech`, `ALLOW_SIGNUP=false` (unless actively admitting testers), and `AUTH_CROSS_ORIGIN=false`. Set Vercel `NEXT_PUBLIC_API_URL=https://api.opensuite.tech` and `NEXT_PUBLIC_ALLOW_SIGNUP` to the same value. The API bridge uses `BETTER_AUTH_URL` as Better Auth's public HTTPS request URL; do not replace it with the internal tunnel address. Production refuses HTTP for the two public URLs. Private S3/MinIO endpoints may remain HTTP.
 2. Configure Cloudflare Tunnel so `api.opensuite.tech` reaches container port **3000**. Do not publish the API port directly; DNS for `api.opensuite.tech` must not point to Vercel.
