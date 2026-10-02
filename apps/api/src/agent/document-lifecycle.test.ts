@@ -7,6 +7,8 @@ import {
 } from "@opensuite/engine-client";
 
 import { createPrimaryDocxTools } from "./docx-tools.js";
+import { normalizeDocumentRenameName } from "../documents/format.js";
+import { DocumentAccessError } from "../documents/service.js";
 
 function memoryDocs(seed: {
   documentId: string;
@@ -135,9 +137,43 @@ function memoryDocs(seed: {
           version: { id: versionId, versionNumber: 1 },
         } as never;
       },
+      rename: async (input: { documentId: string; name: string }) => {
+        const doc = docs.get(input.documentId);
+        if (!doc) throw new Error("missing doc");
+        const name = normalizeDocumentRenameName(input.name, doc.format);
+        if (!name) throw new DocumentAccessError(400, "INVALID_DOCUMENT_NAME", "Invalid document name");
+        doc.name = name;
+        return { id: input.documentId, name } as never;
+      },
     },
   };
 }
+
+test("ten new documents keep distinct filenames and an earlier one can be renamed", async () => {
+  const binding = await createNapiDocxEngineBinding();
+  const mem = memoryDocs({ documentId: "doc-1", versionId: "ver-1", name: "Source.docx", bytes: Buffer.from(buildMinimalDocx(["Source"])) });
+  const renamedEvents: Array<{ documentId: string; name: string }> = [];
+  const tools = await createPrimaryDocxTools({ binding, documents: mem.api, ownerUserId: "user-1", workspaceId: "ws-1", documentId: "doc-1", versionId: "ver-1", onDocumentRenamed: (event) => { renamedEvents.push(event); } });
+  assert.ok(tools);
+  const call = { toolCallId: "name", messages: [], context: undefined as never };
+  const ids: string[] = [];
+  for (let number = 1; number <= 10; number++) {
+    const result = await tools.tools["workspace.create_blank_document"]!.execute!({ title: `Report ${number}` }, call) as { documentId: string; title: string };
+    ids.push(result.documentId);
+    assert.equal(result.title, `Report ${number}.docx`);
+  }
+  assert.equal(new Set(ids).size, 10);
+  const result = await tools.tools["workspace.rename_document"]!.execute!({ documentId: ids[0], name: "Final Report" }, call);
+  assert.deepEqual(result, { ok: true, documentId: ids[0], name: "Final Report.docx" });
+  assert.deepEqual(renamedEvents, [{ documentId: ids[0], name: "Final Report.docx" }]);
+  assert.equal(mem.store.get(ids[0]!)!.versions.size, 1);
+  assert.equal(tools.getActiveDocumentId(), ids[9]);
+  assert.equal(mem.store.get(ids[9]!)!.name, "Report 10.docx");
+  assert.deepEqual(await tools.tools["workspace.rename_document"]!.execute!({ documentId: ids[0], name: "Wrong.xlsx" }, call), { ok: false, reasonCode: "INVALID_DOCUMENT_NAME" });
+  assert.equal(mem.store.get(ids[0]!)!.name, "Final Report.docx");
+  mem.store.get(ids[0]!)!.workspaceId = "other-workspace";
+  assert.deepEqual(await tools.tools["workspace.rename_document"]!.execute!({ documentId: ids[0], name: "Wrong" }, call), { ok: false, reasonCode: "DOCUMENT_NOT_IN_WORKSPACE" });
+});
 
 test("duplicate switches active binding; subsequent mutate targets only the copy", async () => {
   const binding = await createNapiDocxEngineBinding();
@@ -238,6 +274,33 @@ test("select existing working document rebinds before editing", async () => {
   await tools.flush();
   assert.equal(mem.store.get("doc-1")!.versions.size, 2);
   assert.equal(mem.store.get(sourceId)!.versions.size, 1);
+});
+
+test("inspect and explicitly select an untagged workspace DOCX before one locked edit", async () => {
+  const binding = await createNapiDocxEngineBinding();
+  const mem = memoryDocs({ documentId: "active", versionId: "v1", name: "Active.docx", bytes: Buffer.from(buildMinimalDocx(["Active text"])) });
+  mem.store.set("found", { name: "Found.docx", format: "docx", workspaceId: "ws-1",
+    versions: new Map([["v2", { number: 1, bytes: Buffer.from(buildMinimalDocx(["Found evidence"])) }]]), latestVersionId: "v2" });
+  mem.store.set("outside", { name: "Outside.docx", format: "docx", workspaceId: "ws-2",
+    versions: new Map([["v3", { number: 1, bytes: Buffer.from(buildMinimalDocx(["Outside evidence"])) }]]), latestVersionId: "v3" });
+  const tools = await createPrimaryDocxTools({ binding, documents: mem.api, ownerUserId: "user-1", workspaceId: "ws-1",
+    documentId: "active", versionId: "v1", workingDocumentIds: ["active"] });
+  assert.ok(tools);
+  const call = { toolCallId: "inspect", messages: [], context: undefined as never };
+  const result = await tools.tools["workspace.inspect_document"]!.execute!({ documentId: "found", kind: "body_blocks" }, call);
+  assert.match(JSON.stringify(result), /Found evidence/);
+  assert.equal(tools.getActiveDocumentId(), "active");
+  assert.equal((await tools.tools["workspace.inspect_document"]!.execute!({ documentId: "outside", kind: "body_blocks" }, call) as { reasonCode: string }).reasonCode, "DOCUMENT_NOT_READABLE");
+  assert.equal((await tools.tools["workspace.select_document"]!.execute!({ documentId: "outside" }, call) as { reasonCode: string }).reasonCode, "DOCUMENT_NOT_EDITABLE");
+  assert.equal(tools.getActiveDocumentId(), "active");
+  assert.equal((await tools.tools["workspace.select_document"]!.execute!({ documentId: "found" }, call) as { ok: boolean }).ok, true);
+  assert.equal(tools.getActiveDocumentId(), "found");
+  assert.equal(mem.store.get("found")!.versions.size, 1);
+  assert.equal((await tools.tools["document.replace_text"]!.execute!({ target: { text: "Found evidence" }, expectedCurrentText: "Found evidence", replacement: "Updated evidence" }, call) as { ok: boolean }).ok, true);
+  assert.equal((await tools.tools["workspace.select_document"]!.execute!({ documentId: "active" }, call) as { reasonCode: string }).reasonCode, "DOCUMENT_ALREADY_EDITED");
+  await tools.flush();
+  assert.equal(mem.store.get("found")!.versions.size, 2);
+  assert.equal(mem.store.get("active")!.versions.size, 1);
 });
 
 test("create blank becomes active; subsequent mutation targets the blank", async () => {

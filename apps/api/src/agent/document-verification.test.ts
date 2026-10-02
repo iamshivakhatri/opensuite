@@ -4,6 +4,7 @@ import type { DocxEngineBinding } from "@opensuite/engine-client";
 import { oldPeriodFromInstruction, verifyDocumentUpdate } from "./document-verification.js";
 
 const bytes = (text: string) => new TextEncoder().encode(text);
+const months = "January|February|March|April|May|June|July|August|September|October|November|December";
 const binding = {
   async inspectDocx(data: Uint8Array, request: { focus: { kind: string; rowOffset?: number; rowLimit?: number } }) {
     const content = new TextDecoder().decode(data);
@@ -12,9 +13,21 @@ const binding = {
     const rowAdded = content.includes("ROW_ADDED");
     const tableLost = content.includes("TABLE_LOST");
     const created = content.includes("CREATED");
+    const title = content.split(/\n/).find((line) => line.trim())?.trim() || (created ? "New Report" : "Report");
     if (request.focus.kind === "overview") return { ok: true, overview: { sectionCount: 1, bodyBlockCount: created ? 28 : changed ? 3 : tableLost ? 1 : 2, paragraphCount: 2, tableCount: created ? 3 : tableLost ? 0 : 1 } };
     if (request.focus.kind === "body_blocks") {
-      const items = content.includes("PIPELINE") ? [{ handle: "b0", kind: "paragraph", text: "Sales Pipeline", headingLevel: 2 }, { handle: "b1", kind: "table", tableHandle: "t0" }] : [];
+      const items: { handle: string; kind: string; text?: string; headingLevel?: number; tableHandle?: string }[] = [];
+      for (const line of content.split(/\n/)) {
+        const text = line.trim();
+        if (!text) continue;
+        if (/reporting\s*period|prepared(?:\s+(?:on|date))?|as\s+of\b/i.test(text)) {
+          items.push({ handle: `b${items.length}`, kind: "paragraph", text });
+        }
+      }
+      if (content.includes("PIPELINE")) {
+        items.push({ handle: `b${items.length}`, kind: "paragraph", text: "Sales Pipeline", headingLevel: 2 });
+        items.push({ handle: `b${items.length}`, kind: "table", tableHandle: "t0" });
+      }
       return { ok: true, bodyBlocks: { page: { total: items.length, offset: 0, returned: items.length, hasMore: false }, items } };
     }
     if (request.focus.kind === "table_rows") {
@@ -25,8 +38,21 @@ const binding = {
       return { ok: true, tableRows: { tableHandle: "t0", rowCount: cells.length, columnCount: 2, headerTexts: cells[0] ?? [], rowOffset: offset, rows: cells.slice(offset, offset + (request.focus.rowLimit ?? 3)).map((row, index) => ({ index: offset + index, cells: row })) } };
     }
     const items = request.focus.kind === "headings"
-      ? created ? [{ occurrence: 0, text: "New Report", styleName: "Heading 1", level: 1 }] : [{ occurrence: 0, text: "Report", styleName: "Heading 1", level: 1 }]
-      : tableLost ? [] : Array.from({ length: created ? 3 : 1 }, (_, index) => ({ occurrence: index, handle: `t${index}`, rowCount: content.includes("PIPELINE") ? 6 : content.includes("WEIGHTED") ? 4 : rowsAdded ? 4 : rowAdded ? 3 : changed ? 3 : 2, isRectangular: true, columns: content.includes("PIPELINE") || content.includes("WEIGHTED") ? [{ occurrence: 0, handle: "c0", text: "Stage" }, { occurrence: 1, handle: "c1", text: content.includes("WEIGHTED") ? "Weighted %" : "Value (USD)" }] : [{ occurrence: 0, handle: "c0", text: "A" }], rows: [] }));
+      ? [{ occurrence: 0, text: created ? "New Report" : title, styleName: "Heading 1", level: 1 }]
+      : tableLost ? [] : Array.from({ length: created ? 3 : 1 }, (_, index) => {
+          const headerMatch = content.match(new RegExp(`\\b(?:${months})(?:\\s+(?:19|20)\\d{2})?\\b`, "i"));
+          const periodHeader = content.includes("PERIOD_COL") && headerMatch ? headerMatch[0] : "A";
+          return {
+            occurrence: index,
+            handle: `t${index}`,
+            rowCount: content.includes("PIPELINE") ? 6 : content.includes("WEIGHTED") ? 4 : rowsAdded ? 4 : rowAdded ? 3 : changed ? 3 : 2,
+            isRectangular: true,
+            columns: content.includes("PIPELINE") || content.includes("WEIGHTED")
+              ? [{ occurrence: 0, handle: "c0", text: "Stage" }, { occurrence: 1, handle: "c1", text: content.includes("WEIGHTED") ? "Weighted %" : "Value (USD)" }]
+              : [{ occurrence: 0, handle: "c0", text: periodHeader }],
+            rows: [],
+          };
+        });
     return { ok: true, [request.focus.kind]: { page: { total: items.length, offset: 0, returned: items.length, hasMore: false }, items } };
   },
   async findDocxText(data: Uint8Array, request: { text: string }) {
@@ -39,9 +65,29 @@ const binding = {
   },
 } as unknown as DocxEngineBinding;
 
-async function check(after: string, instruction = "Update August report into September report", options: { targetAdvanced?: boolean; sourcesUnchanged?: boolean; successfulMutations?: string[]; created?: boolean; inputNeeded?: boolean } = {}) {
-  return verifyDocumentUpdate({ binding, before: bytes("August report"), after: bytes(after), instruction,
-    targetAdvanced: options.targetAdvanced ?? true, sourcesUnchanged: options.sourcesUnchanged ?? true, successfulMutations: options.successfulMutations, created: options.created, inputNeeded: options.inputNeeded });
+async function check(
+  after: string,
+  instruction = "Update August report into September report",
+  options: {
+    before?: string;
+    targetAdvanced?: boolean;
+    sourcesUnchanged?: boolean;
+    successfulMutations?: string[];
+    created?: boolean;
+    inputNeeded?: boolean;
+  } = {},
+) {
+  return verifyDocumentUpdate({
+    binding,
+    before: bytes(options.before ?? "August report"),
+    after: bytes(after),
+    instruction,
+    targetAdvanced: options.targetAdvanced ?? true,
+    sourcesUnchanged: options.sourcesUnchanged ?? true,
+    successfulMutations: options.successfulMutations,
+    created: options.created,
+    inputNeeded: options.inputNeeded,
+  });
 }
 
 test("saved target advances while sources stay unchanged; a clean refresh preserves structure", async () => {
@@ -49,6 +95,7 @@ test("saved target advances while sources stay unchanged; a clean refresh preser
   assert.deepEqual(checks.map((item) => [item.id, item.status]), [
     ["target", "pass"], ["sources", "pass"], ["open", "pass"], ["structure", "pass"], ["period", "pass"], ["placeholders", "pass"],
   ]);
+  assert.equal(checks.find((item) => item.id === "period")?.message, "No suspicious stale-period statements found");
 });
 
 test("suspicious old-period statements and unresolved placeholders carry evidence", async () => {
@@ -68,7 +115,7 @@ test("structural differences warn, while a source advance fails", async () => {
 test("ambiguous and absent periods skip without guessing", async () => {
   assert.equal(oldPeriodFromInstruction("Update August report into September report; July report into August report"), null);
   assert.equal(oldPeriodFromInstruction("Refresh this report"), null);
-  assert.equal((await check("September report", "Refresh this report")).find((item) => item.id === "period")?.status, "skipped");
+  assert.equal((await check("Same report", "Refresh this report", { before: "Same report" })).find((item) => item.id === "period")?.status, "skipped");
 });
 
 test("explicit report transitions accept words between periods and Q/year updates", () => {
@@ -77,6 +124,42 @@ test("explicit report transitions accept words between periods and Q/year update
   assert.equal(oldPeriodFromInstruction("Update the Q2 report to Q3"), "Q2");
   assert.equal(oldPeriodFromInstruction("Update the 2025 report to 2026"), "2025");
   assert.equal(oldPeriodFromInstruction("Compare the 2025 report to 2026"), null);
+});
+
+test("April to May title rollover is applicable even without instruction transition phrasing", async () => {
+  const checks = await check(
+    "May 2027 Monthly Report\nReporting Period: May 2027",
+    "Refresh this report with the attached May sources",
+    { before: "April 2027 Monthly Report\nReporting Period: April 2027" },
+  );
+  assert.equal(checks.find((item) => item.id === "period")?.status, "pass");
+  assert.equal(checks.find((item) => item.id === "period")?.message, "No suspicious stale-period statements found");
+});
+
+test("rollover keeps legitimate historical old-period references quiet", async () => {
+  const checks = await check(
+    "May 2027 Monthly Report\nReporting Period: May 2027\nReleased in April 2027. Revenue increased from April. Change vs April.",
+    "Update April 2027 report into May 2027 report",
+    { before: "April 2027 Monthly Report\nReporting Period: April 2027" },
+  );
+  assert.equal(checks.find((item) => item.id === "period")?.status, "pass");
+  assert.equal(checks.find((item) => item.id === "period")?.message, "No suspicious stale-period statements found");
+});
+
+test("ordinary non-period edits stay not applicable", async () => {
+  const checks = await check("enrolment 270", "change enrolment 260 to 270", { before: "enrolment 260" });
+  assert.equal(checks.find((item) => item.id === "period")?.status, "skipped");
+  assert.equal(checks.find((item) => item.id === "period")?.message, "Period rollover not applicable to this edit");
+});
+
+test("stale current-period future wording after rollover is reported", async () => {
+  const checks = await check(
+    "May 2027 Monthly Report\nReporting Period: May 2027\nLaunch is scheduled for April.",
+    "Update April report into May report",
+    { before: "April 2027 Monthly Report\nReporting Period: April 2027" },
+  );
+  assert.equal(checks.find((item) => item.id === "period")?.status, "warning");
+  assert.match(checks.find((item) => item.id === "period")?.message ?? "", /scheduled for April/);
 });
 
 test("successful row insertion explains its matching structural difference", async () => {
@@ -96,12 +179,12 @@ test("additive totals reconcile or warn independently of saving", async () => {
 test("generic replace_text of only the Total still reconciles the final table", async () => {
   const before = "September PIPELINE Total=1900000";
   const after = before.replace("1900000", "2350000");
-  assert.equal((await check(before, "Change only the Total", { successfulMutations: ["document.set_table_cells_text"] })).some((item) => item.id.startsWith("reconciliation")), false);
-  const checks = await check(after, "Change only the Total", { successfulMutations: ["document.replace_text"] });
+  assert.equal((await check(before, "Change only the Total", { before, successfulMutations: ["document.set_table_cells_text"] })).some((item) => item.id.startsWith("reconciliation")), false);
+  const checks = await check(after, "Change only the Total", { before, successfulMutations: ["document.replace_text"] });
   assert.equal(checks.find((item) => item.id === "reconciliation-0-1")?.message, "Sales Pipeline 'Value (USD)' rows sum to 1,900,000 but Total is 2,350,000.");
   assert.equal(checks.find((item) => item.id === "reconciliation-0-1")?.status, "warning");
   assert.equal(checks.find((item) => item.id === "period")?.status, "skipped");
-  assert.equal((await check(after, "Change only the Total", { successfulMutations: ["document.set_table_cells_text"] })).find((item) => item.id === "reconciliation-0-1")?.status, "warning");
+  assert.equal((await check(after, "Change only the Total", { before, successfulMutations: ["document.set_table_cells_text"] })).find((item) => item.id === "reconciliation-0-1")?.status, "warning");
 });
 
 test("one intentional row insert passes; unexplained row insert warns", async () => {
@@ -114,7 +197,7 @@ test("creation and bounded edits skip period rollover noise", async () => {
   assert.equal(created.find((item) => item.id === "structure")?.status, "pass");
   assert.equal(created.find((item) => item.id === "period")?.status, "skipped");
   assert.doesNotMatch(JSON.stringify(created), /Heading structure changed|Body block count changed|No unambiguous/);
-  assert.equal((await check("enrolment 270", "change enrolment 260 to 270")).find((item) => item.id === "period")?.status, "skipped");
+  assert.equal((await check("enrolment 270", "change enrolment 260 to 270", { before: "enrolment 260" })).find((item) => item.id === "period")?.status, "skipped");
 });
 
 test("historical comparisons stay quiet and input-needed placeholders are explicit", async () => {

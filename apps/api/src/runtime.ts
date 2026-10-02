@@ -4,6 +4,7 @@ import {
   createDbClient,
   type Db,
 } from "@opensuite/db";
+import { createNapiDocxEngineBinding } from "@opensuite/engine-client";
 
 import { buildApp } from "./app.js";
 import { createAgentExecutionLeaseService } from "./agent/execution-lease.js";
@@ -35,6 +36,12 @@ export async function createOpenSuiteRuntime(
   config: AppConfig = loadConfig(),
   options: OpenSuiteRuntimeOptions = {},
 ): Promise<OpenSuiteRuntime> {
+  try {
+    const caps = (await createNapiDocxEngineBinding()).getDocxCapabilities();
+    console.info(`[engine] version=${caps.engineVersion}`);
+  } catch {
+    console.info("[engine] version=unavailable");
+  }
   console.info("[agent] runtime=v3");
   const dbClient = createDbClient(
     { databaseUrl: config.databaseUrl },

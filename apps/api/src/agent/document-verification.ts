@@ -8,9 +8,37 @@ export interface DocumentCheck {
 }
 
 const months = "January February March April May June July August September October November December".split(" ");
+const periodToken = () => new RegExp(`\\b(?:${months.join("|")}|Q[1-4])(?:\\s+(?:19|20)\\d{2})?\\b|\\b(?:19|20)\\d{2}\\b`, "gi");
+const periodAnchorLine = /reporting\s*period|prepared(?:\s+(?:on|date))?|as\s+of\b/i;
+
+function periodsIn(text: string): string[] {
+  return [...text.matchAll(periodToken())].map((match) => match[0]);
+}
+
+function uniquePeriod(values: readonly string[]): string | null {
+  if (!values.length) return null;
+  const distinct = [...new Set(values.map((value) => value.toLowerCase()))];
+  if (distinct.length === 1) return values[0]!;
+  const withYear = values.filter((value) => /(?:19|20)\d{2}/.test(value) && !/^(?:19|20)\d{2}$/.test(value));
+  const distinctYear = [...new Set(withYear.map((value) => value.toLowerCase()))];
+  return distinctYear.length === 1 ? withYear[0]! : null;
+}
+
+function periodFromAnchorTexts(texts: readonly string[]): string | null {
+  const found: string[] = [];
+  for (const text of texts) {
+    const periods = periodsIn(text);
+    if (periods.length === 1) found.push(periods[0]!);
+    else if (periods.length > 1) {
+      const withYear = periods.filter((value) => /(?:19|20)\d{2}/.test(value) && !/^(?:19|20)\d{2}$/.test(value));
+      if (withYear.length === 1) found.push(withYear[0]!);
+    }
+  }
+  return uniquePeriod(found);
+}
 
 function periodTransition(instruction: string): { old: string; next: string } | null {
-  const period = new RegExp(`\\b(?:${months.join("|")}|Q[1-4])(?:\\s+(?:19|20)\\d{2})?\\b|\\b(?:19|20)\\d{2}\\b`, "gi");
+  const period = periodToken();
   const transitions = [...instruction.matchAll(/\b(?:into|to)\b|→|->/gi)].map((connector) => {
     const left = instruction.slice(Math.max(0, connector.index - 160), connector.index).split(/[.!?;\n]/).at(-1) ?? "";
     const right = (instruction.slice(connector.index + connector[0].length, connector.index + connector[0].length + 160).split(/[.!?;\n]/)[0] ?? "");
@@ -21,6 +49,11 @@ function periodTransition(instruction: string): { old: string; next: string } | 
     return { old: old[0]!, next: next[0]! };
   }).filter((value): value is { old: string; next: string } => value !== null);
   return transitions.length === 1 ? transitions[0]! : null;
+}
+
+function periodTransitionFromAnchors(before: string | null, after: string | null): { old: string; next: string } | null {
+  if (!before || !after || before.toLowerCase() === after.toLowerCase()) return null;
+  return { old: before, next: after };
 }
 
 export function oldPeriodFromInstruction(instruction: string): string | null {
@@ -78,16 +111,28 @@ async function inspectAll(binding: DocxEngineBinding, bytes: Uint8Array, kind: "
 async function structure(binding: DocxEngineBinding, bytes: Uint8Array) {
   const overview = await binding.inspectDocx(bytes, { focus: { kind: "overview" } });
   if (!overview.ok || !overview.overview) throw new Error("Could not inspect DOCX overview");
-  const [headings, tables] = await Promise.all([
+  const [headings, tables, body] = await Promise.all([
     inspectAll(binding, bytes, "headings"),
     inspectAll(binding, bytes, "tables") as Promise<DocxInspectTableItem[]>,
+    binding.inspectDocx(bytes, { focus: { kind: "body_blocks", offset: 0, limit: 100 } }).catch(() => null),
   ]);
+  const anchorTexts: string[] = [];
+  for (const heading of headings) {
+    if ("text" in heading && heading.text?.trim()) anchorTexts.push(heading.text.trim());
+  }
+  if (body?.ok && body.bodyBlocks) {
+    for (const block of body.bodyBlocks.items) {
+      const text = block.text?.trim();
+      if (text && periodAnchorLine.test(text)) anchorTexts.push(text);
+    }
+  }
   return {
     sections: overview.overview.sectionCount,
     bodyBlocks: overview.overview.bodyBlockCount,
     headings: headings.map((heading) => "level" in heading ? [heading.level, heading.styleName] : []),
     tables: tables.map((table) => [table.rowCount, table.columns.length]),
     tableItems: tables,
+    periodAnchor: periodFromAnchorTexts(anchorTexts),
   };
 }
 
@@ -175,6 +220,7 @@ export async function verifyDocumentUpdate(input: {
     checks.push({ id: "open", status: "fail", message: "Saved DOCX could not be inspected" });
     return checks;
   }
+  let beforePeriod: string | null = null;
   if (input.created) {
     const createdTables = (input.successfulMutations ?? []).filter((name) => name === "document.create_table").length;
     let hasContent = after.tables.length > 0 || after.headings.length > 0;
@@ -190,6 +236,7 @@ export async function verifyDocumentUpdate(input: {
   } else {
     try {
       const before = await structure(input.binding, input.before);
+      beforePeriod = before.periodAnchor;
       const tables = tableChangeMessage(before.tables, after.tables, input.successfulMutations ?? []);
       const expected = [...tables.expected];
       const unexpected = [...tables.unexpected];
@@ -209,8 +256,10 @@ export async function verifyDocumentUpdate(input: {
     }
   }
   checks.push(...await reconcileTables(input.binding, input.after, after.tableItems));
-  const transition = periodTransition(input.instruction);
-  if (input.created || !transition) checks.push({ id: "period", status: "skipped", message: "Period rollover not applicable to this edit" });
+  const transition = input.created
+    ? null
+    : periodTransition(input.instruction) ?? periodTransitionFromAnchors(beforePeriod, after.periodAnchor);
+  if (!transition) checks.push({ id: "period", status: "skipped", message: "Period rollover not applicable to this edit" });
   else {
     const results = await Promise.all([transition.old, transition.next].map((text) => input.binding.findDocxText(input.after, { text })));
     const suspicious = results.every((result) => result.ok) ? results.flatMap((result) => result.matches).filter((match) => {

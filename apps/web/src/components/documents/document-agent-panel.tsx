@@ -104,6 +104,7 @@ export function DocumentAgentPanel({
   width = 320,
   onDocumentUpdated,
   onDocumentCreated,
+  onDocumentRenamed,
   onDocumentUploaded,
   onWorkingDocumentUpdated,
 }: {
@@ -117,6 +118,7 @@ export function DocumentAgentPanel({
   onDocumentUpdated?: (document: ListedDocument) => void;
   /** Fired when the agent creates a new workspace document (blank DOCX). */
   onDocumentCreated?: (document: ListedDocument) => void;
+  onDocumentRenamed?: (document: ListedDocument) => void;
   onDocumentUploaded?: (document: ListedDocument) => void;
   onWorkingDocumentUpdated?: (preview: { runId: string; documentId: string; baseVersionId: string; revision: number } | null) => void;
 }) {
@@ -620,6 +622,14 @@ export function DocumentAgentPanel({
                 })
                 .catch(() => undefined);
             }
+          } else if (event.type === "document.renamed") {
+            const renamedId = String(event.data.documentId ?? "");
+            if (renamedId) {
+              void getDocument(renamedId).then((fresh) => {
+                onDocumentRenamed?.(fresh);
+                setWorkspaceFiles((prev) => prev.map((file) => file.id === fresh.id ? fresh : file));
+              }).catch(() => undefined);
+            }
           }
 
           if (
@@ -732,6 +742,7 @@ export function DocumentAgentPanel({
       finalizeFromSnapshot,
       flushDocumentVersionRefresh,
       onDocumentCreated,
+      onDocumentRenamed,
       onWorkingDocumentUpdated,
       onDocumentUpdated,
       refreshMessages,

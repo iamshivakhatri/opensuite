@@ -172,6 +172,8 @@ function toLiveAgentEvent(
           kind: event.kind,
         },
       };
+    case "document.renamed":
+      return { runId: event.runId, type: event.type, at: event.at, data: { documentId: event.documentId, name: event.name } };
     default: {
       const _exhaustive: never = event;
       void _exhaustive;

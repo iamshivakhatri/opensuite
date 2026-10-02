@@ -10,6 +10,7 @@ import {
 
 import type { DocumentService } from "../documents/service.js";
 import {
+  DocumentAccessError,
   DocumentUploadError,
 } from "../documents/service.js";
 import {
@@ -45,7 +46,7 @@ type SessionDocuments = Pick<
   | "appendDocumentVersion"
   | "createBlankDocxDocument"
   | "createOfficeDocumentFromBytes"
->;
+> & Partial<Pick<DocumentService, "rename">>;
 
 function collectHandles(value: unknown, handles: Set<string>): void {
   if (!value || typeof value !== "object") return;
@@ -99,9 +100,9 @@ function createActiveDocxSession(input: {
     readonly name: string;
     readonly kind: "created" | "duplicated";
   }) => void | Promise<void>;
+  readonly onDocumentRenamed?: (event: { documentId: string; name: string }) => void | Promise<void>;
   readonly onWorkingUpdated?: (event: { documentId: string; baseVersionId: string; revision: number }) => void;
   readonly onDocumentSelected?: (event: { documentId: string; versionId: string }) => void;
-  readonly workingDocumentIds: readonly string[];
   readonly editableDocumentId?: string;
 }) {
   let documentId: string | null = null;
@@ -120,7 +121,6 @@ function createActiveDocxSession(input: {
   let handleReuses = 0;
   const mutationFailures = new Map<string, number>();
   const transitions: DocumentTransition[] = [];
-  const workingDocumentIds = new Set(input.workingDocumentIds);
 
   function expireHandles(cause: string): void {
     if (currentHandles.size) {
@@ -317,7 +317,7 @@ function createActiveDocxSession(input: {
     readonly versionId: string;
     readonly name: string;
     readonly bytes: Uint8Array;
-  }): Promise<{ created: true; title: string; becameActive: true }> {
+  }): Promise<{ created: true; documentId: string; title: string; becameActive: true }> {
     rebind({
       documentId: created.documentId,
       versionId: created.versionId,
@@ -338,6 +338,7 @@ function createActiveDocxSession(input: {
     });
     return {
       created: true,
+      documentId: created.documentId,
       title: created.name,
       becameActive: true,
     };
@@ -357,7 +358,6 @@ function createActiveDocxSession(input: {
     getTransitions: () => transitions,
     rebind,
     async selectDocument(selectedDocumentId: string) {
-      if (!workingDocumentIds.has(selectedDocumentId)) return { ok: false, reasonCode: "DOCUMENT_NOT_IN_WORKING_SET" };
       if (input.editableDocumentId && selectedDocumentId !== input.editableDocumentId) return { ok: false, reasonCode: "DOCUMENT_IS_REFERENCE" };
       if (selectedDocumentId === documentId) return { ok: true, documentId, versionId, alreadyActive: true };
       if (workingMutationCount > 0 || dirty) return { ok: false, reasonCode: "DOCUMENT_ALREADY_EDITED" };
@@ -369,11 +369,27 @@ function createActiveDocxSession(input: {
       return { ok: true, documentId, versionId, name: document.name };
     },
     async inspectWorkingDocument(selectedDocumentId: string, focus: InspectFocus) {
-      if (!workingDocumentIds.has(selectedDocumentId)) return { ok: false, reasonCode: "DOCUMENT_NOT_IN_WORKING_SET" };
       const document = await input.documents.getOwnedDocument({ documentId: selectedDocumentId, ownerUserId: input.ownerUserId });
       if (document.workspaceId !== input.workspaceId || document.format !== "docx") return { ok: false, reasonCode: "DOCUMENT_NOT_READABLE" };
       const bytes = await input.documents.readExactVersionBytes({ documentId: selectedDocumentId, versionId: document.latestVersion.id, ownerUserId: input.ownerUserId });
       return input.binding.inspectDocx(new Uint8Array(bytes), { focus });
+    },
+    async renameDocument(selectedDocumentId: string, name: string) {
+      if (!input.documents.rename) return { ok: false, reasonCode: "RENAME_UNAVAILABLE" };
+      try {
+        const document = await input.documents.getOwnedDocument({ documentId: selectedDocumentId, ownerUserId: input.ownerUserId });
+        if (document.workspaceId !== input.workspaceId) return { ok: false, reasonCode: "DOCUMENT_NOT_IN_WORKSPACE" };
+        const renamed = await input.documents.rename({ documentId: selectedDocumentId, ownerUserId: input.ownerUserId, name });
+        try {
+          await input.onDocumentRenamed?.({ documentId: selectedDocumentId, name: renamed.name });
+        } catch (error) {
+          console.error("[agent] document rename event failed", error);
+        }
+        return { ok: true, documentId: selectedDocumentId, name: renamed.name };
+      } catch (error) {
+        if (error instanceof DocumentAccessError) return { ok: false, reasonCode: error.code };
+        throw error;
+      }
     },
     async createBlank(title?: string) {
       const fromDocumentId = documentId;
@@ -477,15 +493,22 @@ const titleInput = jsonSchema<{ title?: string }>({
   properties: {
     title: {
       type: "string",
-      description: "Optional display name for the new document",
+      description: "Optional filename for the copy, with or without .docx.",
     },
   },
   additionalProperties: false,
 });
 
+const requiredTitleInput = jsonSchema<{ title: string }>({
+  type: "object",
+  properties: { title: { type: "string", description: "Filename for this document, with or without .docx. Give each new document its own title." } },
+  required: ["title"], additionalProperties: false,
+});
+
 function createLifecycleTools(session: {
   createBlank: (title?: string) => Promise<unknown>;
   duplicateCurrent: (title?: string) => Promise<unknown>;
+  renameDocument: (documentId: string, name: string) => Promise<unknown>;
   selectDocument: (documentId: string) => Promise<unknown>;
   inspectWorkingDocument: (documentId: string, focus: InspectFocus) => Promise<unknown>;
 }): AgentToolSet {
@@ -493,9 +516,11 @@ function createLifecycleTools(session: {
     "workspace.create_blank_document": defineTool({
       kind: "mutate",
       description:
-        "Create a new blank document in the current workspace and make it the active document for subsequent document tools.",
-      inputSchema: titleInput,
-      execute: async (input) => session.createBlank(input.title),
+        "Create a new blank DOCX in the current workspace and make it active. Pass the requested filename as title on every call, especially when creating several documents.",
+      inputSchema: requiredTitleInput,
+      execute: async (input) => input.title?.trim()
+        ? session.createBlank(input.title)
+        : { ok: false, reasonCode: "INVALID_DOCUMENT_NAME" },
     }),
     "workspace.duplicate_current_document": defineTool({
       kind: "mutate",
@@ -504,15 +529,25 @@ function createLifecycleTools(session: {
       inputSchema: titleInput,
       execute: async (input) => session.duplicateCurrent(input.title),
     }),
+    "workspace.rename_document": defineTool({
+      kind: "mutate",
+      description: "Rename an existing document in this workspace. Use the documentId returned by create_blank_document or duplicate_current_document to rename an earlier created file. The file type and content stay the same.",
+      inputSchema: jsonSchema<{ documentId: string; name: string }>({
+        type: "object",
+        properties: { documentId: { type: "string" }, name: { type: "string", description: "New filename, with or without its Office extension" } },
+        required: ["documentId", "name"], additionalProperties: false,
+      }),
+      execute: async ({ documentId, name }) => session.renameDocument(documentId, name),
+    }),
     "workspace.select_document": defineTool({
       kind: "mutate",
-      description: "Make an existing DOCX in the working set the active editable document. Choose the target before editing; other working documents remain available as read-only sources. Use the document ID shown in the working set.",
+      description: "Make an owned DOCX in this workspace the active editable document before the first edit. Use its document ID from the workspace catalog, search results, or working set. After an edit, the target cannot be changed in this run.",
       inputSchema: jsonSchema<{ documentId: string }>({ type: "object", properties: { documentId: { type: "string" } }, required: ["documentId"], additionalProperties: false }),
       execute: async ({ documentId }) => session.selectDocument(documentId),
     }),
     "workspace.inspect_document": defineTool({
       kind: "read",
-      description: "Read an existing DOCX in the working set without changing the active editable document. Use for source updates when the supplied context lacks needed details. Page through body_blocks or tables with offset and limit.",
+      description: "Read an owned DOCX in this workspace without changing the active editable document or working set. Pass its document ID, not its filename, from the workspace catalog, search results, or working set. Page through body_blocks or tables with offset and limit.",
       inputSchema: jsonSchema<{ documentId: string; kind: "body_blocks" | "tables"; offset?: number; limit?: number }>({
         type: "object",
         properties: { documentId: { type: "string" }, kind: { type: "string", enum: ["body_blocks", "tables"] }, offset: { type: "number" }, limit: { type: "number" } },
@@ -549,6 +584,7 @@ export async function createPrimaryDocxTools(input: {
     readonly name: string;
     readonly kind: "created" | "duplicated";
   }) => void | Promise<void>;
+  readonly onDocumentRenamed?: (event: { documentId: string; name: string }) => void | Promise<void>;
   readonly onWorkingUpdated?: (event: { documentId: string; baseVersionId: string; revision: number }) => void;
   readonly onDocumentSelected?: (event: { documentId: string; versionId: string }) => void;
 }): Promise<PrimaryDocxToolsResult | undefined> {
@@ -561,7 +597,6 @@ export async function createPrimaryDocxTools(input: {
     documents: input.documents,
     ownerUserId: input.ownerUserId,
     workspaceId: input.workspaceId,
-    workingDocumentIds: input.workingDocumentIds ?? (input.documentId ? [input.documentId] : []),
     ...(input.editableDocumentId ? { editableDocumentId: input.editableDocumentId } : {}),
     ...(input.onVersionAdvanced
       ? { onVersionAdvanced: input.onVersionAdvanced }
@@ -569,6 +604,7 @@ export async function createPrimaryDocxTools(input: {
     ...(input.onDocumentCreated
       ? { onDocumentCreated: input.onDocumentCreated }
       : {}),
+    ...(input.onDocumentRenamed ? { onDocumentRenamed: input.onDocumentRenamed } : {}),
     ...(input.onWorkingUpdated ? { onWorkingUpdated: input.onWorkingUpdated } : {}),
     ...(input.onDocumentSelected ? { onDocumentSelected: input.onDocumentSelected } : {}),
   });

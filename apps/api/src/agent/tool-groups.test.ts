@@ -19,6 +19,8 @@ async function createSurface() {
       inputSchema: jsonSchema({ type: "object", properties: {} }), execute: () => "" }),
     request_clarification: defineTool({ kind: "read", terminal: true, description: "clarification",
       inputSchema: jsonSchema({ type: "object", properties: { question: { type: "string" } }, required: ["question"] }), execute: ({ question }: { question: string }) => question }),
+    "workspace.search_documents": defineTool({ kind: "read", description: "search",
+      inputSchema: jsonSchema({ type: "object", properties: { query: { type: "string" } }, required: ["query"] }), execute: () => ({ matches: [] }) }),
   });
 }
 
@@ -29,13 +31,13 @@ const load = (surface: Awaited<ReturnType<typeof createSurface>>, groups: string
 test("common surface is sorted, covers the report update and preserves workspace/finish tools", async () => {
   const surface = await createSurface();
   const names = Object.keys(surface.initialTools);
-  assert.equal(names.length, 17);
+  assert.equal(names.length, 19);
   assert.deepEqual(names, [...names].sort());
   assert.deepEqual(Object.keys(surface.projectTools()), names);
   for (const name of ["document.batch_replace_text", "document.inspect", "document.delete_table_row",
     "document.set_table_cells_text", "document.replace_text", "finish", "finish_with_input_needed", "request_clarification",
     "document.find", "document.insert_paragraphs", "document.set_paragraph_style", "document.create_table",
-    "workspace.create_blank_document", "workspace.duplicate_current_document", "workspace.select_document", "workspace.inspect_document"]) {
+    "workspace.create_blank_document", "workspace.duplicate_current_document", "workspace.select_document", "workspace.inspect_document", "workspace.rename_document", "workspace.search_documents"]) {
     assert.ok(surface.initialTools[name], name);
     assert.equal(surface.initialTools[name], surface.tools[name]);
   }
@@ -74,7 +76,7 @@ test("all current tools have exactly one group or common placement; group/tool o
     for (const name of added) { assert.equal(grouped.has(name), false, name); grouped.add(name); }
   }
   assert.deepEqual([...grouped].sort(), Object.keys(first.tools).sort());
-  assert.equal(grouped.size, 43); // 41 existing tools plus discovery and clarification.
+  assert.equal(grouped.size, 45); // Existing tools plus search, rename, discovery, and clarification.
   await load(first, groups);
   for (const group of [...groups].reverse()) await load(second, [group]);
   assert.deepEqual(Object.keys(first.projectTools()), Object.keys(second.projectTools()));
@@ -117,12 +119,12 @@ test("tool surface logs record turn snapshots, discovery attempts and run totals
   }) as Extract<AgentEvent, { type: "model_turn_completed" }>;
   try {
     surface.projectTools();
-    surface.recordTurn(completed(1, 17, ["tools.load_group"]), "test");
+    surface.recordTurn(completed(1, 19, ["tools.load_group"]), "test");
     await load(surface, ["table_styling"]);
     surface.projectTools();
-    surface.recordTurn(completed(2, 21, ["document.set_table_formatting"]), "test");
-    assert.deepEqual(surface.summary(), { initialToolCount: 17, peakToolCount: 21, groupsLoaded: ["table_styling"], discoveryTurnCount: 1 });
-    assert.match(lines[0]!, /exposedToolCount=17 exposedToolSchemaChars=100 activeGroups=none discoveryTurn=true/);
+    surface.recordTurn(completed(2, 22, ["document.set_table_formatting"]), "test");
+    assert.deepEqual(surface.summary(), { initialToolCount: 19, peakToolCount: 23, groupsLoaded: ["table_styling"], discoveryTurnCount: 1 });
+    assert.match(lines[0]!, /exposedToolCount=19 exposedToolSchemaChars=100 activeGroups=none discoveryTurn=true/);
     assert.match(lines[1]!, /activeGroups=table_styling discoveryTurn=false/);
   } finally { console.info = info; }
 });

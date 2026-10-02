@@ -452,7 +452,7 @@ export function formatWorkspaceRetrievedContext(
   const lines = ["WORKSPACE / REQUEST CONTEXT", "WORKSPACE CATALOG", `${artifacts.length} documents`];
   for (const artifact of catalog) {
     const state = [artifact.documentId === primaryDocumentId ? "active" : undefined, tagged.has(artifact.documentId) ? "tagged" : undefined].filter(Boolean).join(", ");
-    lines.push(`- ${artifact.name} (${artifact.format})${state ? ` [${state}]` : ""}`);
+    lines.push(`- ${artifact.name} (${artifact.format}; ID ${artifact.documentId})${state ? ` [${state}]` : ""}`);
   }
   if (artifacts.length > catalog.length) lines.push(`- ${artifacts.length - catalog.length} additional documents omitted`);
   if (primaryDocumentId) lines.push("The exposed document tools are bound to the active artifact only.");
@@ -466,7 +466,7 @@ export function formatWorkspaceRetrievedContext(
   }
   lines.push("RELEVANT ARTIFACTS");
   for (const candidate of candidates) {
-    lines.push(`- ${candidate.name} (${candidate.format}; ${candidate.reason}${candidate.format === "docx" ? "" : "; semantic inspection unavailable"})`);
+    lines.push(`- ${candidate.name} (${candidate.format}; ID ${candidate.documentId}; ${candidate.reason}${candidate.format === "docx" ? "" : "; semantic inspection unavailable"})`);
   }
   lines.push("RETRIEVED DOCX EVIDENCE");
   for (const item of evidence) {

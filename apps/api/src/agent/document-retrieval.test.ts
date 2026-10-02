@@ -168,10 +168,10 @@ test("workspace catalog remains separate from selected DOCX evidence", () => {
     [],
   );
   assert.match(message, /WORKSPACE CATALOG\n3 documents/);
-  assert.match(message, /A\.docx \(docx\) \[active\]/);
-  assert.match(message, /B\.xlsx \(xlsx\)/);
-  assert.match(message, /C\.pptx \(pptx\)/);
-  assert.match(message, /RELEVANT ARTIFACTS\n- A\.docx/);
+  assert.match(message, /A\.docx \(docx; ID a\) \[active\]/);
+  assert.match(message, /B\.xlsx \(xlsx; ID b\)/);
+  assert.match(message, /C\.pptx \(pptx; ID c\)/);
+  assert.match(message, /RELEVANT ARTIFACTS\n- A\.docx \(docx; ID a; primary\)/);
   assert.match(message, /Document: A\.docx/);
   assert.match(message, /Project Objective/);
   assert.equal((message.match(/Relevant document structure/g) ?? []).length, 1);
@@ -474,7 +474,7 @@ test("direct context falls back when body blocks omit paragraphs", async () => {
 test("workspace catalog is clean when empty and bounded when large", () => {
   assert.match(formatWorkspaceRetrievedContext([], [], [], null, []), /WORKSPACE CATALOG\n0 documents/);
   const single = [{ documentId: "doc", versionId: "v1", name: "Only.docx", format: "docx" }];
-  assert.match(formatWorkspaceRetrievedContext(single, [{ ...single[0]!, reason: "primary" }], [], "doc", []), /1 documents\n- Only\.docx \(docx\) \[active\]/);
+  assert.match(formatWorkspaceRetrievedContext(single, [{ ...single[0]!, reason: "primary" }], [], "doc", []), /1 documents\n- Only\.docx \(docx; ID doc\) \[active\]/);
   const artifacts = Array.from({ length: 11 }, (_, index) => ({ documentId: `doc-${index}`, versionId: `v${index}`, name: `Document ${index}.docx`, format: "docx" }));
   const message = formatWorkspaceRetrievedContext(artifacts, [{ ...artifacts[0]!, reason: "primary" }], [], "doc-0", []);
   assert.match(message, /11 documents/);

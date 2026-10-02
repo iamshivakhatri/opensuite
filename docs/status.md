@@ -15,6 +15,14 @@ _Read this before starting any work. Keep it a concise current-state handoff, no
 
 ## Just Completed
 
+* **Workspace search Phase 1.1** — workspace catalog/relevant entries now show document IDs so the model can pass IDs to `workspace.inspect_document`; the six Turn-1 dogfood failures passed filenames as IDs and PostgreSQL rejected those UUID queries. `workspace.select_document` now accepts an owned DOCX in the current workspace before any edit, even outside the initial working set. Explicit selection remains required and the first successful mutation still locks the target. No retrieval ranking, save, or persistence change.
+
+* **Agent filenames** — new DOCX creation now requires a title and returns the document ID. `workspace.rename_document` uses the existing document service to rename any owned file in the current workspace without making a new version; `document.renamed` updates the workspace UI. A focused test covers ten distinct creates and renaming an earlier file. No paid model call or commit.
+
+* **Workspace document search Phase 1** — main agent now has `workspace.search_documents({ query })`: bounded name/format and exact DOCX-text matches across the current workspace, including files outside the active/tagged/working set. Results carry IDs, reason, and at most a 120-character snippet. `workspace.inspect_document` can read any owned DOCX in the thread workspace by ID. Existing Turn-1 retrieval and save/validation flow remain unchanged. No paid model call or commit.
+
+* **Dependent-claim + period-rollover correctness** — DOCUMENT UPDATE RULE §3 now treats causal/explanatory/attribution/rationale/comparison/consequence clauses as dependent on the old anchor (do not keep them merely because the sentence still reads), and dependent-claim safety overrides source-silent historical preservation when a historical clause would stay attached to an updated current fact. Period validation applicability is no longer instruction-regex-only: if the request lacks an unambiguous `old → next` phrase, a before/after period-anchor change in title/reporting-period/prepared/as-of text still applies the stale-period check. Historical/comparison old-period mentions stay unflagged; future-sounding stale current-period wording still warns. Focused operating-instruction + document-verification tests and API typecheck pass. No runtime/engine/performance work.
+
 * **Engine 0.1.3 pin** — `@opensuite/engine-client` depends on published `@opensuitehq/engine@0.1.3` (lockfile + platform native). Semantic capability gates kept for older installs and also accept `engineVersion >= 0.1.3` because the published N-API filter still omits advertising `semantic_table_cell_targets` / `semantic_table_row_deletion`. Smoke via engine-client confirmed semantic cell/row paths and preserved unrelated content. No agent/runtime/prompt changes.
 
 * **Turn-1 TRANS Experiment 1 (operating instruction only)** — replaced overlapping update/preserve/clarification/handle guidance with a short deterministic document-update decision policy: authoritative current state, change only supported content, consistent corresponding representations, preserve source-silent as success (not missing input), mutate known semantic targets directly, batch independent edits, clarify only for materially different unsupported interpretations, and `finish_with_input_needed` only for explicit incomplete requested outcomes. Top-level handle lifecycle details deferred to tool descriptions. No tool/schema/retrieval/runtime/engine change. Focused operating-instruction tests + API typecheck pass.
@@ -170,6 +178,12 @@ _Read this before starting any work. Keep it a concise current-state handoff, no
 
 ## Verification Status
 
+* Phase 1.1: API typecheck, 34 focused lifecycle/retrieval/search tests, focused terminal-save isolation test, and `git diff --check` pass. The existing recurring-report isolation test still stops on its stale `/source is silent, carry forward/` instruction assertion; not changed here. No paid or manual dogfood.
+
+* Agent filenames: API/web typechecks, 26 focused lifecycle/tool-surface/instruction tests, and `git diff --check` pass. No paid model call or manual ten-document run.
+
+* Workspace search Phase 1: API build/typecheck, 39 focused search/lifecycle/retrieval/tool-surface tests, 3 focused isolation checks, and `git diff --check` pass. The broader isolation file still has older assertions for instruction/trace wording changed in earlier work. No paid call or manual dogfood.
+
 * Readable full-trace aggregation: 9 focused run-trace tests; API typecheck and `git diff --check` pass. No paid model call or commit.
 
 * Phase 2 human-turn correction: API/V3 typechecks and `git diff --check` pass. Focused checks in existing files cover coherent historical pairs, a completed reply alongside a failed run without one, and finish-only text retention. Functional behavior awaits manual full tracing. No paid model call or commit.
@@ -268,4 +282,4 @@ _Read this before starting any work. Keep it a concise current-state handoff, no
 
 ## Recommended Next Step
 
-Manual dogfood: re-run a representative existing-document update with `AGENT_RUN_TRACE=full` and compare Turn-1 reasoning tokens/latency and mutation correctness against the prior ~60k-reasoning baseline.
+Rerun the Q1 board-report workspace-search request and confirm catalog IDs support Turn-1 inspection and explicit target selection before the first edit.

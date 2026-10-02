@@ -521,6 +521,11 @@ export function WorkspaceIde({
             });
             setActiveDocument(created);
           }}
+          onDocumentRenamed={(renamed) => {
+            queryClient.setQueryData(queryKeys.document(renamed.id), renamed);
+            void queryClient.invalidateQueries({ queryKey: queryKeys.workspaceDocuments(workspaceId) });
+            if (activeDocument?.id === renamed.id) setActiveDocument(renamed);
+          }}
           onDocumentUploaded={() => {
             void queryClient.invalidateQueries({ queryKey: queryKeys.workspaceDocuments(workspaceId) });
           }}

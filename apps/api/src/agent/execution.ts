@@ -64,6 +64,7 @@ import { generateThreadTitle } from "./thread-title.js";
 import { estimateTokens } from "./context-projection.js";
 import { compactThreadContext, logContextCompaction } from "./context-compaction.js";
 import { buildAgentOperatingInstruction, buildDocumentUpdateInstruction } from "./operating-instruction.js";
+import { createWorkspaceSearchTool } from "./workspace-search.js";
 import {
   type AgentMessage,
   type AgentPersistenceService,
@@ -100,6 +101,7 @@ export type AgentEvent =
       readonly name: string;
       readonly kind: "created" | "duplicated";
     }
+  | { readonly type: "document.renamed"; readonly runId: string; readonly at: string; readonly documentId: string; readonly name: string }
   | { readonly type: "agent.completed"; readonly runId: string; readonly at: string }
   | { readonly type: "agent.cancelled"; readonly runId: string; readonly at: string }
   | { readonly type: "agent.failed"; readonly runId: string; readonly at: string; readonly code: string };
@@ -175,7 +177,7 @@ export interface AgentExecutionServiceDeps {
     | "appendDocumentVersion"
     | "createBlankDocxDocument"
     | "createOfficeDocumentFromBytes"
-  >;
+  > & Partial<Pick<DocumentService, "rename">>;
   readonly resolveModel: (userId: string) => Promise<ResolvedV3ExecutionModel>;
   readonly docxBinding?: DocxEngineBinding;
   readonly modelUsage?: ModelUsageService;
@@ -576,6 +578,10 @@ async function runExecution(input: {
           kind: created.kind,
         });
       },
+      onDocumentRenamed: async (renamed) => {
+        documentNames.set(renamed.documentId, renamed.name);
+        await input.liveEvents?.emit({ type: "document.renamed", runId: input.run.id, at: new Date().toISOString(), ...renamed });
+      },
     });
     input.setWorkingDocumentGetter(() => boundTools?.getWorkingDocument() ?? null);
 
@@ -584,6 +590,12 @@ async function runExecution(input: {
     });
     const tools: AgentToolSet = {
       ...(boundTools?.tools ?? {}),
+      "workspace.search_documents": createWorkspaceSearchTool({
+        documents: input.deps.documents,
+        ...(input.deps.docxBinding ? { binding: input.deps.docxBinding } : {}),
+        ownerUserId: input.ownerUserId,
+        workspaceId: input.thread.workspaceId,
+      }),
       [finish.name]: finish.tool,
       finish_with_input_needed: defineTool<{ missingInformation: string }, string>({
         kind: "read",
@@ -620,7 +632,7 @@ async function runExecution(input: {
       (!boundTools?.getActiveDocumentId() && tools["workspace.create_blank_document"]
         ? "\n\nNo document is active. If the user requests a new document, create it before calling any document tool."
         : "") +
-      "\n\nFor requests involving several documents, identify the editable target before mutating. The active document is the default target only when it matches the request. Use workspace_select_document to bind another working-set DOCX before editing. Read source documents with workspace_inspect_document when the supplied context lacks their details. Keep edits narrow and preserve unrelated structure and formatting.";
+      "\n\nFor requests involving several documents, search the workspace when the relevant files are not clear from current context. Inspect promising DOCX files narrowly by ID. Search and inspection do not make a file editable. Identify the editable target before mutating. The active document is the default target only when it matches the request. Use workspace_select_document to bind an owned workspace DOCX before editing. Keep edits narrow and preserve unrelated structure and formatting.";
 
     const { messages, context, retrieval, reportRetrieval } = await prepareContext({
       trace: input.trace,

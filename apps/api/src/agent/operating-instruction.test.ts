@@ -24,8 +24,13 @@ test("update policy preserves source-silent facts and flags missing input", () =
   assert.match(policy, /Never invent unsupported facts, values, dates, statuses, owners, events/);
   assert.match(policy, /Correct preservation is success for that part/);
   assert.match(policy, /Replacing an anchor fact does not transfer dependent claims/);
-  assert.match(policy, /independently supported for the new anchor/);
-  assert.match(policy, /Preserve genuinely independent neighboring facts/);
+  assert.match(policy, /cause, explanation, attribution, rationale, comparison, consequence, or modifier/);
+  assert.match(policy, /must not remain attached to the replacement unless independently supported/);
+  assert.match(policy, /naming a real historical event does not make that attachment safe/);
+  assert.match(policy, /Dependent-claim safety overrides source-silent historical preservation/);
+  assert.match(policy, /explicitly anchored to its original historical fact\/event/);
+  assert.match(policy, /Preserve genuinely independent neighboring history/);
+  assert.match(policy, /except where rule 3 requires detaching a dependent claim from an updated current fact/);
   assert.match(policy, /Do not back-solve missing values from rounded or incomplete displayed figures/);
   assert.match(policy, /Recalculate derived values only when every required operand is exact/);
   assert.match(policy, /Related facts are not the same fact/);

@@ -275,6 +275,10 @@ const TOOL_LABELS: Record<string, { active: string; done: string }> = {
     active: "Duplicating document",
     done: "Created copy",
   },
+  "workspace.rename_document": {
+    active: "Renaming document",
+    done: "Renamed document",
+  },
   finish: {
     active: "Completing task",
     done: "Completed task",
