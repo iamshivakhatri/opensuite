@@ -2,6 +2,7 @@ import type { AgentToolSet, ModelMessage } from "@opensuite/agent-core-v3";
 import type { DocxEngineBinding } from "@opensuite/engine-client";
 
 import type { DocumentService } from "../documents/service.js";
+import { formatWorkspaceManifest } from "./workspace-manifest.js";
 import type { AgentRunReportRetrieval } from "./agent-run-report.js";
 import {
   estimateTokens,
@@ -29,6 +30,7 @@ import type { RunTrace } from "./run-trace.js";
 
 export type PreparedContext = {
   readonly messages: ModelMessage[];
+  readonly workspaceManifest: string;
   readonly context: {
     readonly checkpointUsed: boolean;
     readonly historyQueryMode: "recent" | "post_checkpoint";
@@ -187,6 +189,7 @@ export async function prepareContext(input: {
   readonly ownerUserId: string;
   readonly workspaceId: string;
   readonly primaryDocumentId: string | null;
+  readonly openDocumentId: string | null;
   readonly primaryVersionId: string | null;
   readonly submittedDocumentIds: readonly string[];
   readonly workingDocumentIds: readonly string[];
@@ -195,11 +198,25 @@ export async function prepareContext(input: {
     role: message.role,
     content: message.content,
   }));
+  let workspaceDocuments: Awaited<ReturnType<typeof input.documents.listInWorkspace>> | undefined;
+  try {
+    workspaceDocuments = await input.documents.listInWorkspace(input.workspaceId, input.ownerUserId);
+  } catch (error) {
+    input.trace?.write("## Workspace Manifest — Error", error);
+    console.warn(`[agent-v3] workspace_manifest_unavailable reason=${summarizeError(error)}`);
+  }
+  const workspaceManifest = workspaceDocuments
+    ? formatWorkspaceManifest(workspaceDocuments.map((document) => ({
+        documentId: document.id, name: document.name, format: document.format,
+        updatedAt: document.updatedAt, latestVersionNumber: document.latestVersion.versionNumber,
+      })), input.openDocumentId, input.submittedDocumentIds)
+    : "WORKSPACE MANIFEST\nUnavailable; use workspace_search_documents to retry.";
   const requiredTokens =
     estimateTokens(input.system) +
     estimateTokens(toolContext(input.tools)) +
     estimateTokens(input.instruction) +
-    estimateTokens(input.continuationContext ?? "");
+    estimateTokens(input.continuationContext ?? "") +
+    estimateTokens(workspaceManifest);
   const budget =
     input.model.contextLength !== undefined
       ? computeInputBudget({
@@ -238,16 +255,18 @@ export async function prepareContext(input: {
     cache: input.cache,
     binding: input.binding,
     documents: input.documents,
+    workspaceDocuments,
     ownerUserId: input.ownerUserId,
     instruction: input.instruction,
     workspaceId: input.workspaceId,
     primaryDocumentId: input.primaryDocumentId,
+    openDocumentId: input.openDocumentId,
     primaryVersionId: input.primaryVersionId,
     submittedDocumentIds: input.submittedDocumentIds,
     workingDocumentIds: input.workingDocumentIds,
     availableEvidenceTokens: planningAvailableEvidenceTokens,
   });
-  const evidenceTokens = estimateTokens(retrieval?.message ?? "");
+  const evidenceTokens = Math.max(0, estimateTokens(retrieval?.message ?? "") - estimateTokens(workspaceManifest));
   const finalCheckpointBudget = inputBudget === undefined
     ? undefined
     : Math.max(0, inputBudget - requiredTokens - evidenceTokens);
@@ -302,7 +321,7 @@ export async function prepareContext(input: {
       : []),
     { role: "user", content: input.instruction },
   ];
-  return { messages, context, retrieval, reportRetrieval };
+  return { messages, workspaceManifest, context, retrieval, reportRetrieval };
 }
 
 function toolContext(tools: AgentToolSet): string {
@@ -316,19 +335,21 @@ async function loadRetrievedContext(input: {
   readonly cache: SlimDocumentStructureCache;
   readonly binding: DocxEngineBinding | undefined;
   readonly documents: Pick<DocumentService, "listInWorkspace" | "readExactVersionBytes">;
+  readonly workspaceDocuments: Awaited<ReturnType<DocumentService["listInWorkspace"]>> | undefined;
   readonly ownerUserId: string;
   readonly instruction: string;
   readonly workspaceId: string;
   readonly primaryDocumentId: string | null;
+  readonly openDocumentId: string | null;
   readonly primaryVersionId: string | null;
   readonly submittedDocumentIds: readonly string[];
   readonly workingDocumentIds: readonly string[];
   readonly availableEvidenceTokens?: number;
 }): Promise<RetrievedContext | undefined> {
-  if (!input.binding) return undefined;
+  if (!input.binding || !input.workspaceDocuments) return undefined;
   const startedAt = Date.now();
   try {
-    const documents = await input.documents.listInWorkspace(input.workspaceId, input.ownerUserId);
+    const documents = input.workspaceDocuments;
     input.trace?.write("## Retrieval — Artifact Metadata", documents.map((document) => ({
       documentId: document.id, versionId: document.id === input.primaryDocumentId && input.primaryVersionId ? input.primaryVersionId : document.latestVersion.id,
       name: document.name, format: document.format,
@@ -341,9 +362,12 @@ async function loadRetrievedContext(input: {
           : document.latestVersion.id,
         name: document.name,
         format: document.format,
+        updatedAt: document.updatedAt,
+        latestVersionNumber: document.latestVersion.versionNumber,
       })),
       instruction: input.instruction,
       primaryDocumentId: input.primaryDocumentId,
+      openDocumentId: input.openDocumentId,
       taggedDocumentIds: input.submittedDocumentIds,
       workingSetDocumentIds: input.workingDocumentIds,
       binding: input.binding,
@@ -429,7 +453,7 @@ export function composeProjectMessages(input: {
       const current = input.currentDirectMessage();
       afterFirstTurn = directCurrent && current
         ? [...messages.slice(0, directPosition), { role: "user" as const, content: current }, ...messages.slice(directPosition)]
-        : messages;
+        : afterFirstTurn;
     }
     const withReadReminder = directCurrent && input.suppressedReadCount?.()
       ? [...afterFirstTurn, { role: "user" as const, content: "The complete unchanged document is already above. Repeated reads were skipped. Stop inspecting and perform the requested document changes using the available mutation tools." }]

@@ -15,6 +15,8 @@ _Read this before starting any work. Keep it a concise current-state handoff, no
 
 ## Just Completed
 
+* **Workspace-aware target selection** — the agent panel sends the exact route-open document ID. Turn 1 receives a compact workspace manifest with IDs, names, formats, update/version metadata, and open/tagged markers. Only explicit “this/current/open document” wording preselects the open DOCX; other edits require `workspace.select_document`. The old filename/verb target override is removed. An unavailable DOCX engine now returns a clear edit error while workspace-only chat remains available. DIRECT content is limited to an explicit target or tagged documents, and unbound source DIRECT context retains the manifest. Single-target edit lock and one-version save remain.
+
 * **Workspace search Phase 1.1** — workspace catalog/relevant entries now show document IDs so the model can pass IDs to `workspace.inspect_document`; the six Turn-1 dogfood failures passed filenames as IDs and PostgreSQL rejected those UUID queries. `workspace.select_document` now accepts an owned DOCX in the current workspace before any edit, even outside the initial working set. Explicit selection remains required and the first successful mutation still locks the target. No retrieval ranking, save, or persistence change.
 
 * **Agent filenames** — new DOCX creation now requires a title and returns the document ID. `workspace.rename_document` uses the existing document service to rename any owned file in the current workspace without making a new version; `document.renamed` updates the workspace UI. A focused test covers ten distinct creates and renaming an earlier file. No paid model call or commit.

@@ -65,6 +65,7 @@ import { estimateTokens } from "./context-projection.js";
 import { compactThreadContext, logContextCompaction } from "./context-compaction.js";
 import { buildAgentOperatingInstruction, buildDocumentUpdateInstruction } from "./operating-instruction.js";
 import { createWorkspaceSearchTool } from "./workspace-search.js";
+import { refersToOpenDocument, requestsDocumentChange } from "./document-target.js";
 import {
   type AgentMessage,
   type AgentPersistenceService,
@@ -132,7 +133,8 @@ export type AgentExecutionErrorCode =
   | "AGENT_EXECUTION_BUSY"
   | "INVALID_CONTINUATION"
   | "AGENT_EXECUTION_FAILED"
-  | "AGENT_PERSISTENCE_FAILED";
+  | "AGENT_PERSISTENCE_FAILED"
+  | "DOCX_ENGINE_UNAVAILABLE";
 
 export class AgentExecutionError extends Error {
   constructor(readonly code: AgentExecutionErrorCode, message: string) {
@@ -213,35 +215,29 @@ export function createAgentExecutionService(deps: AgentExecutionServiceDeps) {
 
     try {
       const model = await resolveModel(deps, input.userId);
-      let primaryDocument = await resolvePrimaryDocument(
+      const openDocument = await resolvePrimaryDocument(
         deps.documents,
         thread,
         input.userId,
         input.activeDocumentId,
       );
       const creatingNewDocument = /\b(?:create|make|start|draft)\s+(?:a\s+|an\s+|the\s+)?(?:brand\s+)?new\b/i.test(input.instruction);
-      if (creatingNewDocument) primaryDocument = null;
+      if (!deps.docxBinding && requestsDocumentChange(input.instruction) && (
+        openDocument?.format === "docx" || creatingNewDocument ||
+        (await deps.documents.listInWorkspace(thread.workspaceId, input.userId)).some((document) => document.format === "docx")
+      )) {
+        throw new AgentExecutionError("DOCX_ENGINE_UNAVAILABLE", "DOCX editing is unavailable because the document engine did not load. Please try again after the API is restarted with the engine available.");
+      }
+      const primaryDocument = !creatingNewDocument && refersToOpenDocument(input.instruction) ? openDocument : null;
       const persistedWorkingDocumentIds = await deps.persistence.listWorkingDocumentIds({
         threadId: thread.id,
         ownerUserId: input.userId,
       });
       const workingDocumentIds = [...new Set([
         ...persistedWorkingDocumentIds,
-        ...(primaryDocument ? [primaryDocument.documentId] : []),
+        ...(openDocument ? [openDocument.documentId] : []),
         ...(input.documentIds ?? []),
       ])];
-      let editableDocumentId: string | undefined;
-      if (!creatingNewDocument && workingDocumentIds.length > 1) {
-        const documents = await deps.documents.listInWorkspace(thread.workspaceId, input.userId).catch(() => []);
-        const namedTargets = documents.filter((document) =>
-          workingDocumentIds.includes(document.id) && document.format === "docx" &&
-          namesEditTarget(input.instruction, document.name),
-        );
-        if (namedTargets.length === 1) editableDocumentId = namedTargets[0]!.id;
-        if (namedTargets.length === 1 && namedTargets[0]!.id !== primaryDocument?.documentId) {
-          primaryDocument = await resolvePrimaryDocument(deps.documents, thread, input.userId, namedTargets[0]!.id);
-        }
-      }
       const started = await deps.persistence.withTransaction(async (tx) => {
         await deps.persistence.addWorkingDocuments({
           threadId: thread.id,
@@ -298,18 +294,13 @@ export function createAgentExecutionService(deps: AgentExecutionServiceDeps) {
         userMessage: started.userMessage,
         run: started.run,
         primaryDocumentId: primaryDocument?.documentId ?? null,
+        openDocumentId: input.activeDocumentId ?? null,
         primaryDocumentFormat: primaryDocument?.format ?? null,
         structureCache,
         ownerUserId: input.userId,
         instruction: input.instruction,
-        submittedDocumentIds: [...new Set([
-          ...(input.documentIds ?? []),
-          ...(!creatingNewDocument && input.activeDocumentId && input.activeDocumentId !== primaryDocument?.documentId
-            ? [input.activeDocumentId]
-            : []),
-        ])],
+        submittedDocumentIds: [...new Set(input.documentIds ?? [])],
         workingDocumentIds,
-        editableDocumentId,
         ...(continuation ? { continuationContext: continuation.context, continuationPreviousRunId: input.continueFromRunId } : {}),
         signal: input.signal,
         liveEvents: input.liveEvents,
@@ -334,11 +325,6 @@ export function createAgentExecutionService(deps: AgentExecutionServiceDeps) {
   }
 
   return { start };
-}
-
-function namesEditTarget(instruction: string, filename: string): boolean {
-  const name = filename.replace(/\.docx$/i, "").replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  return new RegExp(`\\b(?:update|edit|revise|refresh|modify)\\s+(?:the\\s+)?${name}\\b`, "i").test(instruction);
 }
 
 async function resolveModel(
@@ -428,6 +414,7 @@ async function runExecution(input: {
   readonly userMessage: AgentMessage;
   readonly run: AgentRun;
   readonly primaryDocumentId: string | null;
+  readonly openDocumentId: string | null;
   readonly primaryDocumentFormat: string | null;
   readonly structureCache: SlimDocumentStructureCache;
   readonly ownerUserId: string;
@@ -626,15 +613,15 @@ async function runExecution(input: {
       Object.keys(toolSurface.initialTools).map(providerSafeToolName),
       toolSurface.capabilityIndex,
     ) +
-      (input.primaryDocumentId && /\b(?:update|edit|revise|refresh|modify)\b/i.test(input.instruction)
+      (requestsDocumentChange(input.instruction)
         ? `\n\n${buildDocumentUpdateInstruction()}`
         : "") +
       (!boundTools?.getActiveDocumentId() && tools["workspace.create_blank_document"]
-        ? "\n\nNo document is active. If the user requests a new document, create it before calling any document tool."
+        ? "\n\nNo document is selected for editing. Create one for a new-document request, or call workspace_select_document with the intended workspace DOCX ID before using document tools."
         : "") +
-      "\n\nFor requests involving several documents, search the workspace when the relevant files are not clear from current context. Inspect promising DOCX files narrowly by ID. Search and inspection do not make a file editable. Identify the editable target before mutating. The active document is the default target only when it matches the request. Use workspace_select_document to bind an owned workspace DOCX before editing. Keep edits narrow and preserve unrelated structure and formatting.";
+      "\n\nThe OPEN document in the workspace manifest is context. It is selected automatically only for an explicit request to update this, current, or open document. For other edits, inspect or search as needed, then call workspace_select_document for the target before mutating. Search and inspection do not select a target. Keep edits narrow and preserve unrelated structure and formatting.";
 
-    const { messages, context, retrieval, reportRetrieval } = await prepareContext({
+    const { messages, workspaceManifest, context, retrieval, reportRetrieval } = await prepareContext({
       trace: input.trace,
       checkpoint,
       priorMessages,
@@ -652,6 +639,7 @@ async function runExecution(input: {
       ownerUserId: input.ownerUserId,
       workspaceId: input.thread.workspaceId,
       primaryDocumentId: input.primaryDocumentId,
+      openDocumentId: input.openDocumentId,
       primaryVersionId: input.run.baseDocumentVersionId,
       submittedDocumentIds: input.submittedDocumentIds,
       workingDocumentIds: input.workingDocumentIds,
@@ -704,7 +692,7 @@ async function runExecution(input: {
     let modelTurn = 0;
     let continuation: Record<string, unknown> | undefined;
     const project = composeProjectMessages({
-      retrievalMessage: retrieval?.message,
+      retrievalMessage: retrieval?.message ?? workspaceManifest,
       ...(retrieval?.refreshDirectMessage ? { currentDirectMessage: () => directMessage } : {}),
       safeToolResultNames: input.model.usageAttribution?.provider === "openrouter",
       directVersionId: () => directVersionId,

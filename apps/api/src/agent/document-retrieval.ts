@@ -5,13 +5,13 @@ import type {
 } from "@opensuite/engine-client";
 
 import { estimateTokens } from "./context-projection.js";
+import { formatWorkspaceManifest } from "./workspace-manifest.js";
 
 const CACHE_LIMIT = 64;
 const PAGE_LIMIT = 100;
 const MAX_BLOCKS = 5;
 const MAX_TEXT_LENGTH = 240;
 const MAX_ARTIFACTS = 3;
-const MAX_CATALOG_ARTIFACTS = 10;
 /** Initial runtime policy: enough for useful evidence without bloating every turn. */
 export const PLANNER_EVIDENCE_TOKEN_CAP = 24_000;
 const ABSOLUTE_DIRECT_TOKEN_CAP = 8_000;
@@ -42,6 +42,8 @@ export interface WorkspaceArtifact {
   readonly versionId: string;
   readonly name: string;
   readonly format: string;
+  readonly updatedAt?: string;
+  readonly latestVersionNumber?: number;
 }
 
 export interface ArtifactCandidate extends WorkspaceArtifact {
@@ -147,6 +149,7 @@ export async function retrieveWorkspaceContext(input: {
   readonly artifacts: readonly WorkspaceArtifact[];
   readonly instruction: string;
   readonly primaryDocumentId: string | null;
+  readonly openDocumentId?: string | null;
   readonly taggedDocumentIds: readonly string[];
   readonly workingSetDocumentIds?: readonly string[];
   readonly binding: DocxEngineBinding | undefined;
@@ -192,8 +195,9 @@ export async function retrieveWorkspaceContext(input: {
     loadedDocuments.set(artifact.versionId, loaded);
     return loaded;
   };
-  if (plannerEvidenceBudgetTokens !== undefined && workingSet.length > 0) {
-    const directDocuments = await Promise.all(workingSet.map(async (artifact) => {
+  const directSet = workingSet.filter((artifact) => artifact.documentId === input.primaryDocumentId || input.taggedDocumentIds.includes(artifact.documentId));
+  if (plannerEvidenceBudgetTokens !== undefined && directSet.length > 0) {
+    const directDocuments = await Promise.all(directSet.map(async (artifact) => {
       if (artifact.format !== "docx") return undefined;
       const { bytes, structure } = await loadDocument(artifact);
       return { artifact, content: await formatCompleteDocument(artifact, structure, bytes, input.binding!) };
@@ -249,11 +253,11 @@ export async function retrieveWorkspaceContext(input: {
       }
       completeDocuments = next;
       const currentIds = new Set(next.filter((document) => document.revision !== undefined).map((document) => document.artifact.documentId));
-      return formatWorkspaceRetrievedContext(selected, candidates,
-        evidence.filter((item) => !currentIds.has(item.artifact.documentId)), input.primaryDocumentId, input.taggedDocumentIds,
+      return formatWorkspaceRetrievedContext(input.artifacts, candidates,
+        evidence.filter((item) => !currentIds.has(item.artifact.documentId)), input.openDocumentId ?? null, input.taggedDocumentIds,
         next.map((document) => document.artifact), [], formatCompleteWorkingDocuments(next));
     } } : {}),
-    ...(candidates.length > 0 ? { message: formatWorkspaceRetrievedContext(selected, candidates, evidence, input.primaryDocumentId, input.taggedDocumentIds, workingSet, directContent ? [] : documentMaps, directContent) } : {}),
+    ...(candidates.length > 0 ? { message: formatWorkspaceRetrievedContext(input.artifacts, candidates, evidence, input.openDocumentId ?? null, input.taggedDocumentIds, workingSet, directContent ? [] : documentMaps, directContent) } : {}),
   };
 }
 
@@ -439,23 +443,13 @@ export function formatWorkspaceRetrievedContext(
   artifacts: readonly WorkspaceArtifact[],
   candidates: readonly ArtifactCandidate[],
   evidence: readonly RetrievedArtifactEvidence[],
-  primaryDocumentId: string | null,
+  openDocumentId: string | null,
   taggedDocumentIds: readonly string[],
   workingSet: readonly WorkspaceArtifact[] = [],
   documentMaps: readonly DocumentMap[] = [],
   directContent?: string,
 ): string {
-  const tagged = new Set(taggedDocumentIds);
-  const catalog = [...artifacts]
-    .sort((a, b) => Number(b.documentId === primaryDocumentId) - Number(a.documentId === primaryDocumentId) || a.name.localeCompare(b.name))
-    .slice(0, MAX_CATALOG_ARTIFACTS);
-  const lines = ["WORKSPACE / REQUEST CONTEXT", "WORKSPACE CATALOG", `${artifacts.length} documents`];
-  for (const artifact of catalog) {
-    const state = [artifact.documentId === primaryDocumentId ? "active" : undefined, tagged.has(artifact.documentId) ? "tagged" : undefined].filter(Boolean).join(", ");
-    lines.push(`- ${artifact.name} (${artifact.format}; ID ${artifact.documentId})${state ? ` [${state}]` : ""}`);
-  }
-  if (artifacts.length > catalog.length) lines.push(`- ${artifacts.length - catalog.length} additional documents omitted`);
-  if (primaryDocumentId) lines.push("The exposed document tools are bound to the active artifact only.");
+  const lines = ["WORKSPACE / REQUEST CONTEXT", formatWorkspaceManifest(artifacts, openDocumentId, taggedDocumentIds)];
   lines.push("WORKING SET");
   for (const artifact of workingSet) lines.push(`- ${artifact.name} (${artifact.format}; ID ${artifact.documentId})`);
   if (workingSet.length === 0) lines.push("- No active or tagged documents");

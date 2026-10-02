@@ -808,6 +808,9 @@ function mapExecutionError(
         },
       });
     }
+    if (error.code === "DOCX_ENGINE_UNAVAILABLE") {
+      return reply.status(503).send({ error: { statusCode: 503, message: error.message, code: error.code } });
+    }
     if (
       error.code === "AI_CONFIGURATION_INVALID" ||
       error.code === "AGENT_EXECUTION_FAILED" ||

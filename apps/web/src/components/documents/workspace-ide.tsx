@@ -505,7 +505,7 @@ export function WorkspaceIde({
         ) : null}
         <DocumentAgentPanel
           workspaceId={workspaceId}
-          documentId={activeDocument?.id ?? null}
+          documentId={documentId}
           documentName={activeDocument?.name}
           collapsed={agentCollapsed}
           width={agentWidth}

@@ -16,7 +16,7 @@ import {
   SlimDocumentStructureCache,
   type SlimDocumentStructure,
 } from "./document-retrieval.js";
-import { firstTurnContextProjection } from "./agent-context.js";
+import { composeProjectMessages, firstTurnContextProjection } from "./agent-context.js";
 import { createDocumentTools } from "./document-tools.js";
 
 const structure: SlimDocumentStructure = {
@@ -133,7 +133,8 @@ test("current attachments scope update evidence while an explicit broad request 
   const focused = await retrieveWorkspaceContext({ ...common, instruction: "Update OrbitDesk from the attached September update" });
   assert.deepEqual(new Set(focused.candidates.map((item) => item.documentId)), new Set(["orbit", "source"]));
   assert.deepEqual(focused.workingSet.map((item) => item.documentId), ["orbit", "source"]);
-  assert.doesNotMatch(focused.message ?? "", /Digital Skills Nepal/);
+  assert.match(focused.message ?? "", /Digital Skills Nepal/);
+  assert.doesNotMatch(focused.message ?? "", /Document: Digital Skills Nepal/);
   const broad = await retrieveWorkspaceContext({ ...common, instruction: "Use the other project reports in this workspace as references" });
   assert.ok(broad.candidates.some((item) => item.documentId === "nepal"));
 });
@@ -154,7 +155,7 @@ test("new-document retrieval ignores a previous active report", async () => {
   assert.equal(retrieved.message, undefined);
 });
 
-test("workspace catalog remains separate from selected DOCX evidence", () => {
+test("workspace manifest remains separate from selected DOCX evidence", () => {
   const artifacts = [
     { documentId: "a", versionId: "v1", name: "A.docx", format: "docx" },
     { documentId: "b", versionId: "v2", name: "B.xlsx", format: "xlsx" },
@@ -167,10 +168,10 @@ test("workspace catalog remains separate from selected DOCX evidence", () => {
     "a",
     [],
   );
-  assert.match(message, /WORKSPACE CATALOG\n3 documents/);
-  assert.match(message, /A\.docx \(docx; ID a\) \[active\]/);
-  assert.match(message, /B\.xlsx \(xlsx; ID b\)/);
-  assert.match(message, /C\.pptx \(pptx; ID c\)/);
+  assert.match(message, /WORKSPACE MANIFEST\n3 documents/);
+  assert.match(message, /\[OPEN\] A\.docx \(docx; ID a;/);
+  assert.match(message, /B\.xlsx \(xlsx; ID b;/);
+  assert.match(message, /C\.pptx \(pptx; ID c;/);
   assert.match(message, /RELEVANT ARTIFACTS\n- A\.docx \(docx; ID a; primary\)/);
   assert.match(message, /Document: A\.docx/);
   assert.match(message, /Project Objective/);
@@ -204,7 +205,7 @@ test("map failures leave metadata context available", async () => {
   });
   assert.equal(retrieved.documentMaps.length, 0);
   assert.equal(retrieved.evidence.length, 0);
-  assert.match(retrieved.message ?? "", /WORKSPACE CATALOG/);
+  assert.match(retrieved.message ?? "", /WORKSPACE MANIFEST/);
 });
 
 test("active and tagged documents form the request working set", async () => {
@@ -369,7 +370,7 @@ test("ten tiny working documents use one shared direct budget", async () => {
   assert.ok(retrieved.fullDocumentEstimatedTokens! < 12_000);
   assert.match(retrieved.message ?? "", /=== Document: Tiny 0\.docx \(ID doc-0; version v-0\) ===/);
   assert.match(retrieved.message ?? "", /=== Document: Tiny 9\.docx \(ID doc-9; version v-9\) ===/);
-  assert.match(retrieved.message ?? "", /bound to the active artifact only/);
+  assert.match(retrieved.message ?? "", /COMPLETE CURRENT DOCUMENT CONTENT/);
 });
 
 test("combined direct content falls back when two documents exceed the shared limit", async () => {
@@ -471,15 +472,15 @@ test("direct context falls back when body blocks omit paragraphs", async () => {
   assert.doesNotMatch(retrieved.message ?? "", /COMPLETE ACTIVE DOCUMENT CONTENT/);
 });
 
-test("workspace catalog is clean when empty and bounded when large", () => {
-  assert.match(formatWorkspaceRetrievedContext([], [], [], null, []), /WORKSPACE CATALOG\n0 documents/);
+test("workspace manifest is clean when empty and bounded when large", () => {
+  assert.match(formatWorkspaceRetrievedContext([], [], [], null, []), /WORKSPACE MANIFEST\n0 documents/);
   const single = [{ documentId: "doc", versionId: "v1", name: "Only.docx", format: "docx" }];
-  assert.match(formatWorkspaceRetrievedContext(single, [{ ...single[0]!, reason: "primary" }], [], "doc", []), /1 documents\n- Only\.docx \(docx; ID doc\) \[active\]/);
-  const artifacts = Array.from({ length: 11 }, (_, index) => ({ documentId: `doc-${index}`, versionId: `v${index}`, name: `Document ${index}.docx`, format: "docx" }));
+  assert.match(formatWorkspaceRetrievedContext(single, [{ ...single[0]!, reason: "primary" }], [], "doc", []), /1 documents\n- \[OPEN\] Only\.docx \(docx; ID doc;/);
+  const artifacts = Array.from({ length: 61 }, (_, index) => ({ documentId: `doc-${index}`, versionId: `v${index}`, name: `Document ${index}.docx`, format: "docx" }));
   const message = formatWorkspaceRetrievedContext(artifacts, [{ ...artifacts[0]!, reason: "primary" }], [], "doc-0", []);
-  assert.match(message, /11 documents/);
-  assert.match(message, /1 additional documents omitted/);
-  assert.doesNotMatch(message, /Document 9\.docx/);
+  assert.match(message, /61 documents/);
+  assert.match(message, /1 more documents omitted/);
+  assert.match(message, /Document 59\.docx/);
 });
 
 test("workspace retrieval reads only selected DOCX versions and falls back without evidence", async () => {
@@ -508,7 +509,8 @@ test("workspace retrieval reads only selected DOCX versions and falls back witho
   assert.deepEqual(readVersions, ["v-exact"]);
   assert.equal(retrieved.evidence[0]?.artifact.versionId, "v-exact");
   assert.match(retrieved.message ?? "", /Version: v-exact/);
-  assert.doesNotMatch(retrieved.message ?? "", /Vacation Notes\.docx/);
+  assert.match(retrieved.message ?? "", /Vacation Notes\.docx/);
+  assert.doesNotMatch(retrieved.message ?? "", /Document: Vacation Notes\.docx/);
 });
 
 test("first-turn projection places retrieval context before the latest user instruction", () => {
@@ -526,6 +528,14 @@ test("first-turn projection places retrieval context before the latest user inst
     messages[2],
   ]);
   assert.deepEqual(project(messages), messages);
+});
+
+test("an unbound DIRECT source still gives Turn 1 the workspace manifest", () => {
+  const project = composeProjectMessages({ retrievalMessage: "WORKSPACE MANIFEST\n2 documents", currentDirectMessage: () => "Source content", directVersionId: null, currentVersionId: () => null });
+  assert.deepEqual(project([{ role: "user", content: "Update the board report" }]), [
+    { role: "user", content: "WORKSPACE MANIFEST\n2 documents" },
+    { role: "user", content: "Update the board report" },
+  ]);
 });
 
 test("DIRECT refresh keeps source documents, drops stale target evidence, and uses new table selectors", async () => {

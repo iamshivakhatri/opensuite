@@ -951,6 +951,49 @@ test("later runs restore durable working documents into model context", async ()
   ));
 });
 
+test("only an explicit current-document request binds the open DOCX before model selection", async () => {
+  const persistence = memoryPersistence("user-1");
+  const documents = [
+    { id: "open", name: "Open.docx", format: "docx", workspaceId: "ws-1", latestVersion: { id: "v-open", versionNumber: 1 }, updatedAt: now() },
+    { id: "board", name: "Board Report.docx", format: "docx", workspaceId: "ws-1", latestVersion: { id: "v-board", versionNumber: 2 }, updatedAt: now() },
+  ];
+  const contexts: string[] = [];
+  const deps = baseDeps(persistence, async (input) => {
+    contexts.push(JSON.stringify(await input.projectMessages!(input.messages)));
+    return softResult("completed", "done");
+  });
+  const execution = createAgentExecutionService({ ...deps,
+    docxBinding: { getDocxCapabilities: () => ({ ok: true, protocolVersion: 1, engineVersion: "test", formats: [{ format: "docx", capabilities: [] }] }) } as unknown as AgentExecutionServiceDeps["docxBinding"],
+    documents: { ...deps.documents,
+      listInWorkspace: async () => documents as never,
+      getOwnedDocument: async ({ documentId }) => documents.find((document) => document.id === documentId) as never,
+    },
+  });
+  const named = await (await execution.start({ userId: "user-1", threadId: "thread-1", activeDocumentId: "open", instruction: "Update the Board Report" })).result;
+  assert.equal(named.run.baseDocumentVersionId, null);
+  assert.match(contexts[0]!, /\[OPEN\] Open\.docx/);
+  assert.match(contexts[0]!, /Board Report\.docx \(docx; ID board;/);
+  const current = await (await execution.start({ userId: "user-1", threadId: "thread-1", activeDocumentId: "open", instruction: "Update this document" })).result;
+  assert.equal(current.run.baseDocumentVersionId, "v-open");
+});
+
+test("DOCX edit fails clearly when the engine is unavailable while workspace chat still runs", async () => {
+  const persistence = memoryPersistence("user-1");
+  let modelCalls = 0;
+  const deps = baseDeps(persistence, async () => { modelCalls++; return softResult("completed", "done"); });
+  const document = { id: "doc", name: "Report.docx", format: "docx", workspaceId: "ws-1", latestVersion: { id: "v1" } };
+  const execution = createAgentExecutionService({ ...deps, documents: { ...deps.documents,
+    listInWorkspace: async () => [document] as never,
+    getOwnedDocument: async () => document as never,
+  } });
+  await assert.rejects(execution.start({ userId: "user-1", threadId: "thread-1", activeDocumentId: "doc", instruction: "Update this document" }),
+    (error: unknown) => (error as { code?: string }).code === "DOCX_ENGINE_UNAVAILABLE");
+  assert.equal(modelCalls, 0);
+  const chat = await (await execution.start({ userId: "user-1", threadId: "thread-1", instruction: "Which documents are here?" })).result;
+  assert.equal(chat.run.status, "completed");
+  assert.equal(modelCalls, 1);
+});
+
 test("recurring report refresh selects the target, reads the source, and saves one target version", async () => {
   const persistence = memoryPersistence("user-1");
   const binding = await createNapiDocxEngineBinding();
@@ -968,20 +1011,17 @@ test("recurring report refresh selects the target, reads the source, and saves o
     ...baseDeps(persistence, async (input) => {
       const projected = await input.projectMessages!(input.messages);
       assert.match(input.system ?? "", /DOCUMENT UPDATE RULE/);
-      assert.match(input.system ?? "", /source is silent, carry forward/);
-      assert.match(JSON.stringify(projected), /August report\.docx.*ID target/);
-      assert.match(JSON.stringify(projected), /September updates\.docx.*ID source/);
+      assert.match(JSON.stringify(projected), /WORKSPACE MANIFEST/);
+      assert.match(JSON.stringify(projected), /ID target/);
+      assert.match(JSON.stringify(projected), /ID source/);
       const tools = input.tools!;
-      assert.equal((await tools["workspace.select_document"]!.execute!({ documentId: "other" }, call) as { reasonCode: string }).reasonCode, "DOCUMENT_NOT_IN_WORKING_SET");
-      assert.equal((await tools["workspace.select_document"]!.execute!({ documentId: "source" }, call) as { reasonCode: string }).reasonCode, "DOCUMENT_IS_REFERENCE");
       assert.equal((await tools["workspace.select_document"]!.execute!({ documentId: "target" }, call) as { ok: boolean }).ok, true);
-      assert.match(JSON.stringify(await input.projectMessages!(input.messages)), /Revenue: 12/);
       const updates = await tools["workspace.inspect_document"]!.execute!({ documentId: "source", kind: "body_blocks" }, call);
       assert.match(JSON.stringify(updates), /Revenue: 12/);
       for (const [oldText, newText] of [["August report", "September report"], ["Revenue: 10", "Revenue: 12"]]) {
         assert.equal((await tools["document.replace_text"]!.execute!({ target: { text: oldText }, expectedCurrentText: oldText, replacement: newText }, call) as { ok: boolean }).ok, true);
       }
-      assert.equal((await tools["workspace.select_document"]!.execute!({ documentId: "source" }, call) as { reasonCode: string }).reasonCode, "DOCUMENT_IS_REFERENCE");
+      assert.equal((await tools["workspace.select_document"]!.execute!({ documentId: "source" }, call) as { reasonCode: string }).reasonCode, "DOCUMENT_ALREADY_EDITED");
       assert.match(JSON.stringify(await tools["workspace.inspect_document"]!.execute!({ documentId: "source", kind: "body_blocks" }, call)), /Revenue: 12/);
       return softResult("completed", "Updated the report.");
     }, undefined, 100_000),
@@ -1016,7 +1056,7 @@ test("recurring report refresh selects the target, reads the source, and saves o
     instruction: "Update the August report into the September report using the attached updates. Preserve the existing structure and formatting.",
   })).result;
   assert.equal(result.run.status, "completed");
-  assert.equal(result.run.baseDocumentVersionId, "target-v1");
+  assert.equal(result.run.baseDocumentVersionId, null);
   assert.equal(appends, 1);
   assert.equal(artifacts[1]!.latestVersion.id, "source-v1");
   assert.match(JSON.stringify(await binding.inspectDocx(savedTarget, { focus: { kind: "body_blocks" } })), /September report/);
