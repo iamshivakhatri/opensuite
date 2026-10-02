@@ -27,6 +27,14 @@ export interface DocxEngineDiagnostic {
   readonly operation?: string;
   /** Public opaque target handle when the engine supplies one. */
   readonly targetHandle?: string;
+  readonly targetType?: string;
+  readonly targetDescription?: string;
+  readonly updateIndex?: number;
+  readonly candidateCount?: number;
+  readonly candidateTargets?: readonly string[];
+  readonly requiredSelectorKind?: string;
+  readonly retryable?: boolean;
+  readonly recoveryKind?: string;
 }
 
 export interface DocxEngineChange {
@@ -754,18 +762,18 @@ export async function createNapiDocxEngineBinding(): Promise<DocxEngineBinding> 
     const message =
       error instanceof Error ? error.message : String(error);
     throw new Error(
-      `Failed to load @opensuitehq/engine Node binding. Ensure @opensuitehq/engine@0.1.2 is installed for this platform (darwin-arm64, darwin-x64, linux-x64-gnu, linux-arm64-gnu, win32-x64-msvc; glibc only — no musl/Alpine). Underlying error: ${message}`,
+      `Failed to load @opensuitehq/engine Node binding. Ensure @opensuitehq/engine@0.1.3 is installed for this platform (darwin-arm64, darwin-x64, linux-x64-gnu, linux-arm64-gnu, win32-x64-msvc; glibc only — no musl/Alpine). Underlying error: ${message}`,
     );
   }
 
   if (typeof native.createBlankDocx !== "function") {
     throw new Error(
-      "@opensuitehq/engine is missing createBlankDocx — pin/install @opensuitehq/engine@0.1.2",
+      "@opensuitehq/engine is missing createBlankDocx — pin/install @opensuitehq/engine@0.1.3",
     );
   }
   if (typeof native.executeDocxInsertParagraph !== "function") {
     throw new Error(
-      "@opensuitehq/engine is missing executeDocxInsertParagraph — pin/install @opensuitehq/engine@0.1.2",
+      "@opensuitehq/engine is missing executeDocxInsertParagraph — pin/install @opensuitehq/engine@0.1.3",
     );
   }
   for (const name of [
@@ -797,15 +805,18 @@ export async function createNapiDocxEngineBinding(): Promise<DocxEngineBinding> 
   ] as const) {
     if (typeof native[name] !== "function") {
       throw new Error(
-        `@opensuitehq/engine is missing ${name} — pin/install @opensuitehq/engine@0.1.2`,
+        `@opensuitehq/engine is missing ${name} — pin/install @opensuitehq/engine@0.1.3`,
       );
     }
   }
 
-  const supportsSemanticCellTargets = native.getDocxCapabilities().formats
-    .some((format) => format.format === "docx" && format.capabilities.includes("semantic_table_cell_targets"));
-  const supportsSemanticRowDeletion = native.getDocxCapabilities().formats
-    .some((format) => format.format === "docx" && format.capabilities.includes("semantic_table_row_deletion"));
+  const nativeCapabilities = native.getDocxCapabilities();
+  // Published 0.1.3 implements semantic table paths but does not advertise the
+  // semantic_* capability ids yet — accept by capability id or engineVersion.
+  const supportsSemanticCellTargets =
+    nativeSupportsSemanticTableCellTargets(nativeCapabilities);
+  const supportsSemanticRowDeletion =
+    nativeSupportsSemanticTableRowDeletion(nativeCapabilities);
   const requireSemanticCellTargets = (updates: readonly { readonly target: DocxSemanticCellTarget }[]) => {
     if (!supportsSemanticCellTargets && updates.some((update) =>
       update?.target && ("row" in update.target || "column" in update.target))) {
@@ -1211,6 +1222,67 @@ export async function createNapiDocxEngineBinding(): Promise<DocxEngineBinding> 
       return mapMutationBindingResponse(response);
     },
   };
+}
+
+/**
+ * Authoritative app-side check for semantic table-cell selectors.
+ * Prefer capability ids when present; also accept engineVersion >= 0.1.3
+ * because published 0.1.3 implements the paths without advertising the ids.
+ */
+export function nativeSupportsSemanticTableCellTargets(
+  capabilities: Pick<DocxRuntimeCapabilities, "engineVersion" | "formats">,
+): boolean {
+  return (
+    hasDocxCapability(capabilities, "semantic_table_cell_targets") ||
+    engineVersionAtLeast(capabilities.engineVersion, "0.1.3")
+  );
+}
+
+/** Same policy as cell targets for semantic row deletion selectors. */
+export function nativeSupportsSemanticTableRowDeletion(
+  capabilities: Pick<DocxRuntimeCapabilities, "engineVersion" | "formats">,
+): boolean {
+  return (
+    hasDocxCapability(capabilities, "semantic_table_row_deletion") ||
+    engineVersionAtLeast(capabilities.engineVersion, "0.1.3")
+  );
+}
+
+/** Compact fingerprint of table/semantic capability ids for run traces. */
+export function docxCapabilityFingerprint(
+  capabilities: Pick<DocxRuntimeCapabilities, "formats">,
+): readonly string[] {
+  const caps =
+    capabilities.formats.find((format) => format.format === "docx")?.capabilities ??
+    [];
+  return caps.filter(
+    (id) => id.includes("table") || id.includes("semantic") || id === "inspect",
+  );
+}
+
+function hasDocxCapability(
+  capabilities: { readonly formats: readonly { readonly format: string; readonly capabilities: readonly string[] }[] },
+  capability: string,
+): boolean {
+  return capabilities.formats.some(
+    (format) => format.format === "docx" && format.capabilities.includes(capability),
+  );
+}
+
+/** Simple dotted numeric compare for engine pins (e.g. 0.1.3 >= 0.1.3). */
+export function engineVersionAtLeast(version: string, minimum: string): boolean {
+  const parse = (value: string) =>
+    value.split(".").map((part) => Number.parseInt(part, 10) || 0);
+  const left = parse(version);
+  const right = parse(minimum);
+  const length = Math.max(left.length, right.length);
+  for (let index = 0; index < length; index += 1) {
+    const a = left[index] ?? 0;
+    const b = right[index] ?? 0;
+    if (a > b) return true;
+    if (a < b) return false;
+  }
+  return true;
 }
 
 function toNativeParagraphPlacement(

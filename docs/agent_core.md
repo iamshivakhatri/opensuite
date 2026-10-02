@@ -118,7 +118,7 @@ idempotent, and ordered by sorted group/tool names. Unknown or unavailable group
 fail; a mixed valid/unknown request activates nothing. Groups with no executable
 tools are omitted from the compact prompt index and loader schema.
 
-With the installed engine 0.1.2, the previous run surface had **41 tools**:
+With the installed engine 0.1.3, the previous run surface had **41 tools**:
 35 document tools, four workspace tools, and two finish tools. There were three
 reads, 36 mutations (including three workspace lifecycle actions), and two finish
 tools. The initial surface in that experiment had **16 tools**: 15 existing common tools plus the

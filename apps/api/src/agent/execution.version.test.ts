@@ -79,6 +79,8 @@ test("blank DOCX uses semantic placement and logs rejected handles without chang
     console.info = originalInfo;
   }
   assert.equal(rejected.reasonCode, "STALE_HANDLE");
+  assert.equal((rejected as { staleCause?: string }).staleCause, "unregistered_handle");
+  assert.equal((rejected as { recoveryKind?: string }).recoveryKind, "reinspect");
   const diagnostic = JSON.parse(logs.find((line) => line.startsWith("[agent] stale_handle "))!.slice("[agent] stale_handle ".length));
   assert.equal(diagnostic.tool, "document.insert_paragraphs");
   assert.equal(diagnostic.documentId, "doc-1");
@@ -98,10 +100,16 @@ test("blank DOCX uses semantic placement and logs rejected handles without chang
   }, call) as { ok: boolean }).ok, true);
   const firstHandle = (await inspect()).bodyBlocks.items[0]!.handle;
   assert.equal((await insert(["Before"], { kind: "before", handle: firstHandle })).ok, true);
-  assert.equal((await insert(["Stale"], { kind: "before", handle: firstHandle })).reasonCode, "STALE_HANDLE");
+  const stale = await insert(["Stale"], { kind: "before", handle: firstHandle });
+  assert.equal(stale.reasonCode, "STALE_HANDLE");
+  assert.equal((stale as { staleCause?: string }).staleCause, "mutation_since_inspect");
   assert.equal((await tools.tools["document.create_table"]!.execute!({
     rows: [["Header"], ["Value"]], placement: { kind: "end", handle: "" },
   }, call) as { ok: boolean }).ok, true);
+  const turnHandle = (await inspect()).bodyBlocks.items[0]!.handle;
+  tools.setModelTurn(1);
+  const nextTurn = await insert(["Later"], { kind: "before", handle: turnHandle });
+  assert.equal((nextTurn as { staleCause?: string }).staleCause, "model_turn_boundary");
 });
 
 test("run-local mutations persist and emit one version at flush", async () => {
@@ -298,7 +306,7 @@ test("header shading then table formatting and widths reuse one inspect", async 
 
 test("one structural header formatting call advances preview and expires inspected handles", async () => {
   const binding = await createNapiDocxEngineBinding();
-  assert.equal(binding.getDocxCapabilities().engineVersion, "0.1.2");
+  assert.equal(binding.getDocxCapabilities().engineVersion, "0.1.3");
   assert.ok(binding.getDocxCapabilities().formats.find((format) => format.format === "docx")?.capabilities.includes("set_table_cells_formatting"));
   const tools = await createPrimaryDocxTools({
     binding, ownerUserId: "user-1", workspaceId: "ws-1", documentId: "doc-1", versionId: "v1",
@@ -337,6 +345,13 @@ test("one structural header formatting call advances preview and expires inspect
     table: { handle: table.handle }, updates,
   });
   assert.equal(stale.reasonCode, "STALE_HANDLE");
+  assert.equal((stale as { staleCause?: string }).staleCause, "mutation_since_inspect");
+  assert.equal((stale as { recoveryKind?: string }).recoveryKind, "use_semantic_selector");
+  assert.deepEqual((stale as { diagnostics?: unknown[] }).diagnostics, [{
+    code: "STALE_HANDLE", severity: "error", message: "Handle is no longer valid.",
+    operation: "set_table_cells_formatting", staleCause: "mutation_since_inspect",
+    recoveryKind: "use_semantic_selector", retryable: false,
+  }]);
 });
 
 test("working reads, failed writes, and stale handles keep the last valid state", async () => {
@@ -380,7 +395,9 @@ test("working reads, failed writes, and stale handles keep the last valid state"
   }, call);
   assert.equal((failed as { ok: boolean }).ok, false);
   assert.deepEqual(revisions, [1, 2, 3, 4, 5, 6]);
-  assert.equal((await insert.execute!({ text: "Bad", placement: { kind: "before", handle: "b999" } }, call) as { reasonCode: string }).reasonCode, "STALE_HANDLE");
+  const unknownHandle = await insert.execute!({ text: "Bad", placement: { kind: "before", handle: "b999" } }, call) as { reasonCode: string; staleCause?: string };
+  assert.equal(unknownHandle.reasonCode, "STALE_HANDLE");
+  assert.equal(unknownHandle.staleCause, "unregistered_handle");
   assert.equal((await insert.execute!({ text: "No target", placement: { kind: "before", handle: "b0" } }, call) as { ok: boolean }).ok, true);
   assert.equal((await insert.execute!({ text: "Stale", placement: { kind: "before", handle: "b0" } }, call) as { reasonCode: string }).reasonCode, "STALE_HANDLE");
   assert.equal(appends, 0);

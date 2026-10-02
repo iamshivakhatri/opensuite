@@ -71,6 +71,10 @@ const HANDLE_PRESERVING_MUTATIONS = new Set([
   "set_table_cells_formatting", "set_paragraph_formatting", "set_text_formatting",
   "set_paragraph_style",
 ]);
+const SEMANTIC_HANDLE_ALTERNATIVES = new Set([
+  "set_table_cells_text", "set_table_cells_formatting", "set_table_cell_shading",
+  "delete_table_row", "set_table_formatting", "set_table_column_widths",
+]);
 
 /**
  * Mutable active DOCX binding for one agent run.
@@ -107,6 +111,7 @@ function createActiveDocxSession(input: {
   let workingRevision = 0;
   let workingMutationCount = 0;
   const currentHandles = new Set<string>();
+  let expiredHandles = new Map<string, string>();
   let lastHandleEvent = "none";
   let modelTurn: number | null = null;
   let documentChangedThisTurn = false;
@@ -117,12 +122,19 @@ function createActiveDocxSession(input: {
   const transitions: DocumentTransition[] = [];
   const workingDocumentIds = new Set(input.workingDocumentIds);
 
+  function expireHandles(cause: string): void {
+    if (currentHandles.size) {
+      expiredHandles = new Map([...currentHandles].map((handle) => [handle, cause]));
+    }
+    currentHandles.clear();
+  }
+
   function setModelTurn(turn: number | null): void {
     if (modelTurn !== null && sameTurnMutations) {
       console.info(`[agent] mutation_turn turn=${modelTurn} sameTurnMutations=${sameTurnMutations} compatibleMutations=${compatibleMutations} handleReuses=${handleReuses}`);
     }
     if (documentChangedThisTurn) {
-      currentHandles.clear();
+      expireHandles("model_turn_boundary");
       lastHandleEvent = "model_turn";
     }
     documentChangedThisTurn = false;
@@ -189,7 +201,7 @@ function createActiveDocxSession(input: {
     host = bindHost(next);
     dirty = false;
     workingRevision = 0;
-    currentHandles.clear();
+    expireHandles("document_rebind");
     lastHandleEvent = "rebind";
     mutationFailures.clear();
   }
@@ -208,7 +220,7 @@ function createActiveDocxSession(input: {
     workingMutationCount += applied;
     documentChangedThisTurn = true;
     const preserveHandles = modelTurn !== null && HANDLE_PRESERVING_MUTATIONS.has(capability);
-    if (!preserveHandles) currentHandles.clear();
+    if (!preserveHandles) expireHandles("mutation_since_inspect");
     lastHandleEvent = preserveHandles ? "compatible_mutation" : "mutation";
     sameTurnMutations += applied;
     if (preserveHandles) compatibleMutations += applied;
@@ -226,6 +238,7 @@ function createActiveDocxSession(input: {
     inspect: async (request) => {
       const result = await requireHost().inspect(request);
       collectHandles(result, currentHandles);
+      for (const handle of currentHandles) expiredHandles.delete(handle);
       lastHandleEvent = "inspect";
       return result;
     },
@@ -244,6 +257,8 @@ function createActiveDocxSession(input: {
       collectHandles(operation, handles);
       const rejectedHandle = [...handles].find((handle) => !currentHandles.has(handle));
       if (rejectedHandle !== undefined) {
+        const staleCause = expiredHandles.get(rejectedHandle) ?? "unregistered_handle";
+        const recoveryKind = SEMANTIC_HANDLE_ALTERNATIVES.has(capability) ? "use_semantic_selector" : "reinspect";
         const selector = operation.placement ?? operation.target;
         const selectorKind = selector && typeof selector === "object" && "kind" in selector && typeof selector.kind === "string"
           ? selector.kind.slice(0, 32) : null;
@@ -260,7 +275,9 @@ function createActiveDocxSession(input: {
           modelTurn,
         })}`);
         return noteMutationFailure(capability, { ok: false, reasonCode: "STALE_HANDLE", status: "error", capability,
-          diagnostics: [{ code: "STALE_HANDLE", severity: "error", message: "Inspect the current document again before using this handle." }] });
+          staleCause, recoveryKind,
+          diagnostics: [{ code: "STALE_HANDLE", severity: "error", message: "Handle is no longer valid.", operation: capability,
+            staleCause, recoveryKind, retryable: false }] });
       }
       const result = await host.mutate(capability, operation);
       if (result.ok) {

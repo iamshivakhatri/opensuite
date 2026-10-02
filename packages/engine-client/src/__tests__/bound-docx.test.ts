@@ -7,7 +7,85 @@ import {
   buildNameRoleTableDocx,
   createNapiDocxEngineBinding,
   DISPATCHABLE_MUTATION_CAPABILITIES,
+  nativeSupportsSemanticTableCellTargets,
+  nativeSupportsSemanticTableRowDeletion,
 } from "../index.js";
+
+test("semantic selector compatibility accepts 0.1.3 by version without capability ids", () => {
+  const withoutIds = {
+    ok: true,
+    protocolVersion: 1,
+    engineVersion: "0.1.3",
+    formats: [{ format: "docx", capabilities: ["set_table_cells_text", "delete_table_row"] }],
+  };
+  assert.equal(nativeSupportsSemanticTableCellTargets(withoutIds), true);
+  assert.equal(nativeSupportsSemanticTableRowDeletion(withoutIds), true);
+
+  const older = {
+    ok: true,
+    protocolVersion: 1,
+    engineVersion: "0.1.2",
+    formats: [{ format: "docx", capabilities: ["set_table_cells_text", "delete_table_row"] }],
+  };
+  assert.equal(nativeSupportsSemanticTableCellTargets(older), false);
+  assert.equal(nativeSupportsSemanticTableRowDeletion(older), false);
+
+  const olderWithIds = {
+    ok: true,
+    protocolVersion: 1,
+    engineVersion: "0.1.2",
+    formats: [{
+      format: "docx",
+      capabilities: ["semantic_table_cell_targets", "semantic_table_row_deletion"],
+    }],
+  };
+  assert.equal(nativeSupportsSemanticTableCellTargets(olderWithIds), true);
+  assert.equal(nativeSupportsSemanticTableRowDeletion(olderWithIds), true);
+});
+
+test("installed 0.1.3 binding dispatches semantic table-cell targets past the app gate", async () => {
+  const binding = await createNapiDocxEngineBinding();
+  const caps = binding.getDocxCapabilities();
+  assert.equal(caps.engineVersion, "0.1.3");
+  assert.equal(nativeSupportsSemanticTableCellTargets(caps), true);
+  assert.equal(
+    caps.formats.find((format) => format.format === "docx")?.capabilities.includes("semantic_table_cell_targets"),
+    false,
+  );
+
+  const bytes = new Uint8Array(buildNameRoleTableDocx());
+  const doc = bindDocxDocument({ binding, bytes });
+  const inspected = await doc.inspect({ focus: { kind: "tables" } });
+  const table = inspected.tables?.items?.[0];
+  assert.ok(table);
+
+  const semantic = await doc.mutate("set_table_cells_text", {
+    table: { handle: table.handle },
+    updates: [{
+      target: {
+        row: { kind: "header" },
+        column: { kind: "index", index: 1, expectedHeaderText: "Role" },
+      },
+      expectedCurrentText: "Role",
+      replacement: "Title",
+    }],
+  });
+  assert.notEqual((semantic as { reasonCode?: string }).reasonCode, "DISPATCH_FAILED");
+  assert.equal(semantic.ok, true);
+
+  const after = await doc.inspect({ focus: { kind: "tables" } });
+  const cellHandle = after.tables?.items?.[0]?.rows[1]?.cellHandles[1];
+  assert.ok(cellHandle);
+  const legacy = await doc.mutate("set_table_cells_text", {
+    table: { handle: after.tables!.items![0]!.handle },
+    updates: [{
+      target: { handle: cellHandle },
+      expectedCurrentText: "CEO",
+      replacement: "Chief",
+    }],
+  });
+  assert.equal(legacy.ok, true);
+});
 
 test("bindDocxDocument exposes real engine capabilities/inspect/find", async () => {
   const binding = await createNapiDocxEngineBinding();
@@ -110,6 +188,30 @@ test("failed mutation does not advance version and returns reasonCode", async ()
   const stillThere = await doc.find({ text: "KeepMe" });
   assert.equal(stillThere.ok, true);
   assert.ok(stillThere.matchCount >= 1);
+});
+
+test("engine diagnostics pass through the bound document", async () => {
+  const native = await createNapiDocxEngineBinding();
+  const diagnostic = {
+    code: "TARGET_AMBIGUOUS", severity: "error", message: "Two rows matched.",
+    reasonCode: "TABLE_ROW_AMBIGUOUS", operation: "replace_text", targetType: "row",
+    candidateCount: 2, candidateTargets: ["rowOccurrence 0", "rowOccurrence 1"],
+    requiredSelectorKind: "rowOccurrence", updateIndex: 1, recoveryKind: "unsafe_source",
+  };
+  const binding = new Proxy(native, {
+    get(target, key) {
+      if (key === "executeDocxReplaceText") return async () => ({
+        result: { ok: false, status: "failed", diagnostics: [diagnostic], changes: [] },
+      });
+      return Reflect.get(target, key);
+    },
+  });
+  const doc = bindDocxDocument({ binding, bytes: new Uint8Array(buildMinimalDocx(["Keep"])) });
+  const result = await doc.mutate("replace_text", {
+    target: { text: "Keep" }, expectedCurrentText: "Keep", replacement: "New",
+  });
+  assert.equal(result.reasonCode, "TABLE_ROW_AMBIGUOUS");
+  assert.deepEqual(result.diagnostics, [diagnostic]);
 });
 
 test("set_paragraph_style uses zero-based occurrence matching inspect", async () => {
@@ -227,7 +329,7 @@ test("set_table_cells_text handle path succeeds; bad shape is VALIDATION_FAILED"
     ],
   });
   assert.equal(missing.ok, false);
-  assert.equal(missing.reasonCode, "TARGET_NOT_FOUND");
+  assert.equal(missing.reasonCode, "TABLE_ROW_NOT_FOUND");
   assert.equal(persistCalls, 0);
 
   const ok = await doc.mutate("set_table_cells_text", {

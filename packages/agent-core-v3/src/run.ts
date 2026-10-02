@@ -198,7 +198,8 @@ export async function runAgent(input: RunAgentInput): Promise<RunAgentResult> {
       if (turn.resolvedModelId !== undefined) {
         resolvedModelId = turn.resolvedModelId;
       }
-      // A later finish-only turn must not erase the last user-visible response.
+      // Track latest non-empty assistant text for bounded stops / no-tool complete.
+      // Finish settlement must NOT fall back across turns (see finish_tool below).
       if (turn.text.trim()) lastText = turn.text;
       lastFinishReason = turn.finishReason;
 
@@ -268,11 +269,11 @@ export async function runAgent(input: RunAgentInput): Promise<RunAgentResult> {
       );
 
       // Mutations: sequential; the first failure skips the remainder.
-      let mutationFailed = false;
+      let failedMutationCallId: string | null = null;
       for (const call of mutations) {
         if (input.signal?.aborted) throw abortReason(input.signal);
-        if (mutationFailed) {
-          recordSkip({ input: turnInput, call, results, reason: "PRIOR_MUTATION_FAILED" });
+        if (failedMutationCallId) {
+          recordSkip({ input: turnInput, call, results, reason: "PRIOR_MUTATION_FAILED", failedToolCallId: failedMutationCallId });
           continue;
         }
         const outcome = await runCall({
@@ -285,7 +286,7 @@ export async function runAgent(input: RunAgentInput): Promise<RunAgentResult> {
           turn: turns,
           now,
         });
-        if (outcome !== "ok") mutationFailed = true;
+        if (outcome !== "ok") failedMutationCallId = call.toolCallId;
       }
 
       // Emit results in original call order so the tool message matches calls.
@@ -295,9 +296,11 @@ export async function runAgent(input: RunAgentInput): Promise<RunAgentResult> {
       });
 
       // Finish signal: honour only when the batch's mutations all succeeded.
+      // Final human-turn text is only this terminal turn's response (or the
+      // terminal tool's own string). Never reuse earlier intermediate narration.
       const terminalText = findTerminalText(turnTools, calls, results);
-      if (terminalText !== undefined && !mutationFailed) {
-        const text = terminalText || lastText;
+      if (terminalText !== undefined && !failedMutationCallId) {
+        const text = (terminalText || turn.text).trim() || "Done.";
         await input.onEvent?.({ type: "completed", text, stopReason: "finish_tool" });
         return finish("finish_tool", text);
       }
@@ -470,6 +473,7 @@ function recordSkip(args: {
   readonly call: ToolCall;
   readonly results: Map<string, ToolResultPart>;
   readonly reason: ToolSkipReason;
+  readonly failedToolCallId?: string;
 }): void {
   const { call, results, reason } = args;
   results.set(call.toolCallId, {
@@ -478,7 +482,7 @@ function recordSkip(args: {
     toolName: call.toolName,
     output: {
       type: "json",
-      value: { ok: false, status: "skipped", reason } as never,
+      value: { ok: false, status: "skipped", reason, ...(args.failedToolCallId ? { failedToolCallId: args.failedToolCallId } : {}) } as never,
     },
   });
   if (args.input.onDiagnostic) emitDiagnostic(args.input.onDiagnostic, "tool_skipped", {
@@ -525,8 +529,8 @@ function toResultPart(
 
 /**
  * If a terminal tool was called and executed successfully, return the string it
- * produced (or "" to fall back to assistant text). Returns undefined when no
- * terminal tool ran.
+ * produced (or "" so the caller can use this turn's assistant text). Returns
+ * undefined when no terminal tool ran.
  */
 function findTerminalText(
   tools: AgentToolSet | undefined,

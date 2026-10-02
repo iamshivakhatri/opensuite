@@ -11,6 +11,7 @@ import {
   composeAgentRunReport,
   logAgentRunReport,
   type AgentRunReport,
+  type AgentRunReportEngine,
   type AgentRunReportSink,
   type AgentRunReportRetrieval,
   type DocumentTransition,
@@ -248,6 +249,7 @@ export async function emitRunReport(input: {
   readonly workingMutationCount?: number;
   readonly versionAdvances: readonly DocumentVersionAdvance[];
   readonly documentTransitions?: readonly DocumentTransition[];
+  readonly engine?: AgentRunReportEngine;
   readonly retrieval?: AgentRunReportRetrieval;
   readonly context: {
     readonly checkpointUsed: boolean;
@@ -307,6 +309,7 @@ export async function emitRunReport(input: {
       workingMutationCount: input.workingMutationCount,
       versionAdvances: input.versionAdvances,
       documentTransitions: input.documentTransitions ?? [],
+      ...(input.engine !== undefined ? { engine: input.engine } : {}),
       ...(input.retrieval !== undefined ? { retrieval: input.retrieval } : {}),
       context: input.context,
       pricing,

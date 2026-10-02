@@ -26,11 +26,11 @@ test("diagnostic callback failures cannot change a model or tool outcome", async
   assert.equal(result.metrics.toolCalls[0]?.outcome, "success");
 });
 
-test("a finish-only turn keeps the last assistant text for durable settlement", async () => {
+test("a finish-only turn with no text uses a deterministic completion, not earlier narration", async () => {
   let turn = 0;
   const model = new MockLanguageModelV4({ doStream: async () => ({ stream: simulateReadableStream({ chunks:
     ++turn === 1
-      ? [...textChunks("Report created", "tool-calls").slice(0, -1), ...toolCallChunks([{ id: "read", name: "read", input: {} }]).slice(1)]
+      ? [...textChunks("semantic selectors failed; switching to handles", "tool-calls").slice(0, -1), ...toolCallChunks([{ id: "read", name: "read", input: {} }]).slice(1)]
       : toolCallChunks([{ id: "finish", name: "finish", input: {} }]),
   }) }) });
   const finish = createFinishTool();
@@ -38,6 +38,22 @@ test("a finish-only turn keeps the last assistant text for durable settlement", 
     read: defineTool({ kind: "read", description: "Read", inputSchema: emptyObjectSchema, execute: () => "ok" }),
     finish: finish.tool,
   } });
+  assert.equal(result.text, "Done.");
+  assert.notEqual(result.text, "semantic selectors failed; switching to handles");
+});
+
+test("same-turn final assistant text with finish still settles that text", async () => {
+  const finish = createFinishTool();
+  const model = new MockLanguageModelV4({
+    doStream: async () => ({
+      stream: simulateReadableStream({ chunks: textThenFinishChunks("Report created", finish.name) }),
+    }),
+  });
+  const result = await runAgent({
+    model,
+    messages: [{ role: "user", content: "Create a report" }],
+    tools: { [finish.name]: finish.tool },
+  });
   assert.equal(result.text, "Report created");
 });
 
@@ -523,6 +539,9 @@ test("a failed mutation skips later mutations in the same batch", async () => {
         | undefined;
       assert.ok(toolMsg);
       assert.equal(toolMsg.content.length, 2);
+      assert.deepEqual(toolMsg.content[1]!.output.value, {
+        ok: false, status: "skipped", reason: "PRIOR_MUTATION_FAILED", failedToolCallId: "a",
+      });
       return { stream: simulateReadableStream({ chunks: textChunks("done") }) };
     },
   });

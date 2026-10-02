@@ -13,6 +13,7 @@ import {
 import { jsonSchema } from "ai";
 
 import type { DocxEngineBinding } from "@opensuite/engine-client";
+import { docxCapabilityFingerprint } from "@opensuite/engine-client";
 
 import type { CredentialSource } from "../ai-preferences/types.js";
 import type { ProviderCredentialProvider } from "../credentials/types.js";
@@ -20,6 +21,7 @@ import type { DocumentService } from "../documents/service.js";
 import type { ManagedUsagePolicy } from "../managed-usage-policy.js";
 import type { ModelUsageService } from "../model-usage/service.js";
 import type {
+  AgentRunReportEngine,
   AgentRunReportSink,
   DocumentVersionAdvance,
 } from "./agent-run-report.js";
@@ -269,13 +271,21 @@ export function createAgentExecutionService(deps: AgentExecutionServiceDeps) {
       });
 
       // Banner logged once retrieval resolves (target/sources known).
+      const engineCaps = deps.docxBinding?.getDocxCapabilities();
+      const engineIdentity = engineCaps
+        ? {
+            engineVersion: engineCaps.engineVersion,
+            capabilityFingerprint: docxCapabilityFingerprint(engineCaps),
+          }
+        : undefined;
       const trace = process.env.AGENT_RUN_TRACE === "full" ? createRunTrace({
         runId: started.run.id, threadId: thread.id,
         metadata: { model: typeof model.model === "string" ? model.model : model.model.modelId,
           provider: typeof model.model === "string" ? undefined : model.model.provider, modelSettings: traceModelSettings(model.model),
           workspaceId: thread.workspaceId, documentId: primaryDocument?.documentId ?? null,
           startingVersionId: started.run.baseDocumentVersionId, contextLength: model.contextLength,
-          maxOutputTokens: model.outputTokenLimit, maxTurns: MAX_MODEL_TURNS },
+          maxOutputTokens: model.outputTokenLimit, maxTurns: MAX_MODEL_TURNS,
+          ...(engineIdentity ? { engine: engineIdentity } : {}) },
       }) : undefined;
       let getWorkingDocument = () => null as ReturnType<AgentExecutionHandle["getWorkingDocument"]>;
       const execution = runExecution({
@@ -475,6 +485,13 @@ async function runExecution(input: {
     let savedTarget: { documentId: string; fromVersionId: string; versionId: string } | null = null;
     let createdDocumentId: string | null = null;
     const initialDocumentId = input.primaryDocumentId;
+    const engineCaps = input.deps.docxBinding?.getDocxCapabilities();
+    const engineIdentity: AgentRunReportEngine | undefined = engineCaps
+      ? {
+          engineVersion: engineCaps.engineVersion,
+          capabilityFingerprint: docxCapabilityFingerprint(engineCaps),
+        }
+      : undefined;
     let directVersionId: string | null = null;
     let directWorkingVersions = new Map<string, string>();
     let directMessage: string | undefined;
@@ -815,6 +832,7 @@ async function runExecution(input: {
         versionAdvances,
         workingMutationCount: boundTools?.getWorkingMutationCount() ?? 0,
         documentTransitions: boundTools?.getTransitions() ?? [],
+        ...(engineIdentity ? { engine: engineIdentity } : {}),
         retrieval: reportRetrieval,
         context: {
           ...context,
@@ -844,6 +862,7 @@ async function runExecution(input: {
       versionAdvances,
       workingMutationCount: boundTools?.getWorkingMutationCount() ?? 0,
       documentTransitions: boundTools?.getTransitions() ?? [],
+      ...(engineIdentity ? { engine: engineIdentity } : {}),
       retrieval: reportRetrieval,
       context: {
         ...context,

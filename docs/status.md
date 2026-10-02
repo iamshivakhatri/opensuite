@@ -5,7 +5,7 @@ _Read this before starting any work. Keep it a concise current-state handoff, no
 ## What Exists
 
 * Workspace shell, Casual Docs DOCX, engine-backed inspect/mutate, blank create, workspace agent.
-* Semantic table-row deletion is wired in source through the Rust engine, Node bridge, and document tool; the pinned published engine still needs an update before this path is available in the installed app.
+* Semantic table editing is live on npm `@opensuitehq/engine@0.1.3`: header/first-column/ordinary cell text, cell formatting, shading, semantic row deletion (label/occurrence/index), and structured ambiguity/not-found/unsupported diagnostics. Engine-client keeps capability gates for older installs.
 * **Agent Core V3-2 (live)** — general policy + dynamic AVAILABLE CAPABILITIES; finish + soft stopReasons.
 * **V3 Phase 3 observability** — `AgentRunMetrics` + API `AgentRunReport` / compact log with stable vocabulary (`toolCalls`, `editsApplied`, `persistedVersions`, `toolErrors`; no DB/OTel; not shown in Agent Panel).
 * **V3 lifecycle tools** — `workspace.create_blank_document` + `workspace.duplicate_current_document` with same-run active rebind; `document.created` SSE; report `transitions[]`.
@@ -14,6 +14,8 @@ _Read this before starting any work. Keep it a concise current-state handoff, no
 * **API composition seam** — `@opensuite/api` now exports `createOpenSuiteRuntime`, `createOpenSuiteApp`, and config loading. The self-host server remains a thin wrapper; a future Cloud API can register routes on the same Fastify app, Better Auth instance, and DB client.
 
 ## Just Completed
+
+* **Engine 0.1.3 pin** — `@opensuite/engine-client` depends on published `@opensuitehq/engine@0.1.3` (lockfile + platform native). Semantic capability gates kept for older installs and also accept `engineVersion >= 0.1.3` because the published N-API filter still omits advertising `semantic_table_cell_targets` / `semantic_table_row_deletion`. Smoke via engine-client confirmed semantic cell/row paths and preserved unrelated content. No agent/runtime/prompt changes.
 
 * **Turn-1 TRANS Experiment 1 (operating instruction only)** — replaced overlapping update/preserve/clarification/handle guidance with a short deterministic document-update decision policy: authoritative current state, change only supported content, consistent corresponding representations, preserve source-silent as success (not missing input), mutate known semantic targets directly, batch independent edits, clarify only for materially different unsupported interpretations, and `finish_with_input_needed` only for explicit incomplete requested outcomes. Top-level handle lifecycle details deferred to tool descriptions. No tool/schema/retrieval/runtime/engine change. Focused operating-instruction tests + API typecheck pass.
 

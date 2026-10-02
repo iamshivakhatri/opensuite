@@ -60,6 +60,13 @@ export interface AgentRunReportDocument {
   readonly transitions: readonly DocumentTransition[];
 }
 
+/** Native document engine identity for dispatch observability (not model-facing). */
+export interface AgentRunReportEngine {
+  readonly engineVersion: string;
+  /** Compact table/semantic capability ids from the loaded native binding. */
+  readonly capabilityFingerprint?: readonly string[];
+}
+
 export interface AgentRunReportFailure {
   readonly source: "model" | "tool" | "runtime";
   readonly code?: string;
@@ -161,6 +168,7 @@ export interface AgentRunReport {
   readonly failures: readonly AgentRunReportFailure[];
   readonly fuseEvents: readonly FuseEventMetric[];
   readonly document?: AgentRunReportDocument;
+  readonly engine?: AgentRunReportEngine;
   readonly retrieval?: AgentRunReportRetrieval;
   readonly context?: AgentRunReportContext;
 }
@@ -212,6 +220,7 @@ export interface ComposeAgentRunReportInput {
   readonly workingMutationCount?: number;
   readonly versionAdvances?: readonly DocumentVersionAdvance[];
   readonly documentTransitions?: readonly DocumentTransition[];
+  readonly engine?: AgentRunReportEngine;
   readonly retrieval?: AgentRunReportRetrieval;
   readonly context?: AgentRunReportContext;
   readonly pricing?: ModelPricingEntry | null;
@@ -387,6 +396,7 @@ export function composeAgentRunReport(
           },
         }
       : {}),
+    ...(input.engine !== undefined ? { engine: input.engine } : {}),
     ...(input.retrieval !== undefined ? { retrieval: input.retrieval } : {}),
     ...(input.context !== undefined ? { context: input.context } : {}),
   };
@@ -458,6 +468,9 @@ export function formatAgentRunSummary(report: AgentRunReport): string {
   lines.push("────────────────────────");
   lines.push(`${padLabel("Outcome")}${report.outcome}`);
   lines.push(`${padLabel("Model")}${modelLabel}`);
+  if (report.engine?.engineVersion) {
+    lines.push(`${padLabel("Engine")}${report.engine.engineVersion}`);
+  }
   lines.push(`${padLabel("Model turns")}${report.modelTurns}`);
   lines.push(`${padLabel("Tool calls")}${report.toolCalls}`);
   lines.push(`${padLabel("Read calls")}${countToolsByKind(report.tools, "read")}`);
