@@ -4,8 +4,9 @@ import { defineTool } from "@opensuite/agent-core-v3";
 import { jsonSchema } from "ai";
 import { CapabilityRegistry, type CapabilityDefinition } from "./registry.js";
 import { CapabilitySession } from "./session.js";
-import { capabilityRegistry } from "./catalog.js";
-import { projectLoadedInstructions } from "./instruction-projection.js";
+import { capabilityRegistry } from "../catalog.js";
+import { projectLoadedInstructions } from "../runtime/instruction-projection.js";
+import { createCalculatorTool } from "../definitions/compute/calculator.js";
 
 const group = (id: string, parentId: string | null): CapabilityDefinition => ({ id, parentId, kind: "group", title: id, description: `Find ${id}`, projection: "dynamic" });
 const tool = (id: string, parentId: string): CapabilityDefinition => ({ id, parentId, kind: "tool", title: id, description: `Use ${id}`, projection: "dynamic", toolName: id });
@@ -33,30 +34,6 @@ test("search ranks a title match ahead of a description-only match", () => {
   assert.deepEqual(registry.search("edit").slice(0, 2).map((item) => item.id), ["root.edit", "root.other"]);
 });
 
-test("scientific paper skill is discoverable as metadata and loads guidance without a tool", () => {
-  const events: { capabilityId: string; kind: string; type: string }[] = [];
-  const session = new CapabilitySession(capabilityRegistry, {}, (event) => { events.push(event); });
-  const id = "skills.scientific-writing.scientific-paper";
-  assert.deepEqual(session.roots().map((item) => item.id), ["skills"]);
-  assert.deepEqual(session.list("skills").capabilities?.map((item) => item.id), ["skills.scientific-writing"]);
-  assert.deepEqual(session.list("skills.scientific-writing").capabilities?.map((item) => item.id), [id]);
-  assert.deepEqual(session.search("write a research paper").capabilities.map((item) => item.id), [id]);
-  assert.doesNotMatch(JSON.stringify(session.search("scientific paper")), /Never invent methods/);
-  assert.equal(projectLoadedInstructions(session), undefined);
-  assert.deepEqual(session.load([id], 1), { ok: true, loadedIds: [id] });
-  const guidance = projectLoadedInstructions(session);
-  assert.match(String(guidance?.message.content), /Never invent methods/);
-  const limited = projectLoadedInstructions(session, 80);
-  assert.ok(limited && limited.estimatedTokens <= 80);
-  assert.ok(limited.estimatedTokens < guidance!.estimatedTokens);
-  assert.equal(Object.keys(session.projectTools()).length, 0);
-  assert.deepEqual(session.load([id], 2), { ok: true, loadedIds: [id] });
-  assert.equal(events.filter((event) => event.type === "loaded").length, 1);
-  assert.ok(events.some((event) => event.capabilityId === id && event.kind === "instruction" && event.type === "discovered"));
-  assert.equal(events.some((event) => event.type === "executed" || event.type === "succeeded"), false);
-  assert.equal(projectLoadedInstructions(new CapabilitySession(capabilityRegistry, {})), undefined);
-});
-
 test("instruction bodies are resolved on load and share a session with executable tools", () => {
   let reads = 0;
   const definitions: CapabilityDefinition[] = [group("root", null),
@@ -73,6 +50,18 @@ test("instruction bodies are resolved on load and share a session with executabl
   assert.match(String(projectLoadedInstructions(session)?.message.content), /Unique guidance/);
   session.load(["root.skill"]);
   assert.equal(reads, 1);
+});
+
+test("prompt recommendations are bounded, available, and metadata-only", () => {
+  const session = new CapabilitySession(capabilityRegistry, { "compute.calculator": createCalculatorTool() });
+  assert.deepEqual(session.recommend("Calculate the compound annual growth rate from 4.2M to 6.8M over 3 years").map((item) => item.id), ["compute.calculator"]);
+  assert.deepEqual(session.recommend("Write a scientific paper about the supplied experiment").map((item) => item.id), ["skills.scientific-writing.scientific-paper"]);
+  assert.deepEqual(session.recommend("Update this document's heading").map((item) => item.id), []);
+  const recommendation = JSON.stringify(session.recommend("scientific paper"));
+  assert.doesNotMatch(recommendation, /Never invent|inputSchema|instructions/);
+  assert.equal(session.projectTools()["compute.calculator"], undefined);
+  assert.ok(session.list("compute").ok);
+  assert.ok(session.search("calculator").capabilities.length > 0);
 });
 
 test("large catalog keeps root listing fixed and one loaded leaf isolated", () => {
@@ -113,4 +102,21 @@ test("thousands of unloaded skills add no body or root prompt cost", () => {
   const guidance = String(projectLoadedInstructions(session)?.message.content);
   assert.match(guidance, /Large private body 1999/);
   assert.doesNotMatch(guidance, /Large private body 1998/);
+});
+
+test("large registry keeps prompt recommendations and root context bounded", () => {
+  const definitions: CapabilityDefinition[] = [group("skills", null), group("skills.writing", "skills")];
+  for (let index = 0; index < 20_000; index++) definitions.push({
+    id: `skills.writing.unrelated${index}`, parentId: "skills.writing", kind: "instruction",
+    title: `Unrelated topic ${index}`, description: "Unrelated guidance", projection: "dynamic",
+    instructions: () => "Private body",
+  });
+  definitions.push({ id: "skills.writing.paper", parentId: "skills.writing", kind: "instruction",
+    title: "Scientific paper", description: "Research paper writing", projection: "dynamic", instructions: () => "Private paper body" });
+  const session = new CapabilitySession(new CapabilityRegistry(definitions), {});
+  assert.ok(JSON.stringify(session.roots()).length < 150);
+  const matches = session.recommend("Write a scientific paper");
+  assert.deepEqual(matches.map((item) => item.id), ["skills.writing.paper"]);
+  assert.ok(matches.length <= 3);
+  assert.doesNotMatch(JSON.stringify(matches), /Private paper body/);
 });

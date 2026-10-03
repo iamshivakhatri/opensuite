@@ -1,3 +1,13 @@
+import type { CapabilityDefinition } from "../../core/registry.js";
+
+export const scientificPaperCapability: CapabilityDefinition = {
+  id: "skills.scientific-writing.scientific-paper", parentId: "skills.scientific-writing",
+  kind: "instruction", title: "Scientific Paper Writing",
+  description: "Structure and evidence rules for drafting a scientific paper",
+  aliases: ["write a research paper"], projection: "dynamic",
+  instructions: scientificPaperInstructions,
+};
+
 /** Loaded only when this skill is requested; catalog metadata stays small. */
 export function scientificPaperInstructions(): string {
   return `Draft scientific papers in clear, concise professional language.

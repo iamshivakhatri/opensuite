@@ -1,8 +1,8 @@
 import type { AgentEvent } from "@opensuite/agent-core-v3";
 import type { Db } from "@opensuite/db";
 import { schema } from "@opensuite/db";
-import type { CapabilityEvent } from "./session.js";
-import type { CapabilitySession } from "./session.js";
+import type { CapabilityEvent } from "../core/session.js";
+import type { CapabilitySession } from "../core/session.js";
 
 export type StoredCapabilityEvent = CapabilityEvent & Readonly<{
   runId: string;

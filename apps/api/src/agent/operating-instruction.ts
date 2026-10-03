@@ -7,6 +7,7 @@
 export function buildAgentOperatingInstruction(
   toolNames: readonly string[],
   capabilityIndex?: string,
+  recommendations: readonly { id: string; kind: string; title: string; description: string }[] = [],
 ): string {
   const exposed = [...toolNames].sort();
   const capabilitySummary =
@@ -25,7 +26,8 @@ ${capabilitySummary}${capabilityIndex ? `
 
 CAPABILITY DOMAINS (explore with capabilities_list or capabilities_search, then capabilities_load)
 ${capabilityIndex}
-List a domain to see its immediate children. Search when the domain is unclear. Load the needed capability before concluding it is unsupported.` : ""}
+${recommendations.length ? `\nLIKELY RELEVANT CAPABILITIES\n${recommendations.map((item) => `- ${item.id} (${item.kind}) — ${item.title}: ${item.description}`).join("\n")}` : ""}
+Recommendations are optional. Load an obvious fit directly; use list/search only when these are insufficient. Do not explore just because discovery tools exist. If no specialist is needed, proceed normally.` : ""}
 
 OPERATING PRINCIPLES
 

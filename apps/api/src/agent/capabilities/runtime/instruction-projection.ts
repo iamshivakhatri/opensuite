@@ -1,6 +1,6 @@
 import type { ModelMessage } from "@opensuite/agent-core-v3";
-import { estimateTokens, truncateToTokenBudget } from "../context-projection.js";
-import type { CapabilitySession } from "./session.js";
+import { estimateTokens, truncateToTokenBudget } from "../../context-projection.js";
+import type { CapabilitySession } from "../core/session.js";
 
 /** Project one API-owned guidance message per request; never add it to the run transcript. */
 export function projectLoadedInstructions(session: CapabilitySession, maxTokens?: number):

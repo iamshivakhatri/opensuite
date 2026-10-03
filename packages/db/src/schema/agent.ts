@@ -247,7 +247,7 @@ export const agentCapabilityEvent = pgTable(
     index("agent_capability_event_run_idx").on(table.runId),
     index("agent_capability_event_capability_type_idx").on(table.capabilityId, table.eventType),
     index("agent_capability_event_model_idx").on(table.model),
-    check("agent_capability_event_event_type_check", sql`${table.eventType} IN ('discovered', 'loaded', 'executed', 'succeeded', 'failed')`),
+    check("agent_capability_event_event_type_check", sql`${table.eventType} IN ('recommended', 'discovered', 'loaded', 'executed', 'succeeded', 'failed')`),
     check("agent_capability_event_kind_check", sql`${table.capabilityKind} IN ('group', 'tool', 'instruction')`),
   ],
 );

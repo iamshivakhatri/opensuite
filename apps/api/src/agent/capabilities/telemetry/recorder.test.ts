@@ -3,10 +3,10 @@ import { test } from "node:test";
 import { defineTool, runAgent } from "@opensuite/agent-core-v3";
 import { jsonSchema } from "ai";
 import { MockLanguageModelV4, simulateReadableStream } from "ai/test";
-import { createToolSurface } from "../tool-groups.js";
-import { CapabilityRegistry } from "./registry.js";
-import { CapabilitySession } from "./session.js";
-import { createCapabilityTelemetry, type StoredCapabilityEvent } from "./telemetry.js";
+import { createToolSurface } from "../runtime/tool-surface.js";
+import { CapabilityRegistry } from "../core/registry.js";
+import { CapabilitySession } from "../core/session.js";
+import { createCapabilityTelemetry, type StoredCapabilityEvent } from "./recorder.js";
 
 const registry = new CapabilityRegistry([
   { id: "document", parentId: null, kind: "group", title: "Document", description: "Edit", projection: "dynamic" },

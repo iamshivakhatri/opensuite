@@ -15,7 +15,7 @@ import {
   type AgentExecutionService,
 } from "./agent/execution.js";
 import type { AgentRunReportSink } from "./agent/agent-run-report.js";
-import { createCapabilityEventSink } from "./agent/capabilities/telemetry.js";
+import { createCapabilityEventSink } from "./agent/capabilities/telemetry/recorder.js";
 import {
   createAgentPersistenceService,
   type AgentPersistenceService,

@@ -1,7 +1,7 @@
 import type { AgentToolSet } from "@opensuite/agent-core-v3";
 import { CapabilityRegistry, type CapabilityDefinition } from "./registry.js";
 
-export type CapabilityEventType = "discovered" | "loaded" | "executed" | "succeeded" | "failed";
+export type CapabilityEventType = "recommended" | "discovered" | "loaded" | "executed" | "succeeded" | "failed";
 export type CapabilityEvent = Readonly<{ capabilityId: string; kind: CapabilityDefinition["kind"]; type: CapabilityEventType; turn?: number; latencyMs?: number; errorCode?: string }>;
 type Emit = (event: CapabilityEvent) => void;
 const compact = (item: CapabilityDefinition) => ({ id: item.id, kind: item.kind, title: item.title, description: item.description });
@@ -47,6 +47,12 @@ export class CapabilitySession {
     const matches = this.registry.search(query, 8, (id) => this.isAvailable(id));
     for (const item of matches) this.emit?.({ capabilityId: item.id, kind: item.kind, type: "discovered", turn });
     return { ok: true as const, capabilities: matches.map(compact) };
+  }
+
+  recommend(query: string, turn = 1) {
+    const matches = this.registry.recommend(query, 3, (id) => this.isAvailable(id));
+    for (const item of matches) this.emit?.({ capabilityId: item.id, kind: item.kind, type: "recommended", turn });
+    return matches.map(compact);
   }
 
   load(ids: readonly string[], turn?: number) {

@@ -56,9 +56,10 @@ import {
   releaseLease,
   settleTerminalRunFailure,
 } from "./run-settlement.js";
-import { createToolSurface } from "./tool-groups.js";
-import { createCapabilityTelemetry, type CapabilityEventSink } from "./capabilities/telemetry.js";
-import { projectLoadedInstructions } from "./capabilities/instruction-projection.js";
+import { createToolSurface } from "./capabilities/runtime/tool-surface.js";
+import { createCapabilityTelemetry, type CapabilityEventSink } from "./capabilities/telemetry/recorder.js";
+import { projectLoadedInstructions } from "./capabilities/runtime/instruction-projection.js";
+import { createStandaloneCapabilityTools } from "./capabilities/catalog.js";
 import { createRunTrace, traceModelSettings, type RunTrace } from "./run-trace.js";
 import { createPrimaryDocxTools } from "./docx-tools.js";
 import { verifyDocumentUpdate } from "./document-verification.js";
@@ -582,6 +583,7 @@ async function runExecution(input: {
     });
     const tools: AgentToolSet = {
       ...(boundTools?.tools ?? {}),
+      ...createStandaloneCapabilityTools(),
       "workspace.search_documents": createWorkspaceSearchTool({
         documents: input.deps.documents,
         ...(input.deps.docxBinding ? { binding: input.deps.docxBinding } : {}),
@@ -614,9 +616,11 @@ async function runExecution(input: {
       () => boundTools?.getWorkingRevision() ?? 0,
     );
     const toolSurface = createToolSurface(tools, capabilityTelemetry.record);
+    const recommendations = toolSurface.session.recommend(input.instruction);
     const system = buildAgentOperatingInstruction(
       Object.keys(toolSurface.initialTools).map(providerSafeToolName),
       toolSurface.capabilityIndex,
+      recommendations,
     ) +
       (requestsDocumentChange(input.instruction)
         ? `\n\n${buildDocumentUpdateInstruction()}`

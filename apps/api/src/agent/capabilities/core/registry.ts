@@ -14,6 +14,9 @@ export type CapabilityDefinition =
   | (CapabilityBase & Readonly<{ kind: "instruction"; toolName?: never; instructions: () => string }>);
 
 const words = (value: string) => value.toLowerCase().match(/[a-z0-9]+/g) ?? [];
+const PROMPT_STOP_WORDS = new Set(["the", "and", "for", "from", "with", "this", "that", "what", "how", "please", "document", "file", "report", "write", "edit", "make", "create", "update"]);
+const promptWords = (value: string) => [...new Set(words(value.replaceAll("%", " percent "))
+  .filter((word) => word.length >= 3 && !/^\d+$/.test(word) && !PROMPT_STOP_WORDS.has(word)))].slice(0, 20);
 
 /** Immutable catalog indexes. Building them is a bootstrap cost, not a model-turn cost. */
 export class CapabilityRegistry {
@@ -102,12 +105,14 @@ export class CapabilityRegistry {
   search(query: string, limit = 8, isAvailable: (id: string) => boolean = () => true): CapabilityDefinition[] {
     const terms = [...new Set(words(query).filter((term) => term.length >= 2))].slice(0, 6);
     if (!terms.length) return [];
-    const first = this.searchIndex.get(terms[0]!);
+    const first = terms.map((term) => this.searchIndex.get(term)).sort((a, b) => (a?.size ?? 0) - (b?.size ?? 0))[0];
     if (!first) return [];
     const max = Math.max(0, Math.min(limit, 20));
     const matches: { definition: CapabilityDefinition; score: number }[] = [];
     const normalized = query.toLowerCase().trim();
+    let inspected = 0;
     for (const id of first) {
+      if (++inspected > 2_000) break;
       if (!isAvailable(id) || !terms.every((term) => this.searchIndex.get(term)?.has(id))) continue;
       const definition = this.idIndex.get(id)!;
       const title = definition.title.toLowerCase();
@@ -118,5 +123,30 @@ export class CapabilityRegistry {
       if (matches.length > max) matches.pop();
     }
     return matches.map((match) => match.definition);
+  }
+
+  /** Prompt routing uses only small indexed postings, never a catalog scan. */
+  recommend(query: string, limit = 3, isAvailable: (id: string) => boolean = () => true): CapabilityDefinition[] {
+    const terms = promptWords(query);
+    const postings = terms.map((term) => ({ term, ids: this.searchIndex.get(term) }))
+      .filter((entry): entry is { term: string; ids: Set<string> } => !!entry.ids && entry.ids.size <= 256)
+      .sort((a, b) => a.ids.size - b.ids.size).slice(0, 8);
+    const candidates = new Set<string>();
+    for (const { ids } of postings) for (const id of ids) {
+      if (candidates.size >= 256) break;
+      candidates.add(id);
+    }
+    return [...candidates].map((id) => this.idIndex.get(id)!)
+      .filter((item) => item.kind !== "group" && item.projection === "dynamic" && isAvailable(item.id))
+      .map((item) => {
+        const title = words(`${item.title} ${item.aliases?.join(" ") ?? ""}`);
+        const description = words(item.description);
+        const score = postings.reduce((sum, { term }) => sum + (title.some((word) => word.startsWith(term)) ? 3 : description.some((word) => word.startsWith(term)) ? 1 : 0), 0);
+        return { item, score };
+      })
+      .filter(({ score }) => score > 0)
+      .sort((a, b) => b.score - a.score || a.item.id.localeCompare(b.item.id))
+      .slice(0, Math.max(0, Math.min(limit, 5)))
+      .map(({ item }) => item);
   }
 }
