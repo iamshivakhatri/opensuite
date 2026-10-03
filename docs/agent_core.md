@@ -118,6 +118,15 @@ The next model turn receives schemas for the newly loaded tools through V3's
 existing `projectTools` callback. V3 executes against that turn's snapshot, so
 hidden tools cannot run in the same turn as the load request.
 
+Before Turn 1, the API uses bounded indexed lexical matching on the latest
+request to recommend up to three available dynamic capability leaves. Only
+ID, kind, title, and short description enter the initial prompt; this does not
+load tools or skill bodies. Obvious matches can be loaded directly, while
+`capabilities.list/search` remain available when the shortlist is insufficient.
+`compute.calculator` is the first non-document tool and evaluates arithmetic
+without JavaScript execution. Recommendation events join the existing raw
+capability telemetry and can be compared with later loads and tool use.
+
 DOCX specialist groups now live below `document` (paragraphs, text, tables,
 layout, rich content). Common document, workspace, and finish tools keep their
 previous initial exposure. V3 remains unaware of capability structure and DOCX.

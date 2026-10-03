@@ -59,6 +59,7 @@ packages/db/migrations/*.sql
 !packages/db/migrations/0015_persistent_run_transcript.sql
 !packages/db/migrations/0020_capability_events.sql
 !packages/db/migrations/0021_capability_kind.sql
+!packages/db/migrations/0022_capability_recommendations.sql
 packages/db/migrations/meta/*.json
 !packages/db/migrations/meta/_journal.json
 !packages/db/migrations/meta/0000_snapshot.json

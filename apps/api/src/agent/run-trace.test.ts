@@ -8,7 +8,7 @@ import { jsonSchema } from "ai";
 import { MockLanguageModelV4, simulateReadableStream } from "ai/test";
 import { composeProjectMessages } from "./agent-context.js";
 import { projectInRunObservations } from "./in-run-observation-projection.js";
-import { createToolSurface } from "./tool-groups.js";
+import { createToolSurface } from "./capabilities/runtime/tool-surface.js";
 import { createRunTrace, traceModelSettings, type RunTrace } from "./run-trace.js";
 
 const usage = { inputTokens: { total: 100, noCache: 80, cacheRead: 20, cacheWrite: 0 }, outputTokens: { total: 12, text: 7, reasoning: 5 } };

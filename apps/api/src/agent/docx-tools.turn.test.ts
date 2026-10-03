@@ -4,7 +4,7 @@ import { MockLanguageModelV4, simulateReadableStream } from "ai/test";
 import { createFinishTool, runAgent, type AgentEvent } from "@opensuite/agent-core-v3";
 import { bindDocxDocument, buildMinimalDocx, createNapiDocxEngineBinding } from "@opensuite/engine-client";
 import { createPrimaryDocxTools } from "./docx-tools.js";
-import { createToolSurface } from "./tool-groups.js";
+import { createToolSurface } from "./capabilities/runtime/tool-surface.js";
 
 type Call = { name: string; input: Record<string, unknown> };
 const inspect: Call = { name: "document.inspect", input: { kind: "tables" } };

@@ -4,6 +4,15 @@ import { test } from "node:test";
 import { buildAgentOperatingInstruction, buildDocumentUpdateInstruction } from "./operating-instruction.js";
 import { createDocumentTools } from "./document-tools.js";
 
+test("first-turn recommendations stay compact and do not auto-load tools", () => {
+  const system = buildAgentOperatingInstruction(["capabilities.load"], "compute: Deterministic calculations", [
+    { id: "compute.calculator", kind: "tool", title: "Calculator", description: "Deterministic arithmetic" },
+  ]);
+  assert.match(system, /LIKELY RELEVANT CAPABILITIES\n- compute\.calculator \(tool\)/);
+  assert.match(system, /Load an obvious fit directly; use list\/search only when these are insufficient/);
+  assert.doesNotMatch(system, /- compute_calculator\n|inputSchema/);
+});
+
 test("clarification requires material ambiguity and excludes cheap recovery and delegated choices", () => {
   const system = buildAgentOperatingInstruction(["request_clarification", "finish"]);
   assert.match(system, /request_clarification alone, before further edits, only when a requested outcome requires choosing between two or more materially different unsupported interpretations/);
