@@ -15,6 +15,7 @@ import {
   type AgentExecutionService,
 } from "./agent/execution.js";
 import type { AgentRunReportSink } from "./agent/agent-run-report.js";
+import { createCapabilityEventSink } from "./agent/capabilities/telemetry.js";
 import {
   createAgentPersistenceService,
   type AgentPersistenceService,
@@ -347,6 +348,7 @@ export async function buildApp(
       modelUsage,
       lease: agentExecutionLease,
       managedUsagePolicy,
+      capabilityEventSink: createCapabilityEventSink(deps.db),
       ...(deps.agent?.agentRunReportSink
         ? { agentRunReportSink: deps.agent.agentRunReportSink }
         : {}),

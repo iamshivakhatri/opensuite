@@ -49,6 +49,12 @@ test("operating instruction starts useful tools without a narrated full plan", (
   assert.doesNotMatch(system, /plan a coherent set of edits/);
 });
 
+test("operating instruction treats restored tips as authoritative after discarded newer versions", () => {
+  const system = buildAgentOperatingInstruction(["finish"]);
+  assert.match(system, /Bound document tips in this run are authoritative/);
+  assert.match(system, /after a user restore, higher version numbers are permanently deleted/);
+});
+
 test("operating instruction embeds general policy and only exposed tools", () => {
   const system = buildAgentOperatingInstruction([
     "document.find",

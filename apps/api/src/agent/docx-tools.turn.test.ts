@@ -252,7 +252,7 @@ test("recurring report edits complete on the common surface with zero discovery 
   assert.equal(run.session.getWorkingMutationCount(), 4);
   assert.equal(surface.summary().discoveryTurnCount, 0);
   assert.deepEqual(surface.summary().groupsLoaded, []);
-  assert.ok(result.metrics.modelTurns.every((turn) => turn.exposedToolCount === 15));
+  assert.ok(result.metrics.modelTurns.every((turn) => turn.exposedToolCount === 18));
   await run.session.flush();
   assert.equal(run.appends(), 1);
   const binding = await createNapiDocxEngineBinding();

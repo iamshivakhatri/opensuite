@@ -73,7 +73,7 @@ test("API full trace records retrieval, saved version, validation and durable se
         appendDocumentVersion: async (input) => { versionId = "v2"; versions.set(versionId, Buffer.from(input.bytes)); return { version: { id: versionId, versionNumber: 2 } } as never; },
       },
     });
-    const result = await (await execution.start({ userId: "user-1", threadId: "thread-1", activeDocumentId: "doc-1", instruction: "Replace Before with After" })).result;
+    const result = await (await execution.start({ userId: "user-1", threadId: "thread-1", activeDocumentId: "doc-1", instruction: "Update this document: replace Before with After" })).result;
     assert.equal(result.run.status, "completed");
     assert.equal(versionId, "v2");
     assert.equal(readdirSync(dir).length, 1);
@@ -179,7 +179,7 @@ for (const tracing of [false, true]) {
           },
         },
       });
-      const result = await (await execution.start({ userId: "user-1", threadId: "thread-1", activeDocumentId: "doc-1", instruction: "Replace First, Second and Third, then insert a paragraph" })).result;
+      const result = await (await execution.start({ userId: "user-1", threadId: "thread-1", activeDocumentId: "doc-1", instruction: "Update this document: replace First, Second and Third, then insert a paragraph" })).result;
       assert.equal(result.run.status, "completed");
       assert.equal(appends, 1);
       assert.equal(runtime?.metrics.toolCalls.filter((call) => call.failureCode === "STALE_HANDLE").length, 1);
@@ -246,7 +246,7 @@ test("a failed DIRECT refresh removes the stale view, retries only after another
       },
     },
   });
-  const result = await (await execution.start({ userId: "user-1", threadId: "thread-1", activeDocumentId: "doc-1", instruction: "Replace Small" })).result;
+  const result = await (await execution.start({ userId: "user-1", threadId: "thread-1", activeDocumentId: "doc-1", instruction: "Update this document: replace Small" })).result;
   assert.equal(result.run.status, "completed");
   assert.equal(appends, 1);
   assert.match(JSON.stringify(await realBinding.inspectDocx(saved, { focus: { kind: "body_blocks" } })), /Recovered/);
@@ -632,8 +632,8 @@ test("successful V3 finish_tool settles completed + agent.completed", async () =
   assert.equal(events.some((e) => e.type === "agent.failed"), false);
   assert.ok(sawSystem);
   assert.match(sawSystem!, /You are OpenSuite's document agent/);
-  assert.match(sawSystem!, /AVAILABLE CAPABILITIES/);
-  assert.match(sawSystem!, /Use the finish operation when the requested work is complete/);
+  assert.match(sawSystem!, /INITIAL TOOLS/);
+  assert.match(sawSystem!, /Use finish when the requested work is complete/);
   // Isolation fixture has no bound DOCX → only terminal tools are exposed.
   assert.match(sawSystem!, /- finish/);
   assert.doesNotMatch(sawSystem!.split("OPERATING PRINCIPLES")[0]!, /- document[._]/);
@@ -712,7 +712,7 @@ for (const editFirst of [false, true]) {
         assert.equal(clarification.execute!({ question: "  Which period?  " }, context), "Which period?");
         if (runtimeResults.length) {
           assert.ok(JSON.stringify(input.messages).includes(question), "follow-up includes the durable question");
-          assert.ok(JSON.stringify(input.messages).includes("Change October to November"), "follow-up includes the original request");
+          assert.ok(JSON.stringify(input.messages).includes("Update this document: change October to November"), "follow-up includes the original request");
         }
         const result = await runAgent({ ...input, model });
         runtimeResults.push(result);
@@ -733,7 +733,7 @@ for (const editFirst of [false, true]) {
         },
       });
       const start = (instruction: string) => execution.start({ userId: "user-1", threadId: "thread-1", activeDocumentId: "doc-1", instruction, liveEvents: { emit: (event) => { events.push(event); } } });
-      const first = await (await start("Change October to November and replace Priorities for November with December priorities.")).result;
+      const first = await (await start("Update this document: change October to November and replace Priorities for November with December priorities.")).result;
       assert.equal(first.run.status, "completed_with_input_needed");
       assert.equal(first.run.errorCode, null);
       assert.equal(first.run.resultMessageId, first.assistantMessage?.id);
@@ -752,14 +752,14 @@ for (const editFirst of [false, true]) {
       assert.ok(events.some((event) => event.type === "agent.completed"));
       assert.equal(persistence.steps.filter((step) => step.kind === "narration").length, 0, "question is not duplicated as narration");
       const trace = readFileSync(join(dir, readdirSync(dir)[0]!), "utf8");
-      assert.match(trace, /Tool — request_clarification/);
+      assert.match(trace, /Tool Result — request_clarification/);
       assert.match(trace, /"rawResult":/);
       assert.match(trace, /"stopReason": "finish_tool"/);
       assert.match(trace, /"status": "completed_with_input_needed"/);
       assert.ok(trace.includes(question));
       assert.equal(trace.includes("## Document Version Created"), editFirst);
 
-      const followUp = await (await start("Use October 2026 as the reporting period, with November priorities.")).result;
+      const followUp = await (await start("Update this document: use October 2026 as the reporting period, with November priorities.")).result;
       assert.equal(followUp.thread.id, first.thread.id);
       assert.notEqual(followUp.run.id, first.run.id);
       assert.equal(followUp.run.status, "completed");
@@ -809,7 +809,7 @@ test("a document creation run tells the model to create before editing", async (
     docxBinding: { getDocxCapabilities: () => ({ ok: true, formats: [] }) } as unknown as AgentExecutionServiceDeps["docxBinding"],
   });
   await (await execution.start({ userId: "user-1", threadId: "thread-1", instruction: "Create a research document" })).result;
-  assert.match(system, /No document is active.*create it before calling any document tool/);
+  assert.match(system, /No document is selected for editing\. Create one for a new-document request/);
 });
 
 test("successful V3 completed (no tools) settles completed", async () => {
@@ -918,7 +918,7 @@ test("later runs restore durable working documents into model context", async ()
   const first = await (await execution.start({
     userId: "user-1",
     threadId: "thread-1",
-    instruction: "first",
+    instruction: "Update this document first",
     activeDocumentId: "doc-a",
     documentIds: ["doc-b"],
   })).result;
@@ -933,7 +933,7 @@ test("later runs restore durable working documents into model context", async ()
     const second = await (await execution.start({
       userId: "user-1",
       threadId: "thread-1",
-      instruction: "second",
+      instruction: "Update this document second",
       activeDocumentId: "doc-b",
       documentIds: ["doc-a"],
     })).result;
@@ -941,8 +941,8 @@ test("later runs restore durable working documents into model context", async ()
   } finally {
     console.info = original;
   }
-  assert.match(String(projected.at(-2)?.content), /WORKING SET\n- B\.docx \(docx; ID doc-b\)\n- A\.docx \(docx; ID doc-a\)/);
-  assert.equal(projected.at(-1)?.content, "second");
+  assert.match(String(projected.at(-2)?.content), /WORKING SET\n- B\.docx \(docx; ID doc-b; tip v1; version v-b\)\n- A\.docx \(docx; ID doc-a; tip v1; version v-a\)/);
+  assert.equal(projected.at(-1)?.content, "Update this document second");
   assert.ok(logs.some((message) =>
     message.includes("[agent] RETRIEVAL") &&
     message.includes("target=B.docx") &&
@@ -1615,7 +1615,7 @@ test("terminal runs flush valid working changes once, including partial and canc
         },
       },
     });
-    const result = await (await execution.start({ userId: "user-1", threadId: "thread-1", activeDocumentId: "doc-1", instruction: "edit", signal: controller.signal, liveEvents: { emit: (event) => { events.push(event); } } })).result;
+    const result = await (await execution.start({ userId: "user-1", threadId: "thread-1", activeDocumentId: "doc-1", instruction: "Edit this document", signal: controller.signal, liveEvents: { emit: (event) => { events.push(event); } } })).result;
     assert.equal(modelCalls, 1, `verification must not add a model turn: ${mode}`);
     assert.equal(persistence.steps.some((step) => step.kind === "validation"), appends > 0 && mode !== "append_fail", mode);
     assert.equal(appends, mode === "read_only" || mode === "fail_before" ? 0 : 1, mode);
@@ -1657,7 +1657,7 @@ test("execution scopes compatible handle reuse to the model turn and saves one v
       table = { handle: inspected.value.tables.items[0]!.handle };
     }
     const calls = [
-      [{ name: "tools_load_group", input: { groups: ["table_styling"] } }, { name: "document_inspect", input: { kind: "tables" } }],
+      [{ name: "capabilities_load", input: { ids: ["document.tables.styling"] } }, { name: "document_inspect", input: { kind: "tables" } }],
       [{ name: "document_set_table_formatting", input: { table, borders: "grid" } }, { name: "document_set_table_column_widths", input: { table, widthsTwips: [3000, 3000] } }],
       [{ name: "document_set_table_column_widths", input: { table, widthsTwips: [2000, 4000] } }, { name: "finish", input: {} }],
       [{ name: "finish", input: {} }],
@@ -1672,7 +1672,7 @@ test("execution scopes compatible handle reuse to the model turn and saves one v
   let runtimeResult: RunAgentResult;
   const deps = baseDeps(persistence, async (input) => {
     assert.ok(input.projectTools);
-    assert.match(input.system!, /table_styling: Change table/);
+    assert.match(input.system!, /document: Read and edit DOCX documents/);
     assert.doesNotMatch(input.system!, /- document_set_table_formatting/);
     runtimeResult = await runAgent({ ...input, model });
     return runtimeResult;
@@ -1695,14 +1695,14 @@ test("execution scopes compatible handle reuse to the model turn and saves one v
     },
   });
   const result = await (await execution.start({
-    userId: "user-1", threadId: "thread-1", activeDocumentId: "doc-1", instruction: "format",
+    userId: "user-1", threadId: "thread-1", activeDocumentId: "doc-1", instruction: "Format this document",
   })).result;
   assert.equal(result.run.status, "completed");
   assert.equal(appends, 1);
   assert.equal(reports[0]?.document?.workingMutationCount, 2);
   assert.equal(reports[0]?.document?.finalVersionId, "v2");
   assert.equal(runtimeResult!.stopReason, "finish_tool");
-  assert.deepEqual(runtimeResult!.metrics.modelTurns.map((turn) => turn.exposedToolCount), [18, 22, 22, 22]);
+  assert.deepEqual(runtimeResult!.metrics.modelTurns.map((turn) => turn.exposedToolCount), [21, 25, 25, 25]);
   assert.deepEqual(runtimeResult!.metrics.toolCalls.map((call) => call.failureCode), [undefined, undefined, undefined, undefined, undefined, "STALE_HANDLE", undefined]);
 });
 

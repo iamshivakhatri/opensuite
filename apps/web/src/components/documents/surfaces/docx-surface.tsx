@@ -4,9 +4,10 @@ import * as React from "react";
 import dynamic from "next/dynamic";
 import type { DocxEditorRef } from "@casualoffice/docs";
 
+import { useQueryClient } from "@tanstack/react-query";
+
 import {
   ApiError,
-  fetchDocumentVersionContent,
   fetchWorkingDocument,
   getDocument,
   saveDocumentVersion,
@@ -16,6 +17,7 @@ import { clearCasualLocalAutosave } from "@/lib/casual-autosave";
 import { canApplyWorkingPreview, decideEditorVersionRefresh } from "@/lib/editor-version-refresh";
 import { userFacingError } from "@/components/files/format";
 import { ConfirmDialog } from "@/components/ui/context-menu";
+import { documentVersionContentQuery } from "@/lib/query-keys";
 import { useTheme } from "@/lib/theme";
 import { useToast } from "@/lib/toast";
 
@@ -54,20 +56,27 @@ export type DocxSurfaceStatus = {
  */
 export function DocxSurface({
   document,
+  viewVersionId = null,
   onStatusChange,
   onDocumentUpdated,
+  onRequestRestore,
   saveRequestId = 0,
   workingPreview = null,
 }: {
   readonly document: ListedDocument;
+  /** When set, load this version instead of the tip (read-only if not latest). */
+  readonly viewVersionId?: string | null;
   readonly onStatusChange?: (status: DocxSurfaceStatus) => void;
   readonly onDocumentUpdated?: (document: ListedDocument) => void;
+  /** User wants to make the viewed historical version the tip. */
+  readonly onRequestRestore?: () => void;
   /** Bump to request an explicit save (header Save / Cmd+S from parent). */
   readonly saveRequestId?: number;
   readonly workingPreview?: { runId: string; documentId: string; baseVersionId: string; revision: number } | null;
 }) {
   const { toast } = useToast();
   const { resolvedTheme } = useTheme();
+  const queryClient = useQueryClient();
   const editorRef = React.useRef<DocxEditorRef | null>(null);
   const selectionRef = React.useRef<unknown>(null);
   const savingRef = React.useRef(false);
@@ -80,7 +89,8 @@ export function DocxSurface({
   /** Ignore Casual dirty=true churn right after remount/agent reload. */
   const suppressDirtyRef = React.useRef(false);
   const suppressDirtyTimerRef = React.useRef<number | null>(null);
-  const documentIdRef = React.useRef(document.id);
+  /** `null` until first load effect so initial mount always counts as a switch. */
+  const documentIdRef = React.useRef<string | null>(null);
   const dirtyRef = React.useRef(false);
   const conflictRef = React.useRef(false);
   const phaseRef = React.useRef<LoadPhase>("loading");
@@ -135,7 +145,10 @@ export function DocxSurface({
     };
   }, []);
 
+  const targetVersionId = viewVersionId ?? document.latestVersion.id;
+  const viewingHistory = targetVersionId !== document.latestVersion.id;
   const newerAvailable =
+    !viewingHistory &&
     loadedVersionId != null &&
     latestVersionId != null &&
     loadedVersionId !== latestVersionId;
@@ -174,11 +187,10 @@ export function DocxSurface({
         // Drop Casual's local recovery draft so remount does not show
         // "Unsaved changes from … restore them?" after agent/server loads.
         await clearCasualLocalAutosave();
-        const bytes = await fetchDocumentVersionContent(
-          document.id,
-          versionId,
+        const bytes = await queryClient.fetchQuery(
+          documentVersionContentQuery(document.id, versionId),
         );
-        // Detach a copy so Casual ownership of the buffer cannot mutate our cache.
+        // Detach a copy so Casual ownership cannot detach the React Query cache.
         const copy = bytes.slice(0);
         setBuffer(copy);
         setLoadedVersionId(versionId);
@@ -192,7 +204,7 @@ export function DocxSurface({
         );
       }
     },
-    [beginSuppressDirty, document.id],
+    [beginSuppressDirty, document.id, queryClient],
   );
 
   /**
@@ -221,9 +233,8 @@ export function DocxSurface({
 
       try {
         await clearCasualLocalAutosave();
-        const bytes = await fetchDocumentVersionContent(
-          document.id,
-          versionId,
+        const bytes = await queryClient.fetchQuery(
+          documentVersionContentQuery(document.id, versionId),
         );
         const copy = bytes.slice(0);
         const api = editorRef.current;
@@ -275,7 +286,7 @@ export function DocxSurface({
         reloadingRef.current = false;
       }
     },
-    [beginSuppressDirty, document.id, toast],
+    [beginSuppressDirty, document.id, queryClient, toast],
   );
 
   React.useEffect(() => {
@@ -353,26 +364,26 @@ export function DocxSurface({
     })();
   }, [beginSuppressDirty, phase, previewTick, workingPreview]);
 
-  // Load exact version when opening a document (not on every latestVersion bump).
+  /** `undefined` sentinel so first mount always counts as a view change. */
+  const viewVersionIdRef = React.useRef<string | null | undefined>(undefined);
+
+  // Load on document open or explorer history selection — not on tip advance
+  // (tip advance uses newerAvailable → reloadVersionInPlace below).
   React.useEffect(() => {
     const switched = documentIdRef.current !== document.id;
     documentIdRef.current = document.id;
-    if (switched) {
-      setEditorKey(0);
-    }
+    const viewChanged = viewVersionIdRef.current !== viewVersionId;
+    viewVersionIdRef.current = viewVersionId;
     setLatestVersionId(document.latestVersion.id);
-    void loadVersion(document.latestVersion.id);
-  }, [document.id, loadVersion]);
-
-  // After document identity is stable, keep latestVersionId in sync with parent.
-  // Newer versions arrive via onDocumentUpdated (agent SSE / save), not focus refetch.
-  React.useEffect(() => {
-    setLatestVersionId(document.latestVersion.id);
-  }, [document.latestVersion.id]);
+    if (!switched && !viewChanged) return;
+    if (switched) setEditorKey(0);
+    void loadVersion(targetVersionId);
+  }, [document.id, document.latestVersion.id, loadVersion, targetVersionId, viewVersionId]);
 
   // Auto-refresh when a newer immutable version appears (agent/server).
+  // Skip while the user is intentionally viewing history.
   React.useEffect(() => {
-    if (!newerAvailable || !latestVersionId || phase !== "ready") {
+    if (viewingHistory || !newerAvailable || !latestVersionId || phase !== "ready") {
       return;
     }
 
@@ -413,6 +424,7 @@ export function DocxSurface({
     newerAvailable,
     phase,
     reloadVersionInPlace,
+    viewingHistory,
   ]);
 
   React.useEffect(() => {
@@ -428,6 +440,15 @@ export function DocxSurface({
   const persistBytes = React.useCallback(
     async (bytes: ArrayBuffer) => {
       if (!loadedVersionId || savingRef.current) return;
+      if (loadedVersionId !== latestVersionIdRef.current) {
+        toast({
+          tone: "error",
+          title: "Older version",
+          description:
+            "Restore this version as current before editing, or switch back to the latest tip.",
+        });
+        return;
+      }
       savingRef.current = true;
       setSaving(true);
       setConflict(false);
@@ -590,7 +611,23 @@ export function DocxSurface({
 
   return (
     <div className="relative flex h-full min-h-0 flex-1 flex-col bg-canvas">
-      {conflict ? (
+      {viewingHistory ? (
+        <div className="flex shrink-0 items-center justify-between gap-3 border-b border-primary-line bg-primary-soft px-3 py-2">
+          <p className="os-type-secondary leading-snug text-ink-soft">
+            Viewing an older version (read-only). To edit it, restore it as
+            current — newer versions will be permanently deleted.
+          </p>
+          {onRequestRestore ? (
+            <button
+              type="button"
+              className="os-type-label shrink-0 rounded-[var(--radius-sm)] border border-primary-line bg-surface px-2.5 py-1 font-medium text-primary hover:bg-elevated"
+              onClick={onRequestRestore}
+            >
+              Restore as current
+            </button>
+          ) : null}
+        </div>
+      ) : conflict ? (
         <div className="flex shrink-0 items-center justify-between gap-3 border-b border-danger/25 bg-danger-soft px-3 py-2">
           <p className="os-type-secondary leading-snug text-danger">
             This file was updated elsewhere. Your unsaved edits are kept in

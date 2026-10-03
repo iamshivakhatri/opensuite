@@ -452,6 +452,42 @@ export interface SavedDocumentVersion {
   readonly createdAt: string;
 }
 
+/** Recent version metadata (newest first). Default limit matches explorer. */
+export async function listDocumentVersions(
+  documentId: string,
+  options?: { readonly limit?: number },
+): Promise<ListedDocumentVersion[]> {
+  const query =
+    options?.limit !== undefined ? `?limit=${options.limit}` : "";
+  const response = await apiFetch(
+    `/api/documents/${documentId}/versions${query}`,
+  );
+  if (!response.ok) {
+    throw await parseApiError(response);
+  }
+  const body = (await response.json()) as { versions: ListedDocumentVersion[] };
+  return body.versions;
+}
+
+/**
+ * Make this version the tip by permanently deleting every newer version.
+ * Returns the document with the restored tip as latestVersion.
+ */
+export async function restoreDocumentVersion(
+  documentId: string,
+  versionId: string,
+): Promise<ListedDocument> {
+  const response = await apiFetch(
+    `/api/documents/${documentId}/versions/${versionId}/restore`,
+    { method: "POST" },
+  );
+  if (!response.ok) {
+    throw await parseApiError(response);
+  }
+  const body = (await response.json()) as { document: ListedDocument };
+  return body.document;
+}
+
 /**
  * Fetch exact immutable Office bytes for a specific document version.
  * For a future browser editor — not latest-only download.

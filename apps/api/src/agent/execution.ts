@@ -36,6 +36,7 @@ import {
   composeProjectMessages,
   loadHistory,
   prepareContext,
+  toolContext,
 } from "./agent-context.js";
 import {
   createRunEventHandler,
@@ -56,6 +57,8 @@ import {
   settleTerminalRunFailure,
 } from "./run-settlement.js";
 import { createToolSurface } from "./tool-groups.js";
+import { createCapabilityTelemetry, type CapabilityEventSink } from "./capabilities/telemetry.js";
+import { projectLoadedInstructions } from "./capabilities/instruction-projection.js";
 import { createRunTrace, traceModelSettings, type RunTrace } from "./run-trace.js";
 import { createPrimaryDocxTools } from "./docx-tools.js";
 import { verifyDocumentUpdate } from "./document-verification.js";
@@ -185,6 +188,7 @@ export interface AgentExecutionServiceDeps {
   readonly modelUsage?: ModelUsageService;
   readonly managedUsagePolicy?: ManagedUsagePolicy;
   readonly agentRunReportSink?: AgentRunReportSink;
+  readonly capabilityEventSink?: CapabilityEventSink;
   readonly lease?: AgentExecutionLeaseService;
   /** Test seam — production uses agent-core-v3 `runAgent`. */
   readonly runAgent?: typeof runAgent;
@@ -429,6 +433,7 @@ async function runExecution(input: {
   readonly setWorkingDocumentGetter: (getter: AgentExecutionHandle["getWorkingDocument"]) => void;
 }): Promise<AgentExecutionResult> {
   const transcript = createTranscriptCollector();
+  const capabilityTelemetry = createCapabilityTelemetry(input.run.id, input.model.usageAttribution?.model ?? "unknown", input.deps.capabilityEventSink);
   let boundTools: Awaited<ReturnType<typeof createPrimaryDocxTools>>;
   let flushAttempted = false;
   let persistenceFailure = false;
@@ -608,7 +613,7 @@ async function runExecution(input: {
       false,
       () => boundTools?.getWorkingRevision() ?? 0,
     );
-    const toolSurface = createToolSurface(tools);
+    const toolSurface = createToolSurface(tools, capabilityTelemetry.record);
     const system = buildAgentOperatingInstruction(
       Object.keys(toolSurface.initialTools).map(providerSafeToolName),
       toolSurface.capabilityIndex,
@@ -626,7 +631,7 @@ async function runExecution(input: {
       checkpoint,
       priorMessages,
       system,
-      tools,
+      tools: toolSurface.initialTools,
       instruction: input.instruction,
       ...(input.continuationContext ? { continuationContext: input.continuationContext } : {}),
       activeDocumentId: boundTools?.getActiveDocumentId(),
@@ -729,6 +734,14 @@ async function runExecution(input: {
       } else documentView = undefined;
       const workingRevision = boundTools?.getWorkingRevision() ?? 0;
       const projected = project(messages);
+      // projectMessages runs before the model request. A load call later in this turn
+      // can only change this guidance on the next request.
+      const currentTools = toolSurface.session.projectTools();
+      const instructionBudget = context.safeInputBudgetTokens === undefined ? undefined : Math.max(0,
+        context.safeInputBudgetTokens - estimateTokens(system) - estimateTokens(toolContext(currentTools)) - estimateTokens(JSON.stringify(projected)),
+      );
+      const guidance = projectLoadedInstructions(toolSurface.session, instructionBudget);
+      const modelMessages = guidance ? [...projected, guidance.message] : projected;
       const inRunMessages = projected.slice(initialMessageCount);
       continuation = { turn: ++modelTurn, mode: "provider",
         priorAssistantReasoningReplayed: inRunMessages.some((message) => message.role === "assistant" &&
@@ -738,10 +751,11 @@ async function runExecution(input: {
             part.output.type !== "error-text" && part.output.type !== "error-json" && part.output.type !== "execution-denied" &&
             !("value" in part.output && part.output.value && typeof part.output.value === "object" && (part.output.value as { ok?: unknown }).ok === false))),
         estimatedInRunTokens: estimateTokens(JSON.stringify(inRunMessages)),
+        loadedInstructionTokens: guidance?.estimatedTokens ?? 0,
         workingRevision, snapshotRevision: directSnapshotRevision,
         };
       input.trace?.write(`## Turn ${modelTurn} — Continuation`, continuation);
-      return projected;
+      return modelMessages;
     };
 
     // The one API → agent-core-v3 execution call.
@@ -804,6 +818,7 @@ async function runExecution(input: {
           ? { maxOutputTokens: input.model.outputTokenLimit }
           : {}),
         onEvent: (event) => {
+          capabilityTelemetry.runtimeEvent(event, toolSurface.session);
           input.trace?.event(event);
           if (event.type === "model_turn_started") boundTools?.setModelTurn(event.turn);
           if (event.type === "model_turn_completed") toolSurface.recordTurn(event, runShort);
@@ -962,6 +977,8 @@ async function runExecution(input: {
       liveEvents: input.liveEvents,
       transcript: transcript.entries(),
     });
+  } finally {
+    await capabilityTelemetry.flush();
   }
 }
 

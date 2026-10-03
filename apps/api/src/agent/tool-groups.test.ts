@@ -1,14 +1,17 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { createFinishTool, defineTool, providerSafeToolName, type AgentEvent } from "@opensuite/agent-core-v3";
+import { createFinishTool, defineTool, providerSafeToolName, runAgent } from "@opensuite/agent-core-v3";
 import { createNapiDocxEngineBinding } from "@opensuite/engine-client";
 import { jsonSchema } from "ai";
+import { MockLanguageModelV4, simulateReadableStream } from "ai/test";
 import { createPrimaryDocxTools } from "./docx-tools.js";
 import { createDocumentTools } from "./document-tools.js";
 import { buildAgentOperatingInstruction } from "./operating-instruction.js";
 import { createToolSurface } from "./tool-groups.js";
+import { projectLoadedInstructions } from "./capabilities/instruction-projection.js";
+import type { CapabilityEvent } from "./capabilities/session.js";
 
-async function createSurface() {
+async function createSurface(emit?: (event: CapabilityEvent) => void) {
   const session = await createPrimaryDocxTools({
     binding: await createNapiDocxEngineBinding(), documents: {} as never,
     ownerUserId: "user", workspaceId: "workspace", documentId: null, versionId: null,
@@ -21,110 +24,116 @@ async function createSurface() {
       inputSchema: jsonSchema({ type: "object", properties: { question: { type: "string" } }, required: ["question"] }), execute: ({ question }: { question: string }) => question }),
     "workspace.search_documents": defineTool({ kind: "read", description: "search",
       inputSchema: jsonSchema({ type: "object", properties: { query: { type: "string" } }, required: ["query"] }), execute: () => ({ matches: [] }) }),
-  });
+  }, emit);
 }
 
 const call = { toolCallId: "load", messages: [], context: undefined as never };
-const load = (surface: Awaited<ReturnType<typeof createSurface>>, groups: string[]) =>
-  surface.tools["tools.load_group"]!.execute!({ groups }, call);
+const load = (surface: Awaited<ReturnType<typeof createSurface>>, ids: string[]) =>
+  surface.tools["capabilities.load"]!.execute!({ ids }, call);
 
-test("common surface is sorted, covers the report update and preserves workspace/finish tools", async () => {
+test("root surface stays compact and common document workflows remain available", async () => {
   const surface = await createSurface();
-  const names = Object.keys(surface.initialTools);
-  assert.equal(names.length, 19);
-  assert.deepEqual(names, [...names].sort());
-  assert.deepEqual(Object.keys(surface.projectTools()), names);
-  for (const name of ["document.batch_replace_text", "document.inspect", "document.delete_table_row",
-    "document.set_table_cells_text", "document.replace_text", "finish", "finish_with_input_needed", "request_clarification",
-    "document.find", "document.insert_paragraphs", "document.set_paragraph_style", "document.create_table",
-    "workspace.create_blank_document", "workspace.duplicate_current_document", "workspace.select_document", "workspace.inspect_document", "workspace.rename_document", "workspace.search_documents"]) {
-    assert.ok(surface.initialTools[name], name);
-    assert.equal(surface.initialTools[name], surface.tools[name]);
-  }
+  assert.equal(Object.keys(surface.initialTools).length, 21);
+  assert.deepEqual(Object.keys(surface.initialTools), Object.keys(surface.initialTools).sort());
+  for (const name of ["document.inspect", "document.replace_text", "document.set_table_cells_text",
+    "workspace.select_document", "workspace.search_documents", "finish", "request_clarification",
+    "capabilities.list", "capabilities.search", "capabilities.load"]) assert.ok(surface.initialTools[name], name);
   assert.equal(surface.initialTools["document.set_table_cells_formatting"], undefined);
+  assert.deepEqual(surface.session.roots().map((item) => item.id), ["agent", "document", "skills", "workspace"]);
+  assert.equal(surface.capabilityIndex.includes("table_styling"), false);
+  const system = buildAgentOperatingInstruction(Object.keys(surface.initialTools).map(providerSafeToolName), surface.capabilityIndex);
+  assert.match(system, /capabilities_list/);
+  assert.doesNotMatch(system, /document_set_table_cells_formatting|inputSchema/);
 });
 
-test("loading is monotonic, idempotent, run-local and rejects unknown groups without partial activation", async () => {
+test("list returns immediate available children and search returns compact results", async () => {
   const surface = await createSurface();
-  assert.deepEqual(await load(surface, ["table_styling"]), { ok: true, activeGroups: ["table_styling"] });
-  const names = Object.keys(surface.projectTools());
+  const list = surface.tools["capabilities.list"]!.execute!;
+  assert.deepEqual((await list!({ parentId: "document.tables" }, call) as { capabilities: { id: string }[] }).capabilities.map((item) => item.id),
+    ["document.tables.structure", "document.tables.styling"]);
+  assert.deepEqual((await list!({ parentId: "document" }, call) as { capabilities: { id: string }[] }).capabilities.some((item) => item.id === "document.tables.styling"), false);
+  const search = await surface.tools["capabilities.search"]!.execute!({ query: "shading" }, call) as { capabilities: unknown[] };
+  assert.ok(search.capabilities.length > 0 && search.capabilities.length <= 8);
+  assert.equal(JSON.stringify(search).includes("inputSchema"), false);
+});
+
+test("loading is monotonic, idempotent, run-local, and rejects unavailable IDs atomically", async () => {
+  const surface = await createSurface();
+  assert.deepEqual(await load(surface, ["document.tables.styling"]), { ok: true, loadedIds: ["document.tables.styling"] });
   assert.ok(surface.projectTools()["document.set_table_cells_formatting"]);
-  assert.deepEqual(await load(surface, ["table_styling", "table_styling"]), { ok: true, activeGroups: ["table_styling"] });
-  assert.deepEqual(Object.keys(surface.projectTools()), names);
-  assert.deepEqual(await load(surface, ["text_formatting", "unknown"]), { ok: false, reasonCode: "UNKNOWN_TOOL_GROUP" });
-  assert.deepEqual(await load(surface, ["toString"]), { ok: false, reasonCode: "UNKNOWN_TOOL_GROUP" });
-  assert.deepEqual(await load(surface, []), { ok: false, reasonCode: "UNKNOWN_TOOL_GROUP" });
-  assert.deepEqual(Object.keys(surface.projectTools()), names);
-  await load(surface, ["text_formatting"]);
-  assert.ok(names.every((name) => surface.projectTools()[name]));
+  assert.deepEqual(await load(surface, ["document.tables.styling"]), { ok: true, loadedIds: ["document.tables.styling"] });
+  assert.deepEqual(await load(surface, ["document.text", "unknown"]), { ok: false, reasonCode: "CAPABILITY_UNAVAILABLE" });
+  assert.deepEqual(await load(surface, ["document"]), { ok: false, reasonCode: "CAPABILITY_NOT_LOADABLE" });
+  assert.equal(surface.projectTools()["document.set_text_formatting"], undefined);
   assert.equal((await createSurface()).initialTools["document.set_table_cells_formatting"], undefined);
 });
 
-test("all current tools have exactly one group or common placement; group/tool order ignores loading order", async () => {
-  const first = await createSurface();
-  const second = await createSurface();
-  const groups = first.capabilityIndex.split("\n").map((line) => line.split(":")[0]!);
-  assert.deepEqual(groups, ["page_layout", "paragraphs", "rich_content", "table_structure", "table_styling", "text_formatting"]);
-  const expectedCounts = [5, 6, 4, 5, 4, 2];
-  const grouped = new Set(Object.keys(first.initialTools));
-  for (const [index, group] of groups.entries()) {
-    const single = await createSurface();
-    await load(single, [group]);
-    assert.ok(single.projectTools().request_clarification);
-    const added = Object.keys(single.projectTools()).filter((name) => !single.initialTools[name]);
-    assert.equal(added.length, expectedCounts[index]);
-    for (const name of added) { assert.equal(grouped.has(name), false, name); grouped.add(name); }
-  }
-  assert.deepEqual([...grouped].sort(), Object.keys(first.tools).sort());
-  assert.equal(grouped.size, 45); // Existing tools plus search, rename, discovery, and clarification.
-  await load(first, groups);
-  for (const group of [...groups].reverse()) await load(second, [group]);
-  assert.deepEqual(Object.keys(first.projectTools()), Object.keys(second.projectTools()));
-  assert.deepEqual(first.summary().groupsLoaded, second.summary().groupsLoaded);
-});
-
-test("group index and loader honor existing engine/host capability filtering", async () => {
+test("engine filtering removes unsupported tools and their empty groups", async () => {
   const tools = createDocumentTools({ capabilities: () => ({ formats: [{ format: "docx", capabilities: ["inspect", "set_text_formatting"] }] }),
     inspect: async () => ({}), find: async () => ({}), mutate: async () => ({ ok: true }),
   });
   const surface = createToolSurface(tools);
-  assert.match(surface.capabilityIndex, /^text_formatting:/);
-  assert.equal(surface.capabilityIndex.split("\n").length, 1);
-  assert.deepEqual(await surface.tools["tools.load_group"]!.execute!({ groups: ["table_styling"] }, call), { ok: false, reasonCode: "UNKNOWN_TOOL_GROUP" });
-  await surface.tools["tools.load_group"]!.execute!({ groups: ["text_formatting"] }, call);
-  assert.deepEqual(Object.keys(surface.projectTools()), ["document.inspect", "document.set_text_formatting", "tools.load_group"]);
-  assert.equal(createToolSurface({}).tools["tools.load_group"], undefined);
+  assert.deepEqual(surface.session.roots().map((item) => item.id), ["agent", "document", "skills"]);
+  assert.deepEqual(surface.session.list("document.tables"), { ok: false, reasonCode: "CAPABILITY_UNAVAILABLE" });
+  assert.deepEqual(surface.session.load(["document.tables.styling"]), { ok: false, reasonCode: "CAPABILITY_UNAVAILABLE" });
+  surface.session.load(["document.text"]);
+  assert.ok(surface.projectTools()["document.set_text_formatting"]);
+  assert.equal(surface.projectTools()["document.set_table_formatting"], undefined);
 });
 
-test("prompt advertises only the initial names and a compact group index", async () => {
-  const surface = await createSurface();
-  const system = buildAgentOperatingInstruction(Object.keys(surface.initialTools).map(providerSafeToolName), surface.capabilityIndex);
-  const inventory = system.split("INITIAL TOOLS\n")[1]!.split("OPERATING PRINCIPLES")[0]!;
-  assert.match(inventory, /- tools_load_group/);
-  assert.match(inventory, /- request_clarification/);
-  assert.match(inventory, /table_styling: Change table/);
-  assert.doesNotMatch(inventory, /document_set_table_cells_formatting|inputSchema|properties/);
-  assert.match(system, /load its tool group before concluding it is unsupported/);
+test("loading cannot execute a hidden sibling in the same turn", async () => {
+  let calls = 0;
+  const surface = createToolSurface({ "document.set_text_formatting": defineTool({ kind: "mutate", description: "format",
+    inputSchema: jsonSchema({ type: "object", properties: {} }), execute: () => { calls++; return { ok: true }; } }) });
+  let modelTurn = 0;
+  const model = { specificationVersion: "v3", provider: "test", modelId: "test", supportedUrls: {},
+    doStream: async () => {
+      modelTurn++;
+      const calls = modelTurn === 1
+        ? [{ name: "capabilities_load", input: { ids: ["document.text"] } }, { name: "document_set_text_formatting", input: {} }]
+        : [{ name: "document_set_text_formatting", input: {} }];
+      return { stream: new ReadableStream({ start(controller) {
+        for (const [index, call] of calls.entries()) controller.enqueue({ type: "tool-call", toolCallId: `call-${modelTurn}-${index}`, toolName: call.name, input: JSON.stringify(call.input) });
+        controller.enqueue({ type: "finish", finishReason: modelTurn === 2 ? "stop" : "tool-calls", usage: { inputTokens: 1, outputTokens: 1 } });
+        controller.close();
+      } }) };
+    },
+  } as never;
+  await runAgent({ model, messages: [{ role: "user", content: "format" }], tools: surface.tools, projectTools: surface.projectTools, maxTurns: 2 });
+  assert.equal(calls, 1);
 });
 
-test("tool surface logs record turn snapshots, discovery attempts and run totals", async () => {
-  const surface = await createSurface();
-  const lines: string[] = [];
-  const info = console.info;
-  console.info = (line) => { lines.push(String(line)); };
-  const completed = (turn: number, count: number, toolNames: string[]) => ({
-    type: "model_turn_completed", turn, durationMs: 1, inputTokens: 1, cachedInputTokens: 0,
-    outputTokens: 1, reasoningTokens: 0, finishReason: "tool-calls", toolNames,
-    exposedToolCount: count, exposedToolSchemaChars: 100,
-  }) as Extract<AgentEvent, { type: "model_turn_completed" }>;
-  try {
-    surface.projectTools();
-    surface.recordTurn(completed(1, 19, ["tools.load_group"]), "test");
-    await load(surface, ["table_styling"]);
-    surface.projectTools();
-    surface.recordTurn(completed(2, 22, ["document.set_table_formatting"]), "test");
-    assert.deepEqual(surface.summary(), { initialToolCount: 19, peakToolCount: 23, groupsLoaded: ["table_styling"], discoveryTurnCount: 1 });
-    assert.match(lines[0]!, /exposedToolCount=19 exposedToolSchemaChars=100 activeGroups=none discoveryTurn=true/);
-    assert.match(lines[1]!, /activeGroups=table_styling discoveryTurn=false/);
-  } finally { console.info = info; }
+test("a loaded skill appears only on later model turns and composes with loaded tools", async () => {
+  const events: CapabilityEvent[] = [];
+  const surface = await createSurface((event) => { events.push(event); });
+  const skillId = "skills.scientific-writing.scientific-paper";
+  assert.equal(surface.capabilityIndex.includes("Never invent"), false);
+  let turn = 0;
+  const model = new MockLanguageModelV4({ doStream: async (options) => {
+    const prompt = JSON.stringify(options.prompt);
+    const names = options.tools!.map((item) => item.name);
+    assert.equal(prompt.includes("Never invent methods"), turn > 0);
+    assert.equal((prompt.match(/<loaded_capabilities>/g) ?? []).length, turn > 0 ? 1 : 0);
+    assert.equal(names.includes("document_set_text_formatting"), turn > 0);
+    const calls = turn === 0 ? [{ name: "capabilities_load", input: { ids: [skillId, "document.text"] } }]
+      : turn === 1 ? [{ name: "capabilities_list", input: { parentId: "skills" } }] : [];
+    turn++;
+    return { stream: simulateReadableStream({ chunks: [
+      { type: "stream-start", warnings: [] },
+      ...calls.map((call, index) => ({ type: "tool-call" as const, toolCallId: `${turn}-${index}`, toolName: call.name, input: JSON.stringify(call.input) })),
+      { type: "finish", finishReason: { unified: calls.length ? "tool-calls" as const : "stop" as const, raw: "stop" },
+        usage: { inputTokens: { total: 1, noCache: 1, cacheRead: 0, cacheWrite: 0 }, outputTokens: { total: 1, text: 1, reasoning: 0 } } },
+    ] }) };
+  } });
+  await runAgent({ model, messages: [{ role: "user", content: "Draft a paper" }], tools: surface.tools,
+    projectTools: surface.projectTools,
+    projectMessages: (messages) => {
+      const guidance = projectLoadedInstructions(surface.session);
+      return guidance ? [...messages, guidance.message] : messages;
+    },
+    maxTurns: 3 });
+  assert.equal(turn, 3);
+  assert.deepEqual(events.filter((event) => event.capabilityId === skillId).map((event) => [event.kind, event.type]),
+    [["instruction", "loaded"]]);
+  assert.equal(events.some((event) => event.capabilityId === skillId && ["executed", "succeeded"].includes(event.type)), false);
 });

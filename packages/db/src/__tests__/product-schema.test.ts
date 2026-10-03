@@ -4,6 +4,7 @@ import { getTableName } from "drizzle-orm";
 import { getTableConfig } from "drizzle-orm/pg-core";
 
 import {
+  agentCapabilityEvent,
   agentMessage,
   agentThreadContextCheckpoint,
   agentThreadWorkingDocument,
@@ -88,13 +89,15 @@ test("format and source enums match the decided product vocabulary", () => {
   ]);
 });
 
-test("agent schema exports thread, working document, message, checkpoint, run, step, and execution lease tables", () => {
+test("agent schema exports thread, working document, message, checkpoint, run, step, capability event, and execution lease tables", () => {
   assert.equal(getTableName(agentThread), "agent_thread");
   assert.equal(getTableName(agentThreadWorkingDocument), "agent_thread_working_document");
   assert.equal(getTableName(agentMessage), "agent_message");
   assert.equal(getTableName(agentThreadContextCheckpoint), "agent_thread_context_checkpoint");
   assert.equal(getTableName(agentRun), "agent_run");
   assert.equal(getTableName(agentStep), "agent_step");
+  assert.equal(getTableName(agentCapabilityEvent), "agent_capability_event");
+  assert.equal(agentCapabilityEvent.capabilityKind.name, "capability_kind");
   assert.equal(getTableName(agentExecutionLease), "agent_execution_lease");
 });
 
@@ -106,6 +109,7 @@ test("agent enums match the decided persistence vocabulary", () => {
     "running",
     "waiting_for_confirmation",
     "completed",
+    "completed_with_input_needed",
     "failed",
     "cancelled",
   ]);

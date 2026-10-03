@@ -1,4 +1,9 @@
-import { getDocument, listDocuments } from "@/lib/api";
+import {
+  fetchDocumentVersionContent,
+  getDocument,
+  listDocumentVersions,
+  listDocuments,
+} from "@/lib/api";
 import {
   fetchAiPreference,
   listProviderCredentials,
@@ -8,6 +13,10 @@ export const queryKeys = {
   workspaceDocuments: (workspaceId: string) =>
     ["workspaces", workspaceId, "documents"] as const,
   document: (documentId: string) => ["documents", documentId] as const,
+  documentVersions: (documentId: string) =>
+    ["documents", documentId, "versions"] as const,
+  documentVersionContent: (documentId: string, versionId: string) =>
+    ["documents", documentId, "versions", versionId, "content"] as const,
   aiPreference: ["ai-preferences"] as const,
   providerCredentials: ["provider-credentials"] as const,
 };
@@ -25,6 +34,27 @@ export function documentQuery(documentId: string) {
     queryKey: queryKeys.document(documentId),
     queryFn: () => getDocument(documentId),
     staleTime: 30_000,
+  };
+}
+
+/** Last ~5 tips for the explorer versions rail. */
+export function documentVersionsQuery(documentId: string) {
+  return {
+    queryKey: queryKeys.documentVersions(documentId),
+    queryFn: () => listDocumentVersions(documentId, { limit: 5 }),
+    staleTime: 30_000,
+  };
+}
+
+/** Immutable version bytes — cache forever until explicit remove. */
+export function documentVersionContentQuery(
+  documentId: string,
+  versionId: string,
+) {
+  return {
+    queryKey: queryKeys.documentVersionContent(documentId, versionId),
+    queryFn: () => fetchDocumentVersionContent(documentId, versionId),
+    staleTime: Infinity,
   };
 }
 

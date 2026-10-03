@@ -77,8 +77,8 @@ html[data-opensuite-theme] {
   /* Shared Explorer / Tabs / Agent top rail */
   --workspace-rail-h: 2.5rem;
   /* Explorer file list rhythm — comfortable, not sparse */
-  --explorer-row-h: 30px;
-  --explorer-list-gap: 3px;
+  --explorer-row-h: 32px;
+  --explorer-list-gap: 2px;
   --explorer-list-pad: 8px;
 
   /* Micro elevation for selected tabs / quiet chrome */

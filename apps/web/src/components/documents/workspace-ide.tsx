@@ -16,6 +16,7 @@ import {
   deleteDocument,
   downloadDocument,
   renameWorkspace,
+  restoreDocumentVersion,
   setDocumentStarred,
   type ListedDocument,
 } from "@/lib/api";
@@ -96,6 +97,12 @@ export function WorkspaceIde({
     loadedVersionId: null,
     latestVersionId: null,
   });
+  /** null = follow tip; otherwise a specific version id to view. */
+  const [selectedVersionId, setSelectedVersionId] = React.useState<string | null>(
+    null,
+  );
+  const [restoreOpen, setRestoreOpen] = React.useState(false);
+  const [restoreBusy, setRestoreBusy] = React.useState(false);
   const [saveRequestId, setSaveRequestId] = React.useState(0);
   const [workingPreview, setWorkingPreview] = React.useState<{ runId: string; documentId: string; baseVersionId: string; revision: number } | null>(null);
   const dragDepth = React.useRef(0);
@@ -118,6 +125,8 @@ export function WorkspaceIde({
   // Reset editor chrome only when the open file identity changes — not on
   // every latestVersion bump (agent writes), which caused header flicker.
   React.useEffect(() => {
+    setSelectedVersionId(null);
+    setRestoreOpen(false);
     setEditorStatus({
       dirty: false,
       saving: false,
@@ -127,6 +136,64 @@ export function WorkspaceIde({
     });
   }, [document?.id]);
 
+  const isDirty = editorStatus.dirty || editorStatus.saving;
+  const viewingHistory = Boolean(
+    activeDocument &&
+      selectedVersionId &&
+      selectedVersionId !== activeDocument.latestVersion.id,
+  );
+
+  function selectVersion(versionId: string) {
+    if (!activeDocument) return;
+    if (isDirty) {
+      toast({
+        tone: "error",
+        title: "Unsaved edits",
+        description: "Save or discard before switching versions.",
+      });
+      return;
+    }
+    setSelectedVersionId(
+      versionId === activeDocument.latestVersion.id ? null : versionId,
+    );
+  }
+
+  async function confirmRestoreVersion() {
+    if (!activeDocument || !selectedVersionId || restoreBusy) return;
+    setRestoreBusy(true);
+    try {
+      const updated = await restoreDocumentVersion(
+        activeDocument.id,
+        selectedVersionId,
+      );
+      setActiveDocument(updated);
+      setSelectedVersionId(null);
+      setRestoreOpen(false);
+      queryClient.setQueryData(queryKeys.document(updated.id), updated);
+      await Promise.all([
+        queryClient.invalidateQueries({
+          queryKey: queryKeys.documentVersions(updated.id),
+        }),
+        queryClient.invalidateQueries({
+          queryKey: queryKeys.workspaceDocuments(workspaceId),
+        }),
+      ]);
+      toast({
+        tone: "success",
+        title: "Version restored",
+        description: `v${updated.latestVersion.versionNumber} is now current. Newer versions were deleted.`,
+      });
+    } catch (error) {
+      toast({
+        tone: "error",
+        title: "Restore failed",
+        description: userFacingError(error, "Could not restore this version."),
+      });
+    } finally {
+      setRestoreBusy(false);
+    }
+  }
+
   React.useEffect(() => {
     writeIdePanelPrefs({
       explorerWidth,
@@ -135,8 +202,6 @@ export function WorkspaceIde({
       agentCollapsed,
     });
   }, [explorerWidth, agentWidth, navCollapsed, agentCollapsed]);
-
-  const isDirty = editorStatus.dirty || editorStatus.saving;
 
   function isTypingTarget(target: EventTarget | null): boolean {
     if (!(target instanceof HTMLElement)) return false;
@@ -393,7 +458,9 @@ export function WorkspaceIde({
           Boolean(activeDocument?.format === "docx") &&
           !editorStatus.saving &&
           !editorStatus.conflict &&
-          Boolean(editorStatus.loadedVersionId)
+          !viewingHistory &&
+          Boolean(editorStatus.loadedVersionId) &&
+          editorStatus.loadedVersionId === editorStatus.latestVersionId
         }
         onSave={
           activeDocument?.format === "docx"
@@ -411,6 +478,9 @@ export function WorkspaceIde({
         <DocumentNavigationPanel
           workspaceId={workspaceId}
           activeDocumentId={documentId ?? activeDocument?.id ?? null}
+          activeLatestVersionId={activeDocument?.latestVersion.id ?? null}
+          selectedVersionId={selectedVersionId}
+          onSelectVersion={selectVersion}
           collapsed={navCollapsed}
           width={explorerWidth}
           onToggle={() => setNavCollapsed((value) => !value)}
@@ -464,9 +534,17 @@ export function WorkspaceIde({
             <DocumentSurface
               key={activeDocument.id}
               document={activeDocument}
+              viewVersionId={selectedVersionId}
               saveRequestId={saveRequestId}
-              workingPreview={workingPreview?.documentId === activeDocument.id ? workingPreview : null}
+              workingPreview={
+                viewingHistory
+                  ? null
+                  : workingPreview?.documentId === activeDocument.id
+                    ? workingPreview
+                    : null
+              }
               onStatusChange={setEditorStatus}
+              onRequestRestore={() => setRestoreOpen(true)}
               onDocumentUpdated={(updated) => {
                 setActiveDocument(updated);
                 queryClient.setQueryData(
@@ -475,6 +553,9 @@ export function WorkspaceIde({
                 );
                 void queryClient.invalidateQueries({
                   queryKey: queryKeys.workspaceDocuments(workspaceId),
+                });
+                void queryClient.invalidateQueries({
+                  queryKey: queryKeys.documentVersions(updated.id),
                 });
               }}
             />
@@ -513,6 +594,9 @@ export function WorkspaceIde({
           onDocumentUpdated={(updated) => {
             setActiveDocument(updated);
             queryClient.setQueryData(queryKeys.document(updated.id), updated);
+            void queryClient.invalidateQueries({
+              queryKey: queryKeys.documentVersions(updated.id),
+            });
           }}
           onDocumentCreated={(created) => {
             queryClient.setQueryData(queryKeys.document(created.id), created);
@@ -625,6 +709,23 @@ export function WorkspaceIde({
             </div>
           </form>
         </Dialog>
+      ) : null}
+
+      {restoreOpen && activeDocument && selectedVersionId ? (
+        <ConfirmDialog
+          title="Restore this version?"
+          body="Newer versions will be permanently deleted from storage. This cannot be undone. The selected version becomes current and editable."
+          confirmLabel="Restore as current"
+          tone="danger"
+          busy={restoreBusy}
+          onCancel={() => {
+            if (restoreBusy) return;
+            setRestoreOpen(false);
+          }}
+          onConfirm={() => {
+            void confirmRestoreVersion();
+          }}
+        />
       ) : null}
 
       {discardOpen ? (

@@ -141,6 +141,20 @@
       "when": 1790553600000,
       "tag": "0019_completed_with_input_needed",
       "breakpoints": true
+    },
+    {
+      "idx": 20,
+      "version": "7",
+      "when": 1791072000000,
+      "tag": "0020_capability_events",
+      "breakpoints": true
+    },
+    {
+      "idx": 21,
+      "version": "7",
+      "when": 1791072001000,
+      "tag": "0021_capability_kind",
+      "breakpoints": true
     }
   ]
 }

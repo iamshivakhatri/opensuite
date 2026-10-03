@@ -27,6 +27,10 @@ const DocumentVersionParams = z.object({
   versionId: z.uuid("versionId must be a UUID"),
 });
 
+const ListVersionsQuery = z.object({
+  limit: z.coerce.number().int().min(1).max(20).optional(),
+});
+
 const SetStarBody = z.object({
   starred: z.boolean(),
 });
@@ -579,6 +583,103 @@ export function registerDocumentRoutes(
       throw error;
     }
   });
+
+  /** Recent version metadata for the explorer (newest first). */
+  app.get("/api/documents/:documentId/versions", async (request, reply) => {
+    const user = await getRequestUser(auth, request);
+    if (!user) {
+      return reply.status(401).send(unauthenticated());
+    }
+
+    const params = DocumentIdParams.safeParse(request.params);
+    if (!params.success) {
+      return reply.status(400).send({
+        error: {
+          statusCode: 400,
+          message: params.error.issues[0]?.message ?? "Invalid document id",
+          code: "INVALID_DOCUMENT_ID",
+        },
+      });
+    }
+    const query = ListVersionsQuery.safeParse(request.query);
+    if (!query.success) {
+      return reply.status(400).send({
+        error: {
+          statusCode: 400,
+          message: query.error.issues[0]?.message ?? "Invalid query",
+          code: "INVALID_QUERY",
+        },
+      });
+    }
+
+    try {
+      const versions = await documents.listVersions({
+        documentId: params.data.documentId,
+        ownerUserId: user.id,
+        limit: query.data.limit,
+      });
+      return reply.send({ versions });
+    } catch (error) {
+      if (error instanceof DocumentAccessError) {
+        return reply.status(error.statusCode).send({
+          error: {
+            statusCode: error.statusCode,
+            message: error.message,
+            code: error.code,
+          },
+        });
+      }
+      throw error;
+    }
+  });
+
+  /**
+   * Make this version the tip: permanently delete every newer version
+   * (storage + rows). Older history is kept. Read tip is then editable.
+   */
+  app.post(
+    "/api/documents/:documentId/versions/:versionId/restore",
+    async (request, reply) => {
+      const user = await getRequestUser(auth, request);
+      if (!user) {
+        return reply.status(401).send(unauthenticated());
+      }
+
+      const params = DocumentVersionParams.safeParse(request.params);
+      if (!params.success) {
+        return reply.status(400).send({
+          error: {
+            statusCode: 400,
+            message: params.error.issues[0]?.message ?? "Invalid version id",
+            code: "INVALID_VERSION_ID",
+          },
+        });
+      }
+
+      const rateLimit = rateLimiter.consume(user.id, "documentWrite");
+      if (!rateLimit.allowed) return sendRateLimit(reply, rateLimit);
+
+      try {
+        const document = await documents.restoreVersion({
+          documentId: params.data.documentId,
+          versionId: params.data.versionId,
+          ownerUserId: user.id,
+        });
+        return reply.send({ document });
+      } catch (error) {
+        if (error instanceof DocumentAccessError) {
+          return reply.status(error.statusCode).send({
+            error: {
+              statusCode: error.statusCode,
+              message: error.message,
+              code: error.code,
+            },
+          });
+        }
+        throw error;
+      }
+    },
+  );
 
   /**
    * Exact immutable version bytes (not latest). Owner-only; active

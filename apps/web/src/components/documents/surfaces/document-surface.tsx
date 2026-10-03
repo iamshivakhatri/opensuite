@@ -13,14 +13,18 @@ import { OfficePlaceholderSurface } from "@/components/documents/surfaces/office
  */
 export function DocumentSurface({
   document,
+  viewVersionId = null,
   onStatusChange,
   onDocumentUpdated,
+  onRequestRestore,
   saveRequestId,
   workingPreview,
 }: {
   readonly document: ListedDocument;
+  readonly viewVersionId?: string | null;
   readonly onStatusChange?: (status: DocxSurfaceStatus) => void;
   readonly onDocumentUpdated?: (document: ListedDocument) => void;
+  readonly onRequestRestore?: () => void;
   readonly saveRequestId?: number;
   readonly workingPreview?: { runId: string; documentId: string; baseVersionId: string; revision: number } | null;
 }) {
@@ -29,8 +33,10 @@ export function DocumentSurface({
       return (
         <DocxSurface
           document={document}
+          viewVersionId={viewVersionId}
           onStatusChange={onStatusChange}
           onDocumentUpdated={onDocumentUpdated}
+          onRequestRestore={onRequestRestore}
           saveRequestId={saveRequestId}
           workingPreview={workingPreview}
         />

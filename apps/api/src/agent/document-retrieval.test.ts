@@ -222,7 +222,7 @@ test("active and tagged documents form the request working set", async () => {
     readBytes: async () => new Uint8Array(),
   });
   assert.deepEqual(retrieved.workingSet.map((artifact) => artifact.documentId), ["active", "tagged"]);
-  assert.match(retrieved.message ?? "", /WORKING SET\n- Plan\.docx \(docx; ID active\)\n- Numbers\.xlsx \(xlsx; ID tagged\)/);
+  assert.match(retrieved.message ?? "", /WORKING SET\n- Plan\.docx \(docx; ID active; version v1\)\n- Numbers\.xlsx \(xlsx; ID tagged; version v2\)/);
 });
 
 test("small single DOCX uses complete direct context, including every table row", async () => {
