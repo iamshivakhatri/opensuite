@@ -1235,8 +1235,12 @@ export function createDocumentService(
             }
           }
 
-          // Preserve agent history while removing references that deliberately
-          // use restrictive foreign keys.
+          // Preserve agent history while clearing restrictive document FKs.
+          await tx
+            .delete(schema.agentThreadWorkingDocument)
+            .where(
+              eq(schema.agentThreadWorkingDocument.documentId, input.documentId),
+            );
           await tx
             .update(schema.agentRun)
             .set({ baseDocumentVersionId: null })
@@ -1270,6 +1274,7 @@ export function createDocumentService(
         });
       } catch (error) {
         if (error instanceof DocumentAccessError) throw error;
+        console.error("[trash] document purge failed", error);
         throw new DocumentAccessError(
           500,
           "PURGE_FAILED",

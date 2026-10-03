@@ -8,12 +8,6 @@ export class StorageQuotaError extends Error {
   }
 }
 
-export class StorageAccountingMismatchError extends Error {
-  constructor() {
-    super("Storage accounting does not cover the bytes being released");
-  }
-}
-
 export function createStorageAccountingService(db: Db, quotaBytes: number) {
   async function reserve(tx: Db, userId: string, bytes: number): Promise<void> {
     await tx.insert(schema.userStorageAccount).values({ userId }).onConflictDoNothing();
@@ -28,12 +22,14 @@ export function createStorageAccountingService(db: Db, quotaBytes: number) {
   }
 
   async function release(tx: Db, userId: string, bytes: number): Promise<void> {
-    const [updated] = await tx
+    // Floor at zero so a drifted ledger cannot block permanent trash delete.
+    // Object bytes are already gone; under-counting usedBytes is preferable to stuck trash.
+    await tx
       .update(schema.userStorageAccount)
-      .set({ usedBytes: sql`${schema.userStorageAccount.usedBytes} - ${bytes}` })
-      .where(sql`${schema.userStorageAccount.userId} = ${userId} and ${schema.userStorageAccount.usedBytes} >= ${bytes}`)
-      .returning({ usedBytes: schema.userStorageAccount.usedBytes });
-    if (!updated) throw new StorageAccountingMismatchError();
+      .set({
+        usedBytes: sql`greatest(0, ${schema.userStorageAccount.usedBytes} - ${bytes})`,
+      })
+      .where(eq(schema.userStorageAccount.userId, userId));
   }
 
   return {

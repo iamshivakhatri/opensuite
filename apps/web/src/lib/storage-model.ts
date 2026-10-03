@@ -119,6 +119,21 @@ export function removePurgedTrashItem<T extends { readonly id: string }>(
   return items.filter((item) => item.id !== purgedId);
 }
 
+export function removePurgedTrashItems<T extends { readonly id: string }>(
+  items: readonly T[],
+  purgedIds: ReadonlySet<string>,
+): T[] {
+  if (purgedIds.size === 0) return [...items];
+  return items.filter((item) => !purgedIds.has(item.id));
+}
+
+export function trashSelectionKey(
+  kind: "workspace" | "document",
+  id: string,
+): string {
+  return `${kind}:${id}`;
+}
+
 export function trashDocumentActions(options: {
   readonly workspaceDeleted: boolean;
 }): {

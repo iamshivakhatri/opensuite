@@ -39,3 +39,27 @@ export async function purgeTrashedWorkspace(workspaceId: string): Promise<void> 
   });
   if (!response.ok) throw await parseApiError(response);
 }
+
+/**
+ * Permanently delete selected trashed workspaces and/or documents.
+ */
+export async function purgeTrashSelection(input: {
+  readonly workspaceIds: readonly string[];
+  readonly documentIds: readonly string[];
+}): Promise<void> {
+  const response = await apiFetch("/api/trash/purge", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      workspaceIds: input.workspaceIds,
+      documentIds: input.documentIds,
+    }),
+  });
+  if (!response.ok) throw await parseApiError(response);
+}
+
+/** Permanently delete everything currently in the owner's trash. */
+export async function emptyTrash(): Promise<void> {
+  const response = await apiFetch("/api/trash", { method: "DELETE" });
+  if (!response.ok) throw await parseApiError(response);
+}

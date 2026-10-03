@@ -8,6 +8,7 @@ import {
   permanentDeleteConfirmBody,
   permanentWorkspaceDeleteConfirmCopy,
   removePurgedTrashItem,
+  removePurgedTrashItems,
   STORAGE_CHANGED_EVENT,
   storageQuotaKind,
   storageQuotaMessage,
@@ -15,6 +16,7 @@ import {
   storageUsageRatio,
   storageUsedOfQuotaLabel,
   trashDocumentActions,
+  trashSelectionKey,
   trashWorkspaceActions,
   type StorageStatus,
 } from "./storage-model.ts";
@@ -128,6 +130,18 @@ describe("trash navigation and actions", () => {
     ];
     const after = removePurgedTrashItem(before, "ws-gone");
     assert.deepEqual(after, [{ id: "ws-keep", name: "Keep" }]);
+  });
+
+  it("removes a bulk purge selection from the trash list", () => {
+    const before = [
+      { id: "a", name: "A" },
+      { id: "b", name: "B" },
+      { id: "c", name: "C" },
+    ];
+    const after = removePurgedTrashItems(before, new Set(["a", "c"]));
+    assert.deepEqual(after, [{ id: "b", name: "B" }]);
+    assert.equal(trashSelectionKey("document", "a"), "document:a");
+    assert.equal(trashSelectionKey("workspace", "b"), "workspace:b");
   });
 
   it("leaves the list unchanged when purge fails (no success apply)", () => {

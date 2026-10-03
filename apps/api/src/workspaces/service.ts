@@ -373,8 +373,22 @@ export function createWorkspaceService(
             .select({ id: schema.agentRun.id })
             .from(schema.agentRun)
             .where(sql`${schema.agentRun.threadId} in (${threadIds})`);
+          const documentIds = tx
+            .select({ id: schema.document.id })
+            .from(schema.document)
+            .where(eq(schema.document.workspaceId, input.workspaceId));
 
           await tx.delete(schema.agentStep).where(sql`${schema.agentStep.runId} in (${runIds})`);
+          // Checkpoints and working-document membership restrict thread/message/document deletes.
+          await tx
+            .delete(schema.agentThreadContextCheckpoint)
+            .where(sql`${schema.agentThreadContextCheckpoint.threadId} in (${threadIds})`);
+          await tx
+            .delete(schema.agentThreadWorkingDocument)
+            .where(
+              sql`${schema.agentThreadWorkingDocument.threadId} in (${threadIds})
+                or ${schema.agentThreadWorkingDocument.documentId} in (${documentIds})`,
+            );
           await tx.delete(schema.agentRun).where(sql`${schema.agentRun.threadId} in (${threadIds})`);
           await tx.delete(schema.agentMessage).where(sql`${schema.agentMessage.threadId} in (${threadIds})`);
           await tx.delete(schema.agentThread).where(eq(schema.agentThread.workspaceId, input.workspaceId));
@@ -398,6 +412,7 @@ export function createWorkspaceService(
         });
       } catch (error) {
         if (error instanceof WorkspaceAccessError) throw error;
+        console.error("[trash] workspace purge failed", error);
         throw new WorkspaceAccessError(500, "PURGE_FAILED", "Could not permanently delete workspace");
       }
     },

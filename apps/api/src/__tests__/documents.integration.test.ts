@@ -1143,6 +1143,18 @@ test(
       });
       assert.equal(save.statusCode, 201, save.body);
 
+      // Working-document membership must not block permanent document purge.
+      const [thread] = await dbClient.db.insert(schema.agentThread).values({
+        workspaceId,
+        documentId: uploaded.document.id,
+        createdByUserId: alice.userId,
+      }).returning();
+      assert.ok(thread);
+      await dbClient.db.insert(schema.agentThreadWorkingDocument).values({
+        threadId: thread.id,
+        documentId: uploaded.document.id,
+      });
+
       const activePurge = await app.inject({
         method: "DELETE",
         url: `/api/trash/documents/${uploaded.document.id}`,
@@ -1179,26 +1191,10 @@ test(
       );
 
       failDeleteCall = null;
+      // Drifted ledger must not block purge — release floors usedBytes at 0.
       await dbClient.db
         .update(schema.userStorageAccount)
         .set({ usedBytes: 0 })
-        .where(eq(schema.userStorageAccount.userId, alice.userId));
-      const failedFinalization = await app.inject({
-        method: "DELETE",
-        url: `/api/trash/documents/${uploaded.document.id}`,
-        headers: { cookie: alice.cookie, origin: config.webOrigin },
-      });
-      assert.equal(failedFinalization.statusCode, 500, failedFinalization.body);
-      assert.equal(failedFinalization.json().error.code, "PURGE_FAILED");
-      assert.equal(storage.objects.size, 0);
-      assert.equal(
-        (await dbClient.db.select({ id: schema.document.id }).from(schema.document).where(eq(schema.document.id, uploaded.document.id))).length,
-        1,
-      );
-
-      await dbClient.db
-        .update(schema.userStorageAccount)
-        .set({ usedBytes: v1Bytes.byteLength + v2Bytes.byteLength })
         .where(eq(schema.userStorageAccount.userId, alice.userId));
       const purged = await app.inject({
         method: "DELETE",
@@ -1313,6 +1309,19 @@ test(
         sequence: 0,
         kind: "plan",
         name: "plan",
+      });
+      await dbClient.db.insert(schema.agentThreadWorkingDocument).values({
+        threadId: thread.id,
+        documentId: uploaded.document.id,
+      });
+      await dbClient.db.insert(schema.agentThreadContextCheckpoint).values({
+        threadId: thread.id,
+        throughMessageId: message.id,
+        throughMessageCreatedAt: message.createdAt,
+        contentVersion: 1,
+        content: "checkpoint",
+        sourceMessageCount: 1,
+        estimatedCharacters: 10,
       });
       const [usage] = await dbClient.db.insert(schema.modelUsageEvent).values({
         userId: alice.userId,

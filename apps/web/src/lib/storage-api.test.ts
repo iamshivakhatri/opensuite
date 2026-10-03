@@ -129,4 +129,36 @@ describe("storage API client", () => {
     // Cancel path never invokes purgeTrashedWorkspace / purgeTrashedDocument.
     assert.deepEqual(calls, []);
   });
+
+  it("purges a selection via POST /api/trash/purge", async () => {
+    let body = "";
+    globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      body = String(init?.body ?? "");
+      assert.equal(init?.method, "POST");
+      assert.equal(String(input), "http://api.test/api/trash/purge");
+      return new Response(null, { status: 204 });
+    }) as typeof fetch;
+
+    const api = await loadApi();
+    await api.purgeTrashSelection({
+      workspaceIds: ["22222222-2222-4222-8222-222222222222"],
+      documentIds: ["11111111-1111-4111-8111-111111111111"],
+    });
+    assert.deepEqual(JSON.parse(body), {
+      workspaceIds: ["22222222-2222-4222-8222-222222222222"],
+      documentIds: ["11111111-1111-4111-8111-111111111111"],
+    });
+  });
+
+  it("empties trash via DELETE /api/trash", async () => {
+    const calls: string[] = [];
+    globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      calls.push(`${init?.method ?? "GET"} ${String(input)}`);
+      return new Response(null, { status: 204 });
+    }) as typeof fetch;
+
+    const api = await loadApi();
+    await api.emptyTrash();
+    assert.deepEqual(calls, ["DELETE http://api.test/api/trash"]);
+  });
 });
