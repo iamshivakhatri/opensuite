@@ -225,6 +225,15 @@ const wordStyleProperties = {
   clear: { type: "array", items: { type: "string", enum: ["basedOn", "next", "bold", "italic", "fontSizeHalfPoints", "fontFamily", "color", "underline", "alignment", "spacingBeforeTwips", "spacingAfterTwips", "leftIndentTwips", "rightIndentTwips", "firstLineIndentTwips", "hangingIndentTwips", "keepWithNext", "keepLines"] }, description: "Remove declarations and restore inheritance. Omitted fields stay unchanged. Twips: 20 = 1 pt." },
 };
 
+const imagePosition = (references: string[]) => ({
+  type: "object", additionalProperties: false, required: ["reference"],
+  properties: {
+    reference: { type: "string", enum: references },
+    alignment: { type: "string", enum: ["start", "center", "end"] },
+    offsetEmu: { type: "integer", minimum: -2147483648, maximum: 2147483647 },
+  },
+  oneOf: [{ required: ["alignment"] }, { required: ["offsetEmu"] }],
+});
 const MUTATION_DEFS: Record<string, MutDef> = {
   create_style: { description: "Create a reusable real Word paragraph or character style. No default-style authoring. basedOn and next use IDs; apply paragraph styles with set_paragraph_style using the display name.", inputSchema: op(wordStyleProperties, ["styleId", "styleType", "name"]) },
   update_style: { description: "Patch supported properties of one Word style globally. Unspecified properties stay unchanged; clear removes a declaration and restores inheritance. Style type and default flag cannot change.", inputSchema: op(wordStyleProperties, ["styleId", "styleType"]) },
@@ -524,14 +533,27 @@ const MUTATION_DEFS: Record<string, MutDef> = {
       "Delete a picture identified by an opaque body_blocks handle.",
     inputSchema: op({ handle: { type: "string" } }, ["handle"]),
   },
+  set_picture_layout: {
+    description: "Patch a supported floating image using a fresh inspect_layout image handle. Omitted properties stay unchanged. Inline/floating conversion and tight/through wrapping are unsupported. EMU: 914,400 per inch. Re-inspect after editing.",
+    inputSchema: op({ handle: { type: "string" }, layout: {
+      type: "object", additionalProperties: false, minProperties: 1,
+      properties: {
+        horizontal: imagePosition(["page", "margin", "column"]),
+        vertical: imagePosition(["page", "margin", "paragraph"]),
+        wrap: { type: "string", enum: ["square", "topAndBottom", "behindText", "inFrontOfText"] },
+        distance: { type: "object", additionalProperties: false, minProperties: 1,
+          properties: Object.fromEntries(["topEmu", "bottomEmu", "leftEmu", "rightEmu"].map(key => [key, { type: "integer", minimum: 0, maximum: 4294967295 }])) },
+      },
+    } }, ["handle", "layout"]),
+  },
   set_picture_size: {
     description:
-      "Resize a picture by opaque handle. Supply exactly one of widthEmu or heightEmu.",
+      "Resize an image using a fresh inspect_layout handle. One dimension preserves aspect ratio; both set exact size. EMU: 914,400 per inch.",
     inputSchema: op(
       {
         handle: { type: "string" },
-        widthEmu: { type: "number" },
-        heightEmu: { type: "number" },
+        widthEmu: { type: "integer", minimum: 1, maximum: 4294967295 },
+        heightEmu: { type: "integer", minimum: 1, maximum: 4294967295 },
       },
       ["handle"],
     ),
@@ -674,7 +696,7 @@ export function createDocumentTools(document: BoundDocumentHost): AgentToolSet {
 
   if (caps.has("layout_snapshot")) {
     tools["document.inspect_layout"] = defineTool({ kind: "read",
-      description: "Inspect structural section geometry, explicit pagination controls, table/image dimensions and width warnings. No automatic page positions. Default returns summaries; blockLimit (0–100) and blockOffset request details; sectionIndex selects a zero-based section.",
+      description: "Inspect structural section geometry, explicit pagination controls, table/image dimensions, floating-image positions/wrap, fresh image handles, and width warnings. No automatic page positions. Default returns summaries; blockLimit (0–100) and blockOffset request details; sectionIndex selects a zero-based section.",
       inputSchema: op({ blockOffset: { type: "integer", minimum: 0 }, blockLimit: { type: "integer", minimum: 0, maximum: 100 }, sectionIndex: { type: "integer", minimum: 0 } }),
       execute: async input => document.inspect({ focus: { kind: "layout", ...input } }),
     });

@@ -10,6 +10,7 @@ import { isAbsolute, resolve } from "node:path";
 
 import type { DocxSection, DocxSectionInspection, DocxInsertSectionBreakOperation, DocxSetSectionPropertiesOperation, DocxSetSectionHeaderFooterOperation } from "./docx-sections.js";
 
+import type { DocxInsertPictureOperation, DocxSetPictureLayoutOperation, DocxSetPictureSizeOperation, DocxReplacePictureOperation } from "./docx-images.js";
 import type { DocxLayoutOptions, DocxLayoutSnapshot } from "./docx-layout.js";
 import type { DocxStyleOperation, DocxCreateStyleOperation } from "./docx-styles.js";
 import type { DocxStyleSnapshot } from "./docx-style-snapshot.js";
@@ -98,6 +99,7 @@ export type DocxExtendedOperationName =
   | "executeDocxInsertPicture"
   | "executeDocxDeletePicture"
   | "executeDocxSetPictureSize"
+  | "executeDocxSetPictureLayout"
   | "executeDocxReplacePicture"
   | "executeDocxInsertPageBreak"
   | "executeDocxDeletePageBreak"
@@ -528,6 +530,10 @@ export interface DocxEngineBinding {
     input: Uint8Array,
     request: DocxInspectRequest,
   ): Promise<DocxInspectResult>;
+  executeDocxInsertPicture?(input: Uint8Array, operation: DocxInsertPictureOperation): Promise<DocxMutationBindingResult>;
+  executeDocxSetPictureLayout?(input: Uint8Array, operation: DocxSetPictureLayoutOperation): Promise<DocxMutationBindingResult>;
+  executeDocxSetPictureSize?(input: Uint8Array, operation: DocxSetPictureSizeOperation): Promise<DocxMutationBindingResult>;
+  executeDocxReplacePicture?(input: Uint8Array, operation: DocxReplacePictureOperation): Promise<DocxMutationBindingResult>;
   inspectDocxLayout?(input: Uint8Array, options?: DocxLayoutOptions): Promise<DocxLayoutSnapshot>;
   inspectDocxStyleSnapshot(input: Uint8Array): Promise<DocxStyleSnapshot>;
   executeDocxReplaceText(
@@ -919,6 +925,18 @@ export async function createNapiDocxEngineBinding(): Promise<DocxEngineBinding> 
       return native.findDocxText(Buffer.from(input), { text: request.text });
     },
 
+    executeDocxInsertPicture(input, operation) {
+      return executeExtended(input, "executeDocxInsertPicture", { ...operation, imageBytes: Buffer.from(operation.imageBytes) });
+    },
+    executeDocxSetPictureLayout(input, operation) {
+      return executeExtended(input, "executeDocxSetPictureLayout", { ...operation });
+    },
+    executeDocxSetPictureSize(input, operation) {
+      return executeExtended(input, "executeDocxSetPictureSize", { ...operation });
+    },
+    executeDocxReplacePicture(input, operation) {
+      return executeExtended(input, "executeDocxReplacePicture", { ...operation, replacementBytes: Buffer.from(operation.replacementBytes) });
+    },
     async inspectDocxLayout(input, options) {
       if (!native.inspectDocxLayout) throw new Error("Local engine is missing inspectDocxLayout");
       return JSON.parse(await native.inspectDocxLayout(Buffer.from(input), options)) as DocxLayoutSnapshot;

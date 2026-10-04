@@ -24,6 +24,8 @@ _Read this before starting any work. Keep it a concise current-state handoff, no
 
 * E1 local-engine section editing: dynamic `document.sections` and `document.headers_footers` tools call typed Rust operations through engine-client and the existing run-local mutation/save lifecycle. Inspect fresh section handles after edits. Default/first/even simple text and PAGE fields, independent page setup, link/unlink, restart/continue numbering; odd/even is explicitly document-wide. No npm version change or agent-core-v3 change.
 
+* E1 local-engine image layout: bounded image handles and anchor facts through layout inspection; typed programmatic insertion with exact/proportional size and common floating placement, plus dynamic rich-content resize/layout updates. Square, top/bottom, behind/front text; page/margin/column horizontal and page/margin/paragraph vertical references. Source-local preservation and asset-only replacement. Inline↔floating conversion, polygon wrapping, and header/footer mutation remain deferred. npm pins and agent-core-v3 unchanged.
+
 ## Current Decisions
 
 * Soft-delete; trash permanent purge clears working-document/checkpoint FKs; Empty trash + multi-select purge; optimistic concurrency; Rust SoT.

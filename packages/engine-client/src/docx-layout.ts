@@ -17,7 +17,11 @@ export interface DocxLayoutSnapshot {
     columnWidthsTwips: number[]; rowCount: number; cellMarginsTwips: Record<string, number>; cannotSplitRowCount: number;
     rows: { index: number; heightTwips: number | null; heightRule: string | null; cannotSplit: boolean | null }[];
     truncated: boolean; hasComplexStructure: boolean }[];
-  images: { kind: "inline" | "anchored"; blockHandle: string | null; sectionIndex: number | null;
+  images: { handle: string | null; paragraphIndex: number | null; aspectRatio: number | null;
+    anchor: { horizontal: { reference: string | null; alignment: string | null; offsetEmu: number | null } | null;
+      vertical: { reference: string | null; alignment: string | null; offsetEmu: number | null } | null;
+      wrap: string | null; behindText: boolean | null; distanceEmu: Record<string, number>; editable: boolean } | null;
+    kind: "inline" | "anchored"; blockHandle: string | null; sectionIndex: number | null;
     relationshipId: string | null; assetPartName: string | null; displayWidthEmu: number | null; displayHeightEmu: number | null;
     intrinsicWidthPixels: number | null; intrinsicHeightPixels: number | null }[];
   blocks: { handle: string; kind: "paragraph" | "table"; sectionIndex: number | null;

@@ -1,0 +1,26 @@
+import assert from "node:assert/strict";
+import test from "node:test";
+import { bindDocxDocument, createNapiDocxEngineBinding, type DocxFloatingImageLayout } from "../index.js";
+const png = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVQIHWP4z8DwHwAFgAI/ScL7WQAAAABJRU5ErkJggg==", "base64");
+test("typed image bridge preserves layout on resize/replacement and fails stale patches atomically", async t => {
+  const binding = await createNapiDocxEngineBinding();
+  if (!binding.getDocxCapabilities().formats[0]?.capabilities.includes("set_picture_layout")) return t.skip("local image layout engine required");
+  const layout: DocxFloatingImageLayout = { horizontal: { reference: "margin", alignment: "end" }, vertical: { reference: "paragraph", offsetEmu: 0 }, wrap: "square" };
+  const inserted = await binding.executeDocxInsertPicture!(binding.createBlankDocx(), { imageBytes: png, placement: { kind: "end" }, widthEmu: 914400, layout });
+  assert.equal(inserted.result.ok, true);
+  const doc = bindDocxDocument({ binding, bytes: inserted.output! });
+  const first = (await binding.inspectDocxLayout!(doc.currentBytes())).images[0]!;
+  assert.equal(first.kind, "anchored"); assert.equal(first.anchor?.wrap, "square");
+  assert.equal((await doc.mutate("set_picture_layout", { handle: first.handle, layout: { wrap: "topAndBottom" } })).ok, true);
+  const before = Buffer.from(doc.currentBytes());
+  assert.equal((await doc.mutate("set_picture_layout", { handle: first.handle, layout: { wrap: "behindText" } })).ok, false);
+  assert.deepEqual(Buffer.from(doc.currentBytes()), before);
+  const current = (await binding.inspectDocxLayout!(doc.currentBytes())).images[0]!;
+  const resized = await binding.executeDocxSetPictureSize!(doc.currentBytes(), { handle: current.handle!, widthEmu: 1828800, heightEmu: 914400 });
+  assert.equal(resized.result.ok, true);
+  const fresh = (await binding.inspectDocxLayout!(resized.output!)).images[0]!;
+  const replaced = await binding.executeDocxReplacePicture!(resized.output!, { handle: fresh.handle!, replacementBytes: png, contentType: "image/png" });
+  assert.equal(replaced.result.ok, true);
+  const final = (await binding.inspectDocxLayout!(replaced.output!)).images[0]!;
+  assert.deepEqual(final.anchor, fresh.anchor); assert.equal(final.displayWidthEmu, 1828800); assert.equal(final.displayHeightEmu, 914400);
+});

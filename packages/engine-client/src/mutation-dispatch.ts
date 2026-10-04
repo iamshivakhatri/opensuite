@@ -39,6 +39,7 @@ const EXTENDED: Record<string, DocxExtendedOperationName> = {
   insert_picture: "executeDocxInsertPicture",
   delete_picture: "executeDocxDeletePicture",
   set_picture_size: "executeDocxSetPictureSize",
+  set_picture_layout: "executeDocxSetPictureLayout",
   replace_picture: "executeDocxReplacePicture",
   insert_page_break: "executeDocxInsertPageBreak",
   delete_page_break: "executeDocxDeletePageBreak",
