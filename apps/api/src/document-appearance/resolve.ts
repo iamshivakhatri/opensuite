@@ -5,10 +5,12 @@ import {
   type RoleFormatting,
   type StyleApplicationPlan,
 } from '../style-profiles/application.js';
+import { readableTextColor } from './contrast.js';
 
-export type BrandChannel = 'typography' | 'colors' | 'tableAccent';
+export type BrandChannel = 'typography' | 'colors' | 'tableAccent' | 'logo';
 export type DocumentBrandPolicy = { readonly channels: readonly BrandChannel[] };
 export type AppearanceSource = 'saved_style' | 'workspace_brand';
+export type WorkspaceLogo = { readonly bytes: Uint8Array; readonly contentType: string };
 
 export interface ResolvedAppearance {
   readonly plan: StyleApplicationPlan;
@@ -24,10 +26,18 @@ const hex = (value: string | null) => value?.slice(1).toUpperCase();
 export function resolveDocumentAppearance(input: {
   readonly savedStyle?: StyleProfileData;
   readonly workspaceBrand?: WorkspaceBrandProfile | null;
+  readonly workspaceLogo?: WorkspaceLogo | null;
   readonly policy: DocumentBrandPolicy;
   readonly brand?: 'auto' | 'off';
+  readonly isNewDocument?: boolean;
 }): ResolvedAppearance {
   const plan = input.savedStyle ? buildStyleApplicationPlan(input.savedStyle) : emptyPlan();
+  // A saved body color is the only reusable table-text color profile v1 records.
+  // Preserve it for header cells before a workspace accent can fill the gap.
+  if (plan.roles.body?.text.color) {
+    plan.table ??= { formatting: {} };
+    plan.table.headerTextColor ??= plan.roles.body.text.color;
+  }
   const provenance: Record<string, AppearanceSource> = Object.fromEntries(
     styleApplicationFields(plan).map((field) => [field, 'saved_style']),
   );
@@ -55,7 +65,18 @@ export function resolveDocumentAppearance(input: {
   }
   if (allowed.has('tableAccent')) {
     plan.table ??= { formatting: {} };
-    set('table.headerFill', 'headerFill', hex(input.workspaceBrand.colors.accent) ?? hex(input.workspaceBrand.colors.primary), plan.table as Record<string, unknown>);
+    const headerFill = hex(input.workspaceBrand.colors.accent) ?? hex(input.workspaceBrand.colors.primary);
+    set('table.headerFill', 'headerFill', headerFill, plan.table as Record<string, unknown>);
+    set('table.headerTextColor', 'headerTextColor', readableTextColor(headerFill), plan.table as Record<string, unknown>);
+  }
+  if (input.isNewDocument && allowed.has('logo') && input.workspaceBrand.logoAssetId) {
+    if (input.workspaceLogo?.contentType === 'image/png' || input.workspaceLogo?.contentType === 'image/jpeg') {
+      plan.logo = { imageBytes: input.workspaceLogo.bytes };
+      provenance.logo = 'workspace_brand';
+    } else {
+      plan.unsupported.push('logo');
+      provenance.logo = 'workspace_brand';
+    }
   }
   return { plan, provenance };
 }

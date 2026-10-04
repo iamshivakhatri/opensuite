@@ -106,6 +106,12 @@ export function createWorkspaceAssetService(
         throw error;
       }
     },
+    async readBytes(workspaceId: string, userId: string, id: string) {
+      const object = await this.read(workspaceId, userId, id);
+      const chunks: Buffer[] = [];
+      for await (const chunk of object.body) chunks.push(Buffer.from(chunk));
+      return { bytes: Buffer.concat(chunks), contentType: object.contentType };
+    },
     async removeUnused(workspaceId: string, userId: string, id: string) {
       await requireWorkspace(workspaceId, userId);
       await db.transaction(async (tx) => {

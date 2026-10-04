@@ -332,6 +332,7 @@ export async function buildApp(
       documents,
       styleProfiles,
       workspaceBrand,
+      workspaceAssets,
       ...(docxBinding ? { docxBinding } : {}),
       resolveModel: async (userId: string) => {
         const resolved = await aiModelResolver!.resolve(userId);

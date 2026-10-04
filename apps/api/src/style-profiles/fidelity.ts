@@ -9,6 +9,18 @@ export interface StyleFidelityReport {
   summary: { matched: string[]; mismatched: string[]; notApplicable: string[]; unsupported: string[]; counts: Record<StyleFidelityStatus, number> };
 }
 
+function summary(fields: StyleFidelityReport['fields']): StyleFidelityReport['summary'] {
+  const counts: Record<StyleFidelityStatus, number> = { matched: 0, mismatched: 0, not_applicable: 0, unsupported: 0 };
+  for (const item of fields) counts[item.status]++;
+  const groups = (status: StyleFidelityStatus) => [...new Set(fields.filter(f => f.status === status).map(f => f.field.split('.')[0]!))].slice(0, 12);
+  return { matched: groups('matched'), mismatched: groups('mismatched'), notApplicable: groups('not_applicable'), unsupported: [...new Set(fields.filter(f => f.status === 'unsupported').map(f => f.field))].slice(0, 20), counts };
+}
+
+export function appendStyleFidelityField(report: StyleFidelityReport, field: string, status: StyleFidelityStatus, provenance: Readonly<Record<string, AppearanceSource>> = {}) {
+  report.fields.push({ field, status, ...(provenance[field] ? { source: provenance[field] } : {}) });
+  report.summary = summary(report.fields);
+}
+
 /** Compare every observed effective pattern, never just a dominant normalized value. */
 export function compareStyleFidelity(plan: StyleApplicationPlan, snapshot: DocxStyleSnapshot, unresolved = plan.unsupported, provenance: Readonly<Record<string, AppearanceSource>> = {}): StyleFidelityReport {
   if (!snapshot.ok) throw new Error('Style fidelity requires a successful style snapshot');
@@ -66,8 +78,5 @@ export function compareStyleFidelity(plan: StyleApplicationPlan, snapshot: DocxS
       : field.startsWith('table.') ? !snapshot.tableCount : false;
     add(field, absent && !snapshot.truncated ? 'not_applicable' : 'unsupported');
   }
-  const counts: Record<StyleFidelityStatus, number> = { matched: 0, mismatched: 0, not_applicable: 0, unsupported: 0 };
-  for (const item of fields) counts[item.status]++;
-  const groups = (status: StyleFidelityStatus) => [...new Set(fields.filter(f => f.status === status).map(f => f.field.split('.')[0]!))].slice(0, 12);
-  return { fields, summary: { matched: groups('matched'), mismatched: groups('mismatched'), notApplicable: groups('not_applicable'), unsupported: [...new Set(fields.filter(f => f.status === 'unsupported').map(f => f.field))].slice(0, 20), counts } };
+  return { fields, summary: summary(fields) };
 }

@@ -1,5 +1,6 @@
 import type { StyleProfileService } from "../style-profiles/service.js";
 import type { WorkspaceBrandService } from '../workspace-brand/service.js';
+import type { WorkspaceAssetService } from '../workspace-brand/assets.js';
 import { requestsSavedStyle, createStyleProfileTools } from "./capabilities/definitions/style-profiles.js";
 import { documentSkillPolicy } from './capabilities/definitions/skills/index.js';
 import { resolveDocumentAppearance, shouldApplyAutomaticBrand } from '../document-appearance/resolve.js';
@@ -194,6 +195,7 @@ export interface AgentExecutionServiceDeps {
   readonly docxBinding?: DocxEngineBinding;
   readonly styleProfiles?: StyleProfileService;
   readonly workspaceBrand?: Pick<WorkspaceBrandService, 'get'>;
+  readonly workspaceAssets?: Pick<WorkspaceAssetService, 'readBytes'>;
   readonly modelUsage?: ModelUsageService;
   readonly managedUsagePolicy?: ManagedUsagePolicy;
   readonly agentRunReportSink?: AgentRunReportSink;
@@ -437,10 +439,19 @@ async function applyAutomaticWorkspaceAppearance(input: {
   if (!shouldApplyAutomaticBrand({ isNewDocument, policy, instruction: input.instruction })) return;
   const brand = await input.deps.workspaceBrand.get(input.workspaceId, input.ownerUserId);
   if (!brand) return;
+  const wantsLogo = policy!.channels.includes('logo') && !!brand.logoAssetId;
+  const workspaceLogo = wantsLogo && input.deps.workspaceAssets
+    ? await input.deps.workspaceAssets.readBytes(input.workspaceId, input.ownerUserId, brand.logoAssetId!).catch((error) => {
+      console.warn('[agent] workspace logo unavailable', error);
+      return null;
+    })
+    : undefined;
   const savedStyle = input.boundTools.getAppliedStyle();
   const appearance = resolveDocumentAppearance({
     policy: policy!,
     workspaceBrand: brand,
+    isNewDocument,
+    ...(wantsLogo ? { workspaceLogo } : {}),
     ...(savedStyle ? { savedStyle } : {}),
   });
   if (Object.keys(appearance.provenance).length) {
@@ -450,7 +461,8 @@ async function applyAutomaticWorkspaceAppearance(input: {
       status,
       workspaceFields.filter((field) => field.status === status).length,
     ]));
-    console.info(`[agent] appearance workspace_brand ${JSON.stringify(counts)}`);
+    const mismatchedFields = workspaceFields.filter((field) => field.status === 'mismatched').map((field) => field.field);
+    console.info(`[agent] appearance workspace_brand ${JSON.stringify({ ...counts, ...(mismatchedFields.length ? { mismatchedFields } : {}) })}`);
   }
 }
 

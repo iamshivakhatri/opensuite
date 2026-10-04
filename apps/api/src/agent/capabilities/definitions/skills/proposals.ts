@@ -4,7 +4,7 @@ export const proposalSkills: DocumentSkillDefinition[] = [{
   id: "skills.proposals.basic-proposal", parentId: "skills.proposals", kind: "instruction",
   title: "Basic Proposal", description: "Draft a grounded ordinary business or project proposal",
   aliases: ["project proposal business proposal"], projection: "dynamic",
-  brandPolicy: { channels: ['typography', 'colors', 'tableAccent'] },
+  brandPolicy: { channels: ['typography', 'colors', 'tableAccent', 'logo'] },
   instructions: () => `Draft an ordinary business or project proposal, adapting the outline to the request.
 - Explain the client need, problem, and context from supplied material.
 - Describe the proposed approach, scope, deliverables, and assumptions clearly.

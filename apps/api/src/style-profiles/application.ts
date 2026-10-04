@@ -8,7 +8,7 @@ import {
 import type { DocumentService } from '../documents/service.js';
 import { StyleProfileError, type StyleProfileService } from './service.js';
 import { paragraphRole } from './normalize.js';
-import { compareStyleFidelity, type StyleFidelityReport } from './fidelity.js';
+import { appendStyleFidelityField, compareStyleFidelity, type StyleFidelityReport } from './fidelity.js';
 import type { AppearanceSource } from '../document-appearance/resolve.js';
 
 export type RoleFormatting = {
@@ -21,9 +21,11 @@ export interface StyleApplicationPlan {
   table?: {
     formatting: Omit<DocxSetTableFormattingOperation, 'table' | 'baseRevision'>;
     headerFill?: string;
+    headerTextColor?: string;
     headerBold?: boolean;
     widthTwips?: number;
   };
+  logo?: { imageBytes: Uint8Array };
   unsupported: string[];
 }
 
@@ -37,9 +39,11 @@ export function styleApplicationFields(plan: StyleApplicationPlan): string[] {
     ...(plan.table ? [
       ...Object.keys(plan.table.formatting).map((field) => field === 'borders' ? 'table.borders' : field === 'alignment' ? 'table.alignment' : `table.padding.${field.replace('cellMargin', '').replace('Twips', '').toLowerCase()}`),
       ...(plan.table.headerFill ? ['table.headerFill'] : []),
+      ...(plan.table.headerTextColor ? ['table.headerTextColor'] : []),
       ...(plan.table.headerBold ? ['table.headerBold'] : []),
       ...(plan.table.widthTwips ? ['table.columnWidthTotal'] : []),
     ] : []),
+    ...(plan.logo ? ['logo'] : []),
   ];
 }
 const sides = ['top', 'right', 'bottom', 'left'] as const;
@@ -137,6 +141,27 @@ async function inspectContent(binding: DocxEngineBinding, bytes: Uint8Array) {
   return { paragraphs, tables };
 }
 
+const logoMaxWidthEmu = 1_371_600; // 1.5 inches
+const logoMaxHeightEmu = 457_200; // 0.5 inches
+
+async function firstBodyPicture(binding: DocxEngineBinding, bytes: Uint8Array) {
+  const result = await binding.inspectDocx(bytes, { focus: { kind: 'body_blocks', offset: 0, limit: 1 } });
+  const block = result.bodyBlocks?.items[0];
+  return result.ok && block?.kind === 'picture' ? block.picture : undefined;
+}
+
+function modestLogoSize(widthEmu: number, heightEmu: number) {
+  if (!Number.isFinite(widthEmu) || !Number.isFinite(heightEmu) || widthEmu <= 0 || heightEmu <= 0) return;
+  const widthScale = logoMaxWidthEmu / widthEmu;
+  const heightScale = logoMaxHeightEmu / heightEmu;
+  const scale = Math.min(1, widthScale, heightScale);
+  if (scale === 1) return;
+  // The engine accepts one dimension and derives the other to preserve aspect ratio.
+  return widthScale <= heightScale
+    ? { widthEmu: Math.floor(widthEmu * scale) }
+    : { heightEmu: Math.floor(heightEmu * scale) };
+}
+
 /** Stage through the same bound engine host. The caller adopts bytes only after verification. */
 export async function applyStylePlan(binding: DocxEngineBinding, bytes: Uint8Array, plan: StyleApplicationPlan, provenance: Readonly<Record<string, AppearanceSource>> = {}): Promise<{ bytes: Uint8Array; fidelity: StyleFidelityReport; operationCount: number }> {
   const before = await inspectContent(binding, bytes);
@@ -145,6 +170,9 @@ export async function applyStylePlan(binding: DocxEngineBinding, bytes: Uint8Arr
   const host = bindDocxDocument({ binding, bytes });
   let operationCount = 0;
   const unsupported = [...plan.unsupported];
+  let logoWasApplied = false;
+  let logoInserted = false;
+  let headerTextStatus: StyleFidelityReport['fields'][number]['status'] | undefined;
   async function mutate(capability: string, operation: Record<string, unknown>) {
     const result = await host.mutate(capability, operation);
     if (!result.ok) throw new StyleProfileError(422, result.reasonCode ?? 'STYLE_APPLICATION_FAILED', `Style application failed: ${result.reasonCode ?? capability}`);
@@ -153,6 +181,23 @@ export async function applyStylePlan(binding: DocxEngineBinding, bytes: Uint8Arr
   if (Object.keys(plan.page).length) {
     if (initialStyle.sectionCount > 1) unsupported.push('page.multipleSections');
     else await mutate('set_page_setup', plan.page);
+  }
+  if (plan.logo) {
+    try {
+      await mutate('insert_picture', { imageBytes: Buffer.from(plan.logo.imageBytes), placement: { kind: 'start' } });
+      logoInserted = true;
+      const picture = await firstBodyPicture(binding, host.currentBytes());
+      const size = picture && modestLogoSize(picture.widthEmu, picture.heightEmu);
+      if (!picture) throw new Error('Could not verify inserted workspace logo');
+      if (size) {
+        await mutate('set_picture_size', { handle: picture.handle, ...size });
+      }
+      logoWasApplied = true;
+    } catch (error) {
+      if (logoInserted) throw error;
+      console.warn('[style-application] workspace logo unavailable', error);
+      unsupported.push('logo');
+    }
   }
   const searches = new Map<string, Awaited<ReturnType<DocxEngineBinding['findDocxText']>>>();
   for (const paragraph of before.paragraphs) {
@@ -197,18 +242,38 @@ export async function applyStylePlan(binding: DocxEngineBinding, bytes: Uint8Arr
     const updates = table.rows.flatMap((row, rowIndex) => row.cellHandles.map(handle => ({
       target: { handle },
       ...(rowIndex === 0 && plan.table?.headerFill ? { fill: plan.table.headerFill } : {}),
-      textFormatting: { ...tableText, ...(rowIndex === 0 && plan.table?.headerBold ? { bold: true } : {}) },
+      textFormatting: {
+        ...tableText,
+        ...(rowIndex === 0 && plan.table?.headerTextColor ? { color: plan.table.headerTextColor } : {}),
+        ...(rowIndex === 0 && plan.table?.headerBold ? { bold: true } : {}),
+      },
     })));
     const supportedUpdates = updates.filter(update => 'fill' in update || Object.keys(update.textFormatting).length);
-    if (supportedUpdates.length) await mutate('set_table_cells_formatting', { table: target, updates: supportedUpdates });
+    if (supportedUpdates.length) {
+      await mutate('set_table_cells_formatting', { table: target, updates: supportedUpdates });
+      if (plan.table?.headerTextColor) headerTextStatus = 'matched';
+    }
   }
   const output = host.currentBytes();
   const after = await inspectContent(binding, output);
-  const content = (value: typeof before) => ({ paragraphs: value.paragraphs.map(p => ({ text: p.text, styleName: p.styleName, list: p.list })), tables: value.tables.map(t => ({ rows: t.rows.map(r => r.cells), rowCount: t.rowCount, columns: t.columns.map(c => c.text) })) });
+  // Inline pictures use an empty paragraph anchor. It is layout, not document text.
+  const content = (value: typeof before) => ({ paragraphs: value.paragraphs.filter(p => p.text).map(p => ({ text: p.text, styleName: p.styleName, list: p.list })), tables: value.tables.map(t => ({ rows: t.rows.map(r => r.cells), rowCount: t.rowCount, columns: t.columns.map(c => c.text) })) });
   if (JSON.stringify(content(before)) !== JSON.stringify(content(after))) throw new StyleProfileError(422, 'STYLE_CONTENT_CHANGED', 'Style application changed document content or roles');
   const snapshot = await inspectDocxStyleSnapshot(output, binding);
   if (!snapshot.ok) throw new StyleProfileError(422, 'STYLE_INSPECTION_FAILED', 'Could not verify applied style');
-  return { bytes: output, operationCount, fidelity: compareStyleFidelity(plan, snapshot, unsupported, provenance) };
+  const fidelity = compareStyleFidelity(plan, snapshot, unsupported, provenance);
+  if (plan.table?.headerTextColor) {
+    const status = snapshot.truncated ? 'unsupported' : !before.tables.length ? 'not_applicable'
+      : before.tables.some(table => !table.isRectangular || table.affordances?.some(a => a.capability === 'set_table_cells_formatting' && !a.supported)) ? 'unsupported'
+      : headerTextStatus ?? 'mismatched';
+    appendStyleFidelityField(fidelity, 'table.headerTextColor', status, provenance);
+  }
+  if (plan.logo && !unsupported.includes('logo')) {
+    const picture = await firstBodyPicture(binding, output);
+    appendStyleFidelityField(fidelity, 'logo', logoWasApplied && picture
+      && picture.widthEmu <= logoMaxWidthEmu && picture.heightEmu <= logoMaxHeightEmu ? 'matched' : 'mismatched', provenance);
+  }
+  return { bytes: output, operationCount, fidelity };
 }
 
 export async function applyStyleProfileToDocument(input: {

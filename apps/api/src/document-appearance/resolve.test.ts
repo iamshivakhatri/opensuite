@@ -10,6 +10,9 @@ import {
   resolveDocumentAppearance,
   shouldApplyAutomaticBrand,
 } from './resolve.js';
+import { readableTextColor } from './contrast.js';
+
+const logoPng = new Uint8Array(Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9WlQL0YAAAAASUVORK5CYII=', 'base64'));
 
 const brand: WorkspaceBrandProfile = {
   schemaVersion: 1, workspaceId: 'workspace', createdAt: '', updatedAt: '', logoAssetId: 'logo',
@@ -28,23 +31,55 @@ const savedStyle = (): StyleProfileData => ({
 const reportPolicy = documentSkillPolicy('skills.reporting.analytical-report')!;
 
 test('saved style wins while workspace brand fills missing permitted appearance', () => {
-  const appearance = resolveDocumentAppearance({ savedStyle: savedStyle(), workspaceBrand: brand, policy: reportPolicy });
+  const style = savedStyle();
+  style.body.text.color = 'ABCDEF';
+  const appearance = resolveDocumentAppearance({ savedStyle: style, workspaceBrand: brand, policy: reportPolicy });
   assert.equal(appearance.plan.roles.body?.text.fontFamily, 'Arial');
   assert.equal(appearance.plan.roles.Heading1?.text.fontFamily, 'Arial');
   assert.equal(appearance.plan.roles.Heading1?.text.color, 'ABCDEF');
   assert.equal(appearance.plan.roles.Heading2?.text.fontFamily, 'Aptos Display');
   assert.equal(appearance.plan.roles.Heading2?.text.color, '345678');
   assert.equal(appearance.plan.table?.headerFill, '56789A');
+  assert.equal(appearance.plan.table?.headerTextColor, 'ABCDEF');
   assert.equal(appearance.provenance['Heading1.text.color'], 'saved_style');
+  assert.equal(appearance.provenance['table.headerTextColor'], 'saved_style');
   assert.equal(appearance.provenance['Heading2.text.color'], 'workspace_brand');
 });
 
+test('brand primary styles Title and Heading 1, and dark table fills use a readable foreground', () => {
+  const appearance = resolveDocumentAppearance({
+    workspaceBrand: { ...brand, colors: { primary: '#124733', secondary: null, accent: null } },
+    policy: reportPolicy,
+  });
+  assert.equal(appearance.plan.roles.Title?.text.color, '124733');
+  assert.equal(appearance.plan.roles.Heading1?.text.color, '124733');
+  assert.equal(appearance.plan.table?.headerFill, '124733');
+  assert.equal(appearance.plan.table?.headerTextColor, 'FFFFFF');
+});
+
+test('contrast color is deterministic and leaves invalid backgrounds alone', () => {
+  assert.equal(readableTextColor('#124733'), 'FFFFFF');
+  assert.equal(readableTextColor('#F3F4F6'), '000000');
+  assert.equal(readableTextColor('not-a-color'), undefined);
+});
+
 test('document skill policies keep branding conservative', () => {
-  assert.deepEqual(documentSkillPolicy('skills.reporting.analytical-report')?.channels, ['typography', 'colors', 'tableAccent']);
+  assert.deepEqual(documentSkillPolicy('skills.reporting.analytical-report')?.channels, ['typography', 'colors', 'tableAccent', 'logo']);
+  assert.deepEqual(documentSkillPolicy('skills.proposals.basic-proposal')?.channels, ['typography', 'colors', 'tableAccent', 'logo']);
   assert.deepEqual(documentSkillPolicy('skills.coordination.meeting-minutes')?.channels, ['typography']);
   for (const id of ['skills.reporting.recurring-update', 'skills.career.resume', 'skills.scientific-writing.scientific-paper']) {
     assert.deepEqual(documentSkillPolicy(id)?.channels, [], id);
   }
+});
+
+test('logo plans require a new permitted document', () => {
+  const input = { workspaceBrand: brand, workspaceLogo: { bytes: logoPng, contentType: 'image/png' as const } };
+  const newReport = resolveDocumentAppearance({ ...input, policy: reportPolicy, isNewDocument: true });
+  assert.deepEqual(newReport.plan.logo?.imageBytes, logoPng);
+  assert.equal(newReport.provenance.logo, 'workspace_brand');
+  assert.equal(resolveDocumentAppearance({ ...input, policy: reportPolicy, isNewDocument: false }).plan.logo, undefined);
+  assert.equal(resolveDocumentAppearance({ ...input, policy: documentSkillPolicy('skills.career.resume')!, isNewDocument: true }).plan.logo, undefined);
+  assert.equal(resolveDocumentAppearance({ ...input, policy: documentSkillPolicy('skills.scientific-writing.scientific-paper')!, isNewDocument: true }).plan.logo, undefined);
 });
 
 test('automatic brand application is new-document only and respects a clear opt-out', () => {
