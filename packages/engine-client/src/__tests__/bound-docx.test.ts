@@ -362,6 +362,7 @@ test("every engine mutation capability is either dispatchable or intentionally h
     "inspect_context",
     "inspect_sections",
     "inspect_comments",
+    "inspect_tracked_changes",
     "find_text",
     "body_blocks",
     "style_snapshot",

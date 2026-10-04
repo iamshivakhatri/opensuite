@@ -1,3 +1,4 @@
+import type { DocxRevisionOptions, DocxRevisionInspection } from "./docx-revisions.js";
 import type { DocxCommentOptions, DocxCommentInspection, DocxAddCommentOperation, DocxUpdateCommentOperation, DocxDeleteCommentOperation } from "./docx-comments.js";
 /**
  * Narrow Node-binding surface for opensuite-engine N-API.
@@ -351,6 +352,7 @@ export interface DocxFindTextResult {
 
 /** Focus shapes accepted by the DOCX N-API inspectDocx binding. */
 export type DocxInspectFocus =
+  | ({ readonly kind: "revisions" } & DocxRevisionOptions)
   | ({ readonly kind: "comments" } & DocxCommentOptions)
   | ({ readonly kind: "layout" } & DocxLayoutOptions)
   | { readonly kind: "sections" }
@@ -486,6 +488,7 @@ export interface DocxInspectContextUnit {
 }
 
 export interface DocxInspectResult {
+  readonly revisions?: DocxRevisionInspection;
   readonly comments?: DocxCommentInspection;
   readonly layout?: DocxLayoutSnapshot;
   readonly sections?: readonly DocxSection[];
@@ -518,6 +521,7 @@ export interface DocxInspectResult {
 }
 
 export interface DocxEngineBinding {
+  inspectDocxTrackedChanges?(input: Uint8Array, options?: DocxRevisionOptions): Promise<DocxRevisionInspection>;
   inspectDocxComments?(input: Uint8Array, options?: DocxCommentOptions): Promise<DocxCommentInspection>;
   executeDocxAddComment?(input: Uint8Array, operation: DocxAddCommentOperation): Promise<DocxMutationBindingResult>;
   executeDocxUpdateComment?(input: Uint8Array, operation: DocxUpdateCommentOperation): Promise<DocxMutationBindingResult>;
@@ -628,6 +632,7 @@ export interface DocxEngineBinding {
 }
 
 type NativeEngineModule = {
+  inspectDocxTrackedChanges?: (input: Buffer, options?: DocxRevisionOptions) => Promise<string>;
   inspectDocxComments?: (input: Buffer, options?: DocxCommentOptions) => Promise<string>;
   executeDocxAddComment?: (input: Buffer, operation: Record<string, unknown>) => Promise<DocxMutationBindingResult>;
   executeDocxUpdateComment?: (input: Buffer, operation: Record<string, unknown>) => Promise<DocxMutationBindingResult>;
@@ -790,6 +795,7 @@ type NativeEngineModule = {
 
 function toNativeInspectFocus(focus: DocxInspectFocus): Record<string, unknown> {
   switch (focus.kind) {
+    case "revisions":
     case "comments":
     case "layout":
       return { ...focus };
@@ -957,6 +963,10 @@ export async function createNapiDocxEngineBinding(): Promise<DocxEngineBinding> 
     },
     async executeDocxUpdateComment(input, operation) { return executeExtended(input, "executeDocxUpdateComment", { ...operation }); },
     async executeDocxDeleteComment(input, operation) { return executeExtended(input, "executeDocxDeleteComment", { ...operation }); },
+    async inspectDocxTrackedChanges(input, options) {
+      if (!native.inspectDocxTrackedChanges) throw new Error("Local engine is missing inspectDocxTrackedChanges");
+      return JSON.parse(await native.inspectDocxTrackedChanges(Buffer.from(input), options)) as DocxRevisionInspection;
+    },
     async inspectDocxComments(input, options) {
       if (!native.inspectDocxComments) throw new Error("Local engine is missing inspectDocxComments");
       return JSON.parse(await native.inspectDocxComments(Buffer.from(input), options)) as DocxCommentInspection;
@@ -966,6 +976,12 @@ export async function createNapiDocxEngineBinding(): Promise<DocxEngineBinding> 
       return JSON.parse(await native.inspectDocxLayout(Buffer.from(input), options)) as DocxLayoutSnapshot;
     },
     async inspectDocx(input, request) {
+      if (request.focus.kind === "revisions") {
+        if (!native.inspectDocxTrackedChanges) throw new Error("Local engine is missing inspectDocxTrackedChanges");
+        const { kind, ...options } = request.focus;
+        const revisions = JSON.parse(await native.inspectDocxTrackedChanges(Buffer.from(input), options)) as DocxRevisionInspection;
+        return { ok: revisions.ok, focus: "revisions", revisions, diagnostics: revisions.diagnostics.map(d => ({ ...d, severity: revisions.ok ? "warning" : "error" })) };
+      }
       if (request.focus.kind === "comments") {
         if (!native.inspectDocxComments) throw new Error("Local engine is missing inspectDocxComments");
         const { kind, ...options } = request.focus;

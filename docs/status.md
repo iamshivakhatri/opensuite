@@ -4,6 +4,8 @@ _Read this before starting any work. Keep it a concise current-state handoff, no
 
 ## What Exists
 
+* Local-engine tracked-change inspection: bounded main-document insertion/deletion metadata and text through engine-client and lazy `document.revisions`. Read-only, no new versions. Complex/move/property revisions are counted with diagnostics; authoring and accept/reject remain unavailable. Existing current-text semantics and unsafe editing guards remain unchanged. No npm or Agent Core V3 change.
+
 * Workspace shell, Casual Docs DOCX editor, blank create, workspace agent; PPTX/XLSX storable only.
 * Explorer versions rail: last 5 tips for the open document; view older tips read-only; restore truncates newer versions (DB + object storage) so that tip becomes editable. Each agent run rebinds to current tip via `getOwnedDocument`; operating instruction warns that restored tips discard higher version numbers. Sidebar polish: files use a tinted row with a left accent bar; versions render as a timeline (node, "Current" badge, elevated selected card); hover is a neutral wash; footer is a quiet "Add file" button.
 * Engine-backed DOCX inspect/mutate via npm `@opensuitehq/engine@0.1.3` (semantic table cell/row edits + structured diagnostics). Engine-client keeps capability gates for older installs. API Docker image loads the native binding before deploy (glibc bookworm; not Alpine/musl).

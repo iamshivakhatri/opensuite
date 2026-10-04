@@ -25,6 +25,7 @@ export interface BoundDocumentHost {
 }
 
 export type InspectFocus =
+  | { readonly kind: "revisions"; readonly offset?: number; readonly limit?: number }
   | { readonly kind: "comments"; readonly offset?: number; readonly limit?: number }
   | { readonly kind: "layout"; readonly blockOffset?: number; readonly blockLimit?: number; readonly sectionIndex?: number }
   | { readonly kind: "sections" }
@@ -52,7 +53,7 @@ const findInput = jsonSchema<{ text: string }>({
 });
 
 type InspectToolInput = {
-  kind: Exclude<InspectFocus["kind"], "sections" | "layout" | "comments">;
+  kind: Exclude<InspectFocus["kind"], "sections" | "layout" | "comments" | "revisions">;
   offset?: number;
   limit?: number;
   text?: string;
@@ -716,6 +717,13 @@ export function createDocumentTools(document: BoundDocumentHost): AgentToolSet {
     if (document.renderLayout) tools["document.render_layout"] = defineTool({ kind: "read",
       description: "Get LibreOffice-derived PDF page count and page dimensions using the optional external renderer. Depends on installed fonts and tools; failures report unavailable, never estimated. Exact block-to-page mapping is unavailable. Does not save a document version.",
       inputSchema: op({}), execute: () => document.renderLayout!(),
+    });
+  }
+  if (caps.has("inspect_tracked_changes")) {
+    tools["document.inspect_tracked_changes"] = defineTool({ kind: "read",
+      description: "Inspect existing Word tracked insertions/deletions: IDs, author/date, bounded text, source-order paragraph locations, totals, and complex-revision diagnostics. Main document including tables only. Default 20, maximum 100 per page; text/metadata capped at 2000 characters. Current document text includes insertions and excludes deletions. Does not edit or save a version.",
+      inputSchema: op({ offset: { type: "integer", minimum: 0 }, limit: { type: "integer", minimum: 1, maximum: 100 } }),
+      execute: async input => document.inspect({ focus: { kind: "revisions", ...input } }),
     });
   }
   if (caps.has("inspect_comments")) {

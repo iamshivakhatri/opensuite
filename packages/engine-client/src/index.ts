@@ -22,3 +22,5 @@ export {
   buildNameRoleTableDocx,
 } from "./__fixtures__/minimal-docx.js";
 export type { DocxBodyBlock } from "./__fixtures__/minimal-docx.js";
+
+export * from "./docx-revisions.js";
