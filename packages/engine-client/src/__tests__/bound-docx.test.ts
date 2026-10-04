@@ -364,6 +364,7 @@ test("every engine mutation capability is either dispatchable or intentionally h
     "find_text",
     "body_blocks",
     "style_snapshot",
+    "layout_snapshot",
     "create_blank_docx",
   ]);
 

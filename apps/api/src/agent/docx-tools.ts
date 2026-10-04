@@ -258,6 +258,7 @@ function createActiveDocxSession(input: {
       return result;
     },
     find: (request) => requireHost().find(request),
+    renderLayout: () => requireHost().renderLayout!(),
     mutate: async (capability, operation) => {
       if (!host?.mutate) {
         return {

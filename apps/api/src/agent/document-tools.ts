@@ -11,6 +11,7 @@ import {
 export interface BoundDocumentHost {
   capabilities(): unknown;
   inspect(request: { readonly focus: InspectFocus }): Promise<unknown>;
+  renderLayout?(): Promise<unknown>;
   find(request: { readonly text: string }): Promise<unknown>;
   /** Present when writes are wired. */
   mutate?(
@@ -24,6 +25,7 @@ export interface BoundDocumentHost {
 }
 
 export type InspectFocus =
+  | { readonly kind: "layout"; readonly blockOffset?: number; readonly blockLimit?: number; readonly sectionIndex?: number }
   | { readonly kind: "sections" }
   | { readonly kind: "overview" }
   | {
@@ -49,7 +51,7 @@ const findInput = jsonSchema<{ text: string }>({
 });
 
 type InspectToolInput = {
-  kind: Exclude<InspectFocus["kind"], "sections">;
+  kind: Exclude<InspectFocus["kind"], "sections" | "layout">;
   offset?: number;
   limit?: number;
   text?: string;
@@ -670,6 +672,17 @@ export function createDocumentTools(document: BoundDocumentHost): AgentToolSet {
     });
   }
 
+  if (caps.has("layout_snapshot")) {
+    tools["document.inspect_layout"] = defineTool({ kind: "read",
+      description: "Inspect structural section geometry, explicit pagination controls, table/image dimensions and width warnings. No automatic page positions. Default returns summaries; blockLimit (0–100) and blockOffset request details; sectionIndex selects a zero-based section.",
+      inputSchema: op({ blockOffset: { type: "integer", minimum: 0 }, blockLimit: { type: "integer", minimum: 0, maximum: 100 }, sectionIndex: { type: "integer", minimum: 0 } }),
+      execute: async input => document.inspect({ focus: { kind: "layout", ...input } }),
+    });
+    if (document.renderLayout) tools["document.render_layout"] = defineTool({ kind: "read",
+      description: "Get LibreOffice-derived PDF page count and page dimensions using the optional external renderer. Depends on installed fonts and tools; failures report unavailable, never estimated. Exact block-to-page mapping is unavailable. Does not save a document version.",
+      inputSchema: op({}), execute: () => document.renderLayout!(),
+    });
+  }
   if (caps.has("inspect_sections")) {
     tools["document.inspect_sections"] = defineTool({
       kind: "read",

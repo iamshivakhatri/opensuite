@@ -18,6 +18,8 @@ _Read this before starting any work. Keep it a concise current-state handoff, no
 * Agent UX: progressive activity rows from SSE; clarification via `request_clarification`; Continue after max-turn/deadline; compact `[agent]` logs; opt-in `AGENT_RUN_TRACE=full`.
 * Public marketing + auth (Google OAuth); centralized brand palette; API composition seam (`createOpenSuiteRuntime` / `createOpenSuiteApp`) for a future Cloud overlay. V2 retained off-path.
 
+* E1 Pass 3 local-engine layout inspection: bounded structural geometry, section ownership, pagination controls, and table/image width warnings via dynamic `document.layout`. Optional external LibreOffice→PDF adapter reports renderer-derived page count/dimensions; exact block→page mapping is unavailable. Read-only, no new versions, npm change, or agent-core-v3 change.
+
 * E1 Pass 2 local-engine custom Word styles: typed create/update with inheritance checks, clear-to-inherit patches, character styles, and dynamic `document.styles` tools. IDs name parents/next styles; paragraph application uses display names. No package/version or agent-core-v3 change. Manual Office review remains pending.
 
 * E1 local-engine section editing: dynamic `document.sections` and `document.headers_footers` tools call typed Rust operations through engine-client and the existing run-local mutation/save lifecycle. Inspect fresh section handles after edits. Default/first/even simple text and PAGE fields, independent page setup, link/unlink, restart/continue numbering; odd/even is explicitly document-wide. No npm version change or agent-core-v3 change.

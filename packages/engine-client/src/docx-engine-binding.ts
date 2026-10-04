@@ -10,6 +10,7 @@ import { isAbsolute, resolve } from "node:path";
 
 import type { DocxSection, DocxSectionInspection, DocxInsertSectionBreakOperation, DocxSetSectionPropertiesOperation, DocxSetSectionHeaderFooterOperation } from "./docx-sections.js";
 
+import type { DocxLayoutOptions, DocxLayoutSnapshot } from "./docx-layout.js";
 import type { DocxStyleOperation, DocxCreateStyleOperation } from "./docx-styles.js";
 import type { DocxStyleSnapshot } from "./docx-style-snapshot.js";
 
@@ -344,6 +345,7 @@ export interface DocxFindTextResult {
 
 /** Focus shapes accepted by the DOCX N-API inspectDocx binding. */
 export type DocxInspectFocus =
+  | ({ readonly kind: "layout" } & DocxLayoutOptions)
   | { readonly kind: "sections" }
   | { readonly kind: "overview" }
   | {
@@ -477,6 +479,7 @@ export interface DocxInspectContextUnit {
 }
 
 export interface DocxInspectResult {
+  readonly layout?: DocxLayoutSnapshot;
   readonly sections?: readonly DocxSection[];
   readonly ok: boolean;
   readonly focus: string;
@@ -525,6 +528,7 @@ export interface DocxEngineBinding {
     input: Uint8Array,
     request: DocxInspectRequest,
   ): Promise<DocxInspectResult>;
+  inspectDocxLayout?(input: Uint8Array, options?: DocxLayoutOptions): Promise<DocxLayoutSnapshot>;
   inspectDocxStyleSnapshot(input: Uint8Array): Promise<DocxStyleSnapshot>;
   executeDocxReplaceText(
     input: Uint8Array,
@@ -608,6 +612,7 @@ export interface DocxEngineBinding {
 }
 
 type NativeEngineModule = {
+  inspectDocxLayout?: (input: Buffer, options?: DocxLayoutOptions) => Promise<string>;
   executeDocxCreateStyle?: (input: Buffer, operation: Record<string, unknown>) => Promise<DocxMutationBindingResult>;
   executeDocxUpdateStyle?: (input: Buffer, operation: Record<string, unknown>) => Promise<DocxMutationBindingResult>;
   getDocxCapabilities: () => {
@@ -765,6 +770,8 @@ type NativeEngineModule = {
 
 function toNativeInspectFocus(focus: DocxInspectFocus): Record<string, unknown> {
   switch (focus.kind) {
+    case "layout":
+      return { ...focus };
     case "sections":
       return { kind: "sections" };
     case "overview":
@@ -912,7 +919,17 @@ export async function createNapiDocxEngineBinding(): Promise<DocxEngineBinding> 
       return native.findDocxText(Buffer.from(input), { text: request.text });
     },
 
+    async inspectDocxLayout(input, options) {
+      if (!native.inspectDocxLayout) throw new Error("Local engine is missing inspectDocxLayout");
+      return JSON.parse(await native.inspectDocxLayout(Buffer.from(input), options)) as DocxLayoutSnapshot;
+    },
     async inspectDocx(input, request) {
+      if (request.focus.kind === "layout") {
+        if (!native.inspectDocxLayout) throw new Error("Local engine is missing inspectDocxLayout");
+        const { kind, ...options } = request.focus;
+        const layout = JSON.parse(await native.inspectDocxLayout(Buffer.from(input), options)) as DocxLayoutSnapshot;
+        return { ok: layout.ok, focus: "layout", layout, diagnostics: layout.diagnostics.map(d => ({ ...d, severity: !layout.ok ? "error" : d.code === "RENDERED_LAYOUT_UNAVAILABLE" ? "info" : "warning" })) };
+      }
       if (request.focus.kind === "sections") {
         if (!native.inspectDocxSections) throw new Error("Local engine is missing inspectDocxSections");
         const result = JSON.parse(await native.inspectDocxSections(Buffer.from(input))) as DocxSectionInspection;

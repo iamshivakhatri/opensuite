@@ -49,7 +49,7 @@ const dynamic: Record<string, readonly string[]> = {
   "document.styles": ["create_style", "update_style"],
   "document.sections": ["inspect_sections", "insert_section_break", "set_section_properties"],
   "document.headers_footers": ["set_section_header_footer", "set_odd_even_headers"],
-  "document.layout": ["insert_page_break", "delete_page_break", "set_page_setup", "set_header_footer_text", "set_page_number"],
+  "document.layout": ["inspect_layout", "render_layout", "insert_page_break", "delete_page_break", "set_page_setup", "set_header_footer_text", "set_page_number"],
   "document.rich_content": ["set_content_control_text", "set_hyperlink", "set_picture_size", "delete_picture"],
 };
 

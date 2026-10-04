@@ -31,6 +31,8 @@ export interface DocxParagraphFormattingSnapshot {
   readonly hangingIndentTwips?: number;
   readonly keepWithNext?: boolean;
   readonly keepLines?: boolean;
+  readonly pageBreakBefore?: boolean;
+  readonly widowControl?: boolean;
 }
 
 export interface DocxStyleUsageSnapshot {

@@ -10,6 +10,7 @@ import type {
   DocxRuntimeCapabilities,
 } from "./docx-engine-binding.js";
 import { MutationArgError } from "./docx-engine-binding.js";
+import { renderDocxLayout } from "./docx-renderer.js";
 import { dispatchMutation } from "./mutation-dispatch.js";
 
 export { MutationArgError } from "./docx-engine-binding.js";
@@ -69,6 +70,7 @@ export function bindDocxDocument(input: {
     find(request: DocxFindTextRequest): Promise<DocxFindTextResult> {
       return binding.findDocxText(bytes, request);
     },
+    renderLayout() { return renderDocxLayout(bytes); },
     currentVersionId(): string | undefined {
       return versionId;
     },
