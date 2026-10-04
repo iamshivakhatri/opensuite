@@ -42,7 +42,12 @@ export function createStorageAccountingService(db: Db, quotaBytes: number) {
     },
     async expectedUsage(userId: string) {
       const [row] = await db.select({ usedBytes: sql<number>`coalesce(sum(${schema.documentVersion.sizeBytes}), 0)::bigint` }).from(schema.documentVersion).innerJoin(schema.document, eq(schema.documentVersion.documentId, schema.document.id)).innerJoin(schema.workspace, eq(schema.document.workspaceId, schema.workspace.id)).where(eq(schema.workspace.ownerUserId, userId));
-      return row?.usedBytes ?? 0;
+      const [assets] = await db
+        .select({ usedBytes: sql<number>`coalesce(sum(${schema.workspaceAsset.sizeBytes}), 0)::bigint` })
+        .from(schema.workspaceAsset)
+        .innerJoin(schema.workspace, eq(schema.workspaceAsset.workspaceId, schema.workspace.id))
+        .where(eq(schema.workspace.ownerUserId, userId));
+      return Number(row?.usedBytes ?? 0) + Number(assets?.usedBytes ?? 0);
     },
     async reconcile(userId: string) {
       const [status, expectedBytes] = await Promise.all([

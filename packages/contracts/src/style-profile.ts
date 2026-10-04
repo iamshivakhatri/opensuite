@@ -84,3 +84,15 @@ export interface StyleProfile {
   };
   style: StyleProfileData;
 }
+
+/** Compact list response from the existing personal StyleProfile API. */
+export interface StyleProfileSummary {
+  id: string;
+  name: string;
+  createdAt: string;
+  updatedAt: string;
+  source: StyleProfile['source'];
+  body: StyleTextFormatting;
+  headingLevels: number[];
+  diagnosticCodes: string[];
+}

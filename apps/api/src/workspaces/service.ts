@@ -352,12 +352,15 @@ export function createWorkspaceService(
               eq(schema.documentVersion.documentId, schema.document.id),
             )
             .where(eq(schema.document.workspaceId, input.workspaceId));
-          const reclaimedBytes = versions.reduce(
-            (total, version) => total + version.sizeBytes,
-            0,
-          );
+          const assets = await tx
+            .select()
+            .from(schema.workspaceAsset)
+            .where(eq(schema.workspaceAsset.workspaceId, input.workspaceId));
+          const reclaimedBytes =
+            assets.reduce((total, asset) => total + asset.sizeBytes, 0) +
+            versions.reduce((total, version) => total + version.sizeBytes, 0);
 
-          for (const version of versions) {
+          for (const version of [...versions, ...assets]) {
             try {
               await storage.deleteObject(version.storageKey);
             } catch (error) {
@@ -405,6 +408,8 @@ export function createWorkspaceService(
             where ${schema.document.workspaceId} = ${input.workspaceId}
           )`);
           await tx.delete(schema.document).where(eq(schema.document.workspaceId, input.workspaceId));
+          await tx.delete(schema.workspaceBrand).where(eq(schema.workspaceBrand.workspaceId, input.workspaceId));
+          await tx.delete(schema.workspaceAsset).where(eq(schema.workspaceAsset.workspaceId, input.workspaceId));
           await tx.delete(schema.workspace).where(eq(schema.workspace.id, input.workspaceId));
           if (reclaimedBytes > 0) {
             await storageAccounting.release(tx, input.ownerUserId, reclaimedBytes);

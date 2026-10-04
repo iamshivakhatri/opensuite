@@ -2,7 +2,7 @@
 
 import * as React from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 
 import {
@@ -95,6 +95,8 @@ export function DocumentNavigationPanel({
   onRequestNavigate?: (href: string) => boolean | void;
 }) {
   const router = useRouter();
+  const brandHref = `/app/workspaces/${workspaceId}/brand`;
+  const brandActive = usePathname() === brandHref;
   const { toast } = useToast();
   const queryClient = useQueryClient();
   const documentsQuery = useQuery({
@@ -467,6 +469,22 @@ export function DocumentNavigationPanel({
       </div>
 
       <div className="shrink-0 border-t border-line p-2.5">
+        <Link
+          href={brandHref}
+          aria-current={brandActive ? "page" : undefined}
+          onClick={(event) => {
+            if (onRequestNavigate?.(brandHref) === false) event.preventDefault();
+          }}
+          className={cn(
+            focusRingClass,
+            "mb-2 flex h-8 items-center rounded-[var(--radius-md)] px-2 text-xs font-medium",
+            brandActive
+              ? "bg-primary-soft text-primary"
+              : "text-ink-soft hover:bg-surface hover:text-ink",
+          )}
+        >
+          Brand &amp; Styles
+        </Link>
         <button
           type="button"
           title="Add file"

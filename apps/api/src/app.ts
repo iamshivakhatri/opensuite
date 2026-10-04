@@ -44,6 +44,9 @@ import {
   type ProviderCredentialService,
 } from "./credentials/service.js";
 import { createStyleProfileService } from "./style-profiles/service.js";
+import { createWorkspaceAssetService } from "./workspace-brand/assets.js";
+import { createWorkspaceBrandService } from "./workspace-brand/service.js";
+import { registerWorkspaceBrandRoutes } from "./routes/workspace-brand.js";
 import { registerStyleProfileRoutes } from "./routes/style-profiles.js";
 import { createDocumentService } from "./documents/service.js";
 import { createDocumentPreferenceService } from "./documents/preferences.js";
@@ -304,6 +307,10 @@ export async function buildApp(
     deps.db, documents,
     docxBinding ? bytes => docxBinding!.inspectDocxStyleSnapshot(bytes) : undefined,
   );
+  const workspaceAssets = createWorkspaceAssetService(
+    deps.db, deps.storage, workspaces, storageAccounting,
+  );
+  const workspaceBrand = createWorkspaceBrandService(deps.db, workspaceAssets);
   const preferences = createDocumentPreferenceService(deps.db);
   const managedUsagePolicy = deps.managedUsagePolicy ?? createManagedTrialService(
     createManagedTrialRepository(deps.db),
@@ -400,6 +407,7 @@ export async function buildApp(
   registerStorageRoutes(app, deps.auth, storageAccounting);
   registerSearchRoutes(app, deps.auth, search);
   registerStyleProfileRoutes(app, deps.auth, styleProfiles);
+  registerWorkspaceBrandRoutes(app, deps.auth, workspaceBrand, workspaceAssets);
   registerAgentRoutes(app, {
     auth: deps.auth,
     persistence: agentPersistence,

@@ -169,6 +169,13 @@
       "when": 1791072003000,
       "tag": "0023_style_profiles",
       "breakpoints": true
+    },
+    {
+      "idx": 24,
+      "version": "7",
+      "when": 1791087151581,
+      "tag": "0024_workspace_brand",
+      "breakpoints": true
     }
   ]
 }

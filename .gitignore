@@ -61,6 +61,7 @@ packages/db/migrations/*.sql
 !packages/db/migrations/0021_capability_kind.sql
 !packages/db/migrations/0022_capability_recommendations.sql
 !packages/db/migrations/0023_style_profiles.sql
+!packages/db/migrations/0024_workspace_brand.sql
 packages/db/migrations/meta/*.json
 !packages/db/migrations/meta/_journal.json
 !packages/db/migrations/meta/0000_snapshot.json
@@ -83,5 +84,6 @@ notes.txt
 .gstack/
 
 *.json
+!packages/db/migrations/meta/0024_snapshot.json
 
 .agent-traces

@@ -1,6 +1,6 @@
 import { and, desc, eq } from 'drizzle-orm';
 import { schema, type Db } from '@opensuite/db';
-import type { StyleProfile, StyleProfileData } from '@opensuite/contracts';
+import type { StyleProfile, StyleProfileData, StyleProfileSummary } from '@opensuite/contracts';
 import { inspectDocxStyleSnapshot, type DocxStyleSnapshot } from '@opensuite/engine-client';
 import { type DocumentService } from '../documents/service.js';
 import { normalizeStyleSnapshot } from './normalize.js';
@@ -61,7 +61,7 @@ export function createStyleProfileService(
       const [row] = await db.select().from(schema.styleProfile).where(owned(ownerUserId, id)).limit(1);
       return requireRow(row);
     },
-    async list(ownerUserId: string, limit = 20, offset = 0) {
+    async list(ownerUserId: string, limit = 20, offset = 0): Promise<StyleProfileSummary[]> {
       const rows = await db.select().from(schema.styleProfile).where(eq(schema.styleProfile.ownerUserId, ownerUserId)).orderBy(desc(schema.styleProfile.createdAt), desc(schema.styleProfile.id)).limit(Math.min(50, Math.max(1, limit))).offset(Math.max(0, offset));
       return rows.map(row => {
         const profile = toProfile(row);
