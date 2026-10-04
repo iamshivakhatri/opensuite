@@ -237,6 +237,18 @@ const imagePosition = (references: string[]) => ({
   oneOf: [{ required: ["alignment"] }, { required: ["offsetEmu"] }],
 });
 const MUTATION_DEFS: Record<string, MutDef> = {
+  insert_tracked_text: {
+    description: "Insert text as a real Word tracked insertion before/after an exact ordinary text anchor in one body paragraph. Default after. Inherits formatting at the insertion boundary. Author is explicit; date defaults to current UTC. Fields, wrappers, tables, and paragraphs containing revisions are unsupported. Re-inspect after editing.",
+    inputSchema: op({ target: textTarget, text: { type: "string", minLength: 1, maxLength: 32000 }, position: { type: "string", enum: ["before", "after"] }, author: { type: "string", minLength: 1 }, date: { type: "string", description: "UTC ISO timestamp" } }, ["target", "text", "author"]),
+  },
+  delete_tracked_text: {
+    description: "Delete exact ordinary text as a real Word tracked deletion, retaining deleted text and run formatting for review. One body paragraph; simple multiple runs supported. Author explicit; date defaults to current UTC. Fields, wrappers, tables, and paragraphs containing revisions are unsupported. Re-inspect after editing.",
+    inputSchema: op({ target: textTarget, author: { type: "string", minLength: 1 }, date: { type: "string", description: "UTC ISO timestamp" } }, ["target", "author"]),
+  },
+  replace_text_with_tracked_change: {
+    description: "Replace exact ordinary text with real Word deletion + insertion revisions, preserving source formatting. Simple multiple runs require identical formatting. Author explicit; date defaults to current UTC. Fields, wrappers, tables, and paragraphs containing revisions are unsupported. Re-inspect after editing.",
+    inputSchema: op({ target: textTarget, replacement: { type: "string", minLength: 1, maxLength: 32000 }, author: { type: "string", minLength: 1 }, date: { type: "string", description: "UTC ISO timestamp" } }, ["target", "replacement", "author"]),
+  },
   add_comment: {
     description: "Attach a standard Word comment to exact text in one ordinary body paragraph, including simple formatted runs. Author is explicit; date defaults to current UTC. Wrappers, fields, revisions, cross-paragraph ranges, and threaded comments are unsupported.",
     inputSchema: op({ target: textTarget, text: { type: "string", minLength: 1, maxLength: 32000 }, author: { type: "string", minLength: 1 }, initials: { type: "string" }, date: { type: "string", description: "ISO timestamp, e.g. 2026-10-04T12:00:00Z" } }, ["target", "text", "author"]),

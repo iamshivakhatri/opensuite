@@ -1,4 +1,4 @@
-import type { DocxRevisionOptions, DocxRevisionInspection } from "./docx-revisions.js";
+import type { DocxRevisionOptions, DocxRevisionInspection, DocxInsertTrackedTextOperation, DocxDeleteTrackedTextOperation, DocxReplaceTextWithTrackedChangeOperation } from "./docx-revisions.js";
 import type { DocxCommentOptions, DocxCommentInspection, DocxAddCommentOperation, DocxUpdateCommentOperation, DocxDeleteCommentOperation } from "./docx-comments.js";
 /**
  * Narrow Node-binding surface for opensuite-engine N-API.
@@ -88,6 +88,9 @@ export type DocxMutationBindingResult = DocxReplaceTextBindingResult;
 
 /** Newer DOCX operations share the same verified-output envelope. */
 export type DocxExtendedOperationName =
+  | "executeDocxInsertTrackedText"
+  | "executeDocxDeleteTrackedText"
+  | "executeDocxReplaceTextWithTrackedChange"
   | "executeDocxAddComment"
   | "executeDocxUpdateComment"
   | "executeDocxDeleteComment"
@@ -521,6 +524,9 @@ export interface DocxInspectResult {
 }
 
 export interface DocxEngineBinding {
+  executeDocxInsertTrackedText?(input: Uint8Array, operation: DocxInsertTrackedTextOperation): Promise<DocxMutationBindingResult>;
+  executeDocxDeleteTrackedText?(input: Uint8Array, operation: DocxDeleteTrackedTextOperation): Promise<DocxMutationBindingResult>;
+  executeDocxReplaceTextWithTrackedChange?(input: Uint8Array, operation: DocxReplaceTextWithTrackedChangeOperation): Promise<DocxMutationBindingResult>;
   inspectDocxTrackedChanges?(input: Uint8Array, options?: DocxRevisionOptions): Promise<DocxRevisionInspection>;
   inspectDocxComments?(input: Uint8Array, options?: DocxCommentOptions): Promise<DocxCommentInspection>;
   executeDocxAddComment?(input: Uint8Array, operation: DocxAddCommentOperation): Promise<DocxMutationBindingResult>;
@@ -632,6 +638,9 @@ export interface DocxEngineBinding {
 }
 
 type NativeEngineModule = {
+  executeDocxInsertTrackedText?: (input: Buffer, operation: Record<string, unknown>) => Promise<DocxMutationBindingResult>;
+  executeDocxDeleteTrackedText?: (input: Buffer, operation: Record<string, unknown>) => Promise<DocxMutationBindingResult>;
+  executeDocxReplaceTextWithTrackedChange?: (input: Buffer, operation: Record<string, unknown>) => Promise<DocxMutationBindingResult>;
   inspectDocxTrackedChanges?: (input: Buffer, options?: DocxRevisionOptions) => Promise<string>;
   inspectDocxComments?: (input: Buffer, options?: DocxCommentOptions) => Promise<string>;
   executeDocxAddComment?: (input: Buffer, operation: Record<string, unknown>) => Promise<DocxMutationBindingResult>;
@@ -957,6 +966,16 @@ export async function createNapiDocxEngineBinding(): Promise<DocxEngineBinding> 
     },
     executeDocxReplacePicture(input, operation) {
       return executeExtended(input, "executeDocxReplacePicture", { ...operation, replacementBytes: Buffer.from(operation.replacementBytes) });
+    },
+    async executeDocxInsertTrackedText(input, operation) {
+      if (operation.position !== undefined && operation.position !== "before" && operation.position !== "after") throw new MutationArgError("position must be before or after");
+      return executeExtended(input, "executeDocxInsertTrackedText", { ...operation, target: toNativeTextTarget(operation.target), position: operation.position ?? "after", date: operation.date ?? new Date().toISOString() });
+    },
+    async executeDocxDeleteTrackedText(input, operation) {
+      return executeExtended(input, "executeDocxDeleteTrackedText", { ...operation, target: toNativeTextTarget(operation.target), date: operation.date ?? new Date().toISOString() });
+    },
+    async executeDocxReplaceTextWithTrackedChange(input, operation) {
+      return executeExtended(input, "executeDocxReplaceTextWithTrackedChange", { ...operation, target: toNativeTextTarget(operation.target), date: operation.date ?? new Date().toISOString() });
     },
     async executeDocxAddComment(input, operation) {
       return executeExtended(input, "executeDocxAddComment", { ...operation, target: toNativeTextTarget(operation.target), date: operation.date ?? new Date().toISOString() });

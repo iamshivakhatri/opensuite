@@ -4,7 +4,9 @@ _Read this before starting any work. Keep it a concise current-state handoff, no
 
 ## What Exists
 
-* Local-engine tracked-change inspection: bounded main-document insertion/deletion metadata and text through engine-client and lazy `document.revisions`. Read-only, no new versions. Complex/move/property revisions are counted with diagnostics; authoring and accept/reject remain unavailable. Existing current-text semantics and unsafe editing guards remain unchanged. No npm or Agent Core V3 change.
+* Local-engine tracked-change authoring: lazy `document.revisions` now exposes typed insert-before/after, tracked deletion, and tracked replacement (deletion + insertion). One ordinary body paragraph; simple runs preserve formatting, replacement requires identical run properties. Explicit author, optional UTC date, collision-free main-document IDs, original/current-text verification, and existing one-save-per-run lifecycle. Fields/wrappers/tables/markers and paragraphs with revisions fail safely. Accept/reject, npm pins, and Agent Core V3 remain unchanged.
+
+* Local-engine tracked-change inspection: bounded main-document insertion/deletion metadata and text through engine-client and lazy `document.revisions`. Read-only, no new versions. Complex/move/property revisions are counted with diagnostics; accept/reject remains unavailable. Existing current-text semantics and unsafe editing guards remain unchanged. No npm or Agent Core V3 change.
 
 * Workspace shell, Casual Docs DOCX editor, blank create, workspace agent; PPTX/XLSX storable only.
 * Explorer versions rail: last 5 tips for the open document; view older tips read-only; restore truncates newer versions (DB + object storage) so that tip becomes editable. Each agent run rebinds to current tip via `getOwnedDocument`; operating instruction warns that restored tips discard higher version numbers. Sidebar polish: files use a tinted row with a left accent bar; versions render as a timeline (node, "Current" badge, elevated selected card); hover is a neutral wash; footer is a quiet "Add file" button.
