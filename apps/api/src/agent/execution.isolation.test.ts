@@ -2247,7 +2247,7 @@ test('explicit learn-style request binds the open saved version and exposes the 
     await input.tools!['capabilities.load']!.execute!({ ids: ['style.learn_from_document'] }, {} as never);
     const tools = await input.projectTools!({ turn: 2 } as never);
     assert.ok(tools['style.learn_from_document']);
-    await tools['style.learn_from_document']!.execute!({}, {} as never);
+    await tools['style.learn_from_document']!.execute!({ name: 'Blue Harbor Operating Report Style' }, {} as never);
     return softResult('completed', 'Style saved.');
   });
   const execution = createAgentExecutionService({ ...deps, docxBinding: binding,
@@ -2260,7 +2260,7 @@ test('explicit learn-style request binds the open saved version and exposes the 
       return { id: documentId, name: 'Report Style', createdAt: '', updatedAt: '', source: { type: 'docx', documentId, versionId, workspaceId: 'ws-1', fileName: 'Report.docx', extractedAt: '', snapshotSchemaVersion: 1, normalizerVersion: 1 }, style: normalizeStyleSnapshot(await binding.inspectDocxStyleSnapshot(bytes)) };
     } } as never,
   });
-  const result = await (await execution.start({ userId: 'user-1', threadId: 'thread-1', activeDocumentId: documentId, instruction: 'Learn the style from this document.' })).result;
+  const result = await (await execution.start({ userId: 'user-1', threadId: 'thread-1', activeDocumentId: documentId, instruction: 'Learn the document style from this document and save it for future use.' })).result;
   assert.equal(result.run.status, 'completed');
   assert.equal(learned, 1);
   assert.equal(result.run.baseDocumentVersionId, versionId);

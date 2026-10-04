@@ -23,3 +23,12 @@ test("manifest lists workspace metadata without document bodies", () => {
   assert.match(manifest, /\[TAGGED\] Source\.docx \(docx; ID source; updated 2026-10-02T00:00:00.000Z; v5\)/);
   assert.doesNotMatch(manifest, /body|snippet|heading|table/i);
 });
+
+
+test("explicit document-style wording binds only this/current/open document", () => {
+  assert.equal(refersToOpenDocument("Learn the document style from this document and save it for future use."), true);
+  assert.equal(refersToOpenDocument("Learn the style from this document"), true);
+  assert.equal(refersToOpenDocument("Save the document style of the current report"), true);
+  assert.equal(refersToOpenDocument("Learn the document style from the board report"), false);
+  assert.equal(refersToOpenDocument("Tell me all the styles I have saved."), false);
+});

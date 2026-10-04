@@ -1,6 +1,6 @@
 /** Only an explicit edit or style-learning reference binds the open file before the model acts. */
 export function refersToOpenDocument(instruction: string): boolean {
-  if (/\b(?:learn|save)\s+(?:the\s+)?style\s+(?:from|of)\s+(?:the\s+)?(?:this|current|open)\s+(?:document|doc|file|report)\b/i.test(instruction)) return true;
+  if (/\b(?:learn|save)\s+(?:the\s+)?(?:document\s+)?style\s+(?:from|of)\s+(?:the\s+)?(?:this|current|open)\s+(?:document|doc|file|report)\b/i.test(instruction)) return true;
   return /\b(?:update|edit|revise|refresh|modify|change|format|rewrite|fix)\s+(?:the\s+)?(?:this|current|open)\s+(?:document|doc|file|report)\b/i.test(instruction);
 }
 

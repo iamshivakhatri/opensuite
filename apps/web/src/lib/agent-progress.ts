@@ -291,6 +291,18 @@ const TOOL_LABELS: Record<string, { active: string; done: string }> = {
     active: "Asking for clarification",
     done: "Needs your input",
   },
+  "style.learn_from_document": {
+    active: "Learning document style",
+    done: "Saved style profile",
+  },
+  "style.list_profiles": {
+    active: "Listing saved styles",
+    done: "Listed saved styles",
+  },
+  "style.get_profile": {
+    active: "Reading saved style",
+    done: "Read saved style",
+  },
   "slides.update_text": {
     active: "Updating slide text",
     done: "Updated slide text",
@@ -302,6 +314,15 @@ const TOOL_LABELS: Record<string, { active: string; done: string }> = {
 };
 
 const READ_TOOLS = new Set([
+  "style.list_profiles",
+  "style.get_profile",
+  "capabilities.list",
+  "capabilities.search",
+  "capabilities.load",
+  "workspace.search_documents",
+  "workspace.inspect_document",
+  "workspace.select_document",
+  "compute.calculator",
   "document.inspect",
   "document.find",
   "document.capabilities",
@@ -1047,17 +1068,20 @@ function completionSummaryLabel(lines: readonly AgentProgressLine[]): string {
   let hasLifecycle = false;
   let hasMutation = false;
   let hasRead = false;
+  let hasSavedStyle = false;
 
   for (const line of technical) {
-    if (!line.toolName) continue;
-    if (LIFECYCLE_TOOLS.has(line.toolName) && line.status === "done") {
+    if (!line.toolName || line.status !== "done") continue;
+    if (line.toolName === "style.learn_from_document") {
+      hasSavedStyle = true;
+    } else if (LIFECYCLE_TOOLS.has(line.toolName)) {
       hasLifecycle = true;
       if (line.label.startsWith("Created ")) {
         createdName = line.label.slice("Created ".length);
       }
-    } else if (READ_TOOLS.has(line.toolName)) {
+    } else if (line.toolName === "document.inspect" || line.toolName === "document.find") {
       hasRead = true;
-    } else if (line.toolName !== "finish" && line.toolName !== "finish_with_input_needed" && line.toolName !== "request_clarification") {
+    } else if (activityKindForTool(line.toolName) === "mutate") {
       hasMutation = true;
     }
   }
@@ -1065,8 +1089,9 @@ function completionSummaryLabel(lines: readonly AgentProgressLine[]): string {
   if (createdName) return `Created ${createdName}`;
   if (hasLifecycle && !hasMutation) return "Created document";
   if (hasMutation) return "Updated document";
+  if (hasSavedStyle) return "Saved style profile";
   if (hasRead) return "Reviewed document";
-  return "Done";
+  return "Completed";
 }
 
 function completedHeadline(

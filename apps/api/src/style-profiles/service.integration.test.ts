@@ -8,11 +8,14 @@ import { test } from 'node:test';
 import Fastify from 'fastify';
 import { eq } from 'drizzle-orm';
 import { createDbClient, schema } from '@opensuite/db';
-import { inspectDocxStyleSnapshot, resolveNativeEngineModuleId } from '@opensuite/engine-client';
+import { createNapiDocxEngineBinding, inspectDocxStyleSnapshot, resolveNativeEngineModuleId } from '@opensuite/engine-client';
 import { createDocumentService } from '../documents/service.js';
 import { createMemoryObjectStorage } from '../storage/index.js';
 import { createStyleProfileService } from './service.js';
 import { registerStyleProfileRoutes } from '../routes/style-profiles.js';
+import { MockLanguageModelV4, simulateReadableStream } from 'ai/test';
+import { createAgentExecutionService } from '../agent/execution.js';
+import { createAgentPersistenceService } from '../agent/persistence.js';
 import { createStyleProfileTools } from '../agent/capabilities/definitions/style-profiles.js';
 
 const enabled = process.env.RUN_STYLE_PROFILE_DB_TESTS === 'true';
@@ -57,6 +60,7 @@ test('real DOCX learn/save/fresh-process reload, CRUD, exact provenance, ownersh
     const files = ['Blue Harbor Technologies — September 2026 Monthly Operating Report.docx', 'Maya Chen - Resume.docx', 'Scientific Paper Draft - Battery Capacity.docx'];
     const other = await documents.createOfficeDocumentFromBytes({ workspaceId: bobWorkspace.id, ownerUserId: bob, filename: files[0]!, bytes: await readFile(new URL(files[0]!, root)), source: 'upload' });
     for (const filename of files) {
+      const inspectionsBefore = inspections;
       const bytes = await readFile(new URL(filename, root));
       const uploaded = await documents.createOfficeDocumentFromBytes({ workspaceId: workspace.id, ownerUserId: alice, filename, bytes, source: 'upload' });
       // Add another immutable version, then explicitly learn the original version.
@@ -64,7 +68,7 @@ test('real DOCX learn/save/fresh-process reload, CRUD, exact provenance, ownersh
       const request = { method: 'POST' as const, url: '/api/style-profiles', headers: { 'x-test-user': alice }, payload: { documentId: uploaded.document.id, versionId: uploaded.version.id } };
       const denied = await app.inject({ ...request, headers: { 'x-test-user': bob } });
       assert.equal(denied.statusCode, 404, denied.body);
-      assert.equal(inspections, files.indexOf(filename));
+      assert.equal(inspections, inspectionsBefore);
       const response = await app.inject(request);
       assert.equal(response.statusCode, 201, response.body);
       const profile = response.json().profile;
@@ -113,6 +117,63 @@ test('real DOCX learn/save/fresh-process reload, CRUD, exact provenance, ownersh
       assert.equal(invalidVersion.statusCode, 404);
       const wrongDocumentVersion = await app.inject({ ...request, payload: { documentId: uploaded.document.id, versionId: other.version.id } });
       assert.equal(wrongDocumentVersion.statusCode, 404);
+      if (filename.startsWith('Blue')) {
+        // Replay the actual prompt and name-only arguments through the real V3
+        // tool loop, real document service, local engine, and PostgreSQL.
+        // The scripted model never makes a paid/network model request.
+        const binding = await createNapiDocxEngineBinding();
+        const persistence = createAgentPersistenceService(client.db);
+        const thread = await persistence.createThread({ workspaceId: workspace.id, ownerUserId: alice, createdByUserId: alice, title: 'Style learning regression' });
+        const current = await documents.getOwnedDocument({ documentId: uploaded.document.id, ownerUserId: alice });
+        const versionCount = (await documents.listVersions({ documentId: current.id, ownerUserId: alice })).length;
+        const runPrompt = async (instruction: string, toolName: string, args: Record<string, unknown>) => {
+          let turn = 0;
+          const model = new MockLanguageModelV4({ doStream: async options => {
+            const context = JSON.stringify(options.prompt);
+            assert.equal(context.includes('runPatterns'), false);
+            assert.equal(context.includes('paragraphPatterns'), false);
+            if (turn === 0 && toolName === 'style.learn_from_document') assert.ok(context.includes('- style.learn_from_document (tool)'), 'Learning should be recommended for the actual prompt');
+            if (turn === 2) assert.ok(context.includes('Blue Harbor Operating Report Style'), 'The saved profile should appear in the learn/list/get result');
+            const calls = [
+              { name: 'capabilities_load', input: { ids: [toolName] } },
+              { name: toolName.replaceAll('.', '_'), input: args },
+              { name: 'finish', input: {} },
+            ];
+            const call = calls[turn++];
+            assert.ok(call, 'No extra model turns or hidden retries');
+            return { stream: simulateReadableStream({ chunks: [
+              { type: 'stream-start', warnings: [] },
+              ...(turn === 3 ? [{ type: 'text-start', id: 'answer' }, { type: 'text-delta', id: 'answer', delta: 'Completed style request.' }, { type: 'text-end', id: 'answer' }] : []),
+              { type: 'tool-call', toolCallId: `style-${turn}`, toolName: call.name, input: JSON.stringify(call.input) },
+              { type: 'finish', finishReason: { unified: 'tool-calls', raw: 'tool-calls' }, usage: { inputTokens: { total: 1, noCache: 1, cacheRead: 0, cacheWrite: 0 }, outputTokens: { total: 1, text: 1, reasoning: 0 } } },
+            ] as never[] }) };
+          } });
+          const execution = createAgentExecutionService({ persistence, documents, styleProfiles: profiles, docxBinding: binding, resolveModel: async () => ({ model }) });
+          const result = await (await execution.start({ userId: alice, threadId: thread.id, activeDocumentId: current.id, instruction })).result;
+          assert.equal(result.run.status, 'completed', result.run.errorMessage ?? 'Run failed');
+          const steps = await client.db.select().from(schema.agentStep).where(eq(schema.agentStep.runId, result.run.id));
+          assert.equal(steps.filter(step => step.status === 'failed').length, 0);
+          assert.equal(steps.filter(step => step.name === toolName && step.status === 'completed').length, 1);
+          assert.equal(turn, 3);
+          assert.equal((await documents.listVersions({ documentId: current.id, ownerUserId: alice })).length, versionCount);
+          assert.equal(hash(await documents.readExactVersionBytes({ documentId: current.id, versionId: current.latestVersion.id, ownerUserId: alice })), hash(bytes));
+          return result;
+        };
+        const learned = await runPrompt('Learn the document style from this document and save it for future use.', 'style.learn_from_document', { name: 'Blue Harbor Operating Report Style' });
+        assert.equal(learned.run.baseDocumentVersionId, current.latestVersion.id);
+        const saved = (await profiles.list(alice)).find(profile => profile.name === 'Blue Harbor Operating Report Style');
+        assert.ok(saved);
+        const exact = await profiles.get(alice, saved.id);
+        assert.equal(exact.source.documentId, current.id);
+        assert.equal(exact.source.versionId, current.latestVersion.id);
+        assert.deepEqual(exact.style, profile.style);
+        await runPrompt('Tell me all the styles I have saved.', 'style.list_profiles', {});
+        await runPrompt('Retrieve the Blue Harbor Operating Report Style profile.', 'style.get_profile', { id: saved.id });
+        const { styleProfileSummary } = await import('./service.js');
+        assert.ok(JSON.stringify(styleProfileSummary(exact)).length < 6000);
+        await profiles.delete(alice, saved.id);
+        console.log('Blue Harbor real-agent-loop replay: one successful learn call, list/get successful, no source versions changed, no paid model calls');
+      }
       const removed = await app.inject({ method: 'DELETE', url: `/api/style-profiles/${profile.id}`, headers: { 'x-test-user': alice } });
       assert.equal(removed.statusCode, 204);
       await assert.rejects(() => profiles.get(alice, profile.id), /not found/);

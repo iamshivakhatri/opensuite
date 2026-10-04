@@ -55,3 +55,20 @@ Validated real profiles:
 - Scientific paper: Arial 11 pt; used Heading1 and Heading2 (16/14 pt), body spacing 160/160 twips and auto line spacing 276; 1-inch margins. The actual file has no Title style usage or headers/footers, so none are invented.
 
 Engine limitations remain: unresolved themes, incomplete table-style inheritance, numbering overrides, and bounded facts. A single structural table header can be useful evidence but is labeled with one table sample, not claimed as a universal design. No profile application, brand configuration, engine publishing, or model normalization is included.
+
+
+## Phase 2 dogfood hardening
+
+The failed dogfood run `4c2548e7-d180-49dc-a34e-634f05723d7d` called learning with `{ "name": "Blue Harbor Operating Report Style" }`. The exact error was `Select a source document or provide documentId`. The binding rule recognized “learn the style” but missed “learn the document style”; the run therefore had no selected document or base saved version. The name-only arguments were valid according to the tool schema. Explicit document-style wording now binds the open saved document before the model acts. No retry or unrelated-document fallback was added.
+
+Completion presentation uses successful tool names/statuses, not assistant text or version-count guesses. Successful learning shows “Saved style profile”; profile list/get shows “Completed”; successful document mutations still show “Updated document”; document creation keeps “Created …”. Failed/unknown tools and capability discovery cannot imply document edits.
+
+The exact prompt/arguments have regression coverage in document targeting, execution isolation, and an opt-in integration replay. The replay uses the real V3 loop, persisted agent runs/steps, document service, local native engine, and PostgreSQL in an isolated schema, with a scripted model. Blue Harbor learning executes once with no failures and exact current-version provenance; list/get expose the saved profile in compact model results; source hashes/version counts remain unchanged. All three original normalization and fresh-process persistence checks still pass. Live-model UI dogfood remains a manual check because paid model calls are prohibited.
+
+Manual prompts in the existing local agent panel, with a saved Blue Harbor DOCX open:
+
+1. “Learn the document style from this document and save it for future use.”
+2. “Tell me all the styles I have saved.”
+3. “Retrieve the Blue Harbor style profile you just saved.”
+
+The web suite's default Node type-stripping command cannot resolve existing extensionless imports. The same listed tests pass using the already installed `tsx` Node loader; no dependency or unrelated import changes are needed.
