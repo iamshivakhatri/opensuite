@@ -26,6 +26,8 @@ _Read this before starting any work. Keep it a concise current-state handoff, no
 
 * E1 local-engine image layout: bounded image handles and anchor facts through layout inspection; typed programmatic insertion with exact/proportional size and common floating placement, plus dynamic rich-content resize/layout updates. Square, top/bottom, behind/front text; page/margin/column horizontal and page/margin/paragraph vertical references. Source-local preservation and asset-only replacement. Inline↔floating conversion, polygon wrapping, and header/footer mutation remain deferred. npm pins and agent-core-v3 unchanged.
 
+* Local-engine comments: bounded inspection and lazy `document.comments` add/update/delete tools use typed Rust primitives and the existing one-save-per-run lifecycle. Exact selections across simple runs in one body paragraph; fresh handles for edits/deletion. Imported standard comments and unrelated parts are preserved. Threaded metadata, resolve/replies, wrappers, fields, and cross-paragraph authoring are deferred. npm pin and agent-core-v3 unchanged.
+
 ## Current Decisions
 
 * Soft-delete; trash permanent purge clears working-document/checkpoint FKs; Empty trash + multi-select purge; optimistic concurrency; Rust SoT.

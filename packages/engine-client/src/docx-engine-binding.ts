@@ -1,3 +1,4 @@
+import type { DocxCommentOptions, DocxCommentInspection, DocxAddCommentOperation, DocxUpdateCommentOperation, DocxDeleteCommentOperation } from "./docx-comments.js";
 /**
  * Narrow Node-binding surface for opensuite-engine N-API.
  *
@@ -86,6 +87,9 @@ export type DocxMutationBindingResult = DocxReplaceTextBindingResult;
 
 /** Newer DOCX operations share the same verified-output envelope. */
 export type DocxExtendedOperationName =
+  | "executeDocxAddComment"
+  | "executeDocxUpdateComment"
+  | "executeDocxDeleteComment"
   | "executeDocxCreateStyle"
   | "executeDocxUpdateStyle"
   | "executeDocxInsertSectionBreak"
@@ -347,6 +351,7 @@ export interface DocxFindTextResult {
 
 /** Focus shapes accepted by the DOCX N-API inspectDocx binding. */
 export type DocxInspectFocus =
+  | ({ readonly kind: "comments" } & DocxCommentOptions)
   | ({ readonly kind: "layout" } & DocxLayoutOptions)
   | { readonly kind: "sections" }
   | { readonly kind: "overview" }
@@ -481,6 +486,7 @@ export interface DocxInspectContextUnit {
 }
 
 export interface DocxInspectResult {
+  readonly comments?: DocxCommentInspection;
   readonly layout?: DocxLayoutSnapshot;
   readonly sections?: readonly DocxSection[];
   readonly ok: boolean;
@@ -512,6 +518,10 @@ export interface DocxInspectResult {
 }
 
 export interface DocxEngineBinding {
+  inspectDocxComments?(input: Uint8Array, options?: DocxCommentOptions): Promise<DocxCommentInspection>;
+  executeDocxAddComment?(input: Uint8Array, operation: DocxAddCommentOperation): Promise<DocxMutationBindingResult>;
+  executeDocxUpdateComment?(input: Uint8Array, operation: DocxUpdateCommentOperation): Promise<DocxMutationBindingResult>;
+  executeDocxDeleteComment?(input: Uint8Array, operation: DocxDeleteCommentOperation): Promise<DocxMutationBindingResult>;
   executeDocxInsertSectionBreak?(input: Uint8Array, operation: DocxInsertSectionBreakOperation): Promise<DocxMutationBindingResult>;
   executeDocxSetSectionProperties?(input: Uint8Array, operation: DocxSetSectionPropertiesOperation): Promise<DocxMutationBindingResult>;
   executeDocxSetSectionHeaderFooter?(input: Uint8Array, operation: DocxSetSectionHeaderFooterOperation): Promise<DocxMutationBindingResult>;
@@ -618,6 +628,10 @@ export interface DocxEngineBinding {
 }
 
 type NativeEngineModule = {
+  inspectDocxComments?: (input: Buffer, options?: DocxCommentOptions) => Promise<string>;
+  executeDocxAddComment?: (input: Buffer, operation: Record<string, unknown>) => Promise<DocxMutationBindingResult>;
+  executeDocxUpdateComment?: (input: Buffer, operation: Record<string, unknown>) => Promise<DocxMutationBindingResult>;
+  executeDocxDeleteComment?: (input: Buffer, operation: Record<string, unknown>) => Promise<DocxMutationBindingResult>;
   inspectDocxLayout?: (input: Buffer, options?: DocxLayoutOptions) => Promise<string>;
   executeDocxCreateStyle?: (input: Buffer, operation: Record<string, unknown>) => Promise<DocxMutationBindingResult>;
   executeDocxUpdateStyle?: (input: Buffer, operation: Record<string, unknown>) => Promise<DocxMutationBindingResult>;
@@ -776,6 +790,7 @@ type NativeEngineModule = {
 
 function toNativeInspectFocus(focus: DocxInspectFocus): Record<string, unknown> {
   switch (focus.kind) {
+    case "comments":
     case "layout":
       return { ...focus };
     case "sections":
@@ -937,11 +952,26 @@ export async function createNapiDocxEngineBinding(): Promise<DocxEngineBinding> 
     executeDocxReplacePicture(input, operation) {
       return executeExtended(input, "executeDocxReplacePicture", { ...operation, replacementBytes: Buffer.from(operation.replacementBytes) });
     },
+    async executeDocxAddComment(input, operation) {
+      return executeExtended(input, "executeDocxAddComment", { ...operation, target: toNativeTextTarget(operation.target), date: operation.date ?? new Date().toISOString() });
+    },
+    async executeDocxUpdateComment(input, operation) { return executeExtended(input, "executeDocxUpdateComment", { ...operation }); },
+    async executeDocxDeleteComment(input, operation) { return executeExtended(input, "executeDocxDeleteComment", { ...operation }); },
+    async inspectDocxComments(input, options) {
+      if (!native.inspectDocxComments) throw new Error("Local engine is missing inspectDocxComments");
+      return JSON.parse(await native.inspectDocxComments(Buffer.from(input), options)) as DocxCommentInspection;
+    },
     async inspectDocxLayout(input, options) {
       if (!native.inspectDocxLayout) throw new Error("Local engine is missing inspectDocxLayout");
       return JSON.parse(await native.inspectDocxLayout(Buffer.from(input), options)) as DocxLayoutSnapshot;
     },
     async inspectDocx(input, request) {
+      if (request.focus.kind === "comments") {
+        if (!native.inspectDocxComments) throw new Error("Local engine is missing inspectDocxComments");
+        const { kind, ...options } = request.focus;
+        const comments = JSON.parse(await native.inspectDocxComments(Buffer.from(input), options)) as DocxCommentInspection;
+        return { ok: comments.ok, focus: "comments", comments, diagnostics: comments.diagnostics.map(d => ({ ...d, severity: comments.ok ? "warning" : "error" })) };
+      }
       if (request.focus.kind === "layout") {
         if (!native.inspectDocxLayout) throw new Error("Local engine is missing inspectDocxLayout");
         const { kind, ...options } = request.focus;

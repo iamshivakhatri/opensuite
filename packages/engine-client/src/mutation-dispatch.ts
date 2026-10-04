@@ -6,6 +6,9 @@ import type {
 
 /** Direct typed binding methods (args shaped by engine-client). */
 const DIRECT: Record<string, keyof DocxEngineBinding> = {
+  add_comment: "executeDocxAddComment",
+  update_comment: "executeDocxUpdateComment",
+  delete_comment: "executeDocxDeleteComment",
   create_style: "executeDocxCreateStyle",
   update_style: "executeDocxUpdateStyle",
   replace_text: "executeDocxReplaceText",

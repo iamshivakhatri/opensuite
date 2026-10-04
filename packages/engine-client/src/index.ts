@@ -7,6 +7,7 @@ export * from "./docx-sections.js";
 export * from "./docx-styles.js";
 export * from "./docx-layout.js";
 export * from "./docx-images.js";
+export * from "./docx-comments.js";
 export * from "./docx-renderer.js";
 export {
   bindDocxDocument,

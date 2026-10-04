@@ -25,6 +25,7 @@ export interface BoundDocumentHost {
 }
 
 export type InspectFocus =
+  | { readonly kind: "comments"; readonly offset?: number; readonly limit?: number }
   | { readonly kind: "layout"; readonly blockOffset?: number; readonly blockLimit?: number; readonly sectionIndex?: number }
   | { readonly kind: "sections" }
   | { readonly kind: "overview" }
@@ -51,7 +52,7 @@ const findInput = jsonSchema<{ text: string }>({
 });
 
 type InspectToolInput = {
-  kind: Exclude<InspectFocus["kind"], "sections" | "layout">;
+  kind: Exclude<InspectFocus["kind"], "sections" | "layout" | "comments">;
   offset?: number;
   limit?: number;
   text?: string;
@@ -235,6 +236,18 @@ const imagePosition = (references: string[]) => ({
   oneOf: [{ required: ["alignment"] }, { required: ["offsetEmu"] }],
 });
 const MUTATION_DEFS: Record<string, MutDef> = {
+  add_comment: {
+    description: "Attach a standard Word comment to exact text in one ordinary body paragraph, including simple formatted runs. Author is explicit; date defaults to current UTC. Wrappers, fields, revisions, cross-paragraph ranges, and threaded comments are unsupported.",
+    inputSchema: op({ target: textTarget, text: { type: "string", minLength: 1, maxLength: 32000 }, author: { type: "string", minLength: 1 }, initials: { type: "string" }, date: { type: "string", description: "ISO timestamp, e.g. 2026-10-04T12:00:00Z" } }, ["target", "text", "author"]),
+  },
+  update_comment: {
+    description: "Replace plain comment text using a fresh inspect_comments handle. Anchor, author, initials, and date stay unchanged. Inspect again after every edit.",
+    inputSchema: op({ handle: { type: "string" }, text: { type: "string", minLength: 1, maxLength: 32000 } }, ["handle", "text"]),
+  },
+  delete_comment: {
+    description: "Delete a standard comment and its markers using a fresh inspect_comments handle, preserving the selected document text. Inspect again after every edit.",
+    inputSchema: op({ handle: { type: "string" } }, ["handle"]),
+  },
   create_style: { description: "Create a reusable real Word paragraph or character style. No default-style authoring. basedOn and next use IDs; apply paragraph styles with set_paragraph_style using the display name.", inputSchema: op(wordStyleProperties, ["styleId", "styleType", "name"]) },
   update_style: { description: "Patch supported properties of one Word style globally. Unspecified properties stay unchanged; clear removes a declaration and restores inheritance. Style type and default flag cannot change.", inputSchema: op(wordStyleProperties, ["styleId", "styleType"]) },
   replace_text: {
@@ -703,6 +716,13 @@ export function createDocumentTools(document: BoundDocumentHost): AgentToolSet {
     if (document.renderLayout) tools["document.render_layout"] = defineTool({ kind: "read",
       description: "Get LibreOffice-derived PDF page count and page dimensions using the optional external renderer. Depends on installed fonts and tools; failures report unavailable, never estimated. Exact block-to-page mapping is unavailable. Does not save a document version.",
       inputSchema: op({}), execute: () => document.renderLayout!(),
+    });
+  }
+  if (caps.has("inspect_comments")) {
+    tools["document.inspect_comments"] = defineTool({ kind: "read",
+      description: "Inspect standard comments, author/date, bounded text, attached text, source-order paragraph locations, fresh handles, and malformed/orphan diagnostics. Default 20; maximum 100 per page. Re-inspect after editing. Resolved state and replies are unavailable.",
+      inputSchema: op({ offset: { type: "integer", minimum: 0 }, limit: { type: "integer", minimum: 1, maximum: 100 } }),
+      execute: async input => document.inspect({ focus: { kind: "comments", ...input } }),
     });
   }
   if (caps.has("inspect_sections")) {
