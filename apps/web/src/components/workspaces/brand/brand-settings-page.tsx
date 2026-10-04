@@ -17,7 +17,8 @@ export function BrandSettingsPage({
         <div>
           <h1 className="text-xl font-semibold tracking-tight text-ink">Brand &amp; Styles</h1>
           <p className="mt-1 text-sm text-ink-soft">
-            Configure your workspace identity and manage your saved document styles.
+            Configure your workspace brand. OpenSuite can use these details when branding is
+            appropriate.
           </p>
         </div>
         <div

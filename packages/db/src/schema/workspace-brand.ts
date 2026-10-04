@@ -1,6 +1,7 @@
 import {
   bigint,
   index,
+  integer,
   jsonb,
   pgTable,
   text,
@@ -18,6 +19,9 @@ export const workspaceAsset = pgTable(
       .references(() => workspace.id, { onDelete: "cascade" }),
     storageKey: text("storage_key").notNull().unique(),
     contentType: text("content_type").notNull(),
+    width: integer("width"),
+    height: integer("height"),
+    originalSizeBytes: bigint("original_size_bytes", { mode: "number" }),
     sizeBytes: bigint("size_bytes", { mode: "number" }).notNull(),
     createdAt: timestamp("created_at").defaultNow().notNull(),
   },

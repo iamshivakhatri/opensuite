@@ -1,4 +1,4 @@
-/** Explicit workspace preferences. No document styling is applied by this profile. */
+/** Organization identity configured by the workspace owner. No document styling is applied by this profile. */
 export interface WorkspaceBrandData {
   schemaVersion: 1;
   organization: {
@@ -15,13 +15,6 @@ export interface WorkspaceBrandData {
     accent: string | null;
   };
   typography: { headingFont: string; bodyFont: string };
-  document: {
-    headerText: string;
-    footerText: string;
-    showLogo: boolean;
-    showOrganizationName: boolean;
-    showPageNumbers: boolean;
-  };
 }
 export interface WorkspaceBrandProfile extends WorkspaceBrandData {
   workspaceId: string;

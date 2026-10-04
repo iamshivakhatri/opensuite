@@ -14,18 +14,11 @@ export function emptyBrand(): WorkspaceBrandData {
     logoAssetId: null,
     colors: { primary: null, secondary: null, accent: null },
     typography: { headingFont: "", bodyFont: "" },
-    document: {
-      headerText: "",
-      footerText: "",
-      showLogo: true,
-      showOrganizationName: true,
-      showPageNumbers: true,
-    },
   };
 }
 export function brandData(profile: WorkspaceBrandProfile): WorkspaceBrandData {
-  const { workspaceId: _workspace, createdAt: _created, updatedAt: _updated, ...data } = profile;
-  return data;
+  const { schemaVersion, organization, logoAssetId, colors, typography } = profile;
+  return { schemaVersion, organization, logoAssetId, colors, typography };
 }
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await apiFetch(path, init);

@@ -13,11 +13,9 @@ import { createStorageAccountingService } from "../storage-accounting/service.js
 import { createWorkspaceAssetService } from "./assets.js";
 import { createWorkspaceBrandService } from "./service.js";
 import { registerWorkspaceBrandRoutes } from "../routes/workspace-brand.js";
-import {
-  assetMaxBytes,
-  imageContentType,
-  workspaceBrandSchema,
-} from "./validation.js";
+import { assetMaxBytes, workspaceBrandSchema } from "./validation.js";
+import sharp from "sharp";
+import { optimizeWorkspaceImage } from "./images.js";
 import type { WorkspaceBrandData } from "@opensuite/contracts";
 
 const data: WorkspaceBrandData = {
@@ -32,19 +30,15 @@ const data: WorkspaceBrandData = {
   logoAssetId: null,
   colors: { primary: "#ab12ef", secondary: null, accent: null },
   typography: { headingFont: "Arial", bodyFont: "Calibri" },
-  document: {
-    headerText: "",
-    footerText: "Acme",
-    showLogo: true,
-    showOrganizationName: true,
-    showPageNumbers: true,
-  },
 };
-const png = Buffer.from(
-  "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jZp8AAAAASUVORK5CYII=",
-  "base64",
-);
-test("brand validation normalizes colors and rejects invalid settings and active image formats", () => {
+const png = await sharp({
+  create: { width: 24, height: 12, channels: 4, background: { r: 20, g: 60, b: 100, alpha: 0.5 } },
+})
+  .png()
+  .toBuffer();
+const optimizedPng = await optimizeWorkspaceImage(png);
+
+test("brand validation normalizes colors and rejects invalid settings", () => {
   assert.equal(workspaceBrandSchema.parse(data).colors.primary, "#AB12EF");
   for (const invalid of [
     { ...data, schemaVersion: 2 },
@@ -57,11 +51,6 @@ test("brand validation normalizes colors and rejects invalid settings and active
     { ...data, organization: { ...data.organization, email: "bad" } },
   ])
     assert.equal(workspaceBrandSchema.safeParse(invalid).success, false);
-  assert.equal(imageContentType(png), "image/png");
-  assert.equal(
-    imageContentType(Buffer.from('<svg onload="alert(1)"></svg>')),
-    null,
-  );
 });
 
 test(
@@ -78,31 +67,23 @@ test(
     const client = createDbClient({ databaseUrl: url.toString() });
     const app = Fastify();
     try {
-      const folder = new URL(
-        "../../../../packages/db/migrations/",
-        import.meta.url,
-      );
-      const journal = JSON.parse(
-        await readFile(new URL("meta/_journal.json", folder), "utf8"),
-      ) as { entries: { tag: string }[] };
+      const folder = new URL("../../../../packages/db/migrations/", import.meta.url);
+      const journal = JSON.parse(await readFile(new URL("meta/_journal.json", folder), "utf8")) as {
+        entries: { tag: string }[];
+      };
       for (const { tag } of journal.entries)
         await client.pool.query(
-          (await readFile(new URL(`${tag}.sql`, folder), "utf8")).replaceAll(
-            '"public"',
-            quoted,
-          ),
+          (await readFile(new URL(`${tag}.sql`, folder), "utf8")).replaceAll('"public"', quoted),
         );
       const alice = `alice-${randomUUID()}`,
         bob = `bob-${randomUUID()}`;
-      await client.db
-        .insert(schema.user)
-        .values(
-          [alice, bob].map((id) => ({
-            id,
-            name: id,
-            email: `${id}@example.com`,
-          })),
-        );
+      await client.db.insert(schema.user).values(
+        [alice, bob].map((id) => ({
+          id,
+          name: id,
+          email: `${id}@example.com`,
+        })),
+      );
       const [workspace, other] = await client.db
         .insert(schema.workspace)
         .values([
@@ -112,17 +93,9 @@ test(
         .returning();
       assert.ok(workspace && other);
       const storage = createMemoryObjectStorage();
-      const accounting = createStorageAccountingService(
-        client.db,
-        10 * 1024 * 1024,
-      );
+      const accounting = createStorageAccountingService(client.db, 10 * 1024 * 1024);
       const workspaces = createWorkspaceService(client.db, storage, accounting);
-      const assets = createWorkspaceAssetService(
-        client.db,
-        storage,
-        workspaces,
-        accounting,
-      );
+      const assets = createWorkspaceAssetService(client.db, storage, workspaces, accounting);
       const brand = createWorkspaceBrandService(client.db, assets);
       await app.register(multipart);
       registerWorkspaceBrandRoutes(
@@ -146,10 +119,7 @@ test(
       const path = `/api/workspaces/${workspace.id}/brand`;
       const headers = { "x-test-user": alice };
       assert.equal((await app.inject({ url: path })).statusCode, 401);
-      assert.equal(
-        (await app.inject({ url: path, headers })).json().profile,
-        null,
-      );
+      assert.equal((await app.inject({ url: path, headers })).json().profile, null);
       assert.equal(
         (
           await app.inject({
@@ -169,10 +139,26 @@ test(
       });
       assert.equal(saved.statusCode, 200, saved.body);
       const freshBrand = createWorkspaceBrandService(client.db, assets);
-      assert.deepEqual(
-        await freshBrand.get(workspace.id, alice),
-        saved.json().profile,
-      );
+      assert.deepEqual(await freshBrand.get(workspace.id, alice), saved.json().profile);
+      await client.db
+        .update(schema.workspaceBrand)
+        .set({
+          data: {
+            ...data,
+            document: {
+              headerText: "Old header",
+              footerText: "Old footer",
+              showLogo: true,
+              showOrganizationName: true,
+              showPageNumbers: true,
+            },
+          },
+        })
+        .where(eq(schema.workspaceBrand.workspaceId, workspace.id));
+      const legacy = (await app.inject({ url: path, headers })).json().profile;
+      assert.equal(Object.hasOwn(legacy, "document"), false);
+      assert.equal(legacy.organization.name, "Acme");
+      await brand.save(workspace.id, alice, data);
       for (const method of ["GET", "PUT"] as const)
         assert.equal(
           (
@@ -185,12 +171,23 @@ test(
           ).statusCode,
           404,
         );
+      const logo = await sharp({
+        create: {
+          width: 3200,
+          height: 800,
+          channels: 4,
+          background: { r: 24, g: 64, b: 128, alpha: 0.5 },
+        },
+      })
+        .png({ compressionLevel: 1 })
+        .toBuffer();
+      const optimizedLogo = await optimizeWorkspaceImage(logo);
       const uploadPath = `/api/workspaces/${workspace.id}/assets`;
       const uploadBody = Buffer.concat([
         Buffer.from(
           '--brand\r\nContent-Disposition: form-data; name="file"; filename="logo.png"\r\nContent-Type: image/png\r\n\r\n',
         ),
-        png,
+        logo,
         Buffer.from("\r\n--brand--\r\n"),
       ]);
       const uploaded = await app.inject({
@@ -207,8 +204,13 @@ test(
       const imagePath = `${uploadPath}/${id}`;
       assert.deepEqual(
         (await app.inject({ url: imagePath, headers })).rawPayload,
-        png,
+        optimizedLogo.bytes,
       );
+      const storedAsset = await assets.requireAsset(workspace.id, id);
+      assert.equal(storedAsset.width, 2000);
+      assert.equal(storedAsset.height, 500);
+      assert.equal(storedAsset.originalSizeBytes, logo.length);
+      assert.equal(storedAsset.sizeBytes, optimizedLogo.bytes.length);
       const foreign = await assets.upload(other.id, bob, png);
       assert.equal(
         (
@@ -251,17 +253,13 @@ test(
         ...data,
         logoAssetId: replacement.id,
       });
-      assert.equal(
-        (await app.inject({ url: imagePath, headers })).statusCode,
-        404,
-      );
-      assert.equal((await accounting.status(alice)).usedBytes, png.length);
+      assert.equal((await app.inject({ url: imagePath, headers })).statusCode, 404);
+      assert.equal((await accounting.status(alice)).usedBytes, optimizedPng.bytes.length);
       assert.equal((await accounting.reconcile(alice)).matches, true);
       await brand.save(workspace.id, alice, data);
       assert.equal((await accounting.status(alice)).usedBytes, 0);
       await assert.rejects(
-        () =>
-          assets.upload(workspace.id, alice, Buffer.alloc(assetMaxBytes + 1)),
+        () => assets.upload(workspace.id, alice, Buffer.alloc(assetMaxBytes + 1)),
         /image/,
       );
       await assert.rejects(
@@ -274,10 +272,7 @@ test(
         workspaces,
         createStorageAccountingService(client.db, 1),
       );
-      await assert.rejects(
-        () => quotaAssets.upload(workspace.id, alice, png),
-        /quota/,
-      );
+      await assert.rejects(() => quotaAssets.upload(workspace.id, alice, png), /quota/);
       assert.equal(storage.objects.size, 1, "Failed upload cleans its object");
       const last = await assets.upload(workspace.id, alice, png);
       await brand.save(workspace.id, alice, { ...data, logoAssetId: last.id });

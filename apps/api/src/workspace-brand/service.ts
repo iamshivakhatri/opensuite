@@ -1,31 +1,25 @@
 import { eq } from "drizzle-orm";
 import { schema, type Db } from "@opensuite/db";
-import type {
-  WorkspaceBrandData,
-  WorkspaceBrandProfile,
-} from "@opensuite/contracts";
+import type { WorkspaceBrandData, WorkspaceBrandProfile } from "@opensuite/contracts";
 import type { WorkspaceAssetService } from "./assets.js";
 
-function toProfile(
-  row: typeof schema.workspaceBrand.$inferSelect,
-): WorkspaceBrandProfile {
+function toProfile(row: typeof schema.workspaceBrand.$inferSelect): WorkspaceBrandProfile {
+  const data = row.data as Omit<WorkspaceBrandData, "logoAssetId">;
+  // Old development rows may contain document preferences; expose only identity fields.
   return {
-    ...(row.data as Omit<WorkspaceBrandData, "logoAssetId">),
+    schemaVersion: data.schemaVersion,
+    organization: data.organization,
+    colors: data.colors,
+    typography: data.typography,
     logoAssetId: row.logoAssetId,
     workspaceId: row.workspaceId,
     createdAt: row.createdAt.toISOString(),
     updatedAt: row.updatedAt.toISOString(),
   };
 }
-export function createWorkspaceBrandService(
-  db: Db,
-  assets: WorkspaceAssetService,
-) {
+export function createWorkspaceBrandService(db: Db, assets: WorkspaceAssetService) {
   return {
-    async get(
-      workspaceId: string,
-      userId: string,
-    ): Promise<WorkspaceBrandProfile | null> {
+    async get(workspaceId: string, userId: string): Promise<WorkspaceBrandProfile | null> {
       await assets.requireWorkspace(workspaceId, userId);
       const [row] = await db
         .select()
@@ -42,8 +36,7 @@ export function createWorkspaceBrandService(
       const { logoAssetId, ...data } = input;
       const saved = await db.transaction(async (tx) => {
         await assets.lockWorkspace(tx, workspaceId, userId);
-        if (logoAssetId)
-          await assets.requireAsset(workspaceId, logoAssetId, tx);
+        if (logoAssetId) await assets.requireAsset(workspaceId, logoAssetId, tx);
         const [previous] = await tx
           .select()
           .from(schema.workspaceBrand)
@@ -63,14 +56,10 @@ export function createWorkspaceBrandService(
       if (saved.previousLogo && saved.previousLogo !== logoAssetId) {
         await assets
           .removeUnused(workspaceId, userId, saved.previousLogo)
-          .catch((error) =>
-            console.error("[workspace-brand] old logo cleanup failed", error),
-          );
+          .catch((error) => console.error("[workspace-brand] old logo cleanup failed", error));
       }
       return saved.profile;
     },
   };
 }
-export type WorkspaceBrandService = ReturnType<
-  typeof createWorkspaceBrandService
->;
+export type WorkspaceBrandService = ReturnType<typeof createWorkspaceBrandService>;

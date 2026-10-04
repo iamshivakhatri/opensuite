@@ -176,6 +176,13 @@
       "when": 1791087151581,
       "tag": "0024_workspace_brand",
       "breakpoints": true
+    },
+    {
+      "idx": 25,
+      "version": "7",
+      "when": 1791122860188,
+      "tag": "0025_workspace_asset_images",
+      "breakpoints": true
     }
   ]
 }

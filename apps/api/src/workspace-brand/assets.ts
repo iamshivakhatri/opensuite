@@ -5,7 +5,8 @@ import type { WorkspaceService } from "../workspaces/service.js";
 import { WorkspaceAccessError } from "../workspaces/service.js";
 import { ObjectNotFoundError, type ObjectStorage } from "../storage/types.js";
 import type { StorageAccountingService } from "../storage-accounting/service.js";
-import { assetMaxBytes, imageContentType } from "./validation.js";
+import { assetMaxBytes } from "./validation.js";
+import { optimizeWorkspaceImage } from "./images.js";
 
 export class WorkspaceAssetError extends Error {
   constructor(
@@ -25,24 +26,15 @@ export function createWorkspaceAssetService(
 ) {
   async function requireWorkspace(workspaceId: string, userId: string) {
     if (!(await workspaces.getOwned(workspaceId, userId)))
-      throw new WorkspaceAccessError(
-        404,
-        "WORKSPACE_NOT_FOUND",
-        "Workspace not found",
-      );
+      throw new WorkspaceAccessError(404, "WORKSPACE_NOT_FOUND", "Workspace not found");
   }
   async function lockWorkspace(tx: Db, workspaceId: string, userId: string) {
     // Reuse the existing access rule after taking the lock; purge uses this lock too.
-    await tx.execute(
-      sql`select id from ${schema.workspace} where id = ${workspaceId} for update`,
-    );
+    await tx.execute(sql`select id from ${schema.workspace} where id = ${workspaceId} for update`);
     await requireWorkspace(workspaceId, userId);
   }
   const owned = (workspaceId: string, id: string) =>
-    and(
-      eq(schema.workspaceAsset.workspaceId, workspaceId),
-      eq(schema.workspaceAsset.id, id),
-    );
+    and(eq(schema.workspaceAsset.workspaceId, workspaceId), eq(schema.workspaceAsset.id, id));
   return {
     requireWorkspace,
     lockWorkspace,
@@ -53,47 +45,48 @@ export function createWorkspaceAssetService(
         .where(owned(workspaceId, id))
         .limit(1);
       if (!asset)
-        throw new WorkspaceAssetError(
-          404,
-          "ASSET_NOT_FOUND",
-          "Workspace image not found",
-        );
+        throw new WorkspaceAssetError(404, "ASSET_NOT_FOUND", "Workspace image not found");
       return asset;
     },
     async upload(workspaceId: string, userId: string, bytes: Buffer) {
       await requireWorkspace(workspaceId, userId);
-      const contentType = imageContentType(bytes);
-      if (!contentType || bytes.length > assetMaxBytes)
+      if (bytes.length > assetMaxBytes)
         throw new WorkspaceAssetError(
           400,
           "INVALID_IMAGE",
           "Use a PNG, JPEG, or WebP image up to 2 MB",
         );
+      const optimized = await optimizeWorkspaceImage(bytes).catch(() => {
+        throw new WorkspaceAssetError(
+          400,
+          "INVALID_IMAGE",
+          "Use a valid PNG, JPEG, or WebP image up to 2 MB",
+        );
+      });
+      const { contentType, width, height, originalSizeBytes } = optimized;
       const id = randomUUID();
       const storageKey = `workspaces/${workspaceId}/assets/${id}`;
       try {
-        await storage.putObject({ key: storageKey, body: bytes, contentType });
+        await storage.putObject({ key: storageKey, body: optimized.bytes, contentType });
         await db.transaction(async (tx) => {
           await lockWorkspace(tx, workspaceId, userId);
-          await accounting.reserve(tx, userId, bytes.length);
-          await tx
-            .insert(schema.workspaceAsset)
-            .values({
-              id,
-              workspaceId,
-              storageKey,
-              contentType,
-              sizeBytes: bytes.length,
-            });
+          await accounting.reserve(tx, userId, optimized.bytes.length);
+          await tx.insert(schema.workspaceAsset).values({
+            id,
+            workspaceId,
+            storageKey,
+            contentType,
+            sizeBytes: optimized.bytes.length,
+            width,
+            height,
+            originalSizeBytes,
+          });
         });
       } catch (error) {
         await storage
           .deleteObject(storageKey)
           .catch((cleanupError) =>
-            console.error(
-              "[workspace-assets] upload cleanup failed",
-              cleanupError,
-            ),
+            console.error("[workspace-assets] upload cleanup failed", cleanupError),
           );
         throw error;
       }
@@ -109,11 +102,7 @@ export function createWorkspaceAssetService(
         };
       } catch (error) {
         if (error instanceof ObjectNotFoundError)
-          throw new WorkspaceAssetError(
-            404,
-            "ASSET_NOT_FOUND",
-            "Workspace image not found",
-          );
+          throw new WorkspaceAssetError(404, "ASSET_NOT_FOUND", "Workspace image not found");
         throw error;
       }
     },
@@ -139,6 +128,4 @@ export function createWorkspaceAssetService(
     },
   };
 }
-export type WorkspaceAssetService = ReturnType<
-  typeof createWorkspaceAssetService
->;
+export type WorkspaceAssetService = ReturnType<typeof createWorkspaceAssetService>;

@@ -17,14 +17,11 @@ const fonts = [
   "Tahoma",
   "Cambria",
 ];
-const companyFields = [
-  { key: "name", label: "Company / organization name", max: 160, type: "text" },
-  { key: "website", label: "Website (optional)", max: 500, type: "url" },
+const contactFields = [
   { key: "email", label: "Email (optional)", max: 254, type: "email" },
   { key: "phone", label: "Phone (optional)", max: 80, type: "tel" },
   { key: "address", label: "Address / location (optional)", max: 1000, type: "text" },
 ] as const;
-
 function TextField({ label, ...props }: React.ComponentProps<typeof Input> & { label: string }) {
   return (
     <label className="block space-y-1.5 text-xs text-ink-soft">
@@ -33,7 +30,6 @@ function TextField({ label, ...props }: React.ComponentProps<typeof Input> & { l
     </label>
   );
 }
-
 export function BrandForm({
   workspaceId,
   onDirtyChange,
@@ -43,6 +39,7 @@ export function BrandForm({
 }) {
   const brand = useBrand(workspaceId);
   const { data, setData } = brand;
+  const fileInput = React.useRef<HTMLInputElement>(null);
   React.useEffect(() => {
     onDirtyChange(brand.dirty || brand.busy);
   }, [brand.dirty, brand.busy, onDirtyChange]);
@@ -73,56 +70,91 @@ export function BrandForm({
       >
         <fieldset disabled={brand.busy} className="min-w-0 space-y-6 disabled:opacity-70">
           <section className="space-y-3">
-            <h2 className="font-medium text-ink">Company</h2>
-            {companyFields.map((field) => (
-              <TextField
-                key={field.key}
-                label={field.label}
-                required={field.key === "name"}
-                type={field.type}
-                maxLength={field.max}
-                value={data.organization[field.key]}
-                onChange={(event) =>
-                  setData({
-                    ...data,
-                    organization: { ...data.organization, [field.key]: event.target.value },
-                  })
-                }
-              />
-            ))}
+            <h2 className="font-medium text-ink">Organization</h2>
+            <div className="grid gap-4 sm:grid-cols-[112px_minmax(0,1fr)]">
+              <div className="space-y-2">
+                <div className="grid h-24 place-items-center rounded-[var(--radius-sm)] border border-line bg-surface p-3">
+                  {brand.logoUrl ? (
+                    <img
+                      src={brand.logoUrl}
+                      alt="Organization logo"
+                      className="max-h-16 max-w-full object-contain"
+                    />
+                  ) : (
+                    <span className="text-xs text-ink-faint">Logo</span>
+                  )}
+                </div>
+                <input
+                  ref={fileInput}
+                  type="file"
+                  aria-label="Choose organization logo"
+                  className="hidden"
+                  accept="image/png,image/jpeg,image/webp"
+                  onChange={(event) => {
+                    const file = event.target.files?.[0];
+                    if (file) brand.chooseLogo(file);
+                    event.target.value = "";
+                  }}
+                />
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="w-full"
+                  onClick={() => fileInput.current?.click()}
+                >
+                  {brand.logoUrl || data.logoAssetId ? "Replace logo" : "Upload logo"}
+                </Button>
+                {brand.logoUrl || data.logoAssetId ? (
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    className="w-full"
+                    onClick={brand.removeLogo}
+                  >
+                    Remove logo
+                  </Button>
+                ) : null}
+              </div>
+              <div className="min-w-0 space-y-3">
+                <TextField
+                  label="Company / organization name"
+                  required
+                  maxLength={160}
+                  value={data.organization.name}
+                  onChange={(event) =>
+                    setData({
+                      ...data,
+                      organization: { ...data.organization, name: event.target.value },
+                    })
+                  }
+                />
+                <TextField
+                  label="Website (optional)"
+                  type="url"
+                  maxLength={500}
+                  value={data.organization.website}
+                  onChange={(event) =>
+                    setData({
+                      ...data,
+                      organization: { ...data.organization, website: event.target.value },
+                    })
+                  }
+                />
+                <p className="os-type-meta text-ink-faint">Logo: PNG, JPEG, or WebP · up to 2 MB</p>
+              </div>
+            </div>
           </section>
           <section className="space-y-3 border-t border-line pt-5">
-            <h2 className="font-medium text-ink">Logo</h2>
-            {brand.logoUrl ? (
-              <img
-                src={brand.logoUrl}
-                alt="Current organization logo"
-                className="max-h-20 max-w-48 rounded-[var(--radius-sm)] border border-line bg-white p-2 object-contain"
-              />
-            ) : null}
-            <TextField
-              label={`${brand.logoUrl ? "Replace logo" : "Upload logo"} · PNG, JPEG, WebP · up to 2 MB`}
-              type="file"
-              className="h-auto py-2"
-              accept="image/png,image/jpeg,image/webp"
-              onChange={(event) => {
-                const file = event.target.files?.[0];
-                if (file) brand.chooseLogo(file);
-                event.target.value = "";
-              }}
-            />
-            {brand.logoUrl || data.logoAssetId ? (
-              <Button type="button" variant="outline" size="sm" onClick={brand.removeLogo}>
-                Remove logo
-              </Button>
-            ) : null}
-          </section>
-          <section className="space-y-3 border-t border-line pt-5">
-            <h2 className="font-medium text-ink">Colors</h2>
+            <h2 className="font-medium text-ink">Brand colors</h2>
             <ColorFields colors={data.colors} onChange={(colors) => setData({ ...data, colors })} />
           </section>
           <section className="space-y-3 border-t border-line pt-5">
             <h2 className="font-medium text-ink">Typography</h2>
+            <p className="os-type-meta text-ink-soft">
+              Preferred fonts OpenSuite can use when branding is appropriate.
+            </p>
             <datalist id="brand-fonts">
               {fonts.map((font) => (
                 <option key={font} value={font} />
@@ -145,42 +177,25 @@ export function BrandForm({
               />
             ))}
             <p className="os-type-meta text-ink-faint">
-              Common document font names. Availability depends on the device opening the document.
+              Font availability depends on the device opening the document.
             </p>
           </section>
           <section className="space-y-3 border-t border-line pt-5">
-            <h2 className="font-medium text-ink">Document identity</h2>
-            {(["headerText", "footerText"] as const).map((key) => (
+            <h2 className="font-medium text-ink">Contact information</h2>
+            {contactFields.map((field) => (
               <TextField
-                key={key}
-                label={`${key === "headerText" ? "Header / letterhead text" : "Footer text"} (optional)`}
-                maxLength={2000}
-                value={data.document[key]}
+                key={field.key}
+                label={field.label}
+                type={field.type}
+                maxLength={field.max}
+                value={data.organization[field.key]}
                 onChange={(event) =>
-                  setData({ ...data, document: { ...data.document, [key]: event.target.value } })
+                  setData({
+                    ...data,
+                    organization: { ...data.organization, [field.key]: event.target.value },
+                  })
                 }
               />
-            ))}
-            {(["showLogo", "showOrganizationName", "showPageNumbers"] as const).map((key) => (
-              <label key={key} className="flex items-center gap-2 text-xs text-ink-soft">
-                <input
-                  type="checkbox"
-                  checked={data.document[key]}
-                  onChange={(event) =>
-                    setData({
-                      ...data,
-                      document: { ...data.document, [key]: event.target.checked },
-                    })
-                  }
-                />
-                {
-                  {
-                    showLogo: "Show logo in header",
-                    showOrganizationName: "Show organization name in header",
-                    showPageNumbers: "Show page numbers",
-                  }[key]
-                }
-              </label>
             ))}
           </section>
         </fieldset>
@@ -200,7 +215,6 @@ export function BrandForm({
     </div>
   );
 }
-
 function ColorFields({
   colors,
   onChange,
@@ -209,22 +223,23 @@ function ColorFields({
   onChange: (colors: WorkspaceBrandData["colors"]) => void;
 }) {
   return (
-    <>
+    <div className="grid gap-3 sm:grid-cols-3">
       {(["primary", "secondary", "accent"] as const).map((key) => (
-        <div key={key}>
+        <div key={key} className="min-w-0">
           <label htmlFor={`brand-${key}`} className="mb-1.5 block text-xs capitalize text-ink-soft">
             {key} (optional)
           </label>
-          <div className="flex gap-2">
+          <div className="flex gap-1.5">
             <input
               aria-label={`Pick ${key} color`}
               type="color"
-              className="h-9 w-10 shrink-0 cursor-pointer rounded border border-line bg-surface p-1"
+              className="h-9 w-8 shrink-0 cursor-pointer rounded border border-line bg-surface p-1"
               value={/^#[0-9a-f]{6}$/i.test(colors[key] ?? "") ? colors[key]! : "#000000"}
               onChange={(event) => onChange({ ...colors, [key]: event.target.value.toUpperCase() })}
             />
             <Input
               id={`brand-${key}`}
+              className="min-w-0 px-2 text-xs"
               placeholder="#234567"
               pattern="#[0-9a-fA-F]{6}"
               maxLength={7}
@@ -234,6 +249,6 @@ function ColorFields({
           </div>
         </div>
       ))}
-    </>
+    </div>
   );
 }
