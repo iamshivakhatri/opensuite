@@ -1,5 +1,8 @@
 import type { StyleProfileService } from "../style-profiles/service.js";
+import type { WorkspaceBrandService } from '../workspace-brand/service.js';
 import { requestsSavedStyle, createStyleProfileTools } from "./capabilities/definitions/style-profiles.js";
+import { documentSkillPolicy } from './capabilities/definitions/skills/index.js';
+import { resolveDocumentAppearance, shouldApplyAutomaticBrand } from '../document-appearance/resolve.js';
 import {
   createFinishTool,
   defineTool,
@@ -190,6 +193,7 @@ export interface AgentExecutionServiceDeps {
   readonly resolveModel: (userId: string) => Promise<ResolvedV3ExecutionModel>;
   readonly docxBinding?: DocxEngineBinding;
   readonly styleProfiles?: StyleProfileService;
+  readonly workspaceBrand?: Pick<WorkspaceBrandService, 'get'>;
   readonly modelUsage?: ModelUsageService;
   readonly managedUsagePolicy?: ManagedUsagePolicy;
   readonly agentRunReportSink?: AgentRunReportSink;
@@ -412,6 +416,35 @@ async function resolvePrimaryDocument(
   } catch (error) {
     if (error instanceof AgentExecutionError) throw error;
     throw new AgentExecutionError("DOCUMENT_NOT_FOUND", "Document not found for agent run");
+  }
+}
+
+async function applyAutomaticWorkspaceAppearance(input: {
+  readonly deps: AgentExecutionServiceDeps;
+  readonly toolSurface: ReturnType<typeof createToolSurface>;
+  readonly boundTools: NonNullable<Awaited<ReturnType<typeof createPrimaryDocxTools>>>;
+  readonly workspaceId: string;
+  readonly ownerUserId: string;
+  readonly instruction: string;
+}) {
+  if (!input.deps.workspaceBrand) return;
+  const documentId = input.boundTools.getActiveDocumentId();
+  const isNewDocument = !!documentId && input.boundTools.getTransitions().some((item) => item.kind === 'created' && item.toDocumentId === documentId);
+  const policy = [...input.toolSurface.session.loaded]
+    .sort()
+    .map(documentSkillPolicy)
+    .find((item) => item?.channels.length);
+  if (!shouldApplyAutomaticBrand({ isNewDocument, policy, instruction: input.instruction })) return;
+  const brand = await input.deps.workspaceBrand.get(input.workspaceId, input.ownerUserId);
+  if (!brand) return;
+  const savedStyle = input.boundTools.getAppliedStyle();
+  const appearance = resolveDocumentAppearance({
+    policy: policy!,
+    workspaceBrand: brand,
+    ...(savedStyle ? { savedStyle } : {}),
+  });
+  if (Object.keys(appearance.provenance).length) {
+    await input.boundTools.applyResolvedAppearance(appearance);
   }
 }
 
@@ -806,7 +839,7 @@ async function runExecution(input: {
               : null,
         });
         const fidelity = boundTools.getStyleFidelity();
-        if (fidelity) checks.push({ id: 'style', status: fidelity.summary.counts.mismatched ? 'warning' : 'pass', message: `Saved style: ${fidelity.summary.counts.matched} matched, ${fidelity.summary.counts.mismatched} mismatched, ${fidelity.summary.counts.not_applicable} not applicable, ${fidelity.summary.counts.unsupported} unsupported` });
+        if (fidelity) checks.push({ id: 'style', status: fidelity.summary.counts.mismatched ? 'warning' : 'pass', message: `Appearance: ${fidelity.summary.counts.matched} matched, ${fidelity.summary.counts.mismatched} mismatched, ${fidelity.summary.counts.not_applicable} not applicable, ${fidelity.summary.counts.unsupported} unsupported` });
         transcript.validation(checks);
         input.trace?.write("## Validation", checks);
         logAgentLine(formatValidationChecks(checks));
@@ -849,6 +882,16 @@ async function runExecution(input: {
           return handleRunEvent(event);
         },
       });
+      if (isSuccessfulStop(result.stopReason)) {
+        await applyAutomaticWorkspaceAppearance({
+          deps: input.deps,
+          toolSurface,
+          boundTools: boundTools!,
+          workspaceId: input.thread.workspaceId,
+          ownerUserId: input.ownerUserId,
+          instruction: input.instruction,
+        });
+      }
       const inputNeeded = isInputNeededTool(result.metrics?.toolCalls.filter(tool => tool.outcome === 'success' && isFinishTool(tool.toolName)).at(-1)?.toolName);
       const fidelity = boundTools?.getStyleFidelity();
       if (requiresSavedStyle && isSuccessfulStop(result.stopReason) && !inputNeeded && (!fidelity?.summary.counts.matched || fidelity.summary.counts.mismatched)) {

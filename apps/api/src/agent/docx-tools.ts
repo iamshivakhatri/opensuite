@@ -19,9 +19,11 @@ import {
   type InspectFocus,
 } from "./document-tools.js";
 
-import { applyStyleProfileToDocument, styleApplicationSummary } from '../style-profiles/application.js';
+import { applyStylePlan, applyStyleProfileToDocument, styleApplicationSummary } from '../style-profiles/application.js';
 import type { StyleProfileService } from '../style-profiles/service.js';
 import type { StyleFidelityReport } from '../style-profiles/fidelity.js';
+import type { StyleProfileData } from '@opensuite/contracts';
+import type { ResolvedAppearance } from '../document-appearance/resolve.js';
 
 export interface DocumentTransition {
   readonly kind: "created" | "duplicated";
@@ -33,6 +35,8 @@ export interface DocumentTransition {
 export interface PrimaryDocxToolsResult {
   readonly tools: AgentToolSet;
   readonly applyStyleProfile: (profileId: string, profiles: Pick<StyleProfileService, 'get'>) => Promise<ReturnType<typeof styleApplicationSummary>>;
+  readonly applyResolvedAppearance: (appearance: ResolvedAppearance) => Promise<StyleFidelityReport>;
+  readonly getAppliedStyle: () => StyleProfileData | null;
   readonly getStyleFidelity: () => StyleFidelityReport | null;
   readonly documentId: string | null;
   readonly getActiveDocumentId: () => string | null;
@@ -116,6 +120,7 @@ function createActiveDocxSession(input: {
   let host: ReturnType<typeof bindDocxDocument> | null = null;
   let dirty = false;
   let styleFidelity: StyleFidelityReport | null = null;
+  let appliedStyle: StyleProfileData | null = null;
   let workingRevision = 0;
   let workingMutationCount = 0;
   const currentHandles = new Set<string>();
@@ -212,6 +217,7 @@ function createActiveDocxSession(input: {
     lastHandleEvent = "rebind";
     mutationFailures.clear();
     styleFidelity = null;
+    appliedStyle = null;
   }
 
   function requireHost(): BoundDocumentHost {
@@ -373,9 +379,24 @@ function createActiveDocxSession(input: {
         host = bindHost({ documentId, versionId, bytes: result.bytes });
         advanceWorkingState(result.operationCount, 'apply_style_profile');
       }
+      appliedStyle = result.style;
       styleFidelity = result.fidelity;
       return styleApplicationSummary(result);
     },
+    async applyResolvedAppearance(appearance: ResolvedAppearance) {
+      if (!host || !documentId || !versionId) throw new Error('Select a target document before applying appearance');
+      const startingHost = host;
+      const revision = workingRevision;
+      const result = await applyStylePlan(input.binding, host.currentBytes(), appearance.plan, appearance.provenance);
+      if (host !== startingHost || revision !== workingRevision) throw new Error('Working revision changed during appearance application');
+      if (result.operationCount) {
+        host = bindHost({ documentId, versionId, bytes: result.bytes });
+        advanceWorkingState(result.operationCount, 'apply_document_appearance');
+      }
+      styleFidelity = result.fidelity;
+      return result.fidelity;
+    },
+    getAppliedStyle: () => appliedStyle,
     getWorkingRevision: () => workingRevision,
     getWorkingDocument: () => dirty && host && documentId && versionId
       ? { documentId, baseVersionId: versionId, revision: workingRevision, bytes: host.currentBytes() }
@@ -665,6 +686,8 @@ export async function createPrimaryDocxTools(input: {
     getActiveDocumentId: session.getActiveDocumentId,
     getActiveVersionId: session.getActiveVersionId,
     applyStyleProfile: session.applyStyleProfile,
+    applyResolvedAppearance: session.applyResolvedAppearance,
+    getAppliedStyle: session.getAppliedStyle,
     getStyleFidelity: session.getStyleFidelity,
     getWorkingRevision: session.getWorkingRevision,
     getWorkingDocument: session.getWorkingDocument,

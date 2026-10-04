@@ -331,6 +331,7 @@ export async function buildApp(
       persistence: agentPersistence,
       documents,
       styleProfiles,
+      workspaceBrand,
       ...(docxBinding ? { docxBinding } : {}),
       resolveModel: async (userId: string) => {
         const resolved = await aiModelResolver!.resolve(userId);

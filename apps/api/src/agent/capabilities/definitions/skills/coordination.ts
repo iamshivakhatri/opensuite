@@ -1,9 +1,10 @@
-import type { CapabilityDefinition } from "../../core/registry.js";
+import type { DocumentSkillDefinition } from './policy.js';
 
-export const coordinationSkills: CapabilityDefinition[] = [{
+export const coordinationSkills: DocumentSkillDefinition[] = [{
   id: "skills.coordination.meeting-minutes", parentId: "skills.coordination", kind: "instruction",
   title: "Meeting Minutes", description: "Turn supplied notes or a transcript into clear meeting minutes",
   aliases: ["meeting notes decisions actions"], projection: "dynamic",
+  brandPolicy: { channels: ['typography'] },
   instructions: () => `Turn the supplied meeting record into concise minutes.
 - State the meeting purpose and context when known, then summarize discussion by topic.
 - Separate decisions from proposals and unresolved questions.

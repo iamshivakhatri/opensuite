@@ -9,6 +9,7 @@ import type { DocumentService } from '../documents/service.js';
 import { StyleProfileError, type StyleProfileService } from './service.js';
 import { paragraphRole } from './normalize.js';
 import { compareStyleFidelity, type StyleFidelityReport } from './fidelity.js';
+import type { AppearanceSource } from '../document-appearance/resolve.js';
 
 export type RoleFormatting = {
   text: Omit<DocxSetTextFormattingOperation, 'target' | 'baseRevision'>;
@@ -24,6 +25,22 @@ export interface StyleApplicationPlan {
     widthTwips?: number;
   };
   unsupported: string[];
+}
+
+export function styleApplicationFields(plan: StyleApplicationPlan): string[] {
+  return [
+    ...Object.entries(plan.roles).flatMap(([name, role]) => [
+      ...Object.keys(role.text).map((field) => `${name}.text.${field}`),
+      ...Object.keys(role.paragraph).map((field) => `${name}.paragraph.${field}`),
+    ]),
+    ...Object.keys(plan.page).map((field) => field === 'paperSize' ? 'page.size' : field === 'orientation' ? 'page.orientation' : `page.margins.${field.replace('MarginTwips', '')}`),
+    ...(plan.table ? [
+      ...Object.keys(plan.table.formatting).map((field) => field === 'borders' ? 'table.borders' : field === 'alignment' ? 'table.alignment' : `table.padding.${field.replace('cellMargin', '').replace('Twips', '').toLowerCase()}`),
+      ...(plan.table.headerFill ? ['table.headerFill'] : []),
+      ...(plan.table.headerBold ? ['table.headerBold'] : []),
+      ...(plan.table.widthTwips ? ['table.columnWidthTotal'] : []),
+    ] : []),
+  ];
 }
 const sides = ['top', 'right', 'bottom', 'left'] as const;
 const color = (value: unknown) => typeof value === 'string' && /^(?:[0-9a-f]{6}|auto)$/i.test(value);
@@ -121,7 +138,7 @@ async function inspectContent(binding: DocxEngineBinding, bytes: Uint8Array) {
 }
 
 /** Stage through the same bound engine host. The caller adopts bytes only after verification. */
-export async function applyStylePlan(binding: DocxEngineBinding, bytes: Uint8Array, plan: StyleApplicationPlan): Promise<{ bytes: Uint8Array; fidelity: StyleFidelityReport; operationCount: number }> {
+export async function applyStylePlan(binding: DocxEngineBinding, bytes: Uint8Array, plan: StyleApplicationPlan, provenance: Readonly<Record<string, AppearanceSource>> = {}): Promise<{ bytes: Uint8Array; fidelity: StyleFidelityReport; operationCount: number }> {
   const before = await inspectContent(binding, bytes);
   const initialStyle = await inspectDocxStyleSnapshot(bytes, binding);
   if (!initialStyle.ok) throw new StyleProfileError(422, 'STYLE_INSPECTION_FAILED', 'Could not inspect target styles');
@@ -191,7 +208,7 @@ export async function applyStylePlan(binding: DocxEngineBinding, bytes: Uint8Arr
   if (JSON.stringify(content(before)) !== JSON.stringify(content(after))) throw new StyleProfileError(422, 'STYLE_CONTENT_CHANGED', 'Style application changed document content or roles');
   const snapshot = await inspectDocxStyleSnapshot(output, binding);
   if (!snapshot.ok) throw new StyleProfileError(422, 'STYLE_INSPECTION_FAILED', 'Could not verify applied style');
-  return { bytes: output, operationCount, fidelity: compareStyleFidelity(plan, snapshot, unsupported) };
+  return { bytes: output, operationCount, fidelity: compareStyleFidelity(plan, snapshot, unsupported, provenance) };
 }
 
 export async function applyStyleProfileToDocument(input: {
@@ -206,7 +223,7 @@ export async function applyStyleProfileToDocument(input: {
   if (document.workspaceId !== input.workspaceId || document.format !== 'docx') throw new StyleProfileError(404, 'DOCUMENT_NOT_FOUND', 'Editable DOCX not found in this workspace');
   if (document.latestVersion.id !== input.versionId) throw new StyleProfileError(409, 'VERSION_CONFLICT', 'Document version changed before style application');
   const result = await applyStylePlan(input.binding, input.bytes, buildStyleApplicationPlan(profile.style));
-  return { ...result, profileId: profile.id, profileName: profile.name, documentId: document.id };
+  return { ...result, profileId: profile.id, profileName: profile.name, style: profile.style, documentId: document.id };
 }
 
 /** Field details stay in API verification; the model sees bounded groups and counts. */

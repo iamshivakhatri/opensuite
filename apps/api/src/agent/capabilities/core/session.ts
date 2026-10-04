@@ -64,7 +64,11 @@ export class CapabilitySession {
   recommend(query: string, turn = 1) {
     this.savedStyleRequested = requestsSavedStyle(query);
     const matches = this.savedStyleRequested
-      ? ['style.list_profiles', 'style.get_profile', 'style.apply_profile'].filter(id => this.isAvailable(id)).map(id => this.registry.get(id)!)
+      ? [
+          ...['style.list_profiles', 'style.get_profile', 'style.apply_profile'].filter(id => this.isAvailable(id)).map(id => this.registry.get(id)!),
+          ...this.registry.recommend(query, 3, (id) => this.isAvailable(id))
+            .filter((item) => item.kind === 'instruction' && item.id.startsWith('skills.')).slice(0, 1),
+        ]
       : this.registry.recommend(query, 3, (id) => this.isAvailable(id));
     const recommendedCompanions = new Set<string>();
     const recommendations: CapabilityRecommendation[] = matches.map((item) => {

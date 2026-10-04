@@ -1,10 +1,11 @@
-import type { CapabilityDefinition } from "../../core/registry.js";
+import type { DocumentSkillDefinition } from './policy.js';
 
-export const scientificPaperCapability: CapabilityDefinition = {
+export const scientificPaperCapability: DocumentSkillDefinition = {
   id: "skills.scientific-writing.scientific-paper", parentId: "skills.scientific-writing",
   kind: "instruction", title: "Scientific Paper Writing",
   description: "Structure and evidence rules for drafting a scientific paper",
   aliases: ["write a research paper"], projection: "dynamic",
+  brandPolicy: { channels: [] },
   instructions: scientificPaperInstructions,
 };
 

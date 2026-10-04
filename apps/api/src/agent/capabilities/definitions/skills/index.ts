@@ -5,8 +5,9 @@ import { correspondenceSkills } from "./correspondence.js";
 import { proposalSkills } from "./proposals.js";
 import { careerSkills } from "./career.js";
 import { procedureSkills } from "./procedures.js";
+import type { DocumentSkillDefinition } from './policy.js';
 
-export const documentSkills = [
+export const documentSkills: DocumentSkillDefinition[] = [
   scientificPaperCapability,
   ...reportingSkills,
   ...coordinationSkills,
@@ -15,3 +16,7 @@ export const documentSkills = [
   ...careerSkills,
   ...procedureSkills,
 ];
+
+export function documentSkillPolicy(id: string) {
+  return documentSkills.find((skill) => skill.id === id)?.brandPolicy;
+}

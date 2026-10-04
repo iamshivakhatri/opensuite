@@ -1,10 +1,11 @@
-import type { CapabilityDefinition } from "../../core/registry.js";
+import type { DocumentSkillDefinition } from './policy.js';
 
-export const reportingSkills: CapabilityDefinition[] = [
+export const reportingSkills: DocumentSkillDefinition[] = [
   {
     id: "skills.reporting.analytical-report", parentId: "skills.reporting", kind: "instruction",
     title: "Analytical Report", description: "Create a grounded business or operating report from supplied facts and sources",
     aliases: ["monthly operating report", "business analysis report", "professional report"], projection: "dynamic",
+    brandPolicy: { channels: ['typography', 'colors', 'tableAccent'] },
     instructions: () => `Build a report around the user's purpose and supplied evidence.
 - Give it a clear title and a short executive summary when the audience or length warrants one.
 - Use a logical section hierarchy; adapt sections to the task instead of forcing a fixed outline.
@@ -17,6 +18,7 @@ export const reportingSkills: CapabilityDefinition[] = [
     id: "skills.reporting.recurring-update", parentId: "skills.reporting", kind: "instruction",
     title: "Recurring Report Update", description: "Update an existing periodic report using new evidence while preserving unchanged content",
     aliases: ["monthly report figures update", "weekly quarterly report refresh", "reconcile new figures"], projection: "dynamic",
+    brandPolicy: { channels: [] },
     instructions: () => `Update the existing report conservatively.
 - Identify what the new information actually changes; edit only affected sections.
 - Preserve prior facts and unrelated content unless newer evidence replaces or contradicts them.

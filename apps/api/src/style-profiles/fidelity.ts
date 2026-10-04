@@ -1,19 +1,23 @@
 import type { DocxStyleSnapshot } from '@opensuite/engine-client';
 import type { StyleApplicationPlan } from './application.js';
+import type { AppearanceSource } from '../document-appearance/resolve.js';
 import { paragraphRole } from './normalize.js';
 
 export type StyleFidelityStatus = 'matched' | 'mismatched' | 'not_applicable' | 'unsupported';
 export interface StyleFidelityReport {
-  fields: { field: string; status: StyleFidelityStatus }[];
+  fields: { field: string; status: StyleFidelityStatus; source?: AppearanceSource }[];
   summary: { matched: string[]; mismatched: string[]; notApplicable: string[]; unsupported: string[]; counts: Record<StyleFidelityStatus, number> };
 }
 
 /** Compare every observed effective pattern, never just a dominant normalized value. */
-export function compareStyleFidelity(plan: StyleApplicationPlan, snapshot: DocxStyleSnapshot, unresolved = plan.unsupported): StyleFidelityReport {
+export function compareStyleFidelity(plan: StyleApplicationPlan, snapshot: DocxStyleSnapshot, unresolved = plan.unsupported, provenance: Readonly<Record<string, AppearanceSource>> = {}): StyleFidelityReport {
   if (!snapshot.ok) throw new Error('Style fidelity requires a successful style snapshot');
   const fields: StyleFidelityReport['fields'] = [];
+  function add(field: string, status: StyleFidelityStatus) {
+    fields.push({ field, status, ...(provenance[field] ? { source: provenance[field] } : {}) });
+  }
   function compare(field: string, expected: unknown, values: unknown[]) {
-    fields.push({ field, status: snapshot.truncated ? 'unsupported' : !values.length ? 'not_applicable' : values.every(value => JSON.stringify(value) === JSON.stringify(expected)) ? 'matched' : 'mismatched' });
+    add(field, snapshot.truncated ? 'unsupported' : !values.length ? 'not_applicable' : values.every(value => JSON.stringify(value) === JSON.stringify(expected)) ? 'matched' : 'mismatched');
   }
   const styleNames = new Map(snapshot.styles.map(s => [s.styleId, s.name ?? s.styleId]));
   const roleForId = (id = snapshot.defaults.defaultParagraphStyleId) => paragraphRole(styleNames.get(id ?? ''), id);
@@ -24,11 +28,11 @@ export function compareStyleFidelity(plan: StyleApplicationPlan, snapshot: DocxS
     for (const [field, value] of Object.entries(role.text)) {
       // Run patterns do not retain locations. Table header emphasis cannot prove body emphasis.
       if (name === 'body' && snapshot.tableCount && ['bold', 'italic', 'underline', 'strikethrough', 'highlight', 'verticalAlignment'].includes(field)) {
-        fields.push({ field: `${name}.text.${field}`, status: 'unsupported' });
+        add(`${name}.text.${field}`, 'unsupported');
       } else compare(`${name}.text.${field}`, value, runs.map(p => (p.effectiveFormatting ?? p.directFormatting)[field as keyof typeof p.directFormatting]));
     }
     for (const [field, value] of Object.entries(role.paragraph)) {
-      if (name === 'body' && snapshot.lists.length && field === 'leftIndentTwips') fields.push({ field: 'body.paragraph.leftIndentTwips', status: 'unsupported' });
+      if (name === 'body' && snapshot.lists.length && field === 'leftIndentTwips') add('body.paragraph.leftIndentTwips', 'unsupported');
       else compare(`${name}.paragraph.${field}`, value, paragraphs.map(p => (p.effectiveFormatting ?? p.directFormatting)[field as keyof typeof p.directFormatting]));
     }
   }
@@ -54,13 +58,13 @@ export function compareStyleFidelity(plan: StyleApplicationPlan, snapshot: DocxS
     if (plan.table.headerBold) compare('table.headerBold', true, tables.map(t => t.firstRowBoldRunCount >= t.columnCount));
     if (plan.table.widthTwips) compare('table.columnWidthTotal', plan.table.widthTwips, tables.map(t => t.columnWidthsTwips.reduce((sum, width) => sum + width, 0)));
   }
-  if (!plan.table) fields.push({ field: 'table', status: 'not_applicable' });
-  if (!unresolved.includes('headersFooters')) fields.push({ field: 'headersFooters', status: 'not_applicable' });
+  if (!plan.table) add('table', 'not_applicable');
+  if (!unresolved.includes('headersFooters')) add('headersFooters', 'not_applicable');
   for (const field of [...new Set(unresolved)].sort()) {
     const absent = field === 'headersFooters' ? !snapshot.headersFooters.length
       : field.startsWith('lists.') ? !snapshot.lists.length
       : field.startsWith('table.') ? !snapshot.tableCount : false;
-    fields.push({ field, status: absent && !snapshot.truncated ? 'not_applicable' : 'unsupported' });
+    add(field, absent && !snapshot.truncated ? 'not_applicable' : 'unsupported');
   }
   const counts: Record<StyleFidelityStatus, number> = { matched: 0, mismatched: 0, not_applicable: 0, unsupported: 0 };
   for (const item of fields) counts[item.status]++;
