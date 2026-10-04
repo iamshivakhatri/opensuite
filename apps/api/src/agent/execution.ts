@@ -444,7 +444,13 @@ async function applyAutomaticWorkspaceAppearance(input: {
     ...(savedStyle ? { savedStyle } : {}),
   });
   if (Object.keys(appearance.provenance).length) {
-    await input.boundTools.applyResolvedAppearance(appearance);
+    const fidelity = await input.boundTools.applyResolvedAppearance(appearance);
+    const workspaceFields = fidelity.fields.filter((field) => field.source === 'workspace_brand');
+    const counts = Object.fromEntries(['matched', 'mismatched', 'not_applicable', 'unsupported'].map((status) => [
+      status,
+      workspaceFields.filter((field) => field.status === status).length,
+    ]));
+    console.info(`[agent] appearance workspace_brand ${JSON.stringify(counts)}`);
   }
 }
 
@@ -839,7 +845,10 @@ async function runExecution(input: {
               : null,
         });
         const fidelity = boundTools.getStyleFidelity();
-        if (fidelity) checks.push({ id: 'style', status: fidelity.summary.counts.mismatched ? 'warning' : 'pass', message: `Appearance: ${fidelity.summary.counts.matched} matched, ${fidelity.summary.counts.mismatched} mismatched, ${fidelity.summary.counts.not_applicable} not applicable, ${fidelity.summary.counts.unsupported} unsupported` });
+        if (fidelity) {
+          const workspaceBrand = fidelity.fields.some((field) => field.source === 'workspace_brand');
+          checks.push({ id: 'style', status: fidelity.summary.counts.mismatched ? 'warning' : 'pass', message: `${workspaceBrand ? 'Workspace brand appearance' : 'Appearance'}: ${fidelity.summary.counts.matched} matched, ${fidelity.summary.counts.mismatched} mismatched, ${fidelity.summary.counts.not_applicable} not applicable, ${fidelity.summary.counts.unsupported} unsupported` });
+        }
         transcript.validation(checks);
         input.trace?.write("## Validation", checks);
         logAgentLine(formatValidationChecks(checks));

@@ -6,7 +6,7 @@ import { join } from "node:path";
 
 import { runAgent, type RunAgentResult, type RunModelResult, type V3Model } from "@opensuite/agent-core-v3";
 import { MockLanguageModelV4, simulateReadableStream } from "ai/test";
-import { bindDocxDocument, buildMinimalDocx, createNapiDocxEngineBinding } from "@opensuite/engine-client";
+import { bindDocxDocument, buildMinimalDocx, createNapiDocxEngineBinding, inspectDocxStyleSnapshot } from "@opensuite/engine-client";
 import type { AgentRunReport } from "./agent-run-report.js";
 
 import {
@@ -1089,6 +1089,55 @@ test("creating a new report does not bind or retrieve a stale active document", 
   });
   const result = await (await execution.start({ userId: "user-1", threadId: "thread-1", activeDocumentId: "old", instruction: "Create a new monthly report" })).result;
   assert.equal(result.run.baseDocumentVersionId, null);
+});
+
+test('scripted report creation applies the loaded skill workspace brand before saving', async () => {
+  const persistence = memoryPersistence('user-1');
+  const binding = await createNapiDocxEngineBinding();
+  const versions = new Map<string, Buffer>();
+  let document = { id: 'report-1', name: 'Q3 report.docx', workspaceId: 'ws-1', format: 'docx', latestVersion: { id: 'v1' } };
+  let brandReads = 0;
+  const execution = createAgentExecutionService({
+    ...baseDeps(persistence, async (input) => {
+      const firstTurn = await input.projectTools!({ turn: 1 } as never);
+      await firstTurn['capabilities.load']!.execute!({ ids: ['skills.reporting.analytical-report'] }, {} as never);
+      const tools = await input.projectTools!({ turn: 2 } as never);
+      await tools['workspace.create_blank_document']!.execute!({ title: document.name }, {} as never);
+      await tools['document.insert_paragraphs']!.execute!({ texts: ['Q3 operating report', 'Executive Summary', 'Revenue: $3.8M'], placement: { kind: 'end' } }, {} as never);
+      await tools['document.set_paragraph_style']!.execute!({ target: { text: 'Q3 operating report' }, style: 'Title' }, {} as never);
+      await tools['document.set_paragraph_style']!.execute!({ target: { text: 'Executive Summary' }, style: 'Heading 1' }, {} as never);
+      await tools['document.create_table']!.execute!({ placement: { kind: 'end' }, rows: [['Metric', 'Value'], ['Revenue', '$3.8M']] }, {} as never);
+      return softResult('completed', 'Created.');
+    }),
+    docxBinding: binding,
+    documents: {
+      listInWorkspace: async () => [],
+      getOwnedDocument: async () => document as never,
+      readExactVersionBytes: async ({ versionId }) => versions.get(versionId)!,
+      appendDocumentVersion: async ({ bytes }) => {
+        versions.set('v2', Buffer.from(bytes));
+        document = { ...document, latestVersion: { id: 'v2' } };
+        return { version: { id: 'v2', versionNumber: 2 } } as never;
+      },
+      createBlankDocxDocument: async () => {
+        versions.set('v1', Buffer.from(binding.createBlankDocx()));
+        return { document, version: { id: 'v1', versionNumber: 1 } } as never;
+      },
+      createOfficeDocumentFromBytes: async () => { throw new Error('unused'); },
+    },
+    workspaceBrand: { get: async () => {
+      brandReads++;
+      return { schemaVersion: 1, workspaceId: 'ws-1', createdAt: '', updatedAt: '', logoAssetId: null,
+        organization: { name: 'Cincinnati Sports Club', website: '', email: '', phone: '', address: '' },
+        colors: { primary: '#124733', secondary: '#124733', accent: '#124733' }, typography: { headingFont: 'Arial', bodyFont: 'Arial' } };
+    } },
+  });
+  const result = await (await execution.start({ userId: 'user-1', threadId: 'thread-1', instruction: 'Create a professional quarterly operating report with metrics.' })).result;
+  assert.equal(result.run.status, 'completed');
+  assert.equal(brandReads, 1);
+  const snapshot = await inspectDocxStyleSnapshot(new Uint8Array(versions.get('v2')!), binding);
+  assert.equal(snapshot.tables[0]?.firstRowShadingColors[0], '124733');
+  assert.ok(snapshot.typography.runPatterns.some((pattern) => (pattern.effectiveFormatting ?? pattern.directFormatting).fontFamily === 'Arial'));
 });
 
 test("completed runs persist narration at tool boundaries without duplicating the final answer", async () => {
