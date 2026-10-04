@@ -80,7 +80,7 @@ function collectHandles(value: unknown, handles: Set<string>): void {
 const HANDLE_PRESERVING_MUTATIONS = new Set([
   "set_table_formatting", "set_table_column_widths", "set_table_cell_shading",
   "set_table_cells_formatting", "set_paragraph_formatting", "set_text_formatting",
-  "set_paragraph_style",
+  "set_paragraph_style", "create_style", "update_style",
 ]);
 const SEMANTIC_HANDLE_ALTERNATIVES = new Set([
   "set_table_cells_text", "set_table_cells_formatting", "set_table_cell_shading",

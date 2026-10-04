@@ -4,6 +4,7 @@ export * from "./mock-transport.js";
 export * from "./docx-engine-binding.js";
 export * from "./docx-style-snapshot.js";
 export * from "./docx-sections.js";
+export * from "./docx-styles.js";
 export {
   bindDocxDocument,
   DISPATCHABLE_MUTATION_CAPABILITIES,

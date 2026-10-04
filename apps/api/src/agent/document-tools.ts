@@ -203,7 +203,29 @@ type MutDef = {
  * Binary picture insert/replace are intentionally omitted (JSON cannot carry Buffer).
  * create_blank_docx is not a bound-document mutation.
  */
+const wordStyleProperties = {
+  styleId: { type: "string", description: "Stable Word style ID, for example OpenSuiteReportHeading" },
+  styleType: { type: "string", enum: ["paragraph", "character"] },
+  name: { type: "string", description: "Unique display name; apply paragraph styles using this name" },
+  basedOn: { type: "string", description: "Existing parent style ID, for example Heading1" },
+  next: { type: "string", description: "Existing paragraph style ID" },
+  bold: { type: "boolean" }, italic: { type: "boolean" }, underline: { type: "boolean" },
+  fontFamily: { type: "string" }, fontSizeHalfPoints: { type: "integer", minimum: 1, maximum: 65535, description: "32 = 16 pt" },
+  color: { type: "string", pattern: "^([0-9a-fA-F]{6}|auto)$", description: "RGB without #, for example 124733" },
+  alignment: { type: "string", enum: ["left", "center", "right", "both", "distribute"] },
+  spacingBeforeTwips: { type: "integer" },
+  spacingAfterTwips: { type: "integer" },
+  leftIndentTwips: { type: "integer" },
+  rightIndentTwips: { type: "integer" },
+  firstLineIndentTwips: { type: "integer" },
+  hangingIndentTwips: { type: "integer" },
+  keepWithNext: { type: "boolean" }, keepLines: { type: "boolean" },
+  clear: { type: "array", items: { type: "string", enum: ["basedOn", "next", "bold", "italic", "fontSizeHalfPoints", "fontFamily", "color", "underline", "alignment", "spacingBeforeTwips", "spacingAfterTwips", "leftIndentTwips", "rightIndentTwips", "firstLineIndentTwips", "hangingIndentTwips", "keepWithNext", "keepLines"] }, description: "Remove declarations and restore inheritance. Omitted fields stay unchanged. Twips: 20 = 1 pt." },
+};
+
 const MUTATION_DEFS: Record<string, MutDef> = {
+  create_style: { description: "Create a reusable real Word paragraph or character style. No default-style authoring. basedOn and next use IDs; apply paragraph styles with set_paragraph_style using the display name.", inputSchema: op(wordStyleProperties, ["styleId", "styleType", "name"]) },
+  update_style: { description: "Patch supported properties of one Word style globally. Unspecified properties stay unchanged; clear removes a declaration and restores inheritance. Style type and default flag cannot change.", inputSchema: op(wordStyleProperties, ["styleId", "styleType"]) },
   replace_text: {
     description:
       "Replace one exact text span. Requires target text, zero-based occurrence when ambiguous, expectedCurrentText (must match current content), and replacement.",

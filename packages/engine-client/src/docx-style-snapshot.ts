@@ -38,6 +38,7 @@ export interface DocxStyleUsageSnapshot {
   readonly name?: string;
   readonly styleType: "paragraph" | "character";
   readonly basedOnStyleId?: string;
+  readonly nextStyleId?: string;
   readonly paragraphUsageCount: number;
   readonly runUsageCount: number;
   readonly declaredRunFormatting: DocxRunFormattingSnapshot;

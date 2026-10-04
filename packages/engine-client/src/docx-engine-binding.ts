@@ -10,6 +10,7 @@ import { isAbsolute, resolve } from "node:path";
 
 import type { DocxSection, DocxSectionInspection, DocxInsertSectionBreakOperation, DocxSetSectionPropertiesOperation, DocxSetSectionHeaderFooterOperation } from "./docx-sections.js";
 
+import type { DocxStyleOperation, DocxCreateStyleOperation } from "./docx-styles.js";
 import type { DocxStyleSnapshot } from "./docx-style-snapshot.js";
 
 /** Resolved N-API module id: local path when OPENSUITE_ENGINE_PATH is set, else the npm package. */
@@ -83,6 +84,8 @@ export type DocxMutationBindingResult = DocxReplaceTextBindingResult;
 
 /** Newer DOCX operations share the same verified-output envelope. */
 export type DocxExtendedOperationName =
+  | "executeDocxCreateStyle"
+  | "executeDocxUpdateStyle"
   | "executeDocxInsertSectionBreak"
   | "executeDocxSetSectionProperties"
   | "executeDocxSetSectionHeaderFooter"
@@ -595,6 +598,8 @@ export interface DocxEngineBinding {
     input: Uint8Array,
     operation: DocxSetTableCellsFormattingOperation,
   ): Promise<DocxMutationBindingResult>;
+  executeDocxCreateStyle?(input: Uint8Array, operation: DocxCreateStyleOperation): Promise<DocxMutationBindingResult>;
+  executeDocxUpdateStyle?(input: Uint8Array, operation: DocxStyleOperation): Promise<DocxMutationBindingResult>;
   executeDocxExtended?(
     input: Uint8Array,
     name: DocxExtendedOperationName,
@@ -603,6 +608,8 @@ export interface DocxEngineBinding {
 }
 
 type NativeEngineModule = {
+  executeDocxCreateStyle?: (input: Buffer, operation: Record<string, unknown>) => Promise<DocxMutationBindingResult>;
+  executeDocxUpdateStyle?: (input: Buffer, operation: Record<string, unknown>) => Promise<DocxMutationBindingResult>;
   getDocxCapabilities: () => {
     ok: boolean;
     protocolVersion: number;
@@ -1303,6 +1310,8 @@ export async function createNapiDocxEngineBinding(): Promise<DocxEngineBinding> 
       return executeExtended(input, "executeDocxSetOddEvenHeaders", { ...operation });
     },
 
+    async executeDocxCreateStyle(input, operation) { return executeExtended(input, "executeDocxCreateStyle", { ...operation }); },
+    async executeDocxUpdateStyle(input, operation) { return executeExtended(input, "executeDocxUpdateStyle", { ...operation }); },
     executeDocxExtended: executeExtended,
   };
 }

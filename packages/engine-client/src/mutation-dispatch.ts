@@ -6,6 +6,8 @@ import type {
 
 /** Direct typed binding methods (args shaped by engine-client). */
 const DIRECT: Record<string, keyof DocxEngineBinding> = {
+  create_style: "executeDocxCreateStyle",
+  update_style: "executeDocxUpdateStyle",
   replace_text: "executeDocxReplaceText",
   insert_paragraph: "executeDocxInsertParagraph",
   insert_paragraphs: "executeDocxInsertParagraphs",
