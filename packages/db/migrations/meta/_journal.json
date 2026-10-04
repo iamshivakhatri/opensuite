@@ -162,6 +162,13 @@
       "when": 1791072002000,
       "tag": "0022_capability_recommendations",
       "breakpoints": true
+    },
+    {
+      "idx": 23,
+      "version": "7",
+      "when": 1791072003000,
+      "tag": "0023_style_profiles",
+      "breakpoints": true
     }
   ]
 }

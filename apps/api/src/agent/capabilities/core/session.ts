@@ -5,6 +5,9 @@ export type CapabilityEventType = "recommended" | "discovered" | "loaded" | "exe
 export type CapabilityEvent = Readonly<{ capabilityId: string; kind: CapabilityDefinition["kind"]; type: CapabilityEventType; turn?: number; latencyMs?: number; errorCode?: string }>;
 type Emit = (event: CapabilityEvent) => void;
 const compact = (item: CapabilityDefinition) => ({ id: item.id, kind: item.kind, title: item.title, description: item.description });
+export type CapabilityRecommendation = ReturnType<typeof compact> & Readonly<{
+  companionCapabilities?: readonly ReturnType<typeof compact>[];
+}>;
 
 /** One run's available and loaded capabilities; the registry itself never changes. */
 export class CapabilitySession {
@@ -34,6 +37,13 @@ export class CapabilitySession {
 
   private isAvailable(id: string) { return this.available.has(id) || this.registry.hasInstruction(id); }
 
+  private isLoadable(id: string) {
+    if (!this.isAvailable(id)) return false;
+    const definition = this.registry.get(id);
+    return !!definition && !(definition.kind === "group" &&
+      (definition.parentId === null || this.registry.children(id).some((child) => child.kind === "group" && this.isAvailable(child.id))));
+  }
+
   roots() { return this.registry.roots().filter((item) => this.isAvailable(item.id)).map(compact); }
 
   list(parentId: string | null, turn?: number) {
@@ -51,18 +61,29 @@ export class CapabilitySession {
 
   recommend(query: string, turn = 1) {
     const matches = this.registry.recommend(query, 3, (id) => this.isAvailable(id));
+    const recommendedCompanions = new Set<string>();
+    const recommendations: CapabilityRecommendation[] = matches.map((item) => {
+      const companions = item.kind === "instruction"
+        ? (item.companionCapabilities ?? [])
+            .filter((id) => this.isLoadable(id))
+            .map((id) => this.registry.get(id)!)
+        : [];
+      for (const companion of companions) recommendedCompanions.add(companion.id);
+      return { ...compact(item), ...(companions.length ? { companionCapabilities: companions.map(compact) } : {}) };
+    });
     for (const item of matches) this.emit?.({ capabilityId: item.id, kind: item.kind, type: "recommended", turn });
-    return matches.map(compact);
+    for (const id of recommendedCompanions) {
+      const item = this.registry.get(id)!;
+      this.emit?.({ capabilityId: item.id, kind: item.kind, type: "recommended", turn });
+    }
+    return recommendations;
   }
 
   load(ids: readonly string[], turn?: number) {
     if (!Array.isArray(ids) || !ids.length || ids.some((id) => typeof id !== "string" || !this.isAvailable(id))) {
       return { ok: false as const, reasonCode: "CAPABILITY_UNAVAILABLE" };
     }
-    if (ids.some((id) => this.registry.get(id)?.kind === "group" &&
-      (this.registry.children(id).some((child) => child.kind === "group" && this.isAvailable(child.id)) || this.registry.get(id)?.parentId === null))) {
-      return { ok: false as const, reasonCode: "CAPABILITY_NOT_LOADABLE" };
-    }
+    if (ids.some((id) => !this.isLoadable(id))) return { ok: false as const, reasonCode: "CAPABILITY_NOT_LOADABLE" };
     const requested = new Set(ids);
     for (const id of ids) {
       if (this.registry.get(id)?.kind !== "group") continue;

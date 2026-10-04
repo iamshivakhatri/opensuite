@@ -12,8 +12,20 @@ export const builtInGroups: CapabilityDefinition[] = [
   { id: "workspace", parentId: null, kind: "group", title: "Workspace", description: "Find, inspect, create, and select workspace files", projection: "dynamic" },
   { id: "agent", parentId: null, kind: "group", title: "Run controls", description: "Complete a task or ask for needed input", projection: "dynamic" },
   { id: "compute", parentId: null, kind: "group", title: "Compute", description: "Deterministic calculations", projection: "dynamic" },
-  { id: "skills", parentId: null, kind: "group", title: "Writing skills", description: "Task-specific writing guidance", projection: "dynamic" },
+  { id: "skills", parentId: null, kind: "group", title: "Document skills", description: "Task-specific document structure and content guidance", projection: "dynamic" },
   { id: "skills.scientific-writing", parentId: "skills", kind: "group", title: "Scientific writing", description: "Guidance for scientific documents", projection: "dynamic" },
+  { id: "skills.reporting", parentId: "skills", kind: "group", title: "Reporting", description: "Reports and recurring updates", projection: "dynamic" },
+  { id: "skills.coordination", parentId: "skills", kind: "group", title: "Coordination", description: "Meetings and decisions", projection: "dynamic" },
+  { id: "skills.correspondence", parentId: "skills", kind: "group", title: "Correspondence", description: "Memos and letters", projection: "dynamic" },
+  { id: "skills.proposals", parentId: "skills", kind: "group", title: "Proposals", description: "Grounded business proposals", projection: "dynamic" },
+  { id: "skills.career", parentId: "skills", kind: "group", title: "Career", description: "Résumés and CVs", projection: "dynamic" },
+  { id: "skills.procedures", parentId: "skills", kind: "group", title: "Procedures", description: "Process and SOP documents", projection: "dynamic" },
+  { id: "styles", parentId: null, kind: "group", title: "Style packs", description: "Appearance guidance using supported DOCX tools", projection: "dynamic" },
+  { id: "styles.reporting", parentId: "styles", kind: "group", title: "Report styles", description: "Report appearance", projection: "dynamic" },
+  { id: "styles.correspondence", parentId: "styles", kind: "group", title: "Correspondence styles", description: "Memo and letter appearance", projection: "dynamic" },
+  { id: "styles.proposals", parentId: "styles", kind: "group", title: "Proposal styles", description: "Business proposal appearance", projection: "dynamic" },
+  { id: "styles.career", parentId: "styles", kind: "group", title: "Career styles", description: "Résumé and CV appearance", projection: "dynamic" },
+  { id: "styles.procedures", parentId: "styles", kind: "group", title: "Procedure styles", description: "Process document appearance", projection: "dynamic" },
 ];
 
 const common = [

@@ -11,10 +11,15 @@ type CapabilityBase = Readonly<{
 export type CapabilityDefinition =
   | (CapabilityBase & Readonly<{ kind: "group"; toolName?: never; instructions?: never }>)
   | (CapabilityBase & Readonly<{ kind: "tool"; toolName: string; instructions?: never }>)
-  | (CapabilityBase & Readonly<{ kind: "instruction"; toolName?: never; instructions: () => string }>);
+  | (CapabilityBase & Readonly<{
+      kind: "instruction";
+      toolName?: never;
+      instructions: () => string;
+      companionCapabilities?: readonly string[];
+    }>);
 
 const words = (value: string) => value.toLowerCase().match(/[a-z0-9]+/g) ?? [];
-const PROMPT_STOP_WORDS = new Set(["the", "and", "for", "from", "with", "this", "that", "what", "how", "please", "document", "file", "report", "write", "edit", "make", "create", "update"]);
+const PROMPT_STOP_WORDS = new Set(["the", "and", "for", "from", "with", "this", "that", "what", "how", "please", "document", "file", "write", "edit", "make", "create", "update"]);
 const promptWords = (value: string) => [...new Set(words(value.replaceAll("%", " percent "))
   .filter((word) => word.length >= 3 && !/^\d+$/.test(word) && !PROMPT_STOP_WORDS.has(word)))].slice(0, 20);
 
@@ -34,12 +39,25 @@ export class CapabilityRegistry {
     const children = new Map<string | null, CapabilityDefinition[]>();
     const providerNames = new Set<string>();
     for (const source of definitions) {
-      const definition = Object.freeze({ ...source, ...(source.aliases ? { aliases: Object.freeze([...source.aliases]) } : {}) });
+      const definition = Object.freeze({
+        ...source,
+        ...(source.aliases ? { aliases: Object.freeze([...source.aliases]) } : {}),
+        ...(source.kind === "instruction" && source.companionCapabilities
+          ? { companionCapabilities: Object.freeze([...source.companionCapabilities]) }
+          : {}),
+      });
       if (!definition.id || this.idIndex.has(definition.id)) throw new Error(`Duplicate capability ID: ${definition.id}`);
       if (!definition.title || !definition.description) throw new Error(`Missing capability metadata: ${definition.id}`);
       if (!["group", "tool", "instruction"].includes(definition.kind)) throw new Error(`Invalid capability kind: ${definition.id}`);
       if (definition.projection !== "always" && definition.projection !== "dynamic") throw new Error(`Invalid projection: ${definition.id}`);
       if (definition.kind === "instruction" && definition.projection !== "dynamic") throw new Error(`Instruction must be loaded dynamically: ${definition.id}`);
+      if (definition.kind === "instruction" && (definition.companionCapabilities?.length ?? 0) > 4) {
+        throw new Error(`Too many companion capabilities: ${definition.id}`);
+      }
+      if (definition.kind === "instruction" && definition.companionCapabilities &&
+        new Set(definition.companionCapabilities).size !== definition.companionCapabilities.length) {
+        throw new Error(`Duplicate companion capability: ${definition.id}`);
+      }
       if (definition.kind === "tool" ? !definition.toolName || definition.instructions !== undefined
         : definition.kind === "instruction" ? typeof definition.instructions !== "function" || definition.toolName !== undefined
           : definition.toolName !== undefined || definition.instructions !== undefined) {
@@ -74,6 +92,13 @@ export class CapabilityRegistry {
       const parent = this.idIndex.get(definition.parentId);
       if (!parent) throw new Error(`Missing parent: ${definition.id}`);
       if (parent.kind !== "group") throw new Error(`Leaf capability cannot have children: ${definition.id}`);
+    }
+    for (const definition of this.idIndex.values()) {
+      if (definition.kind !== "instruction") continue;
+      for (const id of definition.companionCapabilities ?? []) {
+        const companion = this.idIndex.get(id);
+        if (!companion || companion.kind === "instruction") throw new Error(`Invalid companion capability: ${definition.id} -> ${id}`);
+      }
     }
     // Every parent chain must reach a root. This also catches cycles.
     const finished = new Set<string>();
@@ -136,7 +161,7 @@ export class CapabilityRegistry {
       if (candidates.size >= 256) break;
       candidates.add(id);
     }
-    return [...candidates].map((id) => this.idIndex.get(id)!)
+    const ranked = [...candidates].map((id) => this.idIndex.get(id)!)
       .filter((item) => item.kind !== "group" && item.projection === "dynamic" && isAvailable(item.id))
       .map((item) => {
         const title = words(`${item.title} ${item.aliases?.join(" ") ?? ""}`);
@@ -145,7 +170,10 @@ export class CapabilityRegistry {
         return { item, score };
       })
       .filter(({ score }) => score > 0)
-      .sort((a, b) => b.score - a.score || a.item.id.localeCompare(b.item.id))
+      .sort((a, b) => b.score - a.score || a.item.id.localeCompare(b.item.id));
+    // Keep weak one-word matches out when the prompt has stronger matches.
+    const minimum = ranked[0] && ranked[0].score >= 6 ? Math.ceil(ranked[0].score * 0.7) : 3;
+    return ranked.filter(({ score }) => score >= minimum)
       .slice(0, Math.max(0, Math.min(limit, 5)))
       .map(({ item }) => item);
   }

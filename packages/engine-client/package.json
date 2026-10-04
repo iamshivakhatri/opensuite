@@ -11,7 +11,8 @@
     "dev": "tsc -w -p tsconfig.json",
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "lint": "echo \"(no lint configured yet)\"",
-    "test": "tsc -p tsconfig.json && node --test \"dist/**/*.test.js\""
+    "test": "tsc -p tsconfig.json && node --test \"dist/**/*.test.js\"",
+    "style-smoke": "tsc -p tsconfig.json && node ./scripts/style-snapshot-smoke.mjs"
   },
   "dependencies": {
     "@opensuite/contracts": "workspace:*",

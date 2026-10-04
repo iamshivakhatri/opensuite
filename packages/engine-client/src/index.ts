@@ -2,6 +2,7 @@ export * from "./transport.js";
 export * from "./engine-client.js";
 export * from "./mock-transport.js";
 export * from "./docx-engine-binding.js";
+export * from "./docx-style-snapshot.js";
 export {
   bindDocxDocument,
   DISPATCHABLE_MUTATION_CAPABILITIES,

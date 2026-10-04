@@ -13,6 +13,21 @@ test("first-turn recommendations stay compact and do not auto-load tools", () =>
   assert.doesNotMatch(system, /- compute_calculator\n|inputSchema/);
 });
 
+test("first-turn recommendations show exact available companion IDs for one load call", () => {
+  const system = buildAgentOperatingInstruction(["capabilities.load"], "document: Read and edit DOCX documents", [{
+    id: "styles.career.clean-resume", kind: "instruction", title: "Clean Resume Style", description: "Resume appearance",
+    companionCapabilities: [
+      { id: "document.paragraphs", kind: "group", title: "Paragraphs", description: "Format paragraphs and lists" },
+      { id: "document.text", kind: "group", title: "Text", description: "Change text appearance" },
+    ],
+  }]);
+  assert.match(system, /USEFUL EXECUTABLE CAPABILITIES/);
+  assert.match(system, /- document\.paragraphs \(group\)/);
+  assert.match(system, /- document\.text \(group\)/);
+  assert.match(system, /These exact IDs are available now/);
+  assert.match(system, /one capabilities_load call/);
+});
+
 test("clarification requires material ambiguity and excludes cheap recovery and delegated choices", () => {
   const system = buildAgentOperatingInstruction(["request_clarification", "finish"]);
   assert.match(system, /request_clarification alone, before further edits, only when a requested outcome requires choosing between two or more materially different unsupported interpretations/);

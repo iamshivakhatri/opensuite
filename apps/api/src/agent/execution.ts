@@ -1,3 +1,5 @@
+import type { StyleProfileService } from "../style-profiles/service.js";
+import { createStyleProfileTools } from "./capabilities/definitions/style-profiles.js";
 import {
   createFinishTool,
   defineTool,
@@ -186,6 +188,7 @@ export interface AgentExecutionServiceDeps {
   > & Partial<Pick<DocumentService, "rename">>;
   readonly resolveModel: (userId: string) => Promise<ResolvedV3ExecutionModel>;
   readonly docxBinding?: DocxEngineBinding;
+  readonly styleProfiles?: StyleProfileService;
   readonly modelUsage?: ModelUsageService;
   readonly managedUsagePolicy?: ManagedUsagePolicy;
   readonly agentRunReportSink?: AgentRunReportSink;
@@ -584,6 +587,10 @@ async function runExecution(input: {
     const tools: AgentToolSet = {
       ...(boundTools?.tools ?? {}),
       ...createStandaloneCapabilityTools(),
+      ...(input.deps.styleProfiles ? createStyleProfileTools({
+        profiles: input.deps.styleProfiles, ownerUserId: input.ownerUserId, workspaceId: input.thread.workspaceId,
+        currentDocument: () => ({ documentId: boundTools?.getActiveDocumentId() ?? null, versionId: boundTools?.getActiveVersionId() ?? null, dirty: (boundTools?.getWorkingMutationCount() ?? 0) > 0 }),
+      }) : {}),
       "workspace.search_documents": createWorkspaceSearchTool({
         documents: input.deps.documents,
         ...(input.deps.docxBinding ? { binding: input.deps.docxBinding } : {}),

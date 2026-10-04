@@ -39,7 +39,7 @@ test("root surface stays compact and common document workflows remain available"
     "workspace.select_document", "workspace.search_documents", "finish", "request_clarification",
     "capabilities.list", "capabilities.search", "capabilities.load"]) assert.ok(surface.initialTools[name], name);
   assert.equal(surface.initialTools["document.set_table_cells_formatting"], undefined);
-  assert.deepEqual(surface.session.roots().map((item) => item.id), ["agent", "document", "skills", "workspace"]);
+  assert.deepEqual(surface.session.roots().map((item) => item.id), ["agent", "document", "skills", "styles", "workspace"]);
   assert.equal(surface.capabilityIndex.includes("table_styling"), false);
   const system = buildAgentOperatingInstruction(Object.keys(surface.initialTools).map(providerSafeToolName), surface.capabilityIndex);
   assert.match(system, /capabilities_list/);
@@ -73,7 +73,7 @@ test("engine filtering removes unsupported tools and their empty groups", async 
     inspect: async () => ({}), find: async () => ({}), mutate: async () => ({ ok: true }),
   });
   const surface = createToolSurface(tools);
-  assert.deepEqual(surface.session.roots().map((item) => item.id), ["agent", "document", "skills"]);
+  assert.deepEqual(surface.session.roots().map((item) => item.id), ["agent", "document", "skills", "styles"]);
   assert.deepEqual(surface.session.list("document.tables"), { ok: false, reasonCode: "CAPABILITY_UNAVAILABLE" });
   assert.deepEqual(surface.session.load(["document.tables.styling"]), { ok: false, reasonCode: "CAPABILITY_UNAVAILABLE" });
   surface.session.load(["document.text"]);

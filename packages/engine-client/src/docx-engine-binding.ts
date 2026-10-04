@@ -5,6 +5,26 @@
  * implement the same shape without changing agents.
  */
 
+import { existsSync } from "node:fs";
+import { isAbsolute, resolve } from "node:path";
+
+import type { DocxStyleSnapshot } from "./docx-style-snapshot.js";
+
+/** Resolved N-API module id: local path when OPENSUITE_ENGINE_PATH is set, else the npm package. */
+export function resolveNativeEngineModuleId(
+  env: NodeJS.ProcessEnv = process.env,
+  cwd: string = process.cwd(),
+): { readonly moduleId: string; readonly fromEnv: boolean } {
+  const configured = env.OPENSUITE_ENGINE_PATH?.trim();
+  if (!configured) {
+    return { moduleId: "@opensuitehq/engine", fromEnv: false };
+  }
+  const moduleId = isAbsolute(configured)
+    ? configured
+    : resolve(cwd, configured);
+  return { moduleId, fromEnv: true };
+}
+
 export interface DocxReplaceTextTarget {
   readonly text: string;
   readonly occurrence?: number;
@@ -488,6 +508,7 @@ export interface DocxEngineBinding {
     input: Uint8Array,
     request: DocxInspectRequest,
   ): Promise<DocxInspectResult>;
+  inspectDocxStyleSnapshot(input: Uint8Array): Promise<DocxStyleSnapshot>;
   executeDocxReplaceText(
     input: Uint8Array,
     operation: DocxReplaceTextOperation,
@@ -595,6 +616,7 @@ type NativeEngineModule = {
     input: Buffer,
     request: { focus: Record<string, unknown> },
   ) => Promise<DocxInspectResult>;
+  inspectDocxStyleSnapshot: (input: Buffer) => Promise<string>;
   executeDocxReplaceText: (
     input: Buffer,
     operation: {
@@ -754,13 +776,26 @@ function toNativeInspectFocus(focus: DocxInspectFocus): Record<string, unknown> 
 export async function createNapiDocxEngineBinding(): Promise<DocxEngineBinding> {
   const { createRequire } = await import("node:module");
   const require = createRequire(import.meta.url);
+  const { moduleId, fromEnv } = resolveNativeEngineModuleId();
+
+  // When OPENSUITE_ENGINE_PATH is set, never fall back to the published package.
+  if (fromEnv && !existsSync(moduleId)) {
+    throw new Error(
+      `OPENSUITE_ENGINE_PATH not found: ${moduleId} (refusing fallback to @opensuitehq/engine)`,
+    );
+  }
 
   let native: NativeEngineModule;
   try {
-    native = require("@opensuitehq/engine") as NativeEngineModule;
+    native = require(moduleId) as NativeEngineModule;
   } catch (error) {
     const message =
       error instanceof Error ? error.message : String(error);
+    if (fromEnv) {
+      throw new Error(
+        `Failed to load local engine at OPENSUITE_ENGINE_PATH=${moduleId} (refusing fallback to @opensuitehq/engine). Underlying error: ${message}`,
+      );
+    }
     throw new Error(
       `Failed to load @opensuitehq/engine Node binding. Ensure @opensuitehq/engine@0.1.3 is installed for this platform (darwin-arm64, darwin-x64, linux-x64-gnu, linux-arm64-gnu, win32-x64-msvc; glibc only — no musl/Alpine). Underlying error: ${message}`,
     );
@@ -842,6 +877,17 @@ export async function createNapiDocxEngineBinding(): Promise<DocxEngineBinding> 
       return native.inspectDocx(Buffer.from(input), {
         focus: toNativeInspectFocus(request.focus),
       });
+    },
+
+    async inspectDocxStyleSnapshot(input) {
+      if (typeof native.inspectDocxStyleSnapshot !== "function") {
+        throw new Error(
+          "installed native engine is missing inspectDocxStyleSnapshot; use OPENSUITE_ENGINE_PATH for the local Phase 1 build",
+        );
+      }
+      return JSON.parse(
+        await native.inspectDocxStyleSnapshot(Buffer.from(input)),
+      ) as DocxStyleSnapshot;
     },
 
     async executeDocxReplaceText(input, operation) {

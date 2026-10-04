@@ -158,3 +158,13 @@ test("agent messages have a complete thread ordering index", () => {
     ),
   );
 });
+
+test('style profiles store personal JSON facts independently of source history foreign keys', async () => {
+  const { styleProfile } = await import('../schema/style-profiles.js');
+  const config = getTableConfig(styleProfile);
+  assert.equal(getTableName(styleProfile), 'style_profile');
+  assert.equal(styleProfile.ownerUserId.notNull, true);
+  assert.equal(styleProfile.data.dataType, 'json');
+  assert.equal(config.foreignKeys.length, 1);
+  assert.equal(config.foreignKeys[0]?.onDelete, 'cascade');
+});

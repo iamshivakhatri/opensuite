@@ -17,6 +17,10 @@ test("registry rejects duplicate IDs, missing parents, cycles, and provider-name
   assert.throws(() => new CapabilityRegistry([group("a", "b"), group("b", "a")]), /cycle/i);
   assert.throws(() => new CapabilityRegistry([group("root", null), tool("a.b", "root"), tool("a_b", "root")]), /Conflicting provider tool name/);
   assert.throws(() => new CapabilityRegistry([group("root", null), { id: "root.bad", parentId: "root", kind: "instruction", title: "Bad", description: "Bad", projection: "always", instructions: () => "Bad" }]), /dynamically/);
+  assert.throws(() => new CapabilityRegistry([group("root", null), {
+    id: "root.skill", parentId: "root", kind: "instruction", title: "Skill", description: "Skill", projection: "dynamic",
+    companionCapabilities: ["root.missing"], instructions: () => "Skill",
+  }]), /Invalid companion capability/);
 });
 
 test("indexed root, child, and lexical search return bounded metadata", () => {

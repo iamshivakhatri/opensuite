@@ -105,6 +105,21 @@ exact immutable version N
 pnpm install   # pulls @opensuitehq/engine@0.1.3 + platform package from npm
 ```
 
+For local engine development, build `opensuite-engine/crates/opensuite-node`, then set
+`OPENSUITE_ENGINE_PATH` in the repo-root `.env` (see `.env.example`) to that checkout's
+`index.js`. Prefer an absolute path. The API `load-env` picks it up on boot; the boot
+line logs `source=OPENSUITE_ENGINE_PATH` vs `source=npm`. When the env var is set, a
+missing or unloadable path errors — there is no silent fallback to the published package.
+
+```bash
+(cd ../opensuite-engine/crates/opensuite-node && npm run build:debug)
+# In opensuite/.env (absolute path):
+# OPENSUITE_ENGINE_PATH=/…/opensuite-engine/crates/opensuite-node/index.js
+OPENSUITE_ENGINE_PATH="$PWD/../opensuite-engine/crates/opensuite-node/index.js" pnpm --filter @opensuite/engine-client test
+OPENSUITE_ENGINE_PATH="$PWD/../opensuite-engine/crates/opensuite-node/index.js" pnpm --filter @opensuite/engine-client style-smoke
+```
+
+
 `packages/engine-client` declares `@opensuitehq/engine` as a **dependency** (exact `0.1.3`) — not optional — so installs fail if the package cannot be resolved. Platform binaries ship as optionalDependencies of that package. Supported: darwin-arm64/x64, linux-x64-gnu, linux-arm64-gnu, win32-x64-msvc (glibc only; no Alpine/musl). No sibling `opensuite-engine` checkout required. Smoke test may write `/private/tmp/opensuite-app-engine-adapter-output.docx` for manual inspection only.
 
 ## Conceptual Interface

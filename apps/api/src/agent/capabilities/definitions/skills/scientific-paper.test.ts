@@ -8,8 +8,8 @@ test("scientific paper skill is discoverable as metadata and loads guidance with
   const events: { capabilityId: string; kind: string; type: string }[] = [];
   const session = new CapabilitySession(capabilityRegistry, {}, (event) => { events.push(event); });
   const id = "skills.scientific-writing.scientific-paper";
-  assert.deepEqual(session.roots().map((item) => item.id), ["skills"]);
-  assert.deepEqual(session.list("skills").capabilities?.map((item) => item.id), ["skills.scientific-writing"]);
+  assert.deepEqual(session.roots().map((item) => item.id), ["skills", "styles"]);
+  assert.deepEqual(session.list("skills").capabilities?.map((item) => item.id), ["skills.career", "skills.coordination", "skills.correspondence", "skills.procedures", "skills.proposals", "skills.reporting", "skills.scientific-writing"]);
   assert.deepEqual(session.list("skills.scientific-writing").capabilities?.map((item) => item.id), [id]);
   assert.deepEqual(session.search("write a research paper").capabilities.map((item) => item.id), [id]);
   assert.doesNotMatch(JSON.stringify(session.search("scientific paper")), /Never invent methods/);

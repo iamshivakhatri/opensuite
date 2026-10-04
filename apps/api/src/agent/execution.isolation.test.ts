@@ -2232,3 +2232,36 @@ test("duplicate cancel is idempotent and does not corrupt a failed run", async (
   assert.equal(failed?.status, "failed");
   assert.equal(failed?.errorCode, "AGENT_EXECUTION_FAILED");
 });
+
+test('explicit learn-style request binds the open saved version and exposes the product capability', async () => {
+  const persistence = memoryPersistence('user-1');
+  const binding = await createNapiDocxEngineBinding();
+  const documentId = '00000000-0000-4000-8000-000000000001';
+  const versionId = '00000000-0000-4000-8000-000000000002';
+  const bytes = Buffer.from(buildMinimalDocx(['A report']));
+  const document = { id: documentId, workspaceId: 'ws-1', name: 'Report.docx', format: 'docx', latestVersion: { id: versionId } };
+  let learned = 0;
+  const deps = baseDeps(persistence, async input => {
+    const initialTools = await input.projectTools!({ turn: 1 } as never);
+    assert.equal(initialTools['style.learn_from_document'], undefined);
+    await input.tools!['capabilities.load']!.execute!({ ids: ['style.learn_from_document'] }, {} as never);
+    const tools = await input.projectTools!({ turn: 2 } as never);
+    assert.ok(tools['style.learn_from_document']);
+    await tools['style.learn_from_document']!.execute!({}, {} as never);
+    return softResult('completed', 'Style saved.');
+  });
+  const execution = createAgentExecutionService({ ...deps, docxBinding: binding,
+    documents: { ...deps.documents, getOwnedDocument: async () => document as never, listInWorkspace: async () => [document] as never, readExactVersionBytes: async () => bytes },
+    styleProfiles: { learnFromDocument: async (input: { documentId: string; versionId?: string }) => {
+      learned++;
+      assert.equal(input.documentId, documentId);
+      assert.equal(input.versionId, versionId);
+      const { normalizeStyleSnapshot } = await import('../style-profiles/normalize.js');
+      return { id: documentId, name: 'Report Style', createdAt: '', updatedAt: '', source: { type: 'docx', documentId, versionId, workspaceId: 'ws-1', fileName: 'Report.docx', extractedAt: '', snapshotSchemaVersion: 1, normalizerVersion: 1 }, style: normalizeStyleSnapshot(await binding.inspectDocxStyleSnapshot(bytes)) };
+    } } as never,
+  });
+  const result = await (await execution.start({ userId: 'user-1', threadId: 'thread-1', activeDocumentId: documentId, instruction: 'Learn the style from this document.' })).result;
+  assert.equal(result.run.status, 'completed');
+  assert.equal(learned, 1);
+  assert.equal(result.run.baseDocumentVersionId, versionId);
+});
