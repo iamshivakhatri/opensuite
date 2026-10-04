@@ -273,12 +273,13 @@ export async function verifyDocumentUpdate(input: {
       : { id: "period", status: "skipped", message: "Report periods could not be searched" });
   }
   const found = [];
-  for (const token of ["[UPDATE", "[INSERT", "TODO", "TBD"]) {
+  for (const token of ["[", "TODO", "TBD"]) {
     const result = await input.binding.findDocxText(input.after, { text: token });
     if (!result.ok) { checks.push({ id: "placeholders", status: "skipped", message: "Placeholders could not be searched" }); return checks; }
     for (const match of result.matches) {
       const context = `${match.before}${match.text}${match.after}`;
-      if (token.startsWith("[") ? /^\[(?:UPDATE|INSERT)\b[^\]]*\]/i.test(context.slice(match.before.length)) : new RegExp(`\\b${token}\\b`).test(context.slice(Math.max(0, match.before.length - 1)))) {
+      // Search excerpts can end before a long input instruction closes its bracket.
+      if (token.startsWith("[") ? /^\[\s*(?:(?:UPDATE|INSERT|Add|Enter|Provide|Your)\b|(?:Email(?: address)?|Phone(?: number)?|City,?\s*State|LinkedIn(?: URL)?|Degree|Graduation year)\s*\])/i.test(context.slice(match.before.length)) : new RegExp(`\\b${token}\\b`).test(context.slice(Math.max(0, match.before.length - 1)))) {
         found.push(`${match.container}: ${context}`.slice(0, 160));
       }
     }

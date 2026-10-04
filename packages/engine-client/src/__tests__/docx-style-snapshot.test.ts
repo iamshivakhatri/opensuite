@@ -66,3 +66,13 @@ test(
     assert.deepEqual(bytes, new Uint8Array(buildMinimalDocx(["Local style check"])));
   },
 );
+
+test('paragraph inspection transports native list facts for preservation decisions', { skip: !process.env.OPENSUITE_ENGINE_PATH }, async () => {
+  const binding = await createNapiDocxEngineBinding();
+  const input = buildMinimalDocx(['First item']);
+  const changed = await binding.executeDocxExtended!(input, 'executeDocxSetParagraphsList', { targets: [{ text: 'First item' }], kind: 'bullet' });
+  assert.equal(changed.result.ok, true);
+  assert.ok(changed.output);
+  const result = await binding.inspectDocx(changed.output, { focus: { kind: 'paragraphs' } });
+  assert.deepEqual(result.paragraphs?.items[0]?.list, { kind: 'bullet', level: 0, supported: true });
+});

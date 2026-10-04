@@ -2265,3 +2265,13 @@ test('explicit learn-style request binds the open saved version and exposes the 
   assert.equal(learned, 1);
   assert.equal(result.run.baseDocumentVersionId, versionId);
 });
+
+test('saved-style completion cannot succeed from assistant text or generic guidance alone', async () => {
+  const persistence = memoryPersistence('user-1');
+  const deps = baseDeps(persistence, async () => softResult('completed', 'I used your saved Resume Style.'));
+  const execution = createAgentExecutionService(deps);
+  const result = await (await execution.start({ userId: 'user-1', threadId: 'thread-1', instruction: 'Use my Resume Style and build me a resume.' })).result;
+  assert.equal(result.run.status, 'failed');
+  assert.match(result.run.errorMessage ?? '', /saved style was not applied and verified/);
+  assert.equal(result.assistantMessage, null);
+});

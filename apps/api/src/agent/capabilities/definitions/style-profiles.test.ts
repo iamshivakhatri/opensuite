@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { createStyleProfileTools } from './style-profiles.js';
+import { requestsSavedStyle, createStyleProfileTools } from './style-profiles.js';
 import { createToolSurface } from '../runtime/tool-surface.js';
 import type { StyleProfileData } from '@opensuite/contracts';
 
@@ -40,4 +40,38 @@ test('style capability is discovered, explicitly loaded, compact, and bound to e
   dirty = true;
   await assert.rejects(() => Promise.resolve(tools['style.learn_from_document']!.execute!({}, {} as never)), /unsaved edits/);
   assert.equal(calls, 1);
+});
+
+
+test('named saved-style prompts recommend exact loadable tools and prevent generic substitution', () => {
+  const profiles = {} as StyleProfileService;
+  const tools = createStyleProfileTools({ profiles, ownerUserId: 'alice', workspaceId: 'workspace', currentDocument: () => ({ documentId, versionId, dirty: false }), applyProfile: async () => ({ matched: ['body'] }) });
+  for (const prompt of ['Use my Resume Style and build me a resume.', 'Using the Blue Harbor Operating Report Style, create a newsletter.', 'Use this Resume Style to create a resume.', 'Apply the saved Blue Harbor style to this document.']) {
+    const surface = createToolSurface(tools);
+    assert.equal(requestsSavedStyle(prompt), true, prompt);
+    const ids = surface.session.recommend(prompt).map(item => item.id);
+    assert.deepEqual(ids, ['style.list_profiles', 'style.get_profile', 'style.apply_profile']);
+    assert.equal(surface.session.load(ids).ok, true, 'No CAPABILITY_NOT_LOADABLE on the normal path');
+    assert.equal(surface.session.load(['styles.career.clean-resume']).reasonCode, 'SAVED_STYLE_REQUIRED');
+    assert.equal(surface.session.load(['skills.career.resume']).ok, true);
+    assert.ok(surface.projectTools()['style.apply_profile']);
+  }
+  for (const prompt of ['Use an appropriate visual style.', 'Create a clean professional resume.', 'Learn the document style and save it.']) assert.equal(requestsSavedStyle(prompt), false, prompt);
+});
+
+test('apply capability validates ID and delegates to the working document service', async () => {
+  let applied = 0;
+  const tools = createStyleProfileTools({ profiles: {} as StyleProfileService, ownerUserId: 'alice', workspaceId: 'workspace', currentDocument: () => ({ documentId, versionId, dirty: true }), applyProfile: async id => { assert.equal(id, documentId); applied++; return { profileName: 'Report Style', matched: ['body'], mismatched: [] }; } });
+  const result = await tools['style.apply_profile']!.execute!({ id: documentId }, {} as never);
+  assert.equal(applied, 1);
+  assert.ok(JSON.stringify(result).length < 200);
+  await assert.rejects(async () => tools['style.apply_profile']!.execute!({ id: 'bad' }, {} as never));
+  assert.equal(applied, 1);
+});
+
+test('applying a saved style to this document binds the open target', async () => {
+  const { refersToOpenDocument } = await import('../../document-target.js');
+  assert.equal(refersToOpenDocument('Apply my Resume Style to this document.'), true);
+  assert.equal(refersToOpenDocument('Use my saved Blue Harbor Style on the current document.'), true);
+  assert.equal(refersToOpenDocument('Use my Resume Style and create a new resume.'), false);
 });

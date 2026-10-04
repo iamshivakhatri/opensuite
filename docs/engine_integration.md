@@ -170,4 +170,4 @@ These types are plain, JSON-shaped TypeScript (no classes, enums-as-objects, or 
 
 Swapping N-API for a future remote engine service only requires a new `DocxEngineBinding`.
 
-N-API paragraph formatting currently maps alignment + spacingBefore/AfterTwips only; fuller protocol patch fields (indent/keep*) await N-API exposure. Do not invent app-side substitutes.
+N-API paragraph formatting currently maps alignment, spacingBefore/AfterTwips, and leftIndentTwips; line spacing, other indents, and keep flags await N-API exposure. Do not invent app-side substitutes.

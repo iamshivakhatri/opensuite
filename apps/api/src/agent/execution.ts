@@ -1,5 +1,5 @@
 import type { StyleProfileService } from "../style-profiles/service.js";
-import { createStyleProfileTools } from "./capabilities/definitions/style-profiles.js";
+import { requestsSavedStyle, createStyleProfileTools } from "./capabilities/definitions/style-profiles.js";
 import {
   createFinishTool,
   defineTool,
@@ -140,7 +140,8 @@ export type AgentExecutionErrorCode =
   | "INVALID_CONTINUATION"
   | "AGENT_EXECUTION_FAILED"
   | "AGENT_PERSISTENCE_FAILED"
-  | "DOCX_ENGINE_UNAVAILABLE";
+  | "DOCX_ENGINE_UNAVAILABLE"
+  | "SAVED_STYLE_NOT_APPLIED";
 
 export class AgentExecutionError extends Error {
   constructor(readonly code: AgentExecutionErrorCode, message: string) {
@@ -584,11 +585,13 @@ async function runExecution(input: {
     const finish = createFinishTool({
       description: "After your concise final response to the user, call this to end the run.",
     });
+    const requiresSavedStyle = requestsSavedStyle(input.instruction);
     const tools: AgentToolSet = {
       ...(boundTools?.tools ?? {}),
       ...createStandaloneCapabilityTools(),
       ...(input.deps.styleProfiles ? createStyleProfileTools({
         profiles: input.deps.styleProfiles, ownerUserId: input.ownerUserId, workspaceId: input.thread.workspaceId,
+        ...(boundTools ? { applyProfile: (id: string) => boundTools!.applyStyleProfile(id, input.deps.styleProfiles!) } : {}),
         currentDocument: () => ({ documentId: boundTools?.getActiveDocumentId() ?? null, versionId: boundTools?.getActiveVersionId() ?? null, dirty: (boundTools?.getWorkingMutationCount() ?? 0) > 0 }),
       }) : {}),
       "workspace.search_documents": createWorkspaceSearchTool({
@@ -597,7 +600,15 @@ async function runExecution(input: {
         ownerUserId: input.ownerUserId,
         workspaceId: input.thread.workspaceId,
       }),
-      [finish.name]: finish.tool,
+      [finish.name]: requiresSavedStyle ? {
+        ...finish.tool,
+        execute: async (args, context) => {
+          const fidelity = boundTools?.getStyleFidelity();
+          if (!fidelity) throw new Error('Retrieve and apply the requested saved style with style.apply_profile before finishing. If required information is missing, use finish_with_input_needed and disclose it.');
+          if (!fidelity.summary.counts.matched || fidelity.summary.counts.mismatched) throw new Error('Saved style has mismatched fields. Resolve them or finish_with_input_needed and report the unmet style requirement.');
+          return finish.tool.execute!(args, context);
+        },
+      } : finish.tool,
       finish_with_input_needed: defineTool<{ missingInformation: string }, string>({
         kind: "read",
         terminal: true,
@@ -794,6 +805,8 @@ async function runExecution(input: {
               ? sources.every((item, index) => currentSources[index]?.latestVersion.id === item.versionId)
               : null,
         });
+        const fidelity = boundTools.getStyleFidelity();
+        if (fidelity) checks.push({ id: 'style', status: fidelity.summary.counts.mismatched ? 'warning' : 'pass', message: `Saved style: ${fidelity.summary.counts.matched} matched, ${fidelity.summary.counts.mismatched} mismatched, ${fidelity.summary.counts.not_applicable} not applicable, ${fidelity.summary.counts.unsupported} unsupported` });
         transcript.validation(checks);
         input.trace?.write("## Validation", checks);
         logAgentLine(formatValidationChecks(checks));
@@ -836,6 +849,11 @@ async function runExecution(input: {
           return handleRunEvent(event);
         },
       });
+      const inputNeeded = isInputNeededTool(result.metrics?.toolCalls.filter(tool => tool.outcome === 'success' && isFinishTool(tool.toolName)).at(-1)?.toolName);
+      const fidelity = boundTools?.getStyleFidelity();
+      if (requiresSavedStyle && isSuccessfulStop(result.stopReason) && !inputNeeded && (!fidelity?.summary.counts.matched || fidelity.summary.counts.mismatched)) {
+        throw new AgentExecutionError('SAVED_STYLE_NOT_APPLIED', 'The requested saved style was not applied and verified.');
+      }
       await flushWorking();
       await verifySavedDocument(result.metrics);
     } catch (error) {

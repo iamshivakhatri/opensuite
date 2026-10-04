@@ -391,6 +391,8 @@ export interface DocxInspectHeadingItem {
 }
 
 export interface DocxInspectParagraphItem {
+  /** Existing native list facts; absence means the paragraph is not a list item. */
+  readonly list?: { readonly kind: string; readonly level: number; readonly supported: boolean };
   /** Position among direct body paragraphs; not a mutation selector. */
   readonly index?: number;
   /** Zero-based selector occurrence among matching mutable body paragraphs. */

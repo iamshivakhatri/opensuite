@@ -222,3 +222,17 @@ test("table loss without a matching delete remains a warning", async () => {
   assert.equal(checks.find((item) => item.id === "structure")?.status, "warning");
   assert.match(checks.find((item) => item.id === "structure")?.message ?? "", /Table count changed unexpectedly: 1 → 0/);
 });
+
+test('actual resume placeholders require input, while ordinary bracket text stays valid', async () => {
+  const placeholders = ['[Email]', '[Phone]', '[City, State]', '[LinkedIn]', '[Add a key responsibility ...]', '[Degree]', '[Graduation year]'];
+  for (const placeholder of placeholders) {
+    const checks = await check(`Resume ${placeholder}`, 'Create a resume', { inputNeeded: true });
+    const result = checks.find(item => item.id === 'placeholders');
+    assert.equal(result?.status, 'warning', placeholder);
+    assert.equal(result?.message, '1 unresolved values require user input');
+    assert.match(result?.evidence ?? '', new RegExp(placeholder.slice(1, -1).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
+  }
+  assert.equal((await check('[Add a key responsibility with specific details about your most recent project and its measurable business result here]')).find(item => item.id === 'placeholders')?.status, 'warning');
+  assert.equal((await check(placeholders.join(' '), 'Create a resume')).find(item => item.id === 'placeholders')?.message, '7 unresolved placeholder(s)');
+  assert.equal((await check('References [1], [Smith 2024], array [a, b], and units [kg].')).find(item => item.id === 'placeholders')?.status, 'pass');
+});

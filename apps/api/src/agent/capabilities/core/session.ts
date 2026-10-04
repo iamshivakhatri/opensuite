@@ -1,3 +1,4 @@
+import { requestsSavedStyle } from "../definitions/style-profiles.js";
 import type { AgentToolSet } from "@opensuite/agent-core-v3";
 import { CapabilityRegistry, type CapabilityDefinition } from "./registry.js";
 
@@ -11,6 +12,7 @@ export type CapabilityRecommendation = ReturnType<typeof compact> & Readonly<{
 
 /** One run's available and loaded capabilities; the registry itself never changes. */
 export class CapabilitySession {
+  private savedStyleRequested = false;
   readonly available = new Set<string>();
   readonly loaded = new Set<string>();
   private readonly loadedInstructions = new Map<string, string>();
@@ -60,7 +62,10 @@ export class CapabilitySession {
   }
 
   recommend(query: string, turn = 1) {
-    const matches = this.registry.recommend(query, 3, (id) => this.isAvailable(id));
+    this.savedStyleRequested = requestsSavedStyle(query);
+    const matches = this.savedStyleRequested
+      ? ['style.list_profiles', 'style.get_profile', 'style.apply_profile'].filter(id => this.isAvailable(id)).map(id => this.registry.get(id)!)
+      : this.registry.recommend(query, 3, (id) => this.isAvailable(id));
     const recommendedCompanions = new Set<string>();
     const recommendations: CapabilityRecommendation[] = matches.map((item) => {
       const companions = item.kind === "instruction"
@@ -82,6 +87,9 @@ export class CapabilitySession {
   load(ids: readonly string[], turn?: number) {
     if (!Array.isArray(ids) || !ids.length || ids.some((id) => typeof id !== "string" || !this.isAvailable(id))) {
       return { ok: false as const, reasonCode: "CAPABILITY_UNAVAILABLE" };
+    }
+    if (this.savedStyleRequested && ids.some(id => id === 'styles' || id.startsWith('styles.'))) {
+      return { ok: false as const, reasonCode: 'SAVED_STYLE_REQUIRED', message: 'This request names a saved style. Load style.list_profiles, style.get_profile, and style.apply_profile. A document skill can still help with content.' };
     }
     if (ids.some((id) => !this.isLoadable(id))) return { ok: false as const, reasonCode: "CAPABILITY_NOT_LOADABLE" };
     const requested = new Set(ids);

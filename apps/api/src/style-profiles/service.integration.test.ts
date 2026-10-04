@@ -49,7 +49,7 @@ test('real DOCX learn/save/fresh-process reload, CRUD, exact provenance, ownersh
     const [bobWorkspace] = await client.db.insert(schema.workspace).values({ ownerUserId: bob, name: 'Other workspace' }).returning();
     assert.ok(workspace && bobWorkspace);
     const storage = createMemoryObjectStorage();
-    const documents = createDocumentService(client.db, storage, { uploadMaxBytes: 20 * 1024 * 1024 });
+    const documents = createDocumentService(client.db, storage, { uploadMaxBytes: 20 * 1024 * 1024, createBlankDocxBytes: async () => (await createNapiDocxEngineBinding()).createBlankDocx() });
     let inspections = 0;
     const profiles = createStyleProfileService(client.db, documents, async bytes => { inspections++; return inspectDocxStyleSnapshot(bytes); });
     registerStyleProfileRoutes(app, { api: { getSession: async ({ headers }) => {
@@ -171,6 +171,63 @@ test('real DOCX learn/save/fresh-process reload, CRUD, exact provenance, ownersh
         await runPrompt('Retrieve the Blue Harbor Operating Report Style profile.', 'style.get_profile', { id: saved.id });
         const { styleProfileSummary } = await import('./service.js');
         assert.ok(JSON.stringify(styleProfileSummary(exact)).length < 6000);
+        // Saved profile → newly created content → deterministic apply → one run-boundary save.
+        const runApplication = async (existingId?: string) => {
+          let turn = 0;
+          const calls = [
+            { name: 'capabilities_load', input: { ids: ['style.list_profiles', 'style.get_profile', 'style.apply_profile'] } },
+            { name: 'style_list_profiles', input: {} },
+            { name: 'style_get_profile', input: { id: saved.id } },
+            ...(existingId ? [{ name: 'workspace_select_document', input: { documentId: existingId } }] : [
+              { name: 'workspace_create_blank_document', input: { title: 'Cincinnati Sports Club — October Newsletter' } },
+              { name: 'document_insert_paragraphs', input: { texts: ['Cincinnati Sports Club — October Newsletter', 'Sample club newsletter. Events are test data.', 'Club News', 'Practice is scheduled for October 12.'], placement: { kind: 'end' } } },
+              { name: 'document_set_paragraph_style', input: { target: { text: 'Cincinnati Sports Club — October Newsletter' }, style: 'Title' } },
+              { name: 'document_set_paragraph_style', input: { target: { text: 'Club News' }, style: 'Heading 1' } },
+              { name: 'document_create_table', input: { rows: [['Activity', 'Test date'], ['Practice', 'October 12']], placement: { kind: 'end' } } },
+            ]),
+            { name: 'style_apply_profile', input: { id: saved.id } },
+            { name: 'finish', input: {} },
+          ];
+          const model = new MockLanguageModelV4({ doStream: async options => {
+            const context = JSON.stringify(options.prompt);
+            assert.doesNotMatch(context, /runPatterns|paragraphPatterns|STYLE PACK:/);
+            if (!turn) for (const id of ['style.list_profiles', 'style.get_profile', 'style.apply_profile']) assert.ok(context.includes(`- ${id} (tool)`));
+            if (turn === calls.length - 1) { assert.match(context, /matched/); assert.match(context, /Blue Harbor Operating Report Style/); }
+            const call = calls[turn++];
+            assert.ok(call, 'Normal saved-style path requires no search/list recovery or retry');
+            return { stream: simulateReadableStream({ chunks: [
+              { type: 'stream-start', warnings: [] },
+              { type: 'tool-call', toolCallId: `apply-${turn}`, toolName: call.name, input: JSON.stringify(call.input) },
+              { type: 'finish', finishReason: { unified: 'tool-calls', raw: 'tool-calls' }, usage: { inputTokens: { total: 1, noCache: 1, cacheRead: 0, cacheWrite: 0 }, outputTokens: { total: 1, text: 1, reasoning: 0 } } },
+            ] as never[] }) };
+          } });
+          const execution = createAgentExecutionService({ persistence, documents, styleProfiles: profiles, docxBinding: binding, resolveModel: async () => ({ model }) });
+          const applied = await (await execution.start({ userId: alice, threadId: thread.id, activeDocumentId: current.id, instruction: existingId ? 'Use my saved Blue Harbor Operating Report Style on the selected newsletter.' : 'Create a newsletter using my saved Blue Harbor Operating Report Style.' })).result;
+          assert.equal(applied.run.status, 'completed', applied.run.errorMessage ?? 'Run failed');
+          const steps = await client.db.select().from(schema.agentStep).where(eq(schema.agentStep.runId, applied.run.id));
+          assert.equal(steps.filter(step => step.status === 'failed').length, 0, JSON.stringify(steps));
+          assert.deepEqual(steps.filter(step => step.name.startsWith('capabilities.')).map(step => step.name), ['capabilities.load']);
+          for (const name of ['style.list_profiles', 'style.get_profile', 'style.apply_profile']) assert.equal(steps.filter(step => step.name === name && step.status === 'completed').length, 1);
+          assert.equal(turn, calls.length);
+          const target = existingId ? await documents.getOwnedDocument({ documentId: existingId, ownerUserId: alice }) : (await documents.listInWorkspace(workspace.id, alice)).find(doc => doc.name === 'Cincinnati Sports Club — October Newsletter.docx');
+          assert.ok(target);
+          const targetVersions = await documents.listVersions({ documentId: target.id, ownerUserId: alice });
+          assert.equal(targetVersions.length, existingId ? 3 : 2, 'One immutable save per application run');
+          const targetBytes = await documents.readExactVersionBytes({ documentId: target.id, versionId: target.latestVersion.id, ownerUserId: alice });
+          const { buildStyleApplicationPlan } = await import('./application.js');
+          const { compareStyleFidelity } = await import('./fidelity.js');
+          const fidelity = compareStyleFidelity(buildStyleApplicationPlan(exact.style), await inspectDocxStyleSnapshot(targetBytes, binding));
+          assert.equal(fidelity.summary.counts.mismatched, 0, JSON.stringify(fidelity));
+          assert.equal(fidelity.summary.counts.matched, 27);
+          const content = await binding.inspectDocx(targetBytes, { focus: { kind: 'paragraphs', limit: 100 } });
+          assert.deepEqual(content.paragraphs?.items.map(p => p.text), ['Cincinnati Sports Club — October Newsletter', 'Sample club newsletter. Events are test data.', 'Club News', 'Practice is scheduled for October 12.']);
+          assert.equal((await documents.listVersions({ documentId: current.id, ownerUserId: alice })).length, versionCount);
+          assert.equal(hash(await documents.readExactVersionBytes({ documentId: current.id, versionId: current.latestVersion.id, ownerUserId: alice })), hash(bytes));
+          console.log(`Blue Harbor saved-profile application (${existingId ? 'existing' : 'new'} target):`, JSON.stringify(fidelity.summary));
+          return target.id;
+        };
+        const targetId = await runApplication();
+        await runApplication(targetId);
         await profiles.delete(alice, saved.id);
         console.log('Blue Harbor real-agent-loop replay: one successful learn call, list/get successful, no source versions changed, no paid model calls');
       }

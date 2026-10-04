@@ -766,6 +766,9 @@ test("completion uses successful tool facts for style learning, retrieval, and d
   assert.equal(headline('style.learn_from_document'), 'Saved style profile · 5.3s');
   assert.equal(headline('style.list_profiles'), 'Completed · 5.3s');
   assert.equal(headline('style.get_profile'), 'Completed · 5.3s');
+  assert.equal(headline('style.apply_profile'), 'Updated document · 5.3s');
+  assert.equal(headline('style.apply_profile', 'error'), 'Completed · 5.3s');
+  assert.deepEqual(toolLabels('style.apply_profile'), { active: 'Applying saved style', done: 'Applied saved style' });
   assert.equal(headline('style.learn_from_document', 'error'), 'Completed · 5.3s');
   assert.equal(headline('document.replace_text', 'error'), 'Completed · 5.3s');
   assert.equal(headline('document.replace_text'), 'Updated document · 5.3s');

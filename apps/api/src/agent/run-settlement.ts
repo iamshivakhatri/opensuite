@@ -210,6 +210,9 @@ export async function settleTerminalRunFailure(input: {
 /** Only known, safe reasons reach persisted run status and the Agent Panel. */
 export function describeRunFailure(error: unknown, transcript: readonly TranscriptEntry[]): { code: string; message: string } | null {
   const code = error && typeof error === "object" && "code" in error ? error.code : undefined;
+  if (code === "SAVED_STYLE_NOT_APPLIED") {
+    return { code, message: "The requested saved style was not applied and verified. The task is incomplete." };
+  }
   if (code === "AGENT_PERSISTENCE_FAILED") {
     return { code, message: "Could not save agent document changes. The previous version is unchanged." };
   }

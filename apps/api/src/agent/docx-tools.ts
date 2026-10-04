@@ -19,6 +19,10 @@ import {
   type InspectFocus,
 } from "./document-tools.js";
 
+import { applyStyleProfileToDocument, styleApplicationSummary } from '../style-profiles/application.js';
+import type { StyleProfileService } from '../style-profiles/service.js';
+import type { StyleFidelityReport } from '../style-profiles/fidelity.js';
+
 export interface DocumentTransition {
   readonly kind: "created" | "duplicated";
   readonly fromDocumentId: string | null;
@@ -28,6 +32,8 @@ export interface DocumentTransition {
 
 export interface PrimaryDocxToolsResult {
   readonly tools: AgentToolSet;
+  readonly applyStyleProfile: (profileId: string, profiles: Pick<StyleProfileService, 'get'>) => Promise<ReturnType<typeof styleApplicationSummary>>;
+  readonly getStyleFidelity: () => StyleFidelityReport | null;
   readonly documentId: string | null;
   readonly getActiveDocumentId: () => string | null;
   readonly getActiveVersionId: () => string | null;
@@ -109,6 +115,7 @@ function createActiveDocxSession(input: {
   let versionId: string | null = null;
   let host: ReturnType<typeof bindDocxDocument> | null = null;
   let dirty = false;
+  let styleFidelity: StyleFidelityReport | null = null;
   let workingRevision = 0;
   let workingMutationCount = 0;
   const currentHandles = new Set<string>();
@@ -204,6 +211,7 @@ function createActiveDocxSession(input: {
     expireHandles("document_rebind");
     lastHandleEvent = "rebind";
     mutationFailures.clear();
+    styleFidelity = null;
   }
 
   function requireHost(): BoundDocumentHost {
@@ -219,6 +227,7 @@ function createActiveDocxSession(input: {
     workingRevision += 1;
     workingMutationCount += applied;
     documentChangedThisTurn = true;
+    styleFidelity = null;
     const preserveHandles = modelTurn !== null && HANDLE_PRESERVING_MUTATIONS.has(capability);
     if (!preserveHandles) expireHandles("mutation_since_inspect");
     lastHandleEvent = preserveHandles ? "compatible_mutation" : "mutation";
@@ -348,6 +357,25 @@ function createActiveDocxSession(input: {
     redirectingHost,
     getActiveDocumentId: () => documentId,
     getActiveVersionId: () => versionId,
+    getStyleFidelity: () => styleFidelity,
+    async applyStyleProfile(profileId: string, profiles: Pick<StyleProfileService, 'get'>) {
+      if (!host || !documentId || !versionId) throw new Error('Select a target document before applying a style profile');
+      if (input.editableDocumentId && documentId !== input.editableDocumentId) throw new Error('Document is reference-only');
+      const startingHost = host;
+      const revision = workingRevision;
+      const result = await applyStyleProfileToDocument({
+        profileId, profiles, documents: input.documents, binding: input.binding,
+        ownerUserId: input.ownerUserId, workspaceId: input.workspaceId,
+        documentId, versionId, bytes: host.currentBytes(),
+      });
+      if (host !== startingHost || revision !== workingRevision) throw new Error('Working revision changed during style application');
+      if (result.operationCount) {
+        host = bindHost({ documentId, versionId, bytes: result.bytes });
+        advanceWorkingState(result.operationCount, 'apply_style_profile');
+      }
+      styleFidelity = result.fidelity;
+      return styleApplicationSummary(result);
+    },
     getWorkingRevision: () => workingRevision,
     getWorkingDocument: () => dirty && host && documentId && versionId
       ? { documentId, baseVersionId: versionId, revision: workingRevision, bytes: host.currentBytes() }
@@ -636,6 +664,8 @@ export async function createPrimaryDocxTools(input: {
     documentId: session.getActiveDocumentId(),
     getActiveDocumentId: session.getActiveDocumentId,
     getActiveVersionId: session.getActiveVersionId,
+    applyStyleProfile: session.applyStyleProfile,
+    getStyleFidelity: session.getStyleFidelity,
     getWorkingRevision: session.getWorkingRevision,
     getWorkingDocument: session.getWorkingDocument,
     getWorkingMutationCount: session.getWorkingMutationCount,

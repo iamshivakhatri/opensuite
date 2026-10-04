@@ -100,3 +100,12 @@ export function normalizeStyleSnapshot(snapshot: DocxStyleSnapshot): StyleProfil
   };
   return JSON.parse(key(data)) as StyleProfileData;
 }
+
+export function paragraphRole(name?: string, styleId?: string): string {
+  for (const value of [styleId, name]) {
+    if (/^title$/i.test(value ?? '')) return 'Title';
+    const heading = value?.match(/^heading\s*([1-9])$/i);
+    if (heading) return `Heading${heading[1]}`;
+  }
+  return 'body';
+}

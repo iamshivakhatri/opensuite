@@ -299,6 +299,10 @@ const TOOL_LABELS: Record<string, { active: string; done: string }> = {
     active: "Listing saved styles",
     done: "Listed saved styles",
   },
+  "style.apply_profile": {
+    active: "Applying saved style",
+    done: "Applied saved style",
+  },
   "style.get_profile": {
     active: "Reading saved style",
     done: "Read saved style",
@@ -358,6 +362,7 @@ export function activityKindForTool(toolName: string): ActivityKind {
   if (toolName === "finish" || toolName === "finish_with_input_needed" || toolName === "request_clarification") return "finish";
   if (READ_TOOLS.has(toolName)) return "read";
   if (LIFECYCLE_TOOLS.has(toolName)) return "lifecycle";
+  if (toolName === "style.apply_profile") return "mutate";
   if (toolName.startsWith("document.") || toolName.startsWith("workspace.")) {
     return "mutate";
   }
