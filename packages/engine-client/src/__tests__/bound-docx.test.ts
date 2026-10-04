@@ -360,6 +360,7 @@ test("every engine mutation capability is either dispatchable or intentionally h
   const nonMutation = new Set([
     "inspect",
     "inspect_context",
+    "inspect_sections",
     "find_text",
     "body_blocks",
     "style_snapshot",

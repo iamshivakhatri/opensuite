@@ -18,6 +18,8 @@ _Read this before starting any work. Keep it a concise current-state handoff, no
 * Agent UX: progressive activity rows from SSE; clarification via `request_clarification`; Continue after max-turn/deadline; compact `[agent]` logs; opt-in `AGENT_RUN_TRACE=full`.
 * Public marketing + auth (Google OAuth); centralized brand palette; API composition seam (`createOpenSuiteRuntime` / `createOpenSuiteApp`) for a future Cloud overlay. V2 retained off-path.
 
+* E1 local-engine section editing: dynamic `document.sections` and `document.headers_footers` tools call typed Rust operations through engine-client and the existing run-local mutation/save lifecycle. Inspect fresh section handles after edits. Default/first/even simple text and PAGE fields, independent page setup, link/unlink, restart/continue numbering; odd/even is explicitly document-wide. No npm version change or agent-core-v3 change.
+
 ## Current Decisions
 
 * Soft-delete; trash permanent purge clears working-document/checkpoint FKs; Empty trash + multi-select purge; optimistic concurrency; Rust SoT.

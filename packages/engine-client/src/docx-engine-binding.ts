@@ -8,6 +8,8 @@
 import { existsSync } from "node:fs";
 import { isAbsolute, resolve } from "node:path";
 
+import type { DocxSection, DocxSectionInspection, DocxInsertSectionBreakOperation, DocxSetSectionPropertiesOperation, DocxSetSectionHeaderFooterOperation } from "./docx-sections.js";
+
 import type { DocxStyleSnapshot } from "./docx-style-snapshot.js";
 
 /** Resolved N-API module id: local path when OPENSUITE_ENGINE_PATH is set, else the npm package. */
@@ -81,6 +83,10 @@ export type DocxMutationBindingResult = DocxReplaceTextBindingResult;
 
 /** Newer DOCX operations share the same verified-output envelope. */
 export type DocxExtendedOperationName =
+  | "executeDocxInsertSectionBreak"
+  | "executeDocxSetSectionProperties"
+  | "executeDocxSetSectionHeaderFooter"
+  | "executeDocxSetOddEvenHeaders"
   | "executeDocxSetTextFormatting"
   | "executeDocxSetContentControlText"
   | "executeDocxSetParagraphsList"
@@ -335,6 +341,7 @@ export interface DocxFindTextResult {
 
 /** Focus shapes accepted by the DOCX N-API inspectDocx binding. */
 export type DocxInspectFocus =
+  | { readonly kind: "sections" }
   | { readonly kind: "overview" }
   | {
       readonly kind: "headings";
@@ -467,6 +474,7 @@ export interface DocxInspectContextUnit {
 }
 
 export interface DocxInspectResult {
+  readonly sections?: readonly DocxSection[];
   readonly ok: boolean;
   readonly focus: string;
   readonly overview?: DocxInspectOverview;
@@ -496,6 +504,10 @@ export interface DocxInspectResult {
 }
 
 export interface DocxEngineBinding {
+  executeDocxInsertSectionBreak?(input: Uint8Array, operation: DocxInsertSectionBreakOperation): Promise<DocxMutationBindingResult>;
+  executeDocxSetSectionProperties?(input: Uint8Array, operation: DocxSetSectionPropertiesOperation): Promise<DocxMutationBindingResult>;
+  executeDocxSetSectionHeaderFooter?(input: Uint8Array, operation: DocxSetSectionHeaderFooterOperation): Promise<DocxMutationBindingResult>;
+  executeDocxSetOddEvenHeaders?(input: Uint8Array, operation: { readonly enabled: boolean }): Promise<DocxMutationBindingResult>;
   getDocxCapabilities(): DocxRuntimeCapabilities;
   /**
    * Deterministic blank DOCX bytes from Rust.
@@ -618,6 +630,7 @@ type NativeEngineModule = {
     input: Buffer,
     request: { focus: Record<string, unknown> },
   ) => Promise<DocxInspectResult>;
+  inspectDocxSections?: (input: Buffer) => Promise<string>;
   inspectDocxStyleSnapshot: (input: Buffer) => Promise<string>;
   executeDocxReplaceText: (
     input: Buffer,
@@ -745,6 +758,8 @@ type NativeEngineModule = {
 
 function toNativeInspectFocus(focus: DocxInspectFocus): Record<string, unknown> {
   switch (focus.kind) {
+    case "sections":
+      return { kind: "sections" };
     case "overview":
       return { kind: "overview" };
     case "headings":
@@ -861,6 +876,21 @@ export async function createNapiDocxEngineBinding(): Promise<DocxEngineBinding> 
     }
   };
 
+  async function executeExtended(input: Uint8Array, name: DocxExtendedOperationName, operation: Record<string, unknown>): Promise<DocxMutationBindingResult> {
+    const method = native[name];
+    if (typeof method !== "function") {
+      throw new Error(`@opensuitehq/engine is missing ${name}`);
+    }
+    const response = await (method as (
+      bytes: Buffer,
+      payload: Record<string, unknown>,
+    ) => Promise<{ result: DocxEngineOperationResult; output?: Buffer }>)(
+      Buffer.from(input),
+      operation,
+    );
+    return mapMutationBindingResponse(response);
+  }
+
   return {
     getDocxCapabilities() {
       return native.getDocxCapabilities();
@@ -876,6 +906,11 @@ export async function createNapiDocxEngineBinding(): Promise<DocxEngineBinding> 
     },
 
     async inspectDocx(input, request) {
+      if (request.focus.kind === "sections") {
+        if (!native.inspectDocxSections) throw new Error("Local engine is missing inspectDocxSections");
+        const result = JSON.parse(await native.inspectDocxSections(Buffer.from(input))) as DocxSectionInspection;
+        return { ...result, focus: "sections" };
+      }
       return native.inspectDocx(Buffer.from(input), {
         focus: toNativeInspectFocus(request.focus),
       });
@@ -1255,20 +1290,20 @@ export async function createNapiDocxEngineBinding(): Promise<DocxEngineBinding> 
       return mapMutationBindingResponse(response);
     },
 
-    async executeDocxExtended(input, name, operation) {
-      const method = native[name];
-      if (typeof method !== "function") {
-        throw new Error(`@opensuitehq/engine is missing ${name}`);
-      }
-      const response = await (method as (
-        bytes: Buffer,
-        payload: Record<string, unknown>,
-      ) => Promise<{ result: DocxEngineOperationResult; output?: Buffer }>)(
-        Buffer.from(input),
-        operation,
-      );
-      return mapMutationBindingResponse(response);
+    async executeDocxInsertSectionBreak(input, operation) {
+      return executeExtended(input, "executeDocxInsertSectionBreak", { ...operation });
     },
+    async executeDocxSetSectionProperties(input, operation) {
+      return executeExtended(input, "executeDocxSetSectionProperties", { ...operation });
+    },
+    async executeDocxSetSectionHeaderFooter(input, operation) {
+      return executeExtended(input, "executeDocxSetSectionHeaderFooter", { ...operation });
+    },
+    async executeDocxSetOddEvenHeaders(input, operation) {
+      return executeExtended(input, "executeDocxSetOddEvenHeaders", { ...operation });
+    },
+
+    executeDocxExtended: executeExtended,
   };
 }
 

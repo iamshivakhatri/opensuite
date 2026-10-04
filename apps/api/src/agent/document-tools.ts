@@ -24,6 +24,7 @@ export interface BoundDocumentHost {
 }
 
 export type InspectFocus =
+  | { readonly kind: "sections" }
   | { readonly kind: "overview" }
   | {
       readonly kind: "headings" | "paragraphs" | "tables" | "body_blocks";
@@ -48,7 +49,7 @@ const findInput = jsonSchema<{ text: string }>({
 });
 
 type InspectToolInput = {
-  kind: InspectFocus["kind"];
+  kind: Exclude<InspectFocus["kind"], "sections">;
   offset?: number;
   limit?: number;
   text?: string;
@@ -520,6 +521,37 @@ const MUTATION_DEFS: Record<string, MutDef> = {
     description: "Delete a page break identified by an opaque body_blocks handle.",
     inputSchema: op({ handle: { type: "string" } }, ["handle"]),
   },
+  insert_section_break: {
+    description: "Insert a real Word section boundary at a body placement. Re-inspect sections and body_blocks after edits.",
+    inputSchema: op({ placement, breakType: { type: "string", enum: ["nextPage", "continuous", "oddPage", "evenPage"] } }, ["placement", "breakType"]),
+  },
+  set_section_properties: {
+    description: "Edit one section using its latest inspected handle. Margins use twips (1440 = one inch). Restart numbering with pageNumberStart or continuePageNumbering=true.",
+    inputSchema: op({
+      handle: { type: "string" },
+      pageSetup: { type: "object", properties: {
+        topMarginTwips: { type: "integer" }, bottomMarginTwips: { type: "integer" },
+        leftMarginTwips: { type: "integer" }, rightMarginTwips: { type: "integer" },
+        paperSize: { type: "string", enum: ["letter", "a4"] }, orientation: { type: "string", enum: ["portrait", "landscape"] },
+      }, additionalProperties: false },
+      differentFirstPage: { type: "boolean" },
+      breakType: { type: "string", enum: ["nextPage", "continuous", "oddPage", "evenPage"] },
+      pageNumberStart: { type: "integer", minimum: 0 }, continuePageNumbering: { type: "boolean" },
+    }, ["handle"]),
+  },
+  set_section_header_footer: {
+    description: "Edit one simple section header/footer variant. text creates independent content; empty text clears it. inherit links to previous; unlink preserves visible content in an independent part. PAGE fields use pageNumber. Other sections retain their content. Enable odd/even explicitly before editing even variants; use differentFirstPage to activate first variants.",
+    inputSchema: op({
+      handle: { type: "string" }, kind: { type: "string", enum: ["header", "footer"] },
+      variant: { type: "string", enum: ["default", "first", "even"] },
+      action: { type: "string", enum: ["text", "pageNumber", "inherit", "unlink"] },
+      text: { type: "string" }, alignment: { type: "string", enum: ["left", "center", "right"] },
+    }, ["handle", "kind", "variant", "action"]),
+  },
+  set_odd_even_headers: {
+    description: "Explicitly enable or disable different odd/even headers and footers for the ENTIRE document. This affects every section; it preserves all variant parts.",
+    inputSchema: op({ enabled: { type: "boolean" } }, ["enabled"]),
+  },
   set_page_setup: {
     description:
       "Update section page margins, paper size (letter/a4), or orientation when section properties exist.",
@@ -613,6 +645,15 @@ export function createDocumentTools(document: BoundDocumentHost): AgentToolSet {
       inputSchema: inspectInput,
       execute: async (input) =>
         document.inspect({ focus: toInspectFocus(input) }),
+    });
+  }
+
+  if (caps.has("inspect_sections")) {
+    tools["document.inspect_sections"] = defineTool({
+      kind: "read",
+      description: "Inspect ordered Word sections with fresh handles, page setup, numbering, and owned/inherited header/footer variants. Re-inspect after every section edit.",
+      inputSchema: op({}),
+      execute: async () => document.inspect({ focus: { kind: "sections" } }),
     });
   }
 

@@ -7,6 +7,8 @@ export const builtInGroups: CapabilityDefinition[] = [
   { id: "document.tables", parentId: "document", kind: "group", title: "Tables", description: "Edit table structure and appearance", projection: "dynamic" },
   { id: "document.tables.structure", parentId: "document.tables", kind: "group", title: "Table structure", description: "Add or delete table rows, columns, and tables", projection: "dynamic" },
   { id: "document.tables.styling", parentId: "document.tables", kind: "group", title: "Table styling", description: "Change table borders, widths, shading, and cell appearance", projection: "dynamic" },
+  { id: "document.sections", parentId: "document", kind: "group", title: "Sections", description: "Inspect sections, insert section breaks, and edit independent page setup and numbering", projection: "dynamic" },
+  { id: "document.headers_footers", parentId: "document", kind: "group", title: "Headers and footers", description: "Edit section header/footer variants and linkage; configure first-page and document-wide odd/even behavior", projection: "dynamic" },
   { id: "document.layout", parentId: "document", kind: "group", title: "Page layout", description: "Change page breaks, page setup, headers, and footers", projection: "dynamic" },
   { id: "document.rich_content", parentId: "document", kind: "group", title: "Rich content", description: "Edit links, content controls, and pictures", projection: "dynamic" },
   { id: "workspace", parentId: null, kind: "group", title: "Workspace", description: "Find, inspect, create, and select workspace files", projection: "dynamic" },
@@ -43,6 +45,8 @@ const dynamic: Record<string, readonly string[]> = {
   "document.text": ["set_text_formatting", "batch_text_formatting"],
   "document.tables.structure": ["insert_table_rows", "insert_table_row", "insert_table_column", "delete_table_column", "delete_table"],
   "document.tables.styling": ["set_table_formatting", "set_table_column_widths", "set_table_cell_shading", "set_table_cells_formatting"],
+  "document.sections": ["inspect_sections", "insert_section_break", "set_section_properties"],
+  "document.headers_footers": ["set_section_header_footer", "set_odd_even_headers"],
   "document.layout": ["insert_page_break", "delete_page_break", "set_page_setup", "set_header_footer_text", "set_page_number"],
   "document.rich_content": ["set_content_control_text", "set_hyperlink", "set_picture_size", "delete_picture"],
 };
