@@ -21,7 +21,19 @@ export const BLOCKING_VERIFICATION_IDS = new Set([
 const SECTION_MUTATION = /^document\.(?:insert_section_break|set_section_properties|set_section_header_footer|set_odd_even_headers)$/;
 const COMMENT_MUTATION = /^document\.(?:add_comment|update_comment|delete_comment)$/;
 const REVISION_MUTATION = /^document\.(?:insert_tracked_text|delete_tracked_text|replace_text_with_tracked_change|accept_revision|reject_revision)$/;
-const FIELD_MUTATION = /^document\.(?:insert_fields|insert_toc)$/;
+const FIELD_MUTATION = /^document\.(?:insert_fields|insert_toc|refresh_fields)$/;
+
+function tocNeedsRefresh(field: {
+  kind: string;
+  dirty: boolean | null;
+  cachedResult: string | null;
+}): boolean {
+  if (field.kind !== "toc") return false;
+  if (field.dirty === true) return true;
+  const cached = (field.cachedResult ?? "").trim();
+  if (!cached) return true;
+  return /update this table of contents|right-click|update field|refresh/i.test(cached);
+}
 
 export function hasBlockingVerificationFailure(checks: readonly DocumentCheck[]): boolean {
   return checks.some((check) => check.status === "fail" && BLOCKING_VERIFICATION_IDS.has(check.id));
@@ -337,8 +349,8 @@ async function verifyCapabilityPostconditions(
           });
         } else if (fieldOps.includes("document.insert_toc") && tocFields.length < 1) {
           checks.push({ id: "fields", status: "fail", message: "TOC insertion reported success but no TOC field is inspectable" });
-        } else if (fieldOps.includes("document.insert_toc") && tocFields.some((field) => field.dirty !== false)) {
-          // Dirty/refreshable TOC is valid package+semantic state, not a finished populated TOC.
+        } else if (fieldOps.includes("document.insert_toc") && tocFields.some(tocNeedsRefresh)) {
+          // Dirty/placeholder TOC is valid package state, not a finished populated TOC.
           checks.push({
             id: "fields",
             status: "warning",

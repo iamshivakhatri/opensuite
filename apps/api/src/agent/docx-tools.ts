@@ -24,6 +24,7 @@ import type { StyleProfileService } from '../style-profiles/service.js';
 import type { StyleFidelityReport } from '../style-profiles/fidelity.js';
 import type { StyleProfileData } from '@opensuite/contracts';
 import type { ResolvedAppearance } from '../document-appearance/resolve.js';
+import { formatFieldRefreshLog, refreshWorkingDocxFields } from "./field-refresh.js";
 
 export interface DocumentTransition {
   readonly kind: "created" | "duplicated";
@@ -180,6 +181,16 @@ function createActiveDocxSession(input: {
 
   async function flush(): Promise<void> {
     if (!dirty || !host || !documentId || !versionId) return;
+
+    // Deterministic field refresh before the single version save — no extra model turn.
+    const refresh = await refreshWorkingDocxFields(input.binding, host.currentBytes());
+    if (refresh.result.detail !== "no refreshable fields") {
+      console.info(`[agent] ${formatFieldRefreshLog(refresh.result, refresh.acceptance)}`);
+    }
+    if (refresh.accepted) {
+      host = bindHost({ documentId, versionId, bytes: refresh.bytes });
+    }
+
     const fromVersionId = versionId;
     const appended = await input.documents.appendDocumentVersion({
       documentId,

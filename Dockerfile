@@ -34,8 +34,13 @@ RUN pnpm --filter @opensuite/api... build
 RUN node --input-type=module -e "import { createNapiDocxEngineBinding } from './packages/engine-client/dist/index.js'; const caps = (await createNapiDocxEngineBinding()).getDocxCapabilities(); if (!caps.ok) throw new Error('DOCX engine capabilities unavailable')"
 
 FROM node:${NODE_VERSION}-bookworm-slim AS runtime
+# LibreOffice Writer (nogui) refreshes TOC/PAGE fields before agent save. Heavy (~400MB+).
 RUN apt-get update \
-  && apt-get install -y --no-install-recommends ca-certificates curl \
+  && apt-get install -y --no-install-recommends \
+    ca-certificates \
+    curl \
+    libreoffice-writer-nogui \
+    fonts-dejavu-core \
   && rm -rf /var/lib/apt/lists/* \
   && corepack enable && corepack prepare pnpm@11.25.0 --activate \
   && groupadd --system --gid 1001 opensuite \

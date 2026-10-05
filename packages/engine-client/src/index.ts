@@ -9,6 +9,7 @@ export * from "./docx-layout.js";
 export * from "./docx-images.js";
 export * from "./docx-comments.js";
 export * from "./docx-renderer.js";
+export * from "./docx-field-refresh.js";
 export {
   bindDocxDocument,
   DISPATCHABLE_MUTATION_CAPABILITIES,

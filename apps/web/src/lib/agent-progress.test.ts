@@ -772,7 +772,7 @@ test("completion uses successful tool facts for style learning, retrieval, and d
   assert.equal(headline('style.learn_from_document', 'error'), 'Completed · 5.3s');
   assert.equal(headline('document.replace_text', 'error'), 'Could not complete requested update · 5.3s');
   assert.equal(headline('document.replace_text'), 'Updated document · 5.3s');
-  assert.equal(headline('document.insert_toc'), 'Added TOC — refresh required · 5.3s');
+  assert.equal(headline('document.insert_toc'), 'Added table of contents · 5.3s');
   assert.equal(headline('workspace.create_blank_document'), 'Created document · 5.3s');
   assert.equal(headline('compute.calculator'), 'Completed · 5.3s');
   assert.equal(headline('unknown.tool'), 'Completed · 5.3s');

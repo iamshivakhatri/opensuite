@@ -247,7 +247,7 @@ const MUTATION_DEFS: Record<string, MutDef> = {
       ] } } }, ["content"]),
   },
   insert_toc: {
-    description: "Insert a real refreshable Word Table of Contents in a new body paragraph, with an optional title paragraph. Heading levels 1 through maxHeadingLevel (default 3, range 1–9). Marked dirty with a refresh placeholder. Word/LibreOffice must update the result and page numbers. Inspect fields first to avoid an unintended duplicate TOC. No field evaluation or custom style mapping.",
+    description: "Insert a real refreshable Word Table of Contents in a new body paragraph, with an optional title paragraph. Heading levels 1 through maxHeadingLevel (default 3, range 1–9). Marked dirty with a refresh placeholder. The runtime refreshes fields via LibreOffice before save when available; otherwise the TOC stays valid with refresh_required. Inspect fields first to avoid an unintended duplicate TOC. No in-engine field evaluation.",
     inputSchema: op({ placement, maxHeadingLevel: { type: "integer", minimum: 1, maximum: 9 }, title: { type: "string", maxLength: 32000 } }, ["placement"]),
   },
   accept_revision: {

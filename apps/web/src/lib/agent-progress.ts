@@ -1112,8 +1112,9 @@ function completionSummaryLabel(lines: readonly AgentProgressLine[]): string {
   if (hasLifecycle && !hasMutation) return "Created document";
   if (hasMutation && unrecoveredMutate) return "Partially updated document";
   if (!hasMutation && unrecoveredMutate) return "Could not complete requested update";
-  if (hasTocInsert && !hasOtherMutation) return "Added TOC — refresh required";
-  if (hasTocInsert && hasOtherMutation) return "Updated document with warnings";
+  // Auto field-refresh may populate TOC at save; validation still warns when refresh_required remains.
+  if (hasTocInsert && !hasOtherMutation) return "Added table of contents";
+  if (hasTocInsert && hasOtherMutation) return "Updated document";
   if (hasMutation) return "Updated document";
   if (hasSavedStyle) return "Saved style profile";
   if (hasRead) return "Reviewed document";

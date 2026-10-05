@@ -301,6 +301,50 @@ test("TOC dirty refresh_required is a warning, not corruption", async () => {
   assert.equal(checks.some((item) => item.status === "fail"), false);
 });
 
+test("populated TOC after refresh clears refresh_required", async () => {
+  const binding = {
+    async inspectDocx(_data: Uint8Array, request: { focus: { kind: string } }) {
+      if (request.focus.kind === "overview") {
+        return { ok: true, overview: { sectionCount: 1, bodyBlockCount: 3, paragraphCount: 3, tableCount: 0 } };
+      }
+      if (request.focus.kind === "body_blocks") {
+        return { ok: true, bodyBlocks: { page: { total: 0, offset: 0, returned: 0, hasMore: false }, items: [] } };
+      }
+      return { ok: true, [request.focus.kind]: { page: { total: 0, offset: 0, returned: 0, hasMore: false }, items: [] } };
+    },
+    async findDocxText() {
+      return { ok: true, query: "", matchCount: 0, matches: [], diagnostics: [] };
+    },
+    async inspectDocxFields() {
+      return {
+        ok: true,
+        total: 1,
+        offset: 0,
+        hasMore: false,
+        fields: [{
+          index: 0, kind: "toc", representation: "complex", instruction: ' TOC \\o "1-3" ',
+          cachedResult: "Introduction1Background1Primary Goal2", partName: "word/document.xml",
+          paragraphIndex: 0, structure: "complete", dirty: null, locked: null,
+          headingLevels: [1, 3], truncated: false, diagnostics: [],
+        }],
+        diagnostics: [],
+      };
+    },
+  } as unknown as DocxEngineBinding;
+  const checks = await verifyDocumentUpdate({
+    binding,
+    before: bytes("Heading"),
+    after: bytes("Heading with populated TOC"),
+    instruction: "Add a table of contents",
+    targetAdvanced: true,
+    sourcesUnchanged: true,
+    successfulMutations: ["document.insert_toc"],
+  });
+  assert.equal(checks.find((item) => item.id === "fields")?.status, "pass");
+  assert.equal(checks.find((item) => item.id === "task")?.status, "pass");
+  assert.equal(checks.some((item) => /refresh_required/i.test(item.message)), false);
+});
+
 test("additive totals reconcile or warn independently of saving", async () => {
   const mismatch = await check("September PIPELINE BAD_TOTAL");
   assert.equal(mismatch.find((item) => item.id === "reconciliation-0-1")?.message, "Sales Pipeline 'Value (USD)' rows sum to 1,900,000 but Total is 2,350,000.");

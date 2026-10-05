@@ -51,10 +51,12 @@ _Read this before starting any work. Keep it a concise current-state handoff, no
 
 ## Recommended Next Step
 
-Proceed to the dedicated TOC-delivery / field-refresh product pass now that editor save preserves real dirty TOC fields (local engine + Casual selective/full round-trip).
+TOC field refresh is in place for finished multi-heading reports. Next product pass should pick the next deferred Office capability (not field evaluation in Rust).
 
-* Editor field preservation: Casual save uses selective export; load normalizes legacy `opensuiteField:` prefixes to `w:`; save refuses silent field-marker loss. Local engine field authoring emits standard `w:` markup so Casual models `complexField`. Unexpected field loss without field mutations fails verification. No npm bump, no agent-core-v3 change, no engine publish.
+* Field refresh (LibreOffice): before the one agent save, dirty TOC/PAGE/NUMPAGES are refreshed via an isolated headless LibreOffice Basic macro (`UpdateIndexes` + text-field refresh). Staged bytes are re-opened with the Rust engine; destructive rewrites (lost TOC, comments, revisions, customXml/embeddings/glossary parts) keep the original working bytes and `refresh_required`. Provider availability is process-cached. API Docker runtime installs `libreoffice-writer-nogui` (+ DejaVu). No npm bump, no agent-core-v3 change, no engine publish. Local engine blank Heading 1–3 now include `w:outlineLvl` so indexes can populate.
 
-* Document completion verification: unrecovered failed mutates cannot finish as full success (`AGENT_PARTIAL_COMPLETION` / `AGENT_MUTATION_FAILED`); blocking verification fails settle truthfully; intentional section changes and dirty TOC `refresh_required` no longer masquerade as structure corruption or finished TOC. Comment/revision/field postconditions reuse engine inspection.
+* Editor field preservation: Casual save uses selective export; load normalizes legacy `opensuiteField:` prefixes to `w:`; save refuses silent field-marker loss. Local engine field authoring emits standard `w:` markup so Casual models `complexField`. Unexpected field loss without field mutations fails verification.
 
-* Local-engine fields and TOC: lazy `document.fields` exposes bounded main/header/footer field inspection, typed PAGE/NUMPAGES paragraph insertion (including Page X of Y appended to a single-section default footer), and real TOC insertion for heading levels 1–9. Dirty fields contain explicit placeholders; Word-compatible editors calculate results. Imported codes/results remain preserved; unsafe field boundaries fail. No field evaluation, TOC removal, npm change, or agent-core-v3 change. Manual Office refresh review remains pending.
+* Document completion verification: unrecovered failed mutates cannot finish as full success; blocking verification fails settle truthfully; dirty/placeholder TOC is `refresh_required` warning; populated TOC after verified refresh clears that warning.
+
+* Local-engine fields and TOC: lazy `document.fields` inspect/insert PAGE/NUMPAGES/TOC; dirty placeholders until external refresh. No in-engine field evaluation.
