@@ -14,6 +14,10 @@ import {
   type ListedDocument,
 } from "@/lib/api";
 import { clearCasualLocalAutosave } from "@/lib/casual-autosave";
+import {
+  assertEditorFieldsPreserved,
+  prepareDocxForEditor,
+} from "@/lib/docx-field-preservation";
 import { canApplyWorkingPreview, decideEditorVersionRefresh } from "@/lib/editor-version-refresh";
 import { userFacingError } from "@/components/files/format";
 import { ConfirmDialog } from "@/components/ui/context-menu";
@@ -191,7 +195,8 @@ export function DocxSurface({
           documentVersionContentQuery(document.id, versionId),
         );
         // Detach a copy so Casual ownership cannot detach the React Query cache.
-        const copy = bytes.slice(0);
+        // Normalize legacy field prefixes so Casual models real Word fields.
+        const copy = await prepareDocxForEditor(bytes.slice(0));
         setBuffer(copy);
         setLoadedVersionId(versionId);
         setEditorKey((value) => value + 1);
@@ -236,7 +241,7 @@ export function DocxSurface({
         const bytes = await queryClient.fetchQuery(
           documentVersionContentQuery(document.id, versionId),
         );
-        const copy = bytes.slice(0);
+        const copy = await prepareDocxForEditor(bytes.slice(0));
         const api = editorRef.current;
 
         if (api && typeof api.loadDocumentBuffer === "function") {
@@ -337,13 +342,14 @@ export function DocxSurface({
             } catch { /* Viewport capture is best effort. */ }
             await clearCasualLocalAutosave();
             if (dirtyRef.current) break;
-            await api.loadDocumentBuffer(preview.bytes.slice(0));
+            const prepared = await prepareDocxForEditor(preview.bytes.slice(0));
+            await api.loadDocumentBuffer(prepared);
             try {
               if (typeof zoom === "number") api.setZoom(zoom);
               if (typeof page === "number" && page >= 1) api.scrollToPage(page);
             } catch { /* Viewport restore is best effort. */ }
             appliedPreviewRef.current = { runId: target.runId, revision: preview.revision };
-            setBuffer(preview.bytes);
+            setBuffer(prepared);
             setDirty(false);
             beginSuppressDirty();
           } finally {
@@ -531,7 +537,9 @@ export function DocxSurface({
     }
 
     try {
-      const bytes = await api.export();
+      // Prefer Casual selective paragraph patching so untouched field XML stays
+      // in the original package parts. Falls back to full repack internally.
+      const bytes = await api.export({ selective: true });
       if (!bytes) {
         toast({
           tone: "error",
@@ -539,6 +547,9 @@ export function DocxSurface({
           description: "Casual Docs could not serialize this document.",
         });
         return;
+      }
+      if (buffer) {
+        await assertEditorFieldsPreserved(buffer, bytes);
       }
       await persistBytes(bytes);
       await clearCasualLocalAutosave();
@@ -549,7 +560,7 @@ export function DocxSurface({
         description: userFacingError(error, "Could not export this document."),
       });
     }
-  }, [conflict, dirty, persistBytes, phase, toast]);
+  }, [buffer, conflict, dirty, persistBytes, phase, toast]);
 
   // Parent-driven save (header button / Cmd+S).
   React.useEffect(() => {

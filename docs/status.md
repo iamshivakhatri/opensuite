@@ -51,8 +51,10 @@ _Read this before starting any work. Keep it a concise current-state handoff, no
 
 ## Recommended Next Step
 
-Treat Casual editor export TOC-field loss as a release blocker for the dedicated TOC-delivery pass; keep using agent/engine paths for TOC until editor round-trip preserves dirty TOC fields.
+Proceed to the dedicated TOC-delivery / field-refresh product pass now that editor save preserves real dirty TOC fields (local engine + Casual selective/full round-trip).
 
-* Document completion verification: unrecovered failed mutates cannot finish as full success (`AGENT_PARTIAL_COMPLETION` / `AGENT_MUTATION_FAILED`); blocking verification fails settle truthfully; intentional section changes and dirty TOC `refresh_required` no longer masquerade as structure corruption or finished TOC. Comment/revision/field postconditions reuse engine inspection. Casual `DocumentAgent.fromBuffer`→`toBuffer` preserves comments/revisions/text but drops TOC fields (blocker). No engine publish, no agent-core-v3 change.
+* Editor field preservation: Casual save uses selective export; load normalizes legacy `opensuiteField:` prefixes to `w:`; save refuses silent field-marker loss. Local engine field authoring emits standard `w:` markup so Casual models `complexField`. Unexpected field loss without field mutations fails verification. No npm bump, no agent-core-v3 change, no engine publish.
+
+* Document completion verification: unrecovered failed mutates cannot finish as full success (`AGENT_PARTIAL_COMPLETION` / `AGENT_MUTATION_FAILED`); blocking verification fails settle truthfully; intentional section changes and dirty TOC `refresh_required` no longer masquerade as structure corruption or finished TOC. Comment/revision/field postconditions reuse engine inspection.
 
 * Local-engine fields and TOC: lazy `document.fields` exposes bounded main/header/footer field inspection, typed PAGE/NUMPAGES paragraph insertion (including Page X of Y appended to a single-section default footer), and real TOC insertion for heading levels 1–9. Dirty fields contain explicit placeholders; Word-compatible editors calculate results. Imported codes/results remain preserved; unsafe field boundaries fail. No field evaluation, TOC removal, npm change, or agent-core-v3 change. Manual Office refresh review remains pending.

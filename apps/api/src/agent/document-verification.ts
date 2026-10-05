@@ -217,6 +217,34 @@ async function reconcileTables(binding: DocxEngineBinding, bytes: Uint8Array, ta
   return checks;
 }
 
+/** Fail when fields disappear without an intentional field mutation. */
+async function verifyUnexpectedFieldLoss(
+  binding: DocxEngineBinding,
+  before: Uint8Array,
+  after: Uint8Array,
+  mutations: readonly string[],
+  created: boolean,
+): Promise<DocumentCheck[]> {
+  if (created || !binding.inspectDocxFields) return [];
+  if (mutations.some((name) => FIELD_MUTATION.test(name))) return [];
+  const [beforeFields, afterFields] = await Promise.all([
+    binding.inspectDocxFields(before).catch(() => null),
+    binding.inspectDocxFields(after).catch(() => null),
+  ]);
+  if (!beforeFields?.ok || !afterFields?.ok) return [];
+  if (beforeFields.total === 0) return [];
+  if (afterFields.total >= beforeFields.total) return [];
+  const beforeToc = beforeFields.fields.filter((field) => field.kind === "toc").length;
+  const afterToc = afterFields.fields.filter((field) => field.kind === "toc").length;
+  return [{
+    id: "fields",
+    status: "fail",
+    message: beforeToc > afterToc
+      ? `Unexpected TOC/field loss: ${beforeFields.total} → ${afterFields.total} inspectable fields`
+      : `Unexpected field loss: ${beforeFields.total} → ${afterFields.total} inspectable fields`,
+  }];
+}
+
 async function verifyCapabilityPostconditions(
   binding: DocxEngineBinding,
   after: Uint8Array,
@@ -406,6 +434,7 @@ export async function verifyDocumentUpdate(input: {
     }
   }
   checks.push(...await reconcileTables(input.binding, input.after, after.tableItems));
+  checks.push(...await verifyUnexpectedFieldLoss(input.binding, input.before, input.after, mutations, input.created === true));
   checks.push(...await verifyCapabilityPostconditions(input.binding, input.after, mutations));
   const transition = input.created
     ? null

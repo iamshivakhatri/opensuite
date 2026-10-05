@@ -210,6 +210,52 @@ test("unrecovered failed mutations mark the task incomplete", async () => {
   assert.match(checks.find((item) => item.id === "task")?.message ?? "", /Partial update.*set_table_cells_text/);
 });
 
+test("unexpected field loss without field mutations fails verification", async () => {
+  const binding = {
+    async inspectDocx(data: Uint8Array, request: { focus: { kind: string } }) {
+      if (request.focus.kind === "overview") {
+        return { ok: true, overview: { sectionCount: 1, bodyBlockCount: 3, paragraphCount: 3, tableCount: 0 } };
+      }
+      if (request.focus.kind === "body_blocks") {
+        return { ok: true, bodyBlocks: { page: { total: 0, offset: 0, returned: 0, hasMore: false }, items: [] } };
+      }
+      return { ok: true, [request.focus.kind]: { page: { total: 0, offset: 0, returned: 0, hasMore: false }, items: [] } };
+    },
+    async findDocxText() {
+      return { ok: true, query: "", matchCount: 0, matches: [], diagnostics: [] };
+    },
+    async inspectDocxFields(data: Uint8Array) {
+      const hasToc = new TextDecoder().decode(data).includes("TOC");
+      return {
+        ok: true,
+        total: hasToc ? 1 : 0,
+        offset: 0,
+        hasMore: false,
+        fields: hasToc
+          ? [{
+            index: 0, kind: "toc", representation: "complex", instruction: "TOC \\o \"1-3\"",
+            cachedResult: "Update this table of contents in Word.", partName: "word/document.xml",
+            paragraphIndex: 0, structure: "complete", dirty: true, locked: false,
+            headingLevels: [1, 3], truncated: false, diagnostics: [],
+          }]
+          : [],
+        diagnostics: [],
+      };
+    },
+  } as unknown as DocxEngineBinding;
+  const checks = await verifyDocumentUpdate({
+    binding,
+    before: bytes("Heading TOC"),
+    after: bytes("Heading flattened"),
+    instruction: "Rename the executive summary heading",
+    targetAdvanced: true,
+    sourcesUnchanged: true,
+    successfulMutations: ["document.replace_text"],
+  });
+  assert.equal(checks.find((item) => item.id === "fields")?.status, "fail");
+  assert.match(checks.find((item) => item.id === "fields")?.message ?? "", /Unexpected TOC\/field loss/);
+});
+
 test("TOC dirty refresh_required is a warning, not corruption", async () => {
   const binding = {
     async inspectDocx(data: Uint8Array, request: { focus: { kind: string } }) {
