@@ -73,6 +73,7 @@ async function check(
     targetAdvanced?: boolean;
     sourcesUnchanged?: boolean;
     successfulMutations?: string[];
+    unrecoveredFailedMutations?: string[];
     created?: boolean;
     inputNeeded?: boolean;
   } = {},
@@ -85,6 +86,7 @@ async function check(
     targetAdvanced: options.targetAdvanced ?? true,
     sourcesUnchanged: options.sourcesUnchanged ?? true,
     successfulMutations: options.successfulMutations,
+    unrecoveredFailedMutations: options.unrecoveredFailedMutations,
     created: options.created,
     inputNeeded: options.inputNeeded,
   });
@@ -166,6 +168,91 @@ test("successful row insertion explains its matching structural difference", asy
   const checks = await check("September ROWS_ADDED", undefined, { successfulMutations: ["document.insert_table_rows"] });
   assert.equal(checks.find((item) => item.id === "structure")?.status, "pass");
   assert.match(checks.find((item) => item.id === "structure")?.message ?? "", /row count changed as expected: 2 → 4/);
+  assert.equal(checks.find((item) => item.id === "task")?.status, "pass");
+});
+
+test("intentional section count changes are expected, not structure warnings", async () => {
+  const binding = {
+    async inspectDocx(data: Uint8Array, request: { focus: { kind: string } }) {
+      const content = new TextDecoder().decode(data);
+      const sections = content.includes("SECTIONS_2") ? 2 : 1;
+      if (request.focus.kind === "overview") {
+        return { ok: true, overview: { sectionCount: sections, bodyBlockCount: 2, paragraphCount: 2, tableCount: 1 } };
+      }
+      if (request.focus.kind === "body_blocks") {
+        return { ok: true, bodyBlocks: { page: { total: 0, offset: 0, returned: 0, hasMore: false }, items: [] } };
+      }
+      return { ok: true, [request.focus.kind]: { page: { total: 1, offset: 0, returned: 1, hasMore: false }, items: [{ occurrence: 0, handle: "t0", rowCount: 2, isRectangular: true, columns: [{ occurrence: 0, handle: "c0", text: "A" }], rows: [] }] } };
+    },
+    async findDocxText() {
+      return { ok: true, query: "", matchCount: 0, matches: [], diagnostics: [] };
+    },
+  } as unknown as DocxEngineBinding;
+  const checks = await verifyDocumentUpdate({
+    binding,
+    before: bytes("SECTIONS_1"),
+    after: bytes("SECTIONS_2"),
+    instruction: "Add a landscape section",
+    targetAdvanced: true,
+    sourcesUnchanged: true,
+    successfulMutations: ["document.insert_section_break"],
+  });
+  assert.equal(checks.find((item) => item.id === "structure")?.status, "pass");
+  assert.match(checks.find((item) => item.id === "structure")?.message ?? "", /Section count changed as expected: 1 → 2/);
+});
+
+test("unrecovered failed mutations mark the task incomplete", async () => {
+  const checks = await check("September report", undefined, {
+    successfulMutations: ["document.replace_text"],
+    unrecoveredFailedMutations: ["document.set_table_cells_text"],
+  });
+  assert.equal(checks.find((item) => item.id === "task")?.status, "fail");
+  assert.match(checks.find((item) => item.id === "task")?.message ?? "", /Partial update.*set_table_cells_text/);
+});
+
+test("TOC dirty refresh_required is a warning, not corruption", async () => {
+  const binding = {
+    async inspectDocx(data: Uint8Array, request: { focus: { kind: string } }) {
+      if (request.focus.kind === "overview") {
+        return { ok: true, overview: { sectionCount: 1, bodyBlockCount: 3, paragraphCount: 3, tableCount: 0 } };
+      }
+      if (request.focus.kind === "body_blocks") {
+        return { ok: true, bodyBlocks: { page: { total: 0, offset: 0, returned: 0, hasMore: false }, items: [] } };
+      }
+      return { ok: true, [request.focus.kind]: { page: { total: 0, offset: 0, returned: 0, hasMore: false }, items: [] } };
+    },
+    async findDocxText() {
+      return { ok: true, query: "", matchCount: 0, matches: [], diagnostics: [] };
+    },
+    async inspectDocxFields() {
+      return {
+        ok: true,
+        total: 1,
+        offset: 0,
+        hasMore: false,
+        fields: [{
+          index: 0, kind: "toc", representation: "complex", instruction: "TOC \\o \"1-3\"",
+          cachedResult: "Right-click and select Update Field", partName: "word/document.xml",
+          paragraphIndex: 0, structure: "complete", dirty: true, locked: false,
+          headingLevels: [1, 3], truncated: false, diagnostics: [],
+        }],
+        diagnostics: [],
+      };
+    },
+  } as unknown as DocxEngineBinding;
+  const checks = await verifyDocumentUpdate({
+    binding,
+    before: bytes("Heading"),
+    after: bytes("Heading with TOC"),
+    instruction: "Add a table of contents",
+    targetAdvanced: true,
+    sourcesUnchanged: true,
+    successfulMutations: ["document.insert_toc"],
+  });
+  assert.equal(checks.find((item) => item.id === "fields")?.status, "warning");
+  assert.match(checks.find((item) => item.id === "fields")?.message ?? "", /refresh_required/);
+  assert.equal(checks.find((item) => item.id === "task")?.status, "warning");
+  assert.equal(checks.some((item) => item.status === "fail"), false);
 });
 
 test("additive totals reconcile or warn independently of saving", async () => {

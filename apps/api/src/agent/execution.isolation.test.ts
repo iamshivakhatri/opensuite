@@ -1036,6 +1036,7 @@ test("recurring report refresh selects the target, reads the source, and saves o
       },
       readExactVersionBytes: async ({ documentId, versionId }) => {
         if (documentId === "target" && versionId === "target-v1") return target;
+        if (documentId === "target" && versionId === "target-v2") return savedTarget;
         if (documentId === "source" && versionId === "source-v1") return source;
         throw new Error("wrong version");
       },
@@ -1762,8 +1763,12 @@ test("execution scopes compatible handle reuse to the model turn and saves one v
   const result = await (await execution.start({
     userId: "user-1", threadId: "thread-1", activeDocumentId: "doc-1", instruction: "Format this document",
   })).result;
-  assert.equal(result.run.status, "completed");
+  // The second column-width attempt intentionally fails with STALE_HANDLE after
+  // earlier successful edits — preserve those edits but do not claim full success.
+  assert.equal(result.run.status, "failed");
+  assert.equal(result.run.errorCode, "AGENT_PARTIAL_COMPLETION");
   assert.equal(appends, 1);
+  assert.equal(reports[0]?.outcome, "partial");
   assert.equal(reports[0]?.document?.workingMutationCount, 2);
   assert.equal(reports[0]?.document?.finalVersionId, "v2");
   assert.equal(runtimeResult!.stopReason, "finish_tool");
@@ -2339,4 +2344,91 @@ test('saved-style completion cannot succeed from assistant text or generic guida
   assert.equal(result.run.status, 'failed');
   assert.match(result.run.errorMessage ?? '', /saved style was not applied and verified/);
   assert.equal(result.assistantMessage, null);
+});
+
+test("partial successful edits cannot present full-success completion", async () => {
+  const binding = await createNapiDocxEngineBinding();
+  const persistence = memoryPersistence("user-1");
+  let bytes = Buffer.from(buildMinimalDocx(["Start"]));
+  let versionId = "v1";
+  let appends = 0;
+  const reports: AgentRunReport[] = [];
+  const deps = baseDeps(persistence, async (input) => {
+    const call = { toolCallId: "test", messages: [], context: undefined as never };
+    assert.equal((await input.tools!["document.insert_paragraph"]!.execute!({ text: "Kept edit", placement: { kind: "end" } }, call) as { ok: boolean }).ok, true);
+    const base = softResult("finish_tool", "All done");
+    return {
+      ...base,
+      metrics: {
+        ...base.metrics,
+        toolCalls: [
+          { sequence: 1, turn: 1, toolName: "document.insert_paragraph", kind: "mutate", durationMs: 1, outcome: "success" },
+          { sequence: 2, turn: 1, toolName: "document.set_table_cells_text", kind: "mutate", durationMs: 1, outcome: "failure", failureCode: "TABLE_NOT_FOUND" },
+        ],
+      },
+    };
+  });
+  const execution = createAgentExecutionService({
+    ...deps,
+    docxBinding: binding,
+    agentRunReportSink: (report) => { reports.push(report); },
+    documents: {
+      ...deps.documents,
+      getOwnedDocument: async () => ({ id: "doc-1", workspaceId: "ws-1", format: "docx", latestVersion: { id: versionId } }) as never,
+      readExactVersionBytes: async () => bytes,
+      appendDocumentVersion: async (input) => {
+        appends++;
+        bytes = Buffer.from(input.bytes);
+        versionId = "v2";
+        return { version: { id: "v2", versionNumber: 2 } } as never;
+      },
+    },
+  });
+  const result = await (await execution.start({ userId: "user-1", threadId: "thread-1", activeDocumentId: "doc-1", instruction: "Edit this document" })).result;
+  assert.equal(appends, 1);
+  assert.equal(result.run.status, "failed");
+  assert.equal(result.run.errorCode, "AGENT_PARTIAL_COMPLETION");
+  assert.match(result.assistantMessage?.content ?? "", /partially/i);
+  assert.match(result.assistantMessage?.content ?? "", /set_table_cells_text/);
+  assert.equal(reports[0]?.outcome, "partial");
+  assert.equal(persistence.steps.some((step) => step.kind === "validation"), true);
+});
+
+test("failed mutations with no output do not persist a version", async () => {
+  const binding = await createNapiDocxEngineBinding();
+  const persistence = memoryPersistence("user-1");
+  let appends = 0;
+  const reports: AgentRunReport[] = [];
+  const deps = baseDeps(persistence, async () => {
+    const base = softResult("finish_tool", "Done");
+    return {
+      ...base,
+      metrics: {
+        ...base.metrics,
+        toolCalls: [
+          { sequence: 1, turn: 1, toolName: "document.delete_table_row", kind: "mutate", durationMs: 1, outcome: "failure", failureCode: "UNSUPPORTED_STRUCTURAL_DELETE" },
+        ],
+      },
+    };
+  });
+  const execution = createAgentExecutionService({
+    ...deps,
+    docxBinding: binding,
+    agentRunReportSink: (report) => { reports.push(report); },
+    documents: {
+      ...deps.documents,
+      getOwnedDocument: async () => ({ id: "doc-1", workspaceId: "ws-1", format: "docx", latestVersion: { id: "v1" } }) as never,
+      readExactVersionBytes: async () => Buffer.from(buildMinimalDocx(["Start"])),
+      appendDocumentVersion: async () => {
+        appends++;
+        return { version: { id: "v2", versionNumber: 2 } } as never;
+      },
+    },
+  });
+  const result = await (await execution.start({ userId: "user-1", threadId: "thread-1", activeDocumentId: "doc-1", instruction: "Delete the protected row" })).result;
+  assert.equal(appends, 0);
+  assert.equal(result.run.status, "failed");
+  assert.equal(result.run.errorCode, "AGENT_MUTATION_FAILED");
+  assert.equal(reports[0]?.outcome, "failure");
+  assert.equal(reports[0]?.document?.versionAdvances.length ?? 0, 0);
 });

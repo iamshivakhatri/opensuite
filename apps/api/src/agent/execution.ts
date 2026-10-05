@@ -31,6 +31,7 @@ import type {
   AgentRunReportSink,
   DocumentVersionAdvance,
 } from "./agent-run-report.js";
+import { unrecoveredFailedMutateToolNames } from "./agent-run-report.js";
 import {
   formatDocumentSaved,
   formatDocumentTarget,
@@ -68,7 +69,11 @@ import { projectLoadedInstructions } from "./capabilities/runtime/instruction-pr
 import { createStandaloneCapabilityTools } from "./capabilities/catalog.js";
 import { createRunTrace, traceModelSettings, type RunTrace } from "./run-trace.js";
 import { createPrimaryDocxTools } from "./docx-tools.js";
-import { verifyDocumentUpdate } from "./document-verification.js";
+import {
+  hasBlockingVerificationFailure,
+  verifyDocumentUpdate,
+  type DocumentCheck,
+} from "./document-verification.js";
 import { SlimDocumentStructureCache } from "./document-retrieval.js";
 import { generateThreadTitle } from "./thread-title.js";
 import { estimateTokens } from "./context-projection.js";
@@ -833,8 +838,20 @@ async function runExecution(input: {
 
     // The one API → agent-core-v3 execution call.
     const executeAgent = input.deps.runAgent ?? runAgent;
-    const verifySavedDocument = async (metrics?: AgentRunMetrics) => {
-      if (!savedTarget || !boundTools?.getWorkingMutationCount() || !input.deps.docxBinding) return;
+    const verifySavedDocument = async (metrics?: AgentRunMetrics): Promise<DocumentCheck[]> => {
+      if (!savedTarget || !boundTools?.getWorkingMutationCount() || !input.deps.docxBinding) {
+        const unrecovered = unrecoveredFailedMutateToolNames(metrics);
+        if (!unrecovered.length) return [];
+        const checks: DocumentCheck[] = [{
+          id: "task",
+          status: "fail",
+          message: `Could not complete requested update: ${unrecovered.join(", ")}`,
+        }];
+        transcript.validation(checks);
+        input.trace?.write("## Validation", checks);
+        logAgentLine(formatValidationChecks(checks));
+        return checks;
+      }
       const target = savedTarget as { documentId: string; fromVersionId: string; versionId: string };
       try {
         const sources = (retrieval?.workingSet ?? []).filter((item) => item.documentId !== target.documentId);
@@ -843,10 +860,12 @@ async function runExecution(input: {
           input.deps.documents.readExactVersionBytes({ documentId: target.documentId, versionId: target.versionId, ownerUserId: input.ownerUserId }),
           ...sources.map((item) => input.deps.documents.getOwnedDocument({ documentId: item.documentId, ownerUserId: input.ownerUserId })),
         ]);
+        const unrecovered = unrecoveredFailedMutateToolNames(metrics);
         const checks = await verifyDocumentUpdate({
           binding: input.deps.docxBinding,
           before: new Uint8Array(before), after: new Uint8Array(after), instruction: input.instruction,
           successfulMutations: metrics?.toolCalls.filter((tool) => tool.kind === "mutate" && tool.outcome === "success").map((tool) => tool.toolName),
+          unrecoveredFailedMutations: unrecovered,
           created: createdDocumentId === target.documentId,
           inputNeeded: isInputNeededTool(metrics?.toolCalls.filter((tool) => tool.outcome === "success" && isFinishTool(tool.toolName)).at(-1)?.toolName),
           targetAdvanced: target.fromVersionId !== target.versionId,
@@ -864,13 +883,17 @@ async function runExecution(input: {
         transcript.validation(checks);
         input.trace?.write("## Validation", checks);
         logAgentLine(formatValidationChecks(checks));
+        return checks;
       } catch {
-        input.trace?.write("## Validation", [{ id: "verification", status: "fail", message: "Saved document could not be verified" }]);
-        transcript.validation([{ id: "verification", status: "fail", message: "Saved document could not be verified" }]);
-        logAgentLine(formatValidationChecks([{ status: "fail", message: "Saved document could not be verified" }]));
+        const checks: DocumentCheck[] = [{ id: "verification", status: "fail", message: "Saved document could not be verified" }];
+        input.trace?.write("## Validation", checks);
+        transcript.validation(checks);
+        logAgentLine(formatValidationChecks(checks));
+        return checks;
       }
     };
     let result;
+    let verificationChecks: DocumentCheck[] = [];
     const handleRunEvent = createRunEventHandler({
       liveEvents: input.liveEvents,
       runId: input.run.id,
@@ -919,11 +942,11 @@ async function runExecution(input: {
         throw new AgentExecutionError('SAVED_STYLE_NOT_APPLIED', 'The requested saved style was not applied and verified.');
       }
       await flushWorking();
-      await verifySavedDocument(result.metrics);
+      verificationChecks = await verifySavedDocument(result.metrics);
     } catch (error) {
       let terminalError = error;
       try { await flushWorking(); } catch (flushError) { terminalError = flushError; }
-      await verifySavedDocument(result?.metrics ?? getRunMetricsFromError(error));
+      verificationChecks = await verifySavedDocument(result?.metrics ?? getRunMetricsFromError(error));
       await emitRunReport({
         trace: input.trace,
         runId: input.run.id,
@@ -954,6 +977,9 @@ async function runExecution(input: {
       console.info(`[agent] tool_surface_summary run=${runShort} ${JSON.stringify(toolSurface.summary())}`);
     }
 
+    const unrecoveredMutates = unrecoveredFailedMutateToolNames(result.metrics);
+    const unfinishedWork = unrecoveredMutates.length > 0 || hasBlockingVerificationFailure(verificationChecks);
+
     await emitRunReport({
       trace: input.trace,
       runId: input.run.id,
@@ -962,7 +988,7 @@ async function runExecution(input: {
       metrics: result.metrics,
       stopReason: result.stopReason,
       cancelled: false,
-      thrown: false,
+      thrown: unfinishedWork,
       initialDocumentId,
       initialVersionId: input.run.baseDocumentVersionId,
       finalDocumentId: boundTools?.getActiveDocumentId() ?? initialDocumentId,
@@ -994,6 +1020,32 @@ async function runExecution(input: {
         liveEvents: input.liveEvents,
         failureCode: failureCodeForStopReason(result.stopReason),
         failureMessage: boundedStopMessage(result.stopReason, versionAdvances.length > 0),
+        transcript: transcript.entries(),
+      });
+    }
+
+    if (unfinishedWork) {
+      transcript.finish();
+      const blocking = verificationChecks.filter((check) => check.status === "fail" && ["open", "target", "task", "comments", "revisions", "fields"].includes(check.id));
+      const preserved = versionAdvances.length > 0;
+      const unresolved = unrecoveredMutates.length
+        ? unrecoveredMutates.join(", ")
+        : blocking.map((check) => check.message).join("; ");
+      return settleTerminalRunFailure({
+        discloseAsAssistant: true,
+        cancelled: false,
+        persistence: input.deps.persistence,
+        ownerUserId: input.ownerUserId,
+        thread: input.thread,
+        userMessage: input.userMessage,
+        run: input.run,
+        liveEvents: input.liveEvents,
+        failureCode: preserved
+          ? unrecoveredMutates.length ? "AGENT_PARTIAL_COMPLETION" : "DOCUMENT_VERIFICATION_FAILED"
+          : unrecoveredMutates.length ? "AGENT_MUTATION_FAILED" : "DOCUMENT_VERIFICATION_FAILED",
+        failureMessage: preserved
+          ? `Updated the document partially. Unresolved: ${unresolved}. Changes made so far were preserved.`
+          : `Could not complete the requested update. ${unresolved}`,
         transcript: transcript.entries(),
       });
     }

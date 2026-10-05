@@ -89,6 +89,8 @@ export async function settleTerminalRunFailure(input: {
   readonly error?: unknown;
   /** A normal runtime boundary, not an unexpected exception. */
   readonly expectedStop?: StopReason;
+  /** Persist failureMessage as the assistant result (bounded stops / partial completion). */
+  readonly discloseAsAssistant?: boolean;
   readonly cancelled: boolean;
   readonly persistence: AgentPersistenceService;
   readonly ownerUserId: string;
@@ -104,6 +106,7 @@ export async function settleTerminalRunFailure(input: {
   const knownFailure = describeRunFailure(input.error, input.transcript ?? []);
   const failureCode = input.failureCode ?? knownFailure?.code ?? "AGENT_EXECUTION_FAILED";
   const failureMessage = input.failureMessage ?? knownFailure?.message ?? "Agent execution failed. Please try again.";
+  const discloseAsAssistant = Boolean(input.expectedStop || input.discloseAsAssistant) && !input.cancelled;
 
   // Idempotent: if already terminal (e.g. outer safety net after settle),
   // do not attempt another status transition or duplicate terminal SSE.
@@ -129,7 +132,7 @@ export async function settleTerminalRunFailure(input: {
 
   if (!alreadyTerminal) {
     try {
-      if (input.expectedStop && !input.cancelled) {
+      if (discloseAsAssistant) {
         assistantMessage = await input.persistence.withTransaction(async (tx) => {
           const message = await input.persistence.appendMessage({
             threadId: input.thread.id,
@@ -212,6 +215,15 @@ export function describeRunFailure(error: unknown, transcript: readonly Transcri
   const code = error && typeof error === "object" && "code" in error ? error.code : undefined;
   if (code === "SAVED_STYLE_NOT_APPLIED") {
     return { code, message: "The requested saved style was not applied and verified. The task is incomplete." };
+  }
+  if (code === "AGENT_PARTIAL_COMPLETION") {
+    return { code, message: "Updated the document partially. Unresolved operations remain. Changes made so far were preserved." };
+  }
+  if (code === "AGENT_MUTATION_FAILED") {
+    return { code, message: "Could not complete the requested document update." };
+  }
+  if (code === "DOCUMENT_VERIFICATION_FAILED") {
+    return { code, message: "The saved document failed verification. The task is incomplete." };
   }
   if (code === "AGENT_PERSISTENCE_FAILED") {
     return { code, message: "Could not save agent document changes. The previous version is unchanged." };

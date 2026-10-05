@@ -767,12 +767,23 @@ test("completion uses successful tool facts for style learning, retrieval, and d
   assert.equal(headline('style.list_profiles'), 'Completed · 5.3s');
   assert.equal(headline('style.get_profile'), 'Completed · 5.3s');
   assert.equal(headline('style.apply_profile'), 'Updated document · 5.3s');
-  assert.equal(headline('style.apply_profile', 'error'), 'Completed · 5.3s');
+  assert.equal(headline('style.apply_profile', 'error'), 'Could not complete requested update · 5.3s');
   assert.deepEqual(toolLabels('style.apply_profile'), { active: 'Applying saved style', done: 'Applied saved style' });
   assert.equal(headline('style.learn_from_document', 'error'), 'Completed · 5.3s');
-  assert.equal(headline('document.replace_text', 'error'), 'Completed · 5.3s');
+  assert.equal(headline('document.replace_text', 'error'), 'Could not complete requested update · 5.3s');
   assert.equal(headline('document.replace_text'), 'Updated document · 5.3s');
+  assert.equal(headline('document.insert_toc'), 'Added TOC — refresh required · 5.3s');
   assert.equal(headline('workspace.create_blank_document'), 'Created document · 5.3s');
   assert.equal(headline('compute.calculator'), 'Completed · 5.3s');
   assert.equal(headline('unknown.tool'), 'Completed · 5.3s');
+});
+
+test("partial mutate success with unrecovered failure is not full completion", () => {
+  assert.equal(
+    presentAgentRun([
+      { id: "a", toolName: "document.replace_text", label: "Updated text", status: "done" },
+      { id: "b", toolName: "document.set_table_cells_text", label: "Failed table update", status: "error" },
+    ], { outcome: "partial", durationMs: 4200 }).headline,
+    "Partially updated document · 4.2s",
+  );
 });

@@ -75,8 +75,9 @@ function runOutcome(run: AgentRun): AgentTurnProgress["outcome"] {
   if (run.status === "completed_with_input_needed") return "completed_with_input_needed";
   if (run.status === "cancelled") return "cancelled";
   if (run.status === "failed") {
-    return run.errorCode === "AGENT_MAX_TURNS" || run.errorCode === "AGENT_DEADLINE"
-      ? "paused" : "failed";
+    if (run.errorCode === "AGENT_MAX_TURNS" || run.errorCode === "AGENT_DEADLINE") return "paused";
+    if (run.errorCode === "AGENT_PARTIAL_COMPLETION") return "partial";
+    return "failed";
   }
   return "completed";
 }

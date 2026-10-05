@@ -21,7 +21,7 @@ export interface AgentTurnProgress {
   readonly runId: string;
   readonly durationMs: number;
   readonly lines: readonly AgentProgressLine[];
-  readonly outcome: "completed" | "completed_with_input_needed" | "cancelled" | "failed" | "paused";
+  readonly outcome: "completed" | "completed_with_input_needed" | "cancelled" | "failed" | "paused" | "partial";
 }
 
 /** Semantic activity family — used for details recovery grouping. */
@@ -1067,6 +1067,18 @@ export function liveHeadlineFromActivities(
   return "Working";
 }
 
+function unrecoveredMutateFailures(lines: readonly AgentProgressLine[]): boolean {
+  const recovered = recoveredErrorIds(lines);
+  return technicalProgressLines(visibleAgentProgress(lines)).some(
+    (line) =>
+      line.status === "error" &&
+      !isTerminalLine(line) &&
+      line.toolName &&
+      activityKindForTool(line.toolName) === "mutate" &&
+      !recovered.has(line.id),
+  );
+}
+
 function completionSummaryLabel(lines: readonly AgentProgressLine[]): string {
   const technical = technicalProgressLines(visibleAgentProgress(lines));
   let createdName: string | null = null;
@@ -1074,6 +1086,8 @@ function completionSummaryLabel(lines: readonly AgentProgressLine[]): string {
   let hasMutation = false;
   let hasRead = false;
   let hasSavedStyle = false;
+  let hasTocInsert = false;
+  let hasOtherMutation = false;
 
   for (const line of technical) {
     if (!line.toolName || line.status !== "done") continue;
@@ -1088,11 +1102,18 @@ function completionSummaryLabel(lines: readonly AgentProgressLine[]): string {
       hasRead = true;
     } else if (activityKindForTool(line.toolName) === "mutate") {
       hasMutation = true;
+      if (line.toolName === "document.insert_toc") hasTocInsert = true;
+      else hasOtherMutation = true;
     }
   }
 
+  const unrecoveredMutate = unrecoveredMutateFailures(lines);
   if (createdName) return `Created ${createdName}`;
   if (hasLifecycle && !hasMutation) return "Created document";
+  if (hasMutation && unrecoveredMutate) return "Partially updated document";
+  if (!hasMutation && unrecoveredMutate) return "Could not complete requested update";
+  if (hasTocInsert && !hasOtherMutation) return "Added TOC — refresh required";
+  if (hasTocInsert && hasOtherMutation) return "Updated document with warnings";
   if (hasMutation) return "Updated document";
   if (hasSavedStyle) return "Saved style profile";
   if (hasRead) return "Reviewed document";
@@ -1109,7 +1130,17 @@ function completedHeadline(
   if (outcome === "cancelled") {
     return elapsed ? `Stopped after ${elapsed}` : "Stopped";
   }
+  if (outcome === "partial") {
+    const summary = completionSummaryLabel(lines);
+    const label = summary.startsWith("Partially") || summary.startsWith("Could not")
+      ? summary
+      : "Partially updated document";
+    return elapsed ? `${label} · ${elapsed}` : label;
+  }
   if (outcome === "failed") {
+    if (unrecoveredMutateFailures(lines) && completionSummaryLabel(lines).startsWith("Partially")) {
+      return elapsed ? `Partially updated document · ${elapsed}` : "Partially updated document";
+    }
     return elapsed ? `Couldn't complete · ${elapsed}` : "Couldn't complete";
   }
   if (outcome === "paused") {

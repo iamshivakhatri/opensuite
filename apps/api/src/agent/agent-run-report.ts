@@ -27,10 +27,10 @@ import {
  * - document.versionAdvances.length / persistedVersions — immutable DB
  *   document_version advances (normally 0–1 per run; not working revisions)
  * - failures[] — structured events (tool attempt errors, runtime bounds,
- *   model errors). `outcome` is authoritative for terminal run failure;
- *   tool-source entries on a successful run are recovered tool errors.
- * Compact logs use toolErrors= for tool-source count only — never imply
- * that a successful run was a terminal failure.
+ *   model errors). `outcome` is authoritative for terminal run result.
+ *   Same-tool later success recovers a tool error; unrecovered mutate
+ *   failures make a finish_tool stop `partial` (with a version) or `failure`.
+ * Compact logs use toolErrors= for tool-source count only.
  */
 
 export type AgentRunOutcome = "success" | "failure" | "partial" | "cancelled";
@@ -227,22 +227,44 @@ export interface ComposeAgentRunReportInput {
   readonly pricingProvider?: ProviderCredentialProvider;
 }
 
+/** Mutate tool names that failed without a later same-tool success. */
+export function unrecoveredFailedMutateToolNames(
+  metrics: AgentRunMetrics | null | undefined,
+): string[] {
+  if (!metrics) return [];
+  const names: string[] = [];
+  for (const call of metrics.toolCalls) {
+    if (call.kind !== "mutate" || call.outcome !== "failure") continue;
+    const recovered = metrics.toolCalls.some(
+      (later) =>
+        later.sequence > call.sequence &&
+        later.toolName === call.toolName &&
+        later.outcome === "success",
+    );
+    if (!recovered) names.push(call.toolName);
+  }
+  return [...new Set(names)];
+}
+
 /**
  * Technical run outcome from runtime + document facts — never LLM-judged.
  *
  * - cancelled: abort signal / cancelled settlement
- * - partial: terminal failure after at least one version advance
- * - failure: terminal failure with no version advance
- * - success: clean successful stop (completed / finish_tool)
+ * - partial: terminal failure or unrecovered mutate work after a version advance
+ * - failure: terminal failure / unrecovered mutates with no version advance
+ * - success: clean successful stop with no unrecovered mutate failures
  */
 export function deriveRunOutcome(input: {
   readonly cancelled?: boolean;
   readonly terminalFailure?: boolean;
   readonly versionAdvanceCount: number;
+  readonly unrecoveredFailedMutates?: number;
 }): AgentRunOutcome {
   if (input.cancelled) return "cancelled";
   if (input.terminalFailure && input.versionAdvanceCount > 0) return "partial";
   if (input.terminalFailure) return "failure";
+  if ((input.unrecoveredFailedMutates ?? 0) > 0 && input.versionAdvanceCount > 0) return "partial";
+  if ((input.unrecoveredFailedMutates ?? 0) > 0) return "failure";
   return "success";
 }
 
@@ -291,10 +313,12 @@ export function composeAgentRunReport(
     (input.thrown === true ||
       (stopReason !== undefined && !successfulStop));
 
+  const unrecoveredFailedMutates = unrecoveredFailedMutateToolNames(input.metrics).length;
   const outcome = deriveRunOutcome({
     cancelled,
     terminalFailure,
     versionAdvanceCount: advances.length,
+    unrecoveredFailedMutates,
   });
 
   const modelTimeMs = input.metrics.modelTurns.reduce(
