@@ -29,7 +29,9 @@ export function compareStyleFidelity(plan: StyleApplicationPlan, snapshot: DocxS
     fields.push({ field, status, ...(provenance[field] ? { source: provenance[field] } : {}) });
   }
   function compare(field: string, expected: unknown, values: unknown[]) {
-    add(field, snapshot.truncated ? 'unsupported' : !values.length ? 'not_applicable' : values.every(value => JSON.stringify(value) === JSON.stringify(expected)) ? 'matched' : 'mismatched');
+    // Line spacing values must match regardless of profile object key order.
+    const serialize = (value: unknown) => JSON.stringify(value, field.endsWith('.lineSpacing') ? ['value', 'rule'] : undefined);
+    add(field, snapshot.truncated ? 'unsupported' : !values.length ? 'not_applicable' : values.every(value => serialize(value) === serialize(expected)) ? 'matched' : 'mismatched');
   }
   const styleNames = new Map(snapshot.styles.map(s => [s.styleId, s.name ?? s.styleId]));
   const roleForId = (id = snapshot.defaults.defaultParagraphStyleId) => paragraphRole(styleNames.get(id ?? ''), id);
@@ -44,7 +46,7 @@ export function compareStyleFidelity(plan: StyleApplicationPlan, snapshot: DocxS
       } else compare(`${name}.text.${field}`, value, runs.map(p => (p.effectiveFormatting ?? p.directFormatting)[field as keyof typeof p.directFormatting]));
     }
     for (const [field, value] of Object.entries(role.paragraph)) {
-      if (name === 'body' && snapshot.lists.length && field === 'leftIndentTwips') add('body.paragraph.leftIndentTwips', 'unsupported');
+      if (name === 'body' && snapshot.lists.length && ['leftIndentTwips', 'rightIndentTwips', 'firstLineIndentTwips', 'hangingIndentTwips'].includes(field)) add(`body.paragraph.${field}`, 'unsupported');
       else compare(`${name}.paragraph.${field}`, value, paragraphs.map(p => (p.effectiveFormatting ?? p.directFormatting)[field as keyof typeof p.directFormatting]));
     }
   }

@@ -208,6 +208,25 @@ type MutDef = {
  * Binary picture insert/replace are intentionally omitted (JSON cannot carry Buffer).
  * create_blank_docx is not a bound-document mutation.
  */
+const lineSpacing = {
+  type: "object", additionalProperties: false, required: ["value"],
+  properties: {
+    value: { type: "integer", minimum: 1, description: "Auto: 240 per line, so 276 = 1.15. Exact/atLeast: twips, 20 = 1 pt." },
+    rule: { type: "string", enum: ["auto", "exact", "atLeast"] },
+  },
+};
+const textPropertyNames = ["bold", "italic", "fontSizeHalfPoints", "fontFamily", "color", "underline", "highlight", "strikethrough", "verticalAlignment"];
+const paragraphPropertyNames = ["alignment", "spacingBeforeTwips", "spacingAfterTwips", "lineSpacing", "leftIndentTwips", "rightIndentTwips", "firstLineIndentTwips", "hangingIndentTwips", "keepWithNext", "keepLines"];
+const paragraphProperties = {
+  alignment: { type: "string", enum: ["left", "center", "right", "both", "distribute"] },
+  lineSpacing,
+  spacingBeforeTwips: { type: "integer" }, spacingAfterTwips: { type: "integer" },
+  leftIndentTwips: { type: "integer" }, rightIndentTwips: { type: "integer" },
+  firstLineIndentTwips: { type: "integer" }, hangingIndentTwips: { type: "integer" },
+  keepWithNext: { type: "boolean", description: "Keep this paragraph with the following paragraph." },
+  keepLines: { type: "boolean", description: "Keep all lines of this paragraph on one page." },
+};
+
 const wordStyleProperties = {
   styleId: { type: "string", description: "Stable Word style ID, for example OpenSuiteReportHeading" },
   styleType: { type: "string", enum: ["paragraph", "character"] },
@@ -215,17 +234,12 @@ const wordStyleProperties = {
   basedOn: { type: "string", description: "Existing parent style ID, for example Heading1" },
   next: { type: "string", description: "Existing paragraph style ID" },
   bold: { type: "boolean" }, italic: { type: "boolean" }, underline: { type: "boolean" },
+  highlight: { type: "string" }, strikethrough: { type: "boolean" },
+  verticalAlignment: { type: "string", enum: ["baseline", "superscript", "subscript"] },
   fontFamily: { type: "string" }, fontSizeHalfPoints: { type: "integer", minimum: 1, maximum: 65535, description: "32 = 16 pt" },
   color: { type: "string", pattern: "^([0-9a-fA-F]{6}|auto)$", description: "RGB without #, for example 124733" },
-  alignment: { type: "string", enum: ["left", "center", "right", "both", "distribute"] },
-  spacingBeforeTwips: { type: "integer" },
-  spacingAfterTwips: { type: "integer" },
-  leftIndentTwips: { type: "integer" },
-  rightIndentTwips: { type: "integer" },
-  firstLineIndentTwips: { type: "integer" },
-  hangingIndentTwips: { type: "integer" },
-  keepWithNext: { type: "boolean" }, keepLines: { type: "boolean" },
-  clear: { type: "array", items: { type: "string", enum: ["basedOn", "next", "bold", "italic", "fontSizeHalfPoints", "fontFamily", "color", "underline", "alignment", "spacingBeforeTwips", "spacingAfterTwips", "leftIndentTwips", "rightIndentTwips", "firstLineIndentTwips", "hangingIndentTwips", "keepWithNext", "keepLines"] }, description: "Remove declarations and restore inheritance. Omitted fields stay unchanged. Twips: 20 = 1 pt." },
+  ...paragraphProperties,
+  clear: { type: "array", items: { type: "string", enum: ["basedOn", "next", ...textPropertyNames, ...paragraphPropertyNames] }, description: "Remove declarations and restore inheritance. Omitted fields stay unchanged. Twips: 20 = 1 pt." },
 };
 
 const imagePosition = (references: string[]) => ({
@@ -330,18 +344,14 @@ const MUTATION_DEFS: Record<string, MutDef> = {
   },
   set_paragraph_formatting: {
     description:
-      "Set alignment, spacing, or indent on a direct body paragraph, not a table cell (occurrence zero-based when ambiguous).",
+      "Set alignment, spacing, indentation, or keep rules on a direct body paragraph (occurrence zero-based). Twips: 20 = 1 pt. both = justified.",
     inputSchema: op(
       {
         target: textTarget,
-        alignment: {
-          type: "string",
-          enum: ["left", "center", "right", "clear"],
-        },
-        spacingBeforeTwips: { type: "number" },
-        spacingAfterTwips: { type: "number" },
-        leftIndentTwips: { type: "number" },
+        ...paragraphProperties,
+        alignment: { type: "string", enum: [...paragraphProperties.alignment.enum, "clear"] },
         clearLeftIndent: { type: "boolean" },
+        clear: { type: "array", items: { type: "string", enum: paragraphPropertyNames }, description: "Remove direct properties and restore inheritance. Omitted fields stay unchanged." },
       },
       ["target"],
     ),
@@ -354,7 +364,7 @@ const MUTATION_DEFS: Record<string, MutDef> = {
         target: textTarget,
         bold: { type: "boolean" },
         italic: { type: "boolean" },
-        fontSizeHalfPoints: { type: "number" },
+        fontSizeHalfPoints: { type: "integer", minimum: 1, maximum: 65535 },
         fontFamily: { type: "string" },
         clearBold: { type: "boolean" },
         color: { type: "string" },
@@ -370,6 +380,7 @@ const MUTATION_DEFS: Record<string, MutDef> = {
           enum: ["baseline", "superscript", "subscript"],
         },
         clearVerticalAlignment: { type: "boolean" },
+        clear: { type: "array", items: { type: "string", enum: textPropertyNames }, description: "Remove direct properties and restore inheritance. Omitted fields stay unchanged." },
       },
       ["target"],
     ),

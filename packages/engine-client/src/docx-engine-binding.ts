@@ -296,7 +296,12 @@ export interface DocxSetParagraphStyleOperation {
   readonly baseRevision?: string;
 }
 
-export type DocxParagraphAlignment = "left" | "center" | "right";
+/** Matches the Rust MAX_TABLE_CELL_UPDATES bound for text, shading, and formatting. */
+export const DOCX_TABLE_CELL_UPDATE_LIMIT = 100;
+export type DocxParagraphAlignment = "left" | "center" | "right" | "both" | "distribute";
+/** Auto uses 240 units per line (276 = 1.15); exact/atLeast use twips (20 = 1 pt). */
+export interface DocxLineSpacing { readonly value: number; readonly rule?: "auto" | "exact" | "atLeast" }
+export type DocxParagraphProperty = "alignment" | "spacingBeforeTwips" | "spacingAfterTwips" | "lineSpacing" | "leftIndentTwips" | "rightIndentTwips" | "firstLineIndentTwips" | "hangingIndentTwips" | "keepWithNext" | "keepLines";
 
 export interface DocxSetParagraphFormattingOperation {
   readonly target: DocxTextTarget;
@@ -305,10 +310,20 @@ export interface DocxSetParagraphFormattingOperation {
   readonly spacingAfterTwips?: number;
   readonly leftIndentTwips?: number;
   readonly clearLeftIndent?: boolean;
+  readonly lineSpacing?: DocxLineSpacing;
+  readonly rightIndentTwips?: number;
+  readonly firstLineIndentTwips?: number;
+  readonly hangingIndentTwips?: number;
+  readonly keepWithNext?: boolean;
+  readonly keepLines?: boolean;
+  /** Remove declarations and restore inheritance; omitted fields stay unchanged. */
+  readonly clear?: readonly DocxParagraphProperty[];
   readonly baseRevision?: string;
 }
 
+export type DocxTextFormattingProperty = "bold" | "italic" | "fontSizeHalfPoints" | "fontFamily" | "color" | "underline" | "highlight" | "strikethrough" | "verticalAlignment";
 export interface DocxSetTextFormattingOperation {
+  readonly clear?: readonly DocxTextFormattingProperty[];
   readonly target: DocxTextTarget;
   readonly bold?: boolean;
   readonly italic?: boolean;
@@ -1151,21 +1166,8 @@ export async function createNapiDocxEngineBinding(): Promise<DocxEngineBinding> 
       const response = await native.executeDocxSetParagraphFormatting(
         Buffer.from(input),
         {
+          ...operation,
           target: toNativeTextTarget(operation.target),
-          ...(operation.alignment !== undefined
-            ? { alignment: operation.alignment }
-            : {}),
-          ...(operation.spacingBeforeTwips !== undefined
-            ? { spacingBeforeTwips: operation.spacingBeforeTwips }
-            : {}),
-          ...(operation.spacingAfterTwips !== undefined
-            ? { spacingAfterTwips: operation.spacingAfterTwips }
-            : {}),
-          ...(operation.leftIndentTwips !== undefined ? { leftIndentTwips: operation.leftIndentTwips } : {}),
-          ...(operation.clearLeftIndent !== undefined ? { clearLeftIndent: operation.clearLeftIndent } : {}),
-          ...(operation.baseRevision !== undefined
-            ? { baseRevision: operation.baseRevision }
-            : {}),
         },
       );
       return mapMutationBindingResponse(response);
@@ -1175,31 +1177,8 @@ export async function createNapiDocxEngineBinding(): Promise<DocxEngineBinding> 
       const response = await native.executeDocxSetTextFormatting(
         Buffer.from(input),
         {
+          ...operation,
           target: toNativeTextTarget(operation.target),
-          ...(operation.bold !== undefined ? { bold: operation.bold } : {}),
-          ...(operation.italic !== undefined
-            ? { italic: operation.italic }
-            : {}),
-          ...(operation.fontSizeHalfPoints !== undefined
-            ? { fontSizeHalfPoints: operation.fontSizeHalfPoints }
-            : {}),
-          ...(operation.fontFamily !== undefined
-            ? { fontFamily: operation.fontFamily }
-            : {}),
-          ...(operation.clearBold !== undefined ? { clearBold: operation.clearBold } : {}),
-          ...(operation.color !== undefined ? { color: operation.color } : {}),
-          ...(operation.clearColor !== undefined ? { clearColor: operation.clearColor } : {}),
-          ...(operation.underline !== undefined ? { underline: operation.underline } : {}),
-          ...(operation.clearUnderline !== undefined ? { clearUnderline: operation.clearUnderline } : {}),
-          ...(operation.highlight !== undefined ? { highlight: operation.highlight } : {}),
-          ...(operation.clearHighlight !== undefined ? { clearHighlight: operation.clearHighlight } : {}),
-          ...(operation.strikethrough !== undefined ? { strikethrough: operation.strikethrough } : {}),
-          ...(operation.clearStrikethrough !== undefined ? { clearStrikethrough: operation.clearStrikethrough } : {}),
-          ...(operation.verticalAlignment !== undefined ? { verticalAlignment: operation.verticalAlignment } : {}),
-          ...(operation.clearVerticalAlignment !== undefined ? { clearVerticalAlignment: operation.clearVerticalAlignment } : {}),
-          ...(operation.baseRevision !== undefined
-            ? { baseRevision: operation.baseRevision }
-            : {}),
         },
       );
       return mapMutationBindingResponse(response);

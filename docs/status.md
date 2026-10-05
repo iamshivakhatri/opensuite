@@ -34,6 +34,8 @@ _Read this before starting any work. Keep it a concise current-state handoff, no
 
 * Local-engine comments: bounded inspection and lazy `document.comments` add/update/delete tools use typed Rust primitives and the existing one-save-per-run lifecycle. Exact selections across simple runs in one body paragraph; fresh handles for edits/deletion. Imported standard comments and unrelated parts are preserved. Threaded metadata, resolve/replies, wrappers, fields, and cross-paragraph authoring are deferred. npm pin and agent-core-v3 unchanged.
 
+* Complete formatting/style application: the local engine bridge, engine-client, and existing lazy paragraph/style tools now carry line spacing, all indentation variants, keep rules, five alignments, and clear-to-inherit patches. Direct text clears cover every existing property; Word styles also expose existing highlight/strike/vertical alignment. Learned profiles apply valid paragraph facts, preserve list indentation, and compare line spacing by values. Table appearance uses source-ordered chunks capped at the existing 100-cell engine bound; a failed chunk discards the staged application and saves no version. Generated 98/102-cell checks, realistic learned-report + TOC dogfood, and imported-part preservation passed. No dependency, engine version, model turn, publishing, or agent-core-v3 change. Existing richer layout/list/header-footer and table-width-declaration limits remain explicit.
+
 ## Current Decisions
 
 * Soft-delete; trash permanent purge clears working-document/checkpoint FKs; Empty trash + multi-select purge; optimistic concurrency; Rust SoT.

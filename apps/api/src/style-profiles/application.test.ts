@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { readFile, writeFile } from 'node:fs/promises';
 import { createHash } from 'node:crypto';
-import { bindDocxDocument, createNapiDocxEngineBinding, inspectDocxStyleSnapshot, type DocxEngineBinding } from '@opensuite/engine-client';
+import { bindDocxDocument, DOCX_TABLE_CELL_UPDATE_LIMIT, createNapiDocxEngineBinding, inspectDocxStyleSnapshot, type DocxEngineBinding } from '@opensuite/engine-client';
 import type { StyleProfile, StyleProfileData } from '@opensuite/contracts';
 import { buildStyleApplicationPlan, applyStylePlan, applyStyleProfileToDocument, styleApplicationSummary } from './application.js';
 import { compareStyleFidelity } from './fidelity.js';
@@ -32,10 +32,12 @@ test('planning is deterministic, absent values stay absent, and unsupported valu
   assert.equal(plan.roles.body?.text.color, undefined);
   assert.equal(plan.roles.body?.text.bold, undefined);
   assert.equal(plan.roles.body?.paragraph.leftIndentTwips, 720);
+  assert.deepEqual(plan.roles.body?.paragraph.lineSpacing, { value: 276, rule: 'auto' });
+  assert.equal(plan.roles.body?.paragraph.keepWithNext, true);
   assert.equal(plan.page.orientation, undefined);
   assert.equal(plan.page.paperSize, undefined);
   assert.equal(plan.page.rightMarginTwips, undefined);
-  for (const field of ['body.text.color', 'body.text.fontSizeHalfPoints', 'body.paragraph.lineSpacing', 'body.paragraph.alignment', 'body.paragraph.keepWithNext', 'page.margins.right']) assert.ok(plan.unsupported.includes(field), field);
+  for (const field of ['body.text.color', 'body.text.fontSizeHalfPoints', 'body.paragraph.alignment', 'page.margins.right']) assert.ok(plan.unsupported.includes(field), field);
 });
 
 test('profile and target ownership and current version are checked before engine access', async () => {
@@ -92,7 +94,7 @@ test('Blue Harbor → newsletter: inspected fidelity, source safety, content pre
   assert.ok(fidelity);
   assert.equal(fidelity.summary.counts.mismatched, 0, JSON.stringify(fidelity));
   for (const field of ['body.text.fontFamily', 'body.text.fontSizeHalfPoints', 'body.paragraph.spacingBeforeTwips', 'body.paragraph.spacingAfterTwips', 'Title.text.fontSizeHalfPoints', 'Title.text.bold', 'Heading1.text.fontSizeHalfPoints', 'Heading1.text.bold', 'page.margins.left', 'page.size', 'table.headerFill', 'table.headerBold', 'table.borders', 'table.padding.left', 'table.columnWidthTotal']) assert.equal(fidelity.fields.find(f => f.field === field)?.status, 'matched', field);
-  assert.ok(fidelity.summary.unsupported.includes('body.paragraph.lineSpacing'));
+  assert.equal(fidelity.fields.find(f => f.field === 'body.paragraph.lineSpacing')?.status, 'matched');
   assert.ok(JSON.stringify(result).length < 1800, 'Model result stays compact');
   await session.flush();
   assert.equal(appends, 1);
@@ -187,4 +189,71 @@ test('body indent conventions never overwrite existing list indentation', { skip
   assert.ok(after.paragraphPatterns.some(p => p.directFormatting.leftIndentTwips === 0));
   assert.ok(result.fidelity.summary.unsupported.includes('body.paragraph.leftIndentTwips'));
   assert.equal(result.fidelity.summary.counts.mismatched, 0);
+});
+
+async function largeTableFixture(binding: DocxEngineBinding, rowCount: number) {
+  const host = bindDocxDocument({ binding, bytes: binding.createBlankDocx() });
+  assert.equal((await host.mutate('create_table', { placement: { kind: 'end' }, rows: Array.from({ length: rowCount }, (_,i) => [`Row ${i}`, `Value ${i}`]) })).ok, true);
+  return host.currentBytes();
+}
+
+test('table style application uses ordered bounded batches and one final save', { skip: !local }, async () => {
+  const real = await createNapiDocxEngineBinding();
+  const profile = saved(simpleProfile());
+  for (const rowCount of [49, 51]) {
+    const original = await largeTableFixture(real, rowCount);
+    const batches: string[][] = [];
+    const binding: DocxEngineBinding = { ...real, executeDocxSetTableCellsFormatting: async (bytes, operation) => {
+      assert.ok(operation.updates.length <= DOCX_TABLE_CELL_UPDATE_LIMIT);
+      batches.push(operation.updates.map(update => 'handle' in update.target ? update.target.handle : ''));
+      return real.executeDocxSetTableCellsFormatting!(bytes, operation);
+    } };
+    let appends = 0;
+    let output = original;
+    const documents = {
+      getOwnedDocument: async () => ({ id: 'target', workspaceId: 'workspace', format: 'docx', latestVersion: { id: 'v1' } }),
+      readExactVersionBytes: async () => Buffer.from(original),
+      appendDocumentVersion: async (input: { bytes: Buffer }) => { appends++; output = input.bytes; return { version: { id: 'v2', versionNumber: 2 } }; },
+    } as unknown as DocumentService;
+    const session = await createPrimaryDocxTools({ binding, documents, ownerUserId: 'alice', workspaceId: 'workspace', documentId: 'target', versionId: 'v1' });
+    assert.ok(session);
+    await session.applyStyleProfile(profile.id, { get: async () => profile });
+    assert.equal(appends, 0);
+    assert.deepEqual(batches.map(batch => batch.length), rowCount === 49 ? [98] : [100, 2]);
+    const before = await real.inspectDocx(original, { focus: { kind: 'tables' } });
+    const intended = before.tables!.items[0]!.rows.flatMap(row => row.cellHandles);
+    assert.deepEqual(batches.flat(), intended);
+    assert.equal(new Set(batches.flat()).size, rowCount * 2);
+    await session.flush();
+    assert.equal(appends, 1);
+    const after = await real.inspectDocx(output, { focus: { kind: 'tables' } });
+    assert.deepEqual(after.tables!.items[0]!.rows.map(row => row.cells), before.tables!.items[0]!.rows.map(row => row.cells));
+    assert.equal(session.getStyleFidelity()?.summary.counts.mismatched, 0);
+  }
+});
+
+test('second table style batch failure discards staged bytes and saves no version', { skip: !local }, async () => {
+  const real = await createNapiDocxEngineBinding();
+  const original = await largeTableFixture(real, 51);
+  let calls = 0;
+  const binding: DocxEngineBinding = { ...real, executeDocxSetTableCellsFormatting: async (bytes, operation) => {
+    calls++;
+    if (calls === 2) return { result: { ok: false, status: 'error', changes: [], diagnostics: [{ code: 'PRECONDITION_FAILED', severity: 'error', message: 'Injected second batch failure' }] } };
+    return real.executeDocxSetTableCellsFormatting!(bytes, operation);
+  } };
+  let appends = 0;
+  const documents = {
+    getOwnedDocument: async () => ({ id: 'target', workspaceId: 'workspace', format: 'docx', latestVersion: { id: 'v1' } }),
+    readExactVersionBytes: async () => Buffer.from(original),
+    appendDocumentVersion: async () => { appends++; return { version: { id: 'v2', versionNumber: 2 } }; },
+  } as unknown as DocumentService;
+  const session = await createPrimaryDocxTools({ binding, documents, ownerUserId: 'alice', workspaceId: 'workspace', documentId: 'target', versionId: 'v1' });
+  assert.ok(session);
+  await assert.rejects(() => session.applyStyleProfile('profile-1', { get: async () => saved(simpleProfile()) }), /PRECONDITION_FAILED/);
+  assert.equal(calls, 2);
+  assert.equal(session.getWorkingDocument(), null);
+  assert.equal(session.getWorkingRevision(), 0);
+  assert.equal(session.getStyleFidelity(), null);
+  await session.flush();
+  assert.equal(appends, 0);
 });

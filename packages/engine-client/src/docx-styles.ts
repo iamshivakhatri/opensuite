@@ -1,3 +1,5 @@
+import type { DocxLineSpacing, DocxParagraphProperty, DocxTextFormattingProperty } from "./docx-engine-binding.js";
+
 export interface DocxStyleOperation {
   styleId: string; styleType: 'paragraph' | 'character'; name?: string; basedOn?: string; next?: string;
   bold?: boolean;
@@ -6,6 +8,10 @@ export interface DocxStyleOperation {
   fontFamily?: string;
   color?: string;
   underline?: boolean;
+  highlight?: string;
+  strikethrough?: boolean;
+  verticalAlignment?: "baseline" | "superscript" | "subscript";
+  lineSpacing?: DocxLineSpacing;
   alignment?: 'left' | 'center' | 'right' | 'both' | 'distribute';
   spacingBeforeTwips?: number;
   spacingAfterTwips?: number;
@@ -15,7 +21,7 @@ export interface DocxStyleOperation {
   hangingIndentTwips?: number;
   keepWithNext?: boolean;
   keepLines?: boolean;
-  clear?: Array<'basedOn' | 'next' | 'bold' | 'italic' | 'fontSizeHalfPoints' | 'fontFamily' | 'color' | 'underline' | 'alignment' | 'spacingBeforeTwips' | 'spacingAfterTwips' | 'leftIndentTwips' | 'rightIndentTwips' | 'firstLineIndentTwips' | 'hangingIndentTwips' | 'keepWithNext' | 'keepLines'>;
+  clear?: Array<DocxParagraphProperty | 'basedOn' | 'next' | DocxTextFormattingProperty>;
   baseRevision?: string;
 }
 

@@ -170,4 +170,6 @@ These types are plain, JSON-shaped TypeScript (no classes, enums-as-objects, or 
 
 Swapping N-API for a future remote engine service only requires a new `DocxEngineBinding`.
 
-N-API paragraph formatting currently maps alignment, spacingBefore/AfterTwips, and leftIndentTwips; line spacing, other indents, and keep flags await N-API exposure. Do not invent app-side substitutes.
+Local N-API paragraph patches now map all Rust-supported alignment values, spacingBefore/AfterTwips, lineSpacing, left/right/first-line/hanging indents, and keepWithNext/keepLines. `clear` removes direct properties to restore inheritance; omitted values stay unchanged. Auto line spacing uses 240 units per line (276 = 1.15); exact/atLeast use twips (20 = 1 pt). Text patches can clear all supported properties. Word-style patches share these value parsers. The published 0.1.3 remains unchanged; use the configured local engine for these completed contracts.
+
+StyleProfile table appearance uses `DOCX_TABLE_CELL_UPDATE_LIMIT` in engine-client, matching Rust's existing 100-update bound. Stable formatting chunks execute against staged working bytes with no intermediate saves; only a verified final result enters the session. Cell text updates retain their existing expected-current-text checks and are not part of style batching.

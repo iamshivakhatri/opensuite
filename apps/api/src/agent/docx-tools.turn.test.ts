@@ -149,7 +149,7 @@ test("paragraph style/formatting, split text formatting, and format batches pres
   const table = run.tables[0]!;
   const { result } = await runTurns(run.session, [[inspect, { name: "document.inspect", input: { kind: "body_blocks" } }], [
     { name: "document.set_paragraph_style", input: { target: { text: "Status" }, style: "Heading 1" } },
-    { name: "document.set_paragraph_formatting", input: { target: { text: "Status" }, alignment: "center" } },
+    { name: "document.set_paragraph_formatting", input: { target: { text: "Status" }, alignment: "both", lineSpacing: { value: 276, rule: "auto" }, hangingIndentTwips: 360, keepWithNext: true, keepLines: true } },
     { name: "document.set_text_formatting", input: { target: { text: "Stat" }, bold: true } },
     { name: "document.batch_paragraph_formatting", input: { operations: [{ target: { text: "Status" }, alignment: "left" }] } },
     { name: "document.set_text_formatting", input: { target: { text: "Item 0" }, italic: true } },

@@ -1,6 +1,6 @@
 import type { StyleProfileData, StyleRole } from '@opensuite/contracts';
 import {
-  bindDocxDocument, inspectDocxStyleSnapshot,
+  bindDocxDocument, inspectDocxStyleSnapshot, DOCX_TABLE_CELL_UPDATE_LIMIT,
   type DocxEngineBinding, type DocxInspectParagraphItem, type DocxInspectTableItem,
   type DocxSetTextFormattingOperation, type DocxSetParagraphFormattingOperation,
   type DocxSetTableFormattingOperation,
@@ -66,9 +66,13 @@ export function buildStyleApplicationPlan(style: StyleProfileData): StyleApplica
       else plan.unsupported.push(`${name}.text.${field}`);
     }
     for (const [field, fact] of Object.entries(value.paragraph)) {
-      const supported = field === 'alignment' ? ['left', 'center', 'right'].includes(String(fact))
+      const supported = field === 'alignment' ? ['left', 'center', 'right', 'both', 'distribute'].includes(String(fact))
         : ['spacingBeforeTwips', 'spacingAfterTwips'].includes(field) ? integer(fact)
-        : field === 'leftIndentTwips' && integer(fact, -31680);
+        : ['leftIndentTwips', 'rightIndentTwips'].includes(field) ? integer(fact, -31680)
+        : ['firstLineIndentTwips', 'hangingIndentTwips'].includes(field) ? integer(fact)
+        : ['keepWithNext', 'keepLines'].includes(field) ? typeof fact === 'boolean'
+        : field === 'lineSpacing' && fact !== null && typeof fact === 'object' && 'value' in fact
+          && integer(fact.value, 1, 4294967295) && (!('rule' in fact) || fact.rule === undefined || ['auto', 'exact', 'atLeast'].includes(String(fact.rule)));
       if (supported) Object.assign(result.paragraph, { [field]: fact });
       else plan.unsupported.push(`${name}.paragraph.${field}`);
     }
@@ -219,7 +223,9 @@ export async function applyStylePlan(binding: DocxEngineBinding, bytes: Uint8Arr
     const textOccurrence = bodyMatches[paragraph.targetOccurrence]!.occurrence;
     if (Object.keys(role.text).length) await mutate('set_text_formatting', { ...role.text, target: { text: paragraph.text, occurrence: textOccurrence } });
     const paragraphFormatting = { ...role.paragraph };
-    if (paragraph.list) delete paragraphFormatting.leftIndentTwips;
+    if (paragraph.list) {
+      for (const field of ['leftIndentTwips', 'rightIndentTwips', 'firstLineIndentTwips', 'hangingIndentTwips'] as const) delete paragraphFormatting[field];
+    }
     if (Object.keys(paragraphFormatting).length) await mutate('set_paragraph_formatting', { ...paragraphFormatting, target: { text: paragraph.text, occurrence: paragraph.targetOccurrence } });
   }
   const tableText = Object.fromEntries(Object.entries(plan.roles.body!.text).filter(([field]) => ['fontFamily', 'fontSizeHalfPoints', 'color', 'bold', 'italic'].includes(field)));
@@ -250,7 +256,9 @@ export async function applyStylePlan(binding: DocxEngineBinding, bytes: Uint8Arr
     })));
     const supportedUpdates = updates.filter(update => 'fill' in update || Object.keys(update.textFormatting).length);
     if (supportedUpdates.length) {
-      await mutate('set_table_cells_formatting', { table: target, updates: supportedUpdates });
+      for (let start = 0; start < supportedUpdates.length; start += DOCX_TABLE_CELL_UPDATE_LIMIT) {
+        await mutate('set_table_cells_formatting', { table: target, updates: supportedUpdates.slice(start, start + DOCX_TABLE_CELL_UPDATE_LIMIT) });
+      }
       if (plan.table?.headerTextColor) headerTextStatus = 'matched';
     }
   }
