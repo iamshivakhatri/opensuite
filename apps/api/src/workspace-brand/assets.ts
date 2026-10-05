@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { and, eq, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, sql } from "drizzle-orm";
 import { schema, type Db } from "@opensuite/db";
 import type { WorkspaceService } from "../workspaces/service.js";
 import { WorkspaceAccessError } from "../workspaces/service.js";
@@ -7,6 +7,10 @@ import { ObjectNotFoundError, type ObjectStorage } from "../storage/types.js";
 import type { StorageAccountingService } from "../storage-accounting/service.js";
 import { assetMaxBytes } from "./validation.js";
 import { optimizeWorkspaceImage } from "./images.js";
+
+/** Engine picture ops accept only these stored MIME types. */
+export const ENGINE_IMAGE_CONTENT_TYPES = ["image/png", "image/jpeg"] as const;
+export type EngineImageContentType = (typeof ENGINE_IMAGE_CONTENT_TYPES)[number];
 
 export class WorkspaceAssetError extends Error {
   constructor(
@@ -111,6 +115,47 @@ export function createWorkspaceAssetService(
       const chunks: Buffer[] = [];
       for await (const chunk of object.body) chunks.push(Buffer.from(chunk));
       return { bytes: Buffer.concat(chunks), contentType: object.contentType };
+    },
+    /** Compact metadata for agent-usable PNG/JPEG assets. Never returns bytes. */
+    async listImages(
+      workspaceId: string,
+      userId: string,
+      options: { offset?: number; limit?: number } = {},
+    ) {
+      await requireWorkspace(workspaceId, userId);
+      const limit = Math.min(50, Math.max(1, options.limit ?? 20));
+      const offset = Math.max(0, options.offset ?? 0);
+      const items = await db
+        .select({
+          id: schema.workspaceAsset.id,
+          contentType: schema.workspaceAsset.contentType,
+          width: schema.workspaceAsset.width,
+          height: schema.workspaceAsset.height,
+          sizeBytes: schema.workspaceAsset.sizeBytes,
+          createdAt: schema.workspaceAsset.createdAt,
+        })
+        .from(schema.workspaceAsset)
+        .where(
+          and(
+            eq(schema.workspaceAsset.workspaceId, workspaceId),
+            inArray(schema.workspaceAsset.contentType, [...ENGINE_IMAGE_CONTENT_TYPES]),
+          ),
+        )
+        .orderBy(desc(schema.workspaceAsset.createdAt))
+        .limit(limit)
+        .offset(offset);
+      return {
+        items: items.map((item) => ({
+          assetId: item.id,
+          contentType: item.contentType,
+          width: item.width,
+          height: item.height,
+          sizeBytes: item.sizeBytes,
+          createdAt: item.createdAt.toISOString(),
+        })),
+        offset,
+        limit,
+      };
     },
     async removeUnused(workspaceId: string, userId: string, id: string) {
       await requireWorkspace(workspaceId, userId);

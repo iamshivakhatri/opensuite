@@ -200,7 +200,7 @@ export interface AgentExecutionServiceDeps {
   readonly docxBinding?: DocxEngineBinding;
   readonly styleProfiles?: StyleProfileService;
   readonly workspaceBrand?: Pick<WorkspaceBrandService, 'get'>;
-  readonly workspaceAssets?: Pick<WorkspaceAssetService, 'readBytes'>;
+  readonly workspaceAssets?: Pick<WorkspaceAssetService, 'readBytes' | 'listImages'>;
   readonly modelUsage?: ModelUsageService;
   readonly managedUsagePolicy?: ManagedUsagePolicy;
   readonly agentRunReportSink?: AgentRunReportSink;
@@ -564,6 +564,7 @@ async function runExecution(input: {
       versionId: input.run.baseDocumentVersionId,
       workingDocumentIds: input.workingDocumentIds,
       ...(input.editableDocumentId ? { editableDocumentId: input.editableDocumentId } : {}),
+      ...(input.deps.workspaceAssets ? { workspaceAssets: input.deps.workspaceAssets } : {}),
       onDocumentSelected: ({ documentId, versionId }) => {
         input.trace?.write("## Document Target", { documentId, versionId });
         logAgentLine(

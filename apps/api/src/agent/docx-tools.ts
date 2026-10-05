@@ -18,6 +18,8 @@ import {
   type BoundDocumentHost,
   type InspectFocus,
 } from "./document-tools.js";
+import { createImageAssetTools } from "./image-asset-tools.js";
+import type { WorkspaceAssetService } from "../workspace-brand/assets.js";
 
 import { applyStylePlan, applyStyleProfileToDocument, styleApplicationSummary } from '../style-profiles/application.js';
 import type { StyleProfileService } from '../style-profiles/service.js';
@@ -25,6 +27,15 @@ import type { StyleFidelityReport } from '../style-profiles/fidelity.js';
 import type { StyleProfileData } from '@opensuite/contracts';
 import type { ResolvedAppearance } from '../document-appearance/resolve.js';
 import { formatFieldRefreshLog, refreshWorkingDocxFields } from "./field-refresh.js";
+
+function docxCaps(binding: DocxEngineBinding): Set<string> {
+  const set = new Set<string>();
+  for (const format of binding.getDocxCapabilities().formats ?? []) {
+    if (format.format !== "docx") continue;
+    for (const capability of format.capabilities ?? []) set.add(capability);
+  }
+  return set;
+}
 
 export interface DocumentTransition {
   readonly kind: "created" | "duplicated";
@@ -632,6 +643,7 @@ export async function createPrimaryDocxTools(input: {
   readonly versionId: string | null;
   readonly workingDocumentIds?: readonly string[];
   readonly editableDocumentId?: string;
+  readonly workspaceAssets?: Pick<WorkspaceAssetService, "readBytes" | "listImages">;
   readonly onVersionAdvanced?: (event: {
     readonly documentId: string;
     readonly fromVersionId: string;
@@ -689,10 +701,23 @@ export async function createPrimaryDocxTools(input: {
     }
   }
 
+  const caps = docxCaps(input.binding);
+  const imageAssetTools = input.workspaceAssets
+    ? createImageAssetTools({
+        assets: input.workspaceAssets,
+        ownerUserId: input.ownerUserId,
+        workspaceId: input.workspaceId,
+        mutate: (capability, operation) => session.redirectingHost.mutate!(capability, operation),
+        canInsert: caps.has("insert_picture"),
+        canReplace: caps.has("replace_picture"),
+      })
+    : {};
+
   return {
     tools: {
       ...createDocumentTools(session.redirectingHost),
       ...createLifecycleTools(session),
+      ...imageAssetTools,
     },
     documentId: session.getActiveDocumentId(),
     getActiveDocumentId: session.getActiveDocumentId,

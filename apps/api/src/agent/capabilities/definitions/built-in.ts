@@ -14,7 +14,7 @@ export const builtInGroups: CapabilityDefinition[] = [
   { id: "document.sections", parentId: "document", kind: "group", title: "Sections", description: "Inspect sections, insert section breaks, and edit independent page setup and numbering", projection: "dynamic" },
   { id: "document.headers_footers", parentId: "document", kind: "group", title: "Headers and footers", description: "Edit section header/footer variants and linkage; configure first-page and document-wide odd/even behavior", projection: "dynamic" },
   { id: "document.layout", parentId: "document", kind: "group", title: "Page layout", description: "Change page breaks, page setup, headers, and footers", projection: "dynamic" },
-  { id: "document.rich_content", parentId: "document", kind: "group", title: "Rich content", description: "Edit links, content controls, and pictures", projection: "dynamic" },
+  { id: "document.rich_content", parentId: "document", kind: "group", title: "Rich content", description: "Edit links, content controls, and pictures; list and place owned workspace image assets", aliases: ["insert image", "replace image", "workspace image", "uploaded chart", "logo image"], projection: "dynamic" },
   { id: "workspace", parentId: null, kind: "group", title: "Workspace", description: "Find, inspect, create, and select workspace files", projection: "dynamic" },
   { id: "agent", parentId: null, kind: "group", title: "Run controls", description: "Complete a task or ask for needed input", projection: "dynamic" },
   { id: "compute", parentId: null, kind: "group", title: "Compute", description: "Deterministic calculations", projection: "dynamic" },
@@ -56,7 +56,10 @@ const dynamic: Record<string, readonly string[]> = {
   "document.sections": ["inspect_sections", "insert_section_break", "set_section_properties"],
   "document.headers_footers": ["set_section_header_footer", "set_odd_even_headers"],
   "document.layout": ["inspect_layout", "render_layout", "insert_page_break", "delete_page_break", "set_page_setup", "set_header_footer_text", "set_page_number"],
-  "document.rich_content": ["set_content_control_text", "set_hyperlink", "set_picture_size", "set_picture_layout", "delete_picture"],
+  "document.rich_content": [
+    "set_content_control_text", "set_hyperlink", "list_image_assets",
+    "insert_image_asset", "replace_image_asset", "set_picture_size", "set_picture_layout", "delete_picture",
+  ],
 };
 
 const tool = (name: string, parentId: string, projection: "always" | "dynamic"): CapabilityDefinition => ({

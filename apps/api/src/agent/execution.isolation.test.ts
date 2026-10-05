@@ -1135,10 +1135,13 @@ test('scripted report creation applies the loaded skill workspace brand before s
         organization: { name: 'Cincinnati Sports Club', website: '', email: '', phone: '', address: '' },
         colors: { primary: '#124733', secondary: '#124733', accent: '#124733' }, typography: { headingFont: 'Arial', bodyFont: 'Arial' } };
     } },
-    workspaceAssets: { readBytes: async () => {
-      logoReads++;
-      return { bytes: logoPng, contentType: 'image/png' };
-    } },
+    workspaceAssets: {
+      listImages: async () => ({ items: [], offset: 0, limit: 20 }),
+      readBytes: async () => {
+        logoReads++;
+        return { bytes: logoPng, contentType: 'image/png' };
+      },
+    },
   });
   const result = await (await execution.start({ userId: 'user-1', threadId: 'thread-1', instruction: 'Create a professional quarterly operating report with metrics.' })).result;
   assert.equal(result.run.status, 'completed');

@@ -231,6 +231,14 @@ const TOOL_LABELS: Record<string, { active: string; done: string }> = {
     active: "Adding image",
     done: "Added image",
   },
+  "document.insert_image_asset": {
+    active: "Adding image",
+    done: "Added image",
+  },
+  "document.list_image_assets": {
+    active: "Listing images",
+    done: "Listed images",
+  },
   "document.delete_picture": {
     active: "Removing image",
     done: "Removed image",
@@ -240,6 +248,10 @@ const TOOL_LABELS: Record<string, { active: string; done: string }> = {
     done: "Sized image",
   },
   "document.replace_picture": {
+    active: "Replacing image",
+    done: "Replaced image",
+  },
+  "document.replace_image_asset": {
     active: "Replacing image",
     done: "Replaced image",
   },
@@ -857,9 +869,12 @@ export function activityFamilyForTool(toolName: string): ActivityFamily {
     case "document.set_table_cell_shading":
       return "table";
     case "document.insert_picture":
+    case "document.insert_image_asset":
+    case "document.list_image_assets":
     case "document.delete_picture":
     case "document.set_picture_size":
     case "document.replace_picture":
+    case "document.replace_image_asset":
       return "media";
     case "document.insert_page_break":
     case "document.delete_page_break":

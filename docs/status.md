@@ -4,6 +4,8 @@ _Read this before starting any work. Keep it a concise current-state handoff, no
 
 ## What Exists
 
+* Agent-accessible workspace image assets: lazy `document.rich_content` adds `list_image_assets`, `insert_image_asset`, and `replace_image_asset`. Models pass owned `workspace_asset` IDs and placement/handles only; the API authorizes, loads bytes once, and calls existing engine `insert_picture` / `replace_picture`. Discovery returns compact PNG/JPEG metadata (no bytes). WebP/PDF and cross-workspace IDs fail before mutation. Replacement preserves layout and requires the same content type. BrandProfile logo auto-insert still uses `readBytes` unchanged. Prompt image attachments and explorer image upload remain deferred. No engine publish, Agent Core V3 change, or second asset store.
+
 * Local-engine revision decisions: lazy `document.revisions` exposes `accept_revision` and `reject_revision`. Fresh source-stamped inspection handles identify one insertion/deletion independently of numeric ID; re-inspect after each decision. Accept insertion/reject deletion retains original runs and formatting; reject insertion/accept deletion removes the content. Restored deletion text becomes ordinary text. Nested/move/property/structural revisions, richer containers, and retained content depending on wrapper XML context fail safely. Existing one-save-per-run lifecycle; no npm, dependency, or Agent Core V3 changes.
 
 * Local-engine tracked-change authoring: lazy `document.revisions` now exposes typed insert-before/after, tracked deletion, and tracked replacement (deletion + insertion). One ordinary body paragraph; simple runs preserve formatting, replacement requires identical run properties. Explicit author, optional UTC date, collision-free main-document IDs, original/current-text verification, and existing one-save-per-run lifecycle. Fields/wrappers/tables/markers and paragraphs with revisions fail safely. Npm pins and Agent Core V3 remain unchanged.
@@ -53,7 +55,7 @@ _Read this before starting any work. Keep it a concise current-state handoff, no
 
 ## Recommended Next Step
 
-TOC field refresh is in place for finished multi-heading reports. Next product pass should pick the next deferred Office capability (not field evaluation in Rust).
+Workspace image assets are agent-usable via asset IDs. Next product pass should pick the next deferred Office capability, or add minimal prompt/explorer image upload onto the existing `workspace_asset` path if that workflow is next.
 
 * Field refresh (LibreOffice): before the one agent save, dirty TOC/PAGE/NUMPAGES are refreshed via an isolated headless LibreOffice Basic macro (`UpdateIndexes` + text-field refresh). Staged bytes are re-opened with the Rust engine; destructive rewrites (lost TOC, comments, revisions, customXml/embeddings/glossary parts) keep the original working bytes and `refresh_required`. Provider availability is process-cached. API Docker runtime installs `libreoffice-writer-nogui` (+ DejaVu). No npm bump, no agent-core-v3 change, no engine publish. Local engine blank Heading 1–3 now include `w:outlineLvl` so indexes can populate.
 
