@@ -52,3 +52,5 @@ _Read this before starting any work. Keep it a concise current-state handoff, no
 ## Recommended Next Step
 
 Apply pending migration `0025` (and `0024` if needed), then manually review the refined Brand form and a newly created branded analytical report in an authenticated workspace.
+
+* Local-engine fields and TOC: lazy `document.fields` exposes bounded main/header/footer field inspection, typed PAGE/NUMPAGES paragraph insertion (including Page X of Y appended to a single-section default footer), and real TOC insertion for heading levels 1–9. Dirty fields contain explicit placeholders; Word-compatible editors calculate results. Imported codes/results remain preserved; unsafe field boundaries fail. No field evaluation, TOC removal, npm change, or agent-core-v3 change. Manual Office refresh review remains pending.

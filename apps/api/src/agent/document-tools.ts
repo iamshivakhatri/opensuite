@@ -25,6 +25,7 @@ export interface BoundDocumentHost {
 }
 
 export type InspectFocus =
+  | { readonly kind: "fields"; readonly offset?: number; readonly limit?: number }
   | { readonly kind: "revisions"; readonly offset?: number; readonly limit?: number }
   | { readonly kind: "comments"; readonly offset?: number; readonly limit?: number }
   | { readonly kind: "layout"; readonly blockOffset?: number; readonly blockLimit?: number; readonly sectionIndex?: number }
@@ -53,7 +54,7 @@ const findInput = jsonSchema<{ text: string }>({
 });
 
 type InspectToolInput = {
-  kind: Exclude<InspectFocus["kind"], "sections" | "layout" | "comments" | "revisions">;
+  kind: Exclude<InspectFocus["kind"], "sections" | "layout" | "comments" | "revisions" | "fields">;
   offset?: number;
   limit?: number;
   text?: string;
@@ -237,6 +238,18 @@ const imagePosition = (references: string[]) => ({
   oneOf: [{ required: ["alignment"] }, { required: ["offsetEmu"] }],
 });
 const MUTATION_DEFS: Record<string, MutDef> = {
+  insert_fields: {
+    description: "Insert a new paragraph of plain text and real PAGE/NUMPAGES fields. content items use kind text with text, or page/numPages without text. Example: text Page , page, text of , numPages. Body requires placement; footer appends to the single-section default footer and omits placement. Cached values are ? and marked dirty; Word calculates them. Imported fields remain unchanged.",
+    inputSchema: op({ location: { type: "string", enum: ["body", "footer"] }, placement,
+      content: { type: "array", minItems: 1, maxItems: 20, items: { oneOf: [
+        { type: "object", properties: { kind: { const: "text" }, text: { type: "string", maxLength: 32000 } }, required: ["kind", "text"], additionalProperties: false },
+        { type: "object", properties: { kind: { type: "string", enum: ["page", "numPages"] } }, required: ["kind"], additionalProperties: false },
+      ] } } }, ["content"]),
+  },
+  insert_toc: {
+    description: "Insert a real refreshable Word Table of Contents in a new body paragraph, with an optional title paragraph. Heading levels 1 through maxHeadingLevel (default 3, range 1–9). Marked dirty with a refresh placeholder. Word/LibreOffice must update the result and page numbers. Inspect fields first to avoid an unintended duplicate TOC. No field evaluation or custom style mapping.",
+    inputSchema: op({ placement, maxHeadingLevel: { type: "integer", minimum: 1, maximum: 9 }, title: { type: "string", maxLength: 32000 } }, ["placement"]),
+  },
   accept_revision: {
     description: "Accept one supported insertion or deletion using its fresh inspect_tracked_changes handle. Keeps inserted content or removes deleted content. For replacement, decide both records individually and re-inspect after each successful decision. Complex revisions are unsupported.",
     inputSchema: op({ handle: { type: "string", minLength: 1 } }, ["handle"]),
@@ -737,6 +750,13 @@ export function createDocumentTools(document: BoundDocumentHost): AgentToolSet {
     if (document.renderLayout) tools["document.render_layout"] = defineTool({ kind: "read",
       description: "Get LibreOffice-derived PDF page count and page dimensions using the optional external renderer. Depends on installed fonts and tools; failures report unavailable, never estimated. Exact block-to-page mapping is unavailable. Does not save a document version.",
       inputSchema: op({}), execute: () => document.renderLayout!(),
+    });
+  }
+  if (caps.has("inspect_fields")) {
+    tools["document.inspect_fields"] = defineTool({ kind: "read",
+      description: "Inspect Word fields including TOC, PAGE, NUMPAGES, DATE, and unknown instructions. Returns bounded instruction and cached text separately, representation, part/paragraph location, dirty/locked flags when present, common TOC heading levels, and structural diagnostics. Main document and header/footer parts. Default 20, maximum 100 records; text capped at 2000 characters. Dirty means refresh requested; absent flags do not prove results are current. Does not calculate or edit fields.",
+      inputSchema: op({ offset: { type: "integer", minimum: 0 }, limit: { type: "integer", minimum: 1, maximum: 100 } }),
+      execute: async input => document.inspect({ focus: { kind: "fields", ...input } }),
     });
   }
   if (caps.has("inspect_tracked_changes")) {

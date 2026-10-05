@@ -1,3 +1,4 @@
+import type { DocxFieldOptions, DocxFieldInspection, DocxInsertFieldsOperation, DocxInsertTocOperation } from "./docx-fields.js";
 import type { DocxRevisionDecisionOperation, DocxRevisionOptions, DocxRevisionInspection, DocxInsertTrackedTextOperation, DocxDeleteTrackedTextOperation, DocxReplaceTextWithTrackedChangeOperation } from "./docx-revisions.js";
 import type { DocxCommentOptions, DocxCommentInspection, DocxAddCommentOperation, DocxUpdateCommentOperation, DocxDeleteCommentOperation } from "./docx-comments.js";
 /**
@@ -88,6 +89,8 @@ export type DocxMutationBindingResult = DocxReplaceTextBindingResult;
 
 /** Newer DOCX operations share the same verified-output envelope. */
 export type DocxExtendedOperationName =
+  | "executeDocxInsertFields"
+  | "executeDocxInsertToc"
   | "executeDocxAcceptRevision"
   | "executeDocxRejectRevision"
   | "executeDocxInsertTrackedText"
@@ -357,6 +360,7 @@ export interface DocxFindTextResult {
 
 /** Focus shapes accepted by the DOCX N-API inspectDocx binding. */
 export type DocxInspectFocus =
+  | ({ readonly kind: "fields" } & DocxFieldOptions)
   | ({ readonly kind: "revisions" } & DocxRevisionOptions)
   | ({ readonly kind: "comments" } & DocxCommentOptions)
   | ({ readonly kind: "layout" } & DocxLayoutOptions)
@@ -493,6 +497,7 @@ export interface DocxInspectContextUnit {
 }
 
 export interface DocxInspectResult {
+  readonly fields?: DocxFieldInspection;
   readonly revisions?: DocxRevisionInspection;
   readonly comments?: DocxCommentInspection;
   readonly layout?: DocxLayoutSnapshot;
@@ -526,6 +531,9 @@ export interface DocxInspectResult {
 }
 
 export interface DocxEngineBinding {
+  inspectDocxFields?(input: Uint8Array, options?: DocxFieldOptions): Promise<DocxFieldInspection>;
+  executeDocxInsertFields?(input: Uint8Array, operation: DocxInsertFieldsOperation): Promise<DocxMutationBindingResult>;
+  executeDocxInsertToc?(input: Uint8Array, operation: DocxInsertTocOperation): Promise<DocxMutationBindingResult>;
   executeDocxAcceptRevision?(input: Uint8Array, operation: DocxRevisionDecisionOperation): Promise<DocxMutationBindingResult>;
   executeDocxRejectRevision?(input: Uint8Array, operation: DocxRevisionDecisionOperation): Promise<DocxMutationBindingResult>;
   executeDocxInsertTrackedText?(input: Uint8Array, operation: DocxInsertTrackedTextOperation): Promise<DocxMutationBindingResult>;
@@ -642,6 +650,9 @@ export interface DocxEngineBinding {
 }
 
 type NativeEngineModule = {
+  inspectDocxFields?: (input: Buffer, options?: DocxFieldOptions) => Promise<string>;
+  executeDocxInsertFields?: (input: Buffer, operation: Record<string, unknown>) => Promise<DocxMutationBindingResult>;
+  executeDocxInsertToc?: (input: Buffer, operation: Record<string, unknown>) => Promise<DocxMutationBindingResult>;
   executeDocxAcceptRevision?: (input: Buffer, operation: Record<string, unknown>) => Promise<DocxMutationBindingResult>;
   executeDocxRejectRevision?: (input: Buffer, operation: Record<string, unknown>) => Promise<DocxMutationBindingResult>;
   executeDocxInsertTrackedText?: (input: Buffer, operation: Record<string, unknown>) => Promise<DocxMutationBindingResult>;
@@ -810,6 +821,7 @@ type NativeEngineModule = {
 
 function toNativeInspectFocus(focus: DocxInspectFocus): Record<string, unknown> {
   switch (focus.kind) {
+    case "fields":
     case "revisions":
     case "comments":
     case "layout":
@@ -973,6 +985,16 @@ export async function createNapiDocxEngineBinding(): Promise<DocxEngineBinding> 
     executeDocxReplacePicture(input, operation) {
       return executeExtended(input, "executeDocxReplacePicture", { ...operation, replacementBytes: Buffer.from(operation.replacementBytes) });
     },
+    async executeDocxInsertFields(input, operation) {
+      return executeExtended(input, "executeDocxInsertFields", { ...operation });
+    },
+    async executeDocxInsertToc(input, operation) {
+      return executeExtended(input, "executeDocxInsertToc", { ...operation });
+    },
+    async inspectDocxFields(input, options) {
+      if (!native.inspectDocxFields) throw new Error("Local engine is missing inspectDocxFields");
+      return JSON.parse(await native.inspectDocxFields(Buffer.from(input), options)) as DocxFieldInspection;
+    },
     async executeDocxAcceptRevision(input, operation) {
       return executeExtended(input, "executeDocxAcceptRevision", { handle: operation.handle });
     },
@@ -1007,6 +1029,12 @@ export async function createNapiDocxEngineBinding(): Promise<DocxEngineBinding> 
       return JSON.parse(await native.inspectDocxLayout(Buffer.from(input), options)) as DocxLayoutSnapshot;
     },
     async inspectDocx(input, request) {
+      if (request.focus.kind === "fields") {
+        if (!native.inspectDocxFields) throw new Error("Local engine is missing inspectDocxFields");
+        const { kind: _, ...options } = request.focus;
+        const fields = JSON.parse(await native.inspectDocxFields(Buffer.from(input), options)) as DocxFieldInspection;
+        return { ok: fields.ok, focus: "fields", fields, diagnostics: fields.diagnostics.map(d => ({ ...d, severity: fields.ok ? "warning" : "error" })) };
+      }
       if (request.focus.kind === "revisions") {
         if (!native.inspectDocxTrackedChanges) throw new Error("Local engine is missing inspectDocxTrackedChanges");
         const { kind, ...options } = request.focus;

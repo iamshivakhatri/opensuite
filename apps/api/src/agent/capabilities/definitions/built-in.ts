@@ -1,6 +1,7 @@
 import type { CapabilityDefinition } from "../core/registry.js";
 
 export const builtInGroups: CapabilityDefinition[] = [
+  { id: "document.fields", parentId: "document", kind: "group", title: "Fields and table of contents", description: "Inspect Word fields, insert a refreshable table of contents, and add PAGE/NUMPAGES including Page X of Y in a footer", projection: "dynamic" },
   { id: "document.revisions", parentId: "document", kind: "group", title: "Tracked changes", description: "Inspect, author, accept, and reject supported tracked changes", projection: "dynamic" },
   { id: "document.comments", parentId: "document", kind: "group", title: "Comments", description: "Inspect, add, edit, and delete standard Word comments", projection: "dynamic" },
   { id: "document", parentId: null, kind: "group", title: "Document", description: "Read and edit DOCX documents", projection: "dynamic" },
@@ -44,6 +45,7 @@ const common = [
 ];
 
 const dynamic: Record<string, readonly string[]> = {
+  "document.fields": ["inspect_fields", "insert_fields", "insert_toc"],
   "document.revisions": ["inspect_tracked_changes", "accept_revision", "reject_revision", "insert_tracked_text", "delete_tracked_text", "replace_text_with_tracked_change"],
   "document.comments": ["inspect_comments", "add_comment", "update_comment", "delete_comment"],
   "document.paragraphs": ["insert_paragraph", "delete_paragraph", "set_paragraph_formatting", "set_paragraphs_list", "batch_paragraph_styles", "batch_paragraph_formatting"],
