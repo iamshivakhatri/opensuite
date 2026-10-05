@@ -27,3 +27,5 @@ export type { DocxBodyBlock } from "./__fixtures__/minimal-docx.js";
 export * from "./docx-revisions.js";
 
 export * from "./docx-fields.js";
+
+export * from "./docx-notes.js";

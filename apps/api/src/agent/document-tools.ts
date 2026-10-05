@@ -25,6 +25,7 @@ export interface BoundDocumentHost {
 }
 
 export type InspectFocus =
+  | { readonly kind: "notes"; readonly offset?: number; readonly limit?: number }
   | { readonly kind: "fields"; readonly offset?: number; readonly limit?: number }
   | { readonly kind: "revisions"; readonly offset?: number; readonly limit?: number }
   | { readonly kind: "comments"; readonly offset?: number; readonly limit?: number }
@@ -54,7 +55,7 @@ const findInput = jsonSchema<{ text: string }>({
 });
 
 type InspectToolInput = {
-  kind: Exclude<InspectFocus["kind"], "sections" | "layout" | "comments" | "revisions" | "fields">;
+  kind: Exclude<InspectFocus["kind"], "sections" | "layout" | "comments" | "revisions" | "fields" | "notes">;
   offset?: number;
   limit?: number;
   text?: string;
@@ -252,6 +253,18 @@ const imagePosition = (references: string[]) => ({
   oneOf: [{ required: ["alignment"] }, { required: ["offsetEmu"] }],
 });
 const MUTATION_DEFS: Record<string, MutDef> = {
+  insert_note: {
+    description: "Insert a real footnote or endnote immediately after exact ordinary text in one body paragraph. Plain one-paragraph note text. Independent comments/revisions are preserved; targets inside or crossing protected ranges, fields, wrappers, and tables refuse. Word controls visible numbering; IDs are not displayed note numbers.",
+    inputSchema: op({ kind: { type: "string", enum: ["footnote", "endnote"] }, target: textTarget, text: { type: "string", minLength: 1, maxLength: 32000 } }, ["kind", "target", "text"]),
+  },
+  update_note: {
+    description: "Update a simple one-paragraph note using a fresh inspect_notes handle. Keeps its ID, reference, formatting, and other notes. Complex note bodies are preserved and cannot be edited. Re-inspect after every mutation.",
+    inputSchema: op({ handle: { type: "string", minLength: 1 }, text: { type: "string", minLength: 1, maxLength: 32000 } }, ["handle", "text"]),
+  },
+  delete_note: {
+    description: "Delete an ordinary simple footnote/endnote and its body reference using a fresh inspect_notes handle. Remaining IDs are preserved. Protected references and complex/malformed notes refuse. Re-inspect after every mutation.",
+    inputSchema: op({ handle: { type: "string", minLength: 1 } }, ["handle"]),
+  },
   insert_fields: {
     description: "Insert a new paragraph of plain text and real PAGE/NUMPAGES fields. content items use kind text with text, or page/numPages without text. Example: text Page , page, text of , numPages. Body requires placement; footer appends to the single-section default footer and omits placement. Cached values are ? and marked dirty; Word calculates them. Imported fields remain unchanged.",
     inputSchema: op({ location: { type: "string", enum: ["body", "footer"] }, placement,
@@ -775,6 +788,13 @@ export function createDocumentTools(document: BoundDocumentHost): AgentToolSet {
       description: "Inspect existing Word tracked insertions/deletions: IDs, author/date, bounded text, source-order paragraph locations, totals, and complex-revision diagnostics. Main document including tables only. Default 20, maximum 100 per page; text/metadata capped at 2000 characters. Current document text includes insertions and excludes deletions. Does not edit or save a version.",
       inputSchema: op({ offset: { type: "integer", minimum: 0 }, limit: { type: "integer", minimum: 1, maximum: 100 } }),
       execute: async input => document.inspect({ focus: { kind: "revisions", ...input } }),
+    });
+  }
+  if (caps.has("inspect_notes")) {
+    tools["document.inspect_notes"] = defineTool({ kind: "read",
+      description: "Inspect ordinary footnotes and endnotes, fresh handles, note IDs, text, zero-based body paragraph and source reference indexes, reference counts, structural status, and imported numbering settings. Separators are excluded and protected. IDs differ from visible note numbers. Default 20, maximum 100 records per page; note text capped at 2000 characters. Read-only.",
+      inputSchema: op({ offset: { type: "integer", minimum: 0 }, limit: { type: "integer", minimum: 1, maximum: 100 } }),
+      execute: async input => document.inspect({ focus: { kind: "notes", ...input } }),
     });
   }
   if (caps.has("inspect_comments")) {

@@ -13,12 +13,14 @@ export const BLOCKING_VERIFICATION_IDS = new Set([
   "target",
   "task",
   "comments",
+  "notes",
   "revisions",
   "fields",
   "verification",
 ]);
 
 const SECTION_MUTATION = /^document\.(?:insert_section_break|set_section_properties|set_section_header_footer|set_odd_even_headers)$/;
+const NOTE_MUTATION = /^document\.(?:insert_note|update_note|delete_note)$/;
 const COMMENT_MUTATION = /^document\.(?:add_comment|update_comment|delete_comment)$/;
 const REVISION_MUTATION = /^document\.(?:insert_tracked_text|delete_tracked_text|replace_text_with_tracked_change|accept_revision|reject_revision)$/;
 const FIELD_MUTATION = /^document\.(?:insert_fields|insert_toc|refresh_fields)$/;
@@ -263,11 +265,19 @@ async function verifyCapabilityPostconditions(
   mutations: readonly string[],
 ): Promise<DocumentCheck[]> {
   const checks: DocumentCheck[] = [];
+  const noteOps = mutations.filter((name) => NOTE_MUTATION.test(name));
   const commentOps = mutations.filter((name) => COMMENT_MUTATION.test(name));
   const revisionOps = mutations.filter((name) => REVISION_MUTATION.test(name));
   const fieldOps = mutations.filter((name) => FIELD_MUTATION.test(name));
-  if (!commentOps.length && !revisionOps.length && !fieldOps.length) return checks;
+  if (!commentOps.length && !revisionOps.length && !fieldOps.length && !noteOps.length) return checks;
 
+  if (noteOps.length) {
+    const inspection = await binding.inspectDocxNotes?.(after).catch(() => null);
+    checks.push(!inspection?.ok || inspection.diagnostics.length || inspection.notes.some(n => n.structure === "malformed")
+      || (noteOps.includes("document.insert_note") && !noteOps.includes("document.delete_note") && inspection.total === 0)
+      ? { id: "notes", status: "fail", message: "Notes have malformed or orphaned references, or could not be inspected" }
+      : { id: "notes", status: "pass", message: `Notes coherent (${inspection.footnoteCount} footnotes, ${inspection.endnoteCount} endnotes)` });
+  }
   if (commentOps.length) {
     if (!binding.inspectDocxComments) {
       checks.push({ id: "comments", status: "skipped", message: "Comment inspection unavailable" });

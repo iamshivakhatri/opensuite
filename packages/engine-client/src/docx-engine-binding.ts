@@ -1,3 +1,4 @@
+import type { DocxNoteOptions, DocxNoteInspection, DocxInsertNoteOperation, DocxUpdateNoteOperation, DocxDeleteNoteOperation } from "./docx-notes.js";
 import type { DocxFieldOptions, DocxFieldInspection, DocxInsertFieldsOperation, DocxInsertTocOperation } from "./docx-fields.js";
 import type { DocxRevisionDecisionOperation, DocxRevisionOptions, DocxRevisionInspection, DocxInsertTrackedTextOperation, DocxDeleteTrackedTextOperation, DocxReplaceTextWithTrackedChangeOperation } from "./docx-revisions.js";
 import type { DocxCommentOptions, DocxCommentInspection, DocxAddCommentOperation, DocxUpdateCommentOperation, DocxDeleteCommentOperation } from "./docx-comments.js";
@@ -89,6 +90,9 @@ export type DocxMutationBindingResult = DocxReplaceTextBindingResult;
 
 /** Newer DOCX operations share the same verified-output envelope. */
 export type DocxExtendedOperationName =
+  | "executeDocxInsertNote"
+  | "executeDocxUpdateNote"
+  | "executeDocxDeleteNote"
   | "executeDocxInsertFields"
   | "executeDocxInsertToc"
   | "executeDocxAcceptRevision"
@@ -375,6 +379,7 @@ export interface DocxFindTextResult {
 
 /** Focus shapes accepted by the DOCX N-API inspectDocx binding. */
 export type DocxInspectFocus =
+  | ({ readonly kind: "notes" } & DocxNoteOptions)
   | ({ readonly kind: "fields" } & DocxFieldOptions)
   | ({ readonly kind: "revisions" } & DocxRevisionOptions)
   | ({ readonly kind: "comments" } & DocxCommentOptions)
@@ -515,6 +520,7 @@ export interface DocxInspectResult {
   readonly fields?: DocxFieldInspection;
   readonly revisions?: DocxRevisionInspection;
   readonly comments?: DocxCommentInspection;
+  readonly notes?: DocxNoteInspection;
   readonly layout?: DocxLayoutSnapshot;
   readonly sections?: readonly DocxSection[];
   readonly ok: boolean;
@@ -555,6 +561,10 @@ export interface DocxEngineBinding {
   executeDocxDeleteTrackedText?(input: Uint8Array, operation: DocxDeleteTrackedTextOperation): Promise<DocxMutationBindingResult>;
   executeDocxReplaceTextWithTrackedChange?(input: Uint8Array, operation: DocxReplaceTextWithTrackedChangeOperation): Promise<DocxMutationBindingResult>;
   inspectDocxTrackedChanges?(input: Uint8Array, options?: DocxRevisionOptions): Promise<DocxRevisionInspection>;
+  inspectDocxNotes?(input: Uint8Array, options?: DocxNoteOptions): Promise<DocxNoteInspection>;
+  executeDocxInsertNote?(input: Uint8Array, operation: DocxInsertNoteOperation): Promise<DocxMutationBindingResult>;
+  executeDocxUpdateNote?(input: Uint8Array, operation: DocxUpdateNoteOperation): Promise<DocxMutationBindingResult>;
+  executeDocxDeleteNote?(input: Uint8Array, operation: DocxDeleteNoteOperation): Promise<DocxMutationBindingResult>;
   inspectDocxComments?(input: Uint8Array, options?: DocxCommentOptions): Promise<DocxCommentInspection>;
   executeDocxAddComment?(input: Uint8Array, operation: DocxAddCommentOperation): Promise<DocxMutationBindingResult>;
   executeDocxUpdateComment?(input: Uint8Array, operation: DocxUpdateCommentOperation): Promise<DocxMutationBindingResult>;
@@ -674,6 +684,10 @@ type NativeEngineModule = {
   executeDocxDeleteTrackedText?: (input: Buffer, operation: Record<string, unknown>) => Promise<DocxMutationBindingResult>;
   executeDocxReplaceTextWithTrackedChange?: (input: Buffer, operation: Record<string, unknown>) => Promise<DocxMutationBindingResult>;
   inspectDocxTrackedChanges?: (input: Buffer, options?: DocxRevisionOptions) => Promise<string>;
+  inspectDocxNotes?: (input: Buffer, options?: DocxNoteOptions) => Promise<string>;
+  executeDocxInsertNote?: (input: Buffer, operation: Record<string, unknown>) => Promise<DocxMutationBindingResult>;
+  executeDocxUpdateNote?: (input: Buffer, operation: Record<string, unknown>) => Promise<DocxMutationBindingResult>;
+  executeDocxDeleteNote?: (input: Buffer, operation: Record<string, unknown>) => Promise<DocxMutationBindingResult>;
   inspectDocxComments?: (input: Buffer, options?: DocxCommentOptions) => Promise<string>;
   executeDocxAddComment?: (input: Buffer, operation: Record<string, unknown>) => Promise<DocxMutationBindingResult>;
   executeDocxUpdateComment?: (input: Buffer, operation: Record<string, unknown>) => Promise<DocxMutationBindingResult>;
@@ -838,6 +852,7 @@ function toNativeInspectFocus(focus: DocxInspectFocus): Record<string, unknown> 
   switch (focus.kind) {
     case "fields":
     case "revisions":
+    case "notes":
     case "comments":
     case "layout":
       return { ...focus };
@@ -1026,6 +1041,16 @@ export async function createNapiDocxEngineBinding(): Promise<DocxEngineBinding> 
     async executeDocxReplaceTextWithTrackedChange(input, operation) {
       return executeExtended(input, "executeDocxReplaceTextWithTrackedChange", { ...operation, target: toNativeTextTarget(operation.target), date: operation.date ?? new Date().toISOString() });
     },
+    async executeDocxInsertNote(input, operation) {
+      if (operation.kind !== "footnote" && operation.kind !== "endnote") throw new MutationArgError("kind must be footnote or endnote");
+      return executeExtended(input, "executeDocxInsertNote", { ...operation, target: toNativeTextTarget(operation.target) });
+    },
+    async executeDocxUpdateNote(input, operation) { return executeExtended(input, "executeDocxUpdateNote", { ...operation }); },
+    async executeDocxDeleteNote(input, operation) { return executeExtended(input, "executeDocxDeleteNote", { ...operation }); },
+    async inspectDocxNotes(input, options) {
+      if (!native.inspectDocxNotes) throw new Error("Local engine is missing inspectDocxNotes");
+      return JSON.parse(await native.inspectDocxNotes(Buffer.from(input), options)) as DocxNoteInspection;
+    },
     async executeDocxAddComment(input, operation) {
       return executeExtended(input, "executeDocxAddComment", { ...operation, target: toNativeTextTarget(operation.target), date: operation.date ?? new Date().toISOString() });
     },
@@ -1044,6 +1069,12 @@ export async function createNapiDocxEngineBinding(): Promise<DocxEngineBinding> 
       return JSON.parse(await native.inspectDocxLayout(Buffer.from(input), options)) as DocxLayoutSnapshot;
     },
     async inspectDocx(input, request) {
+      if (request.focus.kind === "notes") {
+        if (!native.inspectDocxNotes) throw new Error("Local engine is missing inspectDocxNotes");
+        const { kind: _kind, ...options } = request.focus;
+        const notes = JSON.parse(await native.inspectDocxNotes(Buffer.from(input), options)) as DocxNoteInspection;
+        return { ok: notes.ok, focus: "notes", notes, diagnostics: notes.diagnostics.map(d => ({ ...d, severity: notes.ok ? "warning" : "error" })) };
+      }
       if (request.focus.kind === "fields") {
         if (!native.inspectDocxFields) throw new Error("Local engine is missing inspectDocxFields");
         const { kind: _, ...options } = request.focus;
