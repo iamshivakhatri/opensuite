@@ -237,6 +237,14 @@ const imagePosition = (references: string[]) => ({
   oneOf: [{ required: ["alignment"] }, { required: ["offsetEmu"] }],
 });
 const MUTATION_DEFS: Record<string, MutDef> = {
+  accept_revision: {
+    description: "Accept one supported insertion or deletion using its fresh inspect_tracked_changes handle. Keeps inserted content or removes deleted content. For replacement, decide both records individually and re-inspect after each successful decision. Complex revisions are unsupported.",
+    inputSchema: op({ handle: { type: "string", minLength: 1 } }, ["handle"]),
+  },
+  reject_revision: {
+    description: "Reject one supported insertion or deletion using its fresh inspect_tracked_changes handle. Removes inserted content or restores deleted content with its formatting. For replacement, decide both records individually and re-inspect after each successful decision. Complex revisions are unsupported.",
+    inputSchema: op({ handle: { type: "string", minLength: 1 } }, ["handle"]),
+  },
   insert_tracked_text: {
     description: "Insert text as a real Word tracked insertion before/after an exact ordinary text anchor in one body paragraph. Default after. Inherits formatting at the insertion boundary. Author is explicit; date defaults to current UTC. Fields, wrappers, tables, and paragraphs containing revisions are unsupported. Re-inspect after editing.",
     inputSchema: op({ target: textTarget, text: { type: "string", minLength: 1, maxLength: 32000 }, position: { type: "string", enum: ["before", "after"] }, author: { type: "string", minLength: 1 }, date: { type: "string", description: "UTC ISO timestamp" } }, ["target", "text", "author"]),

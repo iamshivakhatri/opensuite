@@ -62,3 +62,39 @@ test("tracked change tools load lazily and persist one verified version", async 
   assert.equal(appends, 1);
   assert.equal((await binding.inspectDocxTrackedChanges!(stored)).total, 4);
 });
+
+test("revision decisions use fresh lazy handles and save a resolved replacement once", async t => {
+  const binding = await createNapiDocxEngineBinding();
+  if (!binding.getDocxCapabilities().formats[0]?.capabilities.includes("accept_revision")) return t.skip("local decision engine required");
+  for (const action of ["accept_revision", "reject_revision"]) {
+    let stored = (await binding.executeDocxInsertParagraph(binding.createBlankDocx(), { text: "Revenue was $2.1M.", placement: { kind: "end" } })).output!;
+    stored = (await binding.executeDocxReplaceTextWithTrackedChange!(stored, { target: { text: "$2.1M" }, replacement: "$2.4M", author: "Sarah" })).output!;
+    let saves = 0;
+    const session = await createPrimaryDocxTools({ binding, ownerUserId: "user", workspaceId: "workspace", documentId: "doc", versionId: "v1",
+      documents: { getOwnedDocument: async () => ({ format: "docx" }) as never, readExactVersionBytes: async () => stored,
+        appendDocumentVersion: async ({ bytes }: { bytes: Uint8Array }) => { saves++; stored = Buffer.from(bytes); return { version: { id: "v2", versionNumber: 2 } } as never; } } as never,
+    });
+    assert.ok(session);
+    const surface = createToolSurface(session.tools);
+    for (const name of ["accept_revision", "reject_revision"]) assert.equal(surface.initialTools[`document.${name}`], undefined);
+    assert.equal(surface.session.load(["document.revisions"]).ok, true);
+    const tools = surface.projectTools();
+    const call = { toolCallId: "decision", messages: [], context: undefined as never };
+    const inspect = async () => (await tools["document.inspect_tracked_changes"]!.execute!({}, call) as { revisions: DocxRevisionInspection }).revisions;
+    const run = async (handle: string) => await tools[`document.${action}`]!.execute!({ handle }, call) as { ok: boolean; reasonCode?: string };
+    const first = await inspect();
+    assert.equal(first.total, 2);
+    assert.equal((await run(first.revisions[0]!.handle)).ok, true);
+    assert.equal((await run(first.revisions[1]!.handle)).reasonCode, "STALE_HANDLE");
+    const fresh = await inspect();
+    assert.equal(fresh.total, 1);
+    assert.equal((await run(fresh.revisions[0]!.handle)).ok, true);
+    assert.equal((await inspect()).total, 0);
+    assert.equal(saves, 0);
+    await session.flush();
+    assert.equal(saves, 1);
+    const expected = action === "accept_revision" ? "$2.4M" : "$2.1M";
+    assert.equal((await binding.findDocxText(stored, { text: expected })).matches.length, 1);
+    assert.equal((await binding.inspectDocxTrackedChanges!(stored)).total, 0);
+  }
+});

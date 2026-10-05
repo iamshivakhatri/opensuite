@@ -6,6 +6,8 @@ import type {
 
 /** Direct typed binding methods (args shaped by engine-client). */
 const DIRECT: Record<string, keyof DocxEngineBinding> = {
+  accept_revision: "executeDocxAcceptRevision",
+  reject_revision: "executeDocxRejectRevision",
   insert_tracked_text: "executeDocxInsertTrackedText",
   delete_tracked_text: "executeDocxDeleteTrackedText",
   replace_text_with_tracked_change: "executeDocxReplaceTextWithTrackedChange",

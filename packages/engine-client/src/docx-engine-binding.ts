@@ -1,4 +1,4 @@
-import type { DocxRevisionOptions, DocxRevisionInspection, DocxInsertTrackedTextOperation, DocxDeleteTrackedTextOperation, DocxReplaceTextWithTrackedChangeOperation } from "./docx-revisions.js";
+import type { DocxRevisionDecisionOperation, DocxRevisionOptions, DocxRevisionInspection, DocxInsertTrackedTextOperation, DocxDeleteTrackedTextOperation, DocxReplaceTextWithTrackedChangeOperation } from "./docx-revisions.js";
 import type { DocxCommentOptions, DocxCommentInspection, DocxAddCommentOperation, DocxUpdateCommentOperation, DocxDeleteCommentOperation } from "./docx-comments.js";
 /**
  * Narrow Node-binding surface for opensuite-engine N-API.
@@ -88,6 +88,8 @@ export type DocxMutationBindingResult = DocxReplaceTextBindingResult;
 
 /** Newer DOCX operations share the same verified-output envelope. */
 export type DocxExtendedOperationName =
+  | "executeDocxAcceptRevision"
+  | "executeDocxRejectRevision"
   | "executeDocxInsertTrackedText"
   | "executeDocxDeleteTrackedText"
   | "executeDocxReplaceTextWithTrackedChange"
@@ -524,6 +526,8 @@ export interface DocxInspectResult {
 }
 
 export interface DocxEngineBinding {
+  executeDocxAcceptRevision?(input: Uint8Array, operation: DocxRevisionDecisionOperation): Promise<DocxMutationBindingResult>;
+  executeDocxRejectRevision?(input: Uint8Array, operation: DocxRevisionDecisionOperation): Promise<DocxMutationBindingResult>;
   executeDocxInsertTrackedText?(input: Uint8Array, operation: DocxInsertTrackedTextOperation): Promise<DocxMutationBindingResult>;
   executeDocxDeleteTrackedText?(input: Uint8Array, operation: DocxDeleteTrackedTextOperation): Promise<DocxMutationBindingResult>;
   executeDocxReplaceTextWithTrackedChange?(input: Uint8Array, operation: DocxReplaceTextWithTrackedChangeOperation): Promise<DocxMutationBindingResult>;
@@ -638,6 +642,8 @@ export interface DocxEngineBinding {
 }
 
 type NativeEngineModule = {
+  executeDocxAcceptRevision?: (input: Buffer, operation: Record<string, unknown>) => Promise<DocxMutationBindingResult>;
+  executeDocxRejectRevision?: (input: Buffer, operation: Record<string, unknown>) => Promise<DocxMutationBindingResult>;
   executeDocxInsertTrackedText?: (input: Buffer, operation: Record<string, unknown>) => Promise<DocxMutationBindingResult>;
   executeDocxDeleteTrackedText?: (input: Buffer, operation: Record<string, unknown>) => Promise<DocxMutationBindingResult>;
   executeDocxReplaceTextWithTrackedChange?: (input: Buffer, operation: Record<string, unknown>) => Promise<DocxMutationBindingResult>;
@@ -966,6 +972,12 @@ export async function createNapiDocxEngineBinding(): Promise<DocxEngineBinding> 
     },
     executeDocxReplacePicture(input, operation) {
       return executeExtended(input, "executeDocxReplacePicture", { ...operation, replacementBytes: Buffer.from(operation.replacementBytes) });
+    },
+    async executeDocxAcceptRevision(input, operation) {
+      return executeExtended(input, "executeDocxAcceptRevision", { handle: operation.handle });
+    },
+    async executeDocxRejectRevision(input, operation) {
+      return executeExtended(input, "executeDocxRejectRevision", { handle: operation.handle });
     },
     async executeDocxInsertTrackedText(input, operation) {
       if (operation.position !== undefined && operation.position !== "before" && operation.position !== "after") throw new MutationArgError("position must be before or after");
