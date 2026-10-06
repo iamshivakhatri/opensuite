@@ -4,7 +4,7 @@ import { bindDocxDocument, createNapiDocxEngineBinding } from "../index.js";
 
 test("custom style bridge advances verified bytes and keeps failure atomic", async (t) => {
   const binding = await createNapiDocxEngineBinding();
-  if (!binding.getDocxCapabilities().formats[0]?.capabilities.includes("create_style")) return t.skip("local Pass 2 engine required");
+  if (!binding.getDocxCapabilities().formats[0]?.capabilities.includes("create_style")) return t.skip("create_style capability required");
   const doc = bindDocxDocument({ binding, bytes: binding.createBlankDocx() });
   assert.equal((await doc.mutate("create_style", { styleId: "ClientHeading", styleType: "paragraph", name: "Client Heading", basedOn: "Heading1", color: "124733" })).ok, true);
   assert.equal((await doc.mutate("insert_paragraph", { text: "Bridge heading", placement: { kind: "end" } })).ok, true);
@@ -21,7 +21,7 @@ test("custom style bridge advances verified bytes and keeps failure atomic", asy
   assert.deepEqual(Buffer.from(doc.currentBytes()), before);
 });
 
-test("paragraph controls round-trip and clear to inherited formatting", { skip: !process.env.OPENSUITE_ENGINE_PATH }, async () => {
+test("paragraph controls round-trip and clear to inherited formatting", async () => {
   const binding = await createNapiDocxEngineBinding();
   const doc = bindDocxDocument({ binding, bytes: binding.createBlankDocx() });
   async function edit(capability: string, operation: Record<string, unknown>) {

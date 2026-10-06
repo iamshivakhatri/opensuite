@@ -4,7 +4,7 @@ import { bindDocxDocument, createNapiDocxEngineBinding } from "../index.js";
 
 test("note bridge distinguishes kinds, rejects stale handles, and preserves body text", async t => {
   const binding = await createNapiDocxEngineBinding();
-  if (!binding.getDocxCapabilities().formats[0]?.capabilities.includes("insert_note")) return t.skip("local notes engine required");
+  if (!binding.getDocxCapabilities().formats[0]?.capabilities.includes("insert_note")) return t.skip("insert_note capability required");
   const inserted = await binding.executeDocxInsertParagraph(binding.createBlankDocx(), { text: "Revenue improved. Margin increased.", placement: { kind: "end" } });
   const doc = bindDocxDocument({ binding, bytes: inserted.output! });
   for (const [kind, text] of [["footnote", "Revenue improved."], ["endnote", "Margin increased."]]) {

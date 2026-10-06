@@ -306,7 +306,7 @@ test("header shading then table formatting and widths reuse one inspect", async 
 
 test("one structural header formatting call advances preview and expires inspected handles", async () => {
   const binding = await createNapiDocxEngineBinding();
-  assert.equal(binding.getDocxCapabilities().engineVersion, "0.1.3");
+  assert.equal(binding.getDocxCapabilities().engineVersion, "0.1.4");
   assert.ok(binding.getDocxCapabilities().formats.find((format) => format.format === "docx")?.capabilities.includes("set_table_cells_formatting"));
   const tools = await createPrimaryDocxTools({
     binding, ownerUserId: "user-1", workspaceId: "ws-1", documentId: "doc-1", versionId: "v1",

@@ -67,8 +67,7 @@ async function newsletterFixture(binding: DocxEngineBinding) {
   return host.currentBytes();
 }
 
-const local = !!process.env.OPENSUITE_ENGINE_PATH;
-test('Blue Harbor → newsletter: inspected fidelity, source safety, content preservation, lists, repeated text, and immutable save', { skip: !local }, async () => {
+test('Blue Harbor → newsletter: inspected fidelity, source safety, content preservation, lists, repeated text, and immutable save', async () => {
   const binding = await createNapiDocxEngineBinding();
   const sourcePath = new URL('../../../../Blue Harbor Technologies — September 2026 Monthly Operating Report.docx', import.meta.url);
   const source = await readFile(sourcePath);
@@ -115,7 +114,7 @@ test('Blue Harbor → newsletter: inspected fidelity, source safety, content pre
   console.log('Phase 3 fidelity:', JSON.stringify(styleApplicationSummary({ profileId: profile.id, profileName: profile.name, documentId: 'target', fidelity })));
 });
 
-test('Title, Heading2, body colors and alignment, explicit landscape, and unsupported source facts', { skip: !local }, async () => {
+test('Title, Heading2, body colors and alignment, explicit landscape, and unsupported source facts', async () => {
   const binding = await createNapiDocxEngineBinding();
   const style = simpleProfile();
   style.title = { ...structuredClone(style.body), text: { fontFamily: 'Arial', fontSizeHalfPoints: 40, bold: true, italic: true, color: 'ABCDEF' }, paragraph: { alignment: 'center', spacingAfterTwips: 280 } };
@@ -128,7 +127,7 @@ test('Title, Heading2, body colors and alignment, explicit landscape, and unsupp
   assert.ok(result.fidelity.summary.unsupported.includes('unresolvedThemeReferences'));
 });
 
-test('engine ambiguity is still rejected; saved application resolves duplicate body text beside table text', { skip: !local }, async () => {
+test('engine ambiguity is still rejected; saved application resolves duplicate body text beside table text', async () => {
   const binding = await createNapiDocxEngineBinding();
   const host = bindDocxDocument({ binding, bytes: binding.createBlankDocx() });
   assert.equal((await host.mutate('insert_paragraphs', { texts: ['Same text', 'Same text'], placement: { kind: 'end' } })).ok, true);
@@ -139,7 +138,7 @@ test('engine ambiguity is still rejected; saved application resolves duplicate b
   assert.equal(result.fidelity.summary.unsupported.includes('body.unsafeTextTarget'), false);
 });
 
-test('failed staged application leaves earlier working edits and versions intact', { skip: !local }, async () => {
+test('failed staged application leaves earlier working edits and versions intact', async () => {
   const real = await createNapiDocxEngineBinding();
   const original = await newsletterFixture(real);
   let paragraphCalls = 0;
@@ -165,7 +164,7 @@ test('failed staged application leaves earlier working edits and versions intact
   assert.equal(appends, 0);
 });
 
-test('substring collisions stay unresolved instead of styling the wrong paragraph', { skip: !local }, async () => {
+test('substring collisions stay unresolved instead of styling the wrong paragraph', async () => {
   const binding = await createNapiDocxEngineBinding();
   const host = bindDocxDocument({ binding, bytes: binding.createBlankDocx() });
   await host.mutate('insert_paragraphs', { texts: ['News', 'Club News'], placement: { kind: 'end' } });
@@ -174,7 +173,7 @@ test('substring collisions stay unresolved instead of styling the wrong paragrap
   assert.ok(result.fidelity.summary.counts.mismatched, 'Unmet supported formatting is not silently reported as matched');
 });
 
-test('body indent conventions never overwrite existing list indentation', { skip: !local }, async () => {
+test('body indent conventions never overwrite existing list indentation', async () => {
   const binding = await createNapiDocxEngineBinding();
   const host = bindDocxDocument({ binding, bytes: binding.createBlankDocx() });
   await host.mutate('insert_paragraphs', { texts: ['Body paragraph', 'List item'], placement: { kind: 'end' } });
@@ -197,7 +196,7 @@ async function largeTableFixture(binding: DocxEngineBinding, rowCount: number) {
   return host.currentBytes();
 }
 
-test('table style application uses ordered bounded batches and one final save', { skip: !local }, async () => {
+test('table style application uses ordered bounded batches and one final save', async () => {
   const real = await createNapiDocxEngineBinding();
   const profile = saved(simpleProfile());
   for (const rowCount of [49, 51]) {
@@ -232,7 +231,7 @@ test('table style application uses ordered bounded batches and one final save', 
   }
 });
 
-test('second table style batch failure discards staged bytes and saves no version', { skip: !local }, async () => {
+test('second table style batch failure discards staged bytes and saves no version', async () => {
   const real = await createNapiDocxEngineBinding();
   const original = await largeTableFixture(real, 51);
   let calls = 0;

@@ -16,7 +16,7 @@
   },
   "dependencies": {
     "@opensuite/contracts": "workspace:*",
-    "@opensuitehq/engine": "0.1.3"
+    "@opensuitehq/engine": "0.1.4"
   },
   "devDependencies": {
     "@types/node": "^22.10.2",

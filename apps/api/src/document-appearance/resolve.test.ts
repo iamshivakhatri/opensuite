@@ -102,7 +102,7 @@ test('workspace-brand fidelity identifies the source of matched fields', () => {
   });
 });
 
-test('report brand resolution uses the existing engine application plan', { skip: !process.env.OPENSUITE_ENGINE_PATH }, async () => {
+test('report brand resolution uses the existing engine application plan', async () => {
   const binding = await createNapiDocxEngineBinding();
   const host = bindDocxDocument({ binding, bytes: binding.createBlankDocx() });
   assert.equal((await host.mutate('insert_paragraphs', { texts: ['September report', 'Operations', 'Revenue increased.'], placement: { kind: 'end' } })).ok, true);

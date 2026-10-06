@@ -102,10 +102,11 @@ exact immutable version N
 ### Node binding setup
 
 ```bash
-pnpm install   # pulls @opensuitehq/engine@0.1.3 + platform package from npm
+pnpm install   # pulls @opensuitehq/engine@0.1.4 + platform package from npm
 ```
 
-For local engine development, build `opensuite-engine/crates/opensuite-node`, then set
+Normal app, test, Docker, and production paths use the installed npm package. For local
+engine development only, build `opensuite-engine/crates/opensuite-node`, then set
 `OPENSUITE_ENGINE_PATH` in the repo-root `.env` (see `.env.example`) to that checkout's
 `index.js`. Prefer an absolute path. The API `load-env` picks it up on boot; the boot
 line logs `source=OPENSUITE_ENGINE_PATH` vs `source=npm`. When the env var is set, a
@@ -113,14 +114,15 @@ missing or unloadable path errors — there is no silent fallback to the publish
 
 ```bash
 (cd ../opensuite-engine/crates/opensuite-node && npm run build:debug)
-# In opensuite/.env (absolute path):
+# In opensuite/.env (absolute path) — optional local override only:
 # OPENSUITE_ENGINE_PATH=/…/opensuite-engine/crates/opensuite-node/index.js
+# Leave unset to use published @opensuitehq/engine@0.1.4
 OPENSUITE_ENGINE_PATH="$PWD/../opensuite-engine/crates/opensuite-node/index.js" pnpm --filter @opensuite/engine-client test
-OPENSUITE_ENGINE_PATH="$PWD/../opensuite-engine/crates/opensuite-node/index.js" pnpm --filter @opensuite/engine-client style-smoke
+pnpm --filter @opensuite/engine-client style-smoke
 ```
 
 
-`packages/engine-client` declares `@opensuitehq/engine` as a **dependency** (exact `0.1.3`) — not optional — so installs fail if the package cannot be resolved. Platform binaries ship as optionalDependencies of that package. Supported: darwin-arm64/x64, linux-x64-gnu, linux-arm64-gnu, win32-x64-msvc (glibc only; no Alpine/musl). No sibling `opensuite-engine` checkout required. Smoke test may write `/private/tmp/opensuite-app-engine-adapter-output.docx` for manual inspection only.
+`packages/engine-client` declares `@opensuitehq/engine` as a **dependency** (exact `0.1.4`) — not optional — so installs fail if the package cannot be resolved. Platform binaries ship as optionalDependencies of that package. Supported: darwin-arm64/x64, linux-x64-gnu, linux-arm64-gnu, win32-x64-msvc (glibc only; no Alpine/musl). No sibling `opensuite-engine` checkout required. Smoke test may write `/private/tmp/opensuite-app-engine-adapter-output.docx` for manual inspection only.
 
 ## Conceptual Interface
 
@@ -170,6 +172,6 @@ These types are plain, JSON-shaped TypeScript (no classes, enums-as-objects, or 
 
 Swapping N-API for a future remote engine service only requires a new `DocxEngineBinding`.
 
-Local N-API paragraph patches now map all Rust-supported alignment values, spacingBefore/AfterTwips, lineSpacing, left/right/first-line/hanging indents, and keepWithNext/keepLines. `clear` removes direct properties to restore inheritance; omitted values stay unchanged. Auto line spacing uses 240 units per line (276 = 1.15); exact/atLeast use twips (20 = 1 pt). Text patches can clear all supported properties. Word-style patches share these value parsers. The published 0.1.3 remains unchanged; use the configured local engine for these completed contracts.
+Local N-API paragraph patches now map all Rust-supported alignment values, spacingBefore/AfterTwips, lineSpacing, left/right/first-line/hanging indents, and keepWithNext/keepLines. `clear` removes direct properties to restore inheritance; omitted values stay unchanged. Auto line spacing uses 240 units per line (276 = 1.15); exact/atLeast use twips (20 = 1 pt). Text patches can clear all supported properties. Word-style patches share these value parsers. Published `@opensuitehq/engine@0.1.4` includes this surface; `OPENSUITE_ENGINE_PATH` remains an optional local-development override only.
 
 StyleProfile table appearance uses `DOCX_TABLE_CELL_UPDATE_LIMIT` in engine-client, matching Rust's existing 100-update bound. Stable formatting chunks execute against staged working bytes with no intermediate saves; only a verified final result enters the session. Cell text updates retain their existing expected-current-text checks and are not part of style batching.

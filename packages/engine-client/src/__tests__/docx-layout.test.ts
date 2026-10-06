@@ -6,7 +6,7 @@ import { createNapiDocxEngineBinding, renderDocxLayout } from "../index.js";
 
 test("typed structural layout inspection is read-only and bounded", async (t) => {
   const binding = await createNapiDocxEngineBinding();
-  if (!binding.getDocxCapabilities().formats[0]?.capabilities.includes("layout_snapshot")) return t.skip("local Pass 3 required");
+  if (!binding.getDocxCapabilities().formats[0]?.capabilities.includes("layout_snapshot")) return t.skip("layout_snapshot capability required");
   const bytes = binding.createBlankDocx(); const original = Buffer.from(bytes);
   const result = await binding.inspectDocxLayout!(bytes, { blockLimit: 20 });
   assert.equal(result.kind, "structural"); assert.equal(result.sections[0]!.usableWidthTwips, 9360);

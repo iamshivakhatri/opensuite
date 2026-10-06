@@ -912,18 +912,18 @@ export async function createNapiDocxEngineBinding(): Promise<DocxEngineBinding> 
       );
     }
     throw new Error(
-      `Failed to load @opensuitehq/engine Node binding. Ensure @opensuitehq/engine@0.1.3 is installed for this platform (darwin-arm64, darwin-x64, linux-x64-gnu, linux-arm64-gnu, win32-x64-msvc; glibc only — no musl/Alpine). Underlying error: ${message}`,
+      `Failed to load @opensuitehq/engine Node binding. Ensure @opensuitehq/engine@0.1.4 is installed for this platform (darwin-arm64, darwin-x64, linux-x64-gnu, linux-arm64-gnu, win32-x64-msvc; glibc only — no musl/Alpine). Underlying error: ${message}`,
     );
   }
 
   if (typeof native.createBlankDocx !== "function") {
     throw new Error(
-      "@opensuitehq/engine is missing createBlankDocx — pin/install @opensuitehq/engine@0.1.3",
+      "@opensuitehq/engine is missing createBlankDocx — pin/install @opensuitehq/engine@0.1.4",
     );
   }
   if (typeof native.executeDocxInsertParagraph !== "function") {
     throw new Error(
-      "@opensuitehq/engine is missing executeDocxInsertParagraph — pin/install @opensuitehq/engine@0.1.3",
+      "@opensuitehq/engine is missing executeDocxInsertParagraph — pin/install @opensuitehq/engine@0.1.4",
     );
   }
   for (const name of [
@@ -955,14 +955,14 @@ export async function createNapiDocxEngineBinding(): Promise<DocxEngineBinding> 
   ] as const) {
     if (typeof native[name] !== "function") {
       throw new Error(
-        `@opensuitehq/engine is missing ${name} — pin/install @opensuitehq/engine@0.1.3`,
+        `@opensuitehq/engine is missing ${name} — pin/install @opensuitehq/engine@0.1.4`,
       );
     }
   }
 
   const nativeCapabilities = native.getDocxCapabilities();
-  // Published 0.1.3 implements semantic table paths but does not advertise the
-  // semantic_* capability ids yet — accept by capability id or engineVersion.
+  // Prefer semantic_* capability ids; also accept engineVersion >= 0.1.3 for
+  // older published packages that implemented the paths without advertising ids.
   const supportsSemanticCellTargets =
     nativeSupportsSemanticTableCellTargets(nativeCapabilities);
   const supportsSemanticRowDeletion =
@@ -1112,7 +1112,7 @@ export async function createNapiDocxEngineBinding(): Promise<DocxEngineBinding> 
     async inspectDocxStyleSnapshot(input) {
       if (typeof native.inspectDocxStyleSnapshot !== "function") {
         throw new Error(
-          "installed native engine is missing inspectDocxStyleSnapshot; use OPENSUITE_ENGINE_PATH for the local Phase 1 build",
+          "installed native engine is missing inspectDocxStyleSnapshot — pin/install @opensuitehq/engine@0.1.4 (or set OPENSUITE_ENGINE_PATH for a local engine build)",
         );
       }
       return JSON.parse(
@@ -1469,7 +1469,7 @@ export async function createNapiDocxEngineBinding(): Promise<DocxEngineBinding> 
 /**
  * Authoritative app-side check for semantic table-cell selectors.
  * Prefer capability ids when present; also accept engineVersion >= 0.1.3
- * because published 0.1.3 implements the paths without advertising the ids.
+ * for older packages that implemented the paths without advertising the ids.
  */
 export function nativeSupportsSemanticTableCellTargets(
   capabilities: Pick<DocxRuntimeCapabilities, "engineVersion" | "formats">,

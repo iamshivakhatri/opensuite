@@ -81,15 +81,15 @@ importers:
 
   apps/web:
     dependencies:
-      '@opensuite/contracts':
-        specifier: workspace:*
-        version: link:../../packages/contracts
       '@casualoffice/docs':
         specifier: ^1.4.2
         version: 1.4.2(@hocuspocus/provider@4.6.0(y-protocols@1.0.7(yjs@13.6.32))(yjs@13.6.32))(@types/react-dom@19.2.5(@types/react@19.2.18))(@types/react@19.2.18)(prosemirror-commands@1.7.2)(prosemirror-dropcursor@1.8.3)(prosemirror-history@1.5.0)(prosemirror-keymap@1.2.3)(prosemirror-model@1.25.11)(prosemirror-state@1.4.4)(prosemirror-tables@1.8.5)(prosemirror-transform@1.12.1)(prosemirror-view@1.42.3)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)(y-prosemirror@1.3.7(prosemirror-model@1.25.11)(prosemirror-state@1.4.4)(prosemirror-view@1.42.3)(y-protocols@1.0.7(yjs@13.6.32))(yjs@13.6.32))(y-websocket@3.1.0(yjs@13.6.32))(yjs@13.6.32)
       '@hocuspocus/provider':
         specifier: ^4.6.0
         version: 4.6.0(y-protocols@1.0.7(yjs@13.6.32))(yjs@13.6.32)
+      '@opensuite/contracts':
+        specifier: workspace:*
+        version: link:../../packages/contracts
       '@schnsrw/core':
         specifier: ^0.1.1
         version: 0.1.1
@@ -221,8 +221,8 @@ importers:
         specifier: workspace:*
         version: link:../contracts
       '@opensuitehq/engine':
-        specifier: 0.1.3
-        version: 0.1.3
+        specifier: 0.1.4
+        version: 0.1.4
     devDependencies:
       '@types/node':
         specifier: ^22.10.2
@@ -1364,40 +1364,40 @@ packages:
       ai: ^7.0.0
       zod: ^3.25.76 || ^4.1.8
 
-  '@opensuitehq/engine-darwin-arm64@0.1.3':
-    resolution: {integrity: sha512-AzWGNHV9E3jA12FvgQxdcWJlxT59nIdOJoLSxCptSZX+i1SGfoV+f3nr4FWneu5Ts8kmYNlG2gJYTJNjFmtODw==}
+  '@opensuitehq/engine-darwin-arm64@0.1.4':
+    resolution: {integrity: sha512-jFNb/YJjgFxLYb1VM1AUNVm6H5veHmF2vg9JcAUinqMFGpQHayqudppZ2ttJEKU5MHCK5ylaPltnv60ISjVcHw==}
     engines: {node: '>=20'}
     cpu: [arm64]
     os: [darwin]
 
-  '@opensuitehq/engine-darwin-x64@0.1.3':
-    resolution: {integrity: sha512-Z+HVDFBpVIjFCsJGQI3+S5kff3E6Gui8CEc4hDLDVkSw+/l9jq7KC6mZ/WmXplTGAKCDskADlMZ8l0q8ePS3ww==}
+  '@opensuitehq/engine-darwin-x64@0.1.4':
+    resolution: {integrity: sha512-0ZJQnrVO5Rfm2P6DJ5drn78Q74Ax7+tqYTF7vcRnwegIrKKSJVgvLFJChgYndP1UQg9ckv1rhd8fbwtNh29++A==}
     engines: {node: '>=20'}
     cpu: [x64]
     os: [darwin]
 
-  '@opensuitehq/engine-linux-arm64-gnu@0.1.3':
-    resolution: {integrity: sha512-9XqvW9SItZys15WugeMPw9DSrtskfVJ8QMMM5vmjGPHi+DgHPagw4KUO2MYptSm9F4W7oW9ycC8Rpcgdg5Z3Ew==}
+  '@opensuitehq/engine-linux-arm64-gnu@0.1.4':
+    resolution: {integrity: sha512-A3TtcAEuFnOqANnGBN7TRCzBVZWMGi7bDshKPrhkXT94NqWPYGYSWB/9DBXsApjsr8mbsZYIVsfilfI6DcgIug==}
     engines: {node: '>=20'}
     cpu: [arm64]
     os: [linux]
     libc: [glibc]
 
-  '@opensuitehq/engine-linux-x64-gnu@0.1.3':
-    resolution: {integrity: sha512-IsImiw9W9W3/fYELozg7ff5/9P0tMbqrbssjcuiuNxjmeu3N+wZZ5CWiByCrmZw1TaeUZniX/qNLAMS5z1H0mw==}
+  '@opensuitehq/engine-linux-x64-gnu@0.1.4':
+    resolution: {integrity: sha512-AXoS5aAVpJWT2mH9osPPNq2SJL57mFH8eLoWitG7uVhNEZDW9Tld5eDt16vE9Ce7oojtdQuAOBgwjivCytuUvw==}
     engines: {node: '>=20'}
     cpu: [x64]
     os: [linux]
     libc: [glibc]
 
-  '@opensuitehq/engine-win32-x64-msvc@0.1.3':
-    resolution: {integrity: sha512-KoowL0rVe1+j6b/oYjnBSNNYVFVhTPe4Hu9axETK5UsEZ0eEb3DtlvRzvkP4xyD6xtblgwJ9ruDkSQqvLm6Rgw==}
+  '@opensuitehq/engine-win32-x64-msvc@0.1.4':
+    resolution: {integrity: sha512-IPOwvHW17WJ779fC6AsyEW314a8Nbhnv8xaPPWJmeJ6JoC9Nfg9TicRwscExG5OsdbGhpdRGCNox05kwceOhJQ==}
     engines: {node: '>=20'}
     cpu: [x64]
     os: [win32]
 
-  '@opensuitehq/engine@0.1.3':
-    resolution: {integrity: sha512-AYKDigmT3lKWSt/izfF7y0KbEh/NbwHub22XiKpe7EMYp2meytipqVZInc/ZjeOlV/tOL+gExWvjEb9fyA535Q==}
+  '@opensuitehq/engine@0.1.4':
+    resolution: {integrity: sha512-ae88ZwhG/YTjh5tQIHdt9aE0EwG1gmFNFqDXluKK3nsgMHAnYyIFwjUHMtV9pLqCkTvMZBNgOVIvWyi+7wU37w==}
     engines: {node: '>=20'}
 
   '@opentelemetry/semantic-conventions@1.43.0':
@@ -3712,28 +3712,28 @@ snapshots:
       ai: 7.0.99(zod@4.5.4)
       zod: 4.5.4
 
-  '@opensuitehq/engine-darwin-arm64@0.1.3':
+  '@opensuitehq/engine-darwin-arm64@0.1.4':
     optional: true
 
-  '@opensuitehq/engine-darwin-x64@0.1.3':
+  '@opensuitehq/engine-darwin-x64@0.1.4':
     optional: true
 
-  '@opensuitehq/engine-linux-arm64-gnu@0.1.3':
+  '@opensuitehq/engine-linux-arm64-gnu@0.1.4':
     optional: true
 
-  '@opensuitehq/engine-linux-x64-gnu@0.1.3':
+  '@opensuitehq/engine-linux-x64-gnu@0.1.4':
     optional: true
 
-  '@opensuitehq/engine-win32-x64-msvc@0.1.3':
+  '@opensuitehq/engine-win32-x64-msvc@0.1.4':
     optional: true
 
-  '@opensuitehq/engine@0.1.3':
+  '@opensuitehq/engine@0.1.4':
     optionalDependencies:
-      '@opensuitehq/engine-darwin-arm64': 0.1.3
-      '@opensuitehq/engine-darwin-x64': 0.1.3
-      '@opensuitehq/engine-linux-arm64-gnu': 0.1.3
-      '@opensuitehq/engine-linux-x64-gnu': 0.1.3
-      '@opensuitehq/engine-win32-x64-msvc': 0.1.3
+      '@opensuitehq/engine-darwin-arm64': 0.1.4
+      '@opensuitehq/engine-darwin-x64': 0.1.4
+      '@opensuitehq/engine-linux-arm64-gnu': 0.1.4
+      '@opensuitehq/engine-linux-x64-gnu': 0.1.4
+      '@opensuitehq/engine-win32-x64-msvc': 0.1.4
 
   '@opentelemetry/semantic-conventions@1.43.0': {}
 
@@ -4932,7 +4932,6 @@ snapshots:
       '@img/sharp-win32-ia32': 0.35.4
       '@img/sharp-win32-x64': 0.35.4
       '@types/node': 22.20.1
-    optional: true
 
   sonic-boom@4.2.1:
     dependencies:

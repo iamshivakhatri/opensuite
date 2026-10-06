@@ -2,7 +2,7 @@
 #   docker build -t opensuite-api .
 # Atlas/Dokploy: docker-compose.atlas.yml (API only; external DB + MinIO).
 #
-# Native engine: @opensuitehq/engine@0.1.3 from npm (glibc platforms only).
+# Native engine: @opensuitehq/engine@0.1.4 from npm (glibc platforms only).
 # Base image is Debian bookworm (glibc) — Alpine/musl is incompatible.
 
 # syntax=docker/dockerfile:1.7

@@ -38,15 +38,14 @@ Default name: `<document filename without .docx> Style`, bounded to 160 characte
 
 Unit fixtures cover deterministic output, custom/default body selection, headings, repeated patterns, isolated overrides, table isolation, lists, page setup, and unresolved/partial evidence. Capability checks cover discovery, explicit load/use, compact output, and unsaved-edit rejection. The execution isolation suite checks open-document binding and service wiring without paid models.
 
-Run the API build, then the opt-in integration test:
+Run the API build, then the opt-in integration test (uses published `@opensuitehq/engine@0.1.4` unless `OPENSUITE_ENGINE_PATH` is set):
 
 ```sh
-OPENSUITE_ENGINE_PATH=/absolute/path/opensuite-engine/crates/opensuite-node/index.js \
 RUN_STYLE_PROFILE_DB_TESTS=true \
 node --test apps/api/dist/style-profiles/service.integration.test.js
 ```
 
-This test requires PostgreSQL schema creation rights. It creates a random isolated schema on `DATABASE_URL`, applies the entire migration chain there (substituting historical `public` schema identifiers), and drops that test schema in cleanup. It does not migrate the application schema. Each of the three repository dogfood DOCX files is learned from an explicit older version, saved, and reloaded through a fresh Node process/database pool with full structural equality. Tests check source hashes/version counts, personal CRUD, cross-user/source-workspace access, wrong version IDs, latest-tip provenance, and trashed-source rejection. Explicit extraction tests require a local engine path and fail if unavailable.
+This test requires PostgreSQL schema creation rights. It creates a random isolated schema on `DATABASE_URL`, applies the entire migration chain there (substituting historical `public` schema identifiers), and drops that test schema in cleanup. It does not migrate the application schema. Each of the three repository dogfood DOCX files is learned from an explicit older version, saved, and reloaded through a fresh Node process/database pool with full structural equality. Tests check source hashes/version counts, personal CRUD, cross-user/source-workspace access, wrong version IDs, latest-tip provenance, and trashed-source rejection. Extraction requires `@opensuitehq/engine@0.1.4` (or a valid `OPENSUITE_ENGINE_PATH` override).
 
 Validated real profiles:
 
@@ -106,6 +105,6 @@ A deterministic Cincinnati Sports Club October newsletter contains unrelated sam
 
 Result: **27 matched, 0 mismatched, 1 N/A, 9 unsupported**. Unsupported facts are body/Title/Heading1 line spacing, Title/Heading1 keep-with-next, header/footer/gutter page distances, and table width declaration. Additional tests cover Heading2, colors, alignment, explicit landscape, intentional mismatches, absent tables, unknown themes, unsafe targets, authorization/version conflicts, stage rollback, list preservation, and false completion.
 
-Known limits: no custom page sizes, numbering/marker redesign, richer section layout, arbitrary borders, header/footer creation, BrandProfile, or organization precedence. Multisection page setup is left unresolved; richer unsafe content can reject staging. The local engine remains selected through `OPENSUITE_ENGINE_PATH`; npm stays at 0.1.3. Generated dogfood files are `/private/tmp/opensuite-phase3-newsletter.docx` and `/private/tmp/opensuite-phase3-fidelity.json`.
+Known limits: no custom page sizes, numbering/marker redesign, richer section layout, arbitrary borders, header/footer creation, BrandProfile, or organization precedence. Multisection page setup is left unresolved; richer unsafe content can reject staging. Application/runtime uses published `@opensuitehq/engine@0.1.4`; `OPENSUITE_ENGINE_PATH` is optional for local engine development only. Generated dogfood files are `/private/tmp/opensuite-phase3-newsletter.docx` and `/private/tmp/opensuite-phase3-fidelity.json`.
 
 Validation: API suite and isolation/normalization/capability/placeholder/native application tests; isolated PostgreSQL style integration; engine-client and DB unit suites; API and web typechecks; web tests through the existing tsx loader (the default strip-types runner still cannot resolve extensionless imports); `git diff --check`. Other opt-in infrastructure tests remain skipped in ordinary suites.

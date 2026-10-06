@@ -1,8 +1,8 @@
 /**
- * Manual Phase 1 dogfood: load a DOCX through the local native engine and
- * print a concise style-snapshot summary.
+ * Smoke: load a DOCX through the installed native engine and print a concise
+ * style-snapshot summary. Uses published `@opensuitehq/engine` unless
+ * OPENSUITE_ENGINE_PATH is set for local engine development.
  *
- * Requires OPENSUITE_ENGINE_PATH pointing at opensuite-node/index.js.
  * Run: pnpm --filter @opensuite/engine-client style-smoke
  */
 
@@ -14,19 +14,10 @@ import {
 } from "../dist/index.js";
 
 const { moduleId, fromEnv } = resolveNativeEngineModuleId();
-if (!fromEnv) {
-  console.error(
-    "OPENSUITE_ENGINE_PATH is unset; refusing to smoke against the published package.\n" +
-      "Example:\n" +
-      '  OPENSUITE_ENGINE_PATH="$PWD/../opensuite-engine/crates/opensuite-node/index.js" pnpm --filter @opensuite/engine-client style-smoke',
-  );
-  process.exit(1);
-}
-
 const binding = await createNapiDocxEngineBinding();
 const caps = binding.getDocxCapabilities();
 const bytes = new Uint8Array(
-  buildMinimalDocx(["Phase 1 style snapshot smoke"]),
+  buildMinimalDocx(["Style snapshot smoke"]),
 );
 const snapshot = await inspectDocxStyleSnapshot(bytes, binding);
 
@@ -46,7 +37,9 @@ const headerFooter =
         .join(", ");
 
 console.log(`engine: ${caps.engineVersion}`);
-console.log(`source: OPENSUITE_ENGINE_PATH → ${moduleId}`);
+console.log(
+  `source: ${fromEnv ? "OPENSUITE_ENGINE_PATH" : "npm"} → ${moduleId}`,
+);
 console.log(`ok: ${snapshot.ok} schemaVersion: ${snapshot.schemaVersion}`);
 console.log(`fonts: ${fonts}`);
 console.log(`paragraphStyles: ${paragraphStyles}`);

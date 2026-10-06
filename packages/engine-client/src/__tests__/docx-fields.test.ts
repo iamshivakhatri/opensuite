@@ -4,7 +4,7 @@ import { bindDocxDocument, createNapiDocxEngineBinding } from "../index.js";
 
 test("typed fields and TOC bridge round-trip with bounded inspection", async t => {
   const binding = await createNapiDocxEngineBinding();
-  if (!binding.getDocxCapabilities().formats[0]?.capabilities.includes("insert_toc")) return t.skip("local field engine required");
+  if (!binding.getDocxCapabilities().formats[0]?.capabilities.includes("insert_toc")) return t.skip("insert_toc capability required");
   const doc = bindDocxDocument({ binding, bytes: binding.createBlankDocx() });
   assert.equal((await doc.mutate("insert_fields", { location: "footer", content: [{ kind: "text", text: "Page " }, { kind: "page" }, { kind: "text", text: " of " }, { kind: "numPages" }] })).ok, true);
   assert.equal((await doc.mutate("insert_toc", { placement: { kind: "start" }, title: "Table of Contents" })).ok, true);

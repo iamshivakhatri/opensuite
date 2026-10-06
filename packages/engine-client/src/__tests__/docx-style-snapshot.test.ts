@@ -52,8 +52,7 @@ test("inspectDocxStyleSnapshot passes bytes to the typed engine method", async (
 });
 
 test(
-  "local native engine returns a structured style snapshot",
-  { skip: !process.env.OPENSUITE_ENGINE_PATH },
+  "installed native engine returns a structured style snapshot",
   async () => {
     const binding = await createNapiDocxEngineBinding();
     const bytes = new Uint8Array(buildMinimalDocx(["Local style check"]));
@@ -67,7 +66,7 @@ test(
   },
 );
 
-test('paragraph inspection transports native list facts for preservation decisions', { skip: !process.env.OPENSUITE_ENGINE_PATH }, async () => {
+test('paragraph inspection transports native list facts for preservation decisions', async () => {
   const binding = await createNapiDocxEngineBinding();
   const input = buildMinimalDocx(['First item']);
   const changed = await binding.executeDocxExtended!(input, 'executeDocxSetParagraphsList', { targets: [{ text: 'First item' }], kind: 'bullet' });

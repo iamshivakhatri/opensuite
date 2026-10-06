@@ -8,7 +8,7 @@ import { test } from 'node:test';
 import Fastify from 'fastify';
 import { eq } from 'drizzle-orm';
 import { createDbClient, schema } from '@opensuite/db';
-import { createNapiDocxEngineBinding, inspectDocxStyleSnapshot, resolveNativeEngineModuleId } from '@opensuite/engine-client';
+import { createNapiDocxEngineBinding, inspectDocxStyleSnapshot } from '@opensuite/engine-client';
 import { createDocumentService } from '../documents/service.js';
 import { createMemoryObjectStorage } from '../storage/index.js';
 import { createStyleProfileService } from './service.js';
@@ -23,7 +23,11 @@ const hash = (bytes: Uint8Array) => createHash('sha256').update(bytes).digest('h
 
 test('real DOCX learn/save/fresh-process reload, CRUD, exact provenance, ownership, and source safety', { skip: !enabled }, async () => {
   assert.ok(process.env.DATABASE_URL, 'DATABASE_URL is required');
-  assert.equal(resolveNativeEngineModuleId().fromEnv, true, 'OPENSUITE_ENGINE_PATH must select the local Phase 1 engine');
+  assert.equal(
+    (await createNapiDocxEngineBinding()).getDocxCapabilities().engineVersion,
+    '0.1.4',
+    'style profile extraction requires installed @opensuitehq/engine@0.1.4',
+  );
   const admin = createDbClient({ databaseUrl: process.env.DATABASE_URL });
   const testSchema = `style_test_${randomUUID().replaceAll('-', '')}`;
   const quoted = `"${testSchema}"`;
