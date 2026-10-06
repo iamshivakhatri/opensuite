@@ -802,6 +802,21 @@ test("known document and provider failures have specific safe explanations", () 
   assert.equal(describeRunFailure(new Error("database password is secret"), []), null);
 });
 
+test("managed AI plain errors still map to actionable user-facing copy", () => {
+  assert.deepEqual(describeRunFailure(new Error("Managed AI is unavailable."), []), {
+    code: "MANAGED_USAGE_EXHAUSTED",
+    message: "Managed AI credits are exhausted. Add your own API key in AI & Models settings.",
+  });
+  assert.deepEqual(describeRunFailure(new Error("Managed AI is not available."), []), {
+    code: "MANAGED_USAGE_DISABLED",
+    message: "Managed AI is unavailable. Add your own API key in AI & Models settings.",
+  });
+  assert.deepEqual(describeRunFailure(new Error("Managed AI accounting is unavailable."), []), {
+    code: "MANAGED_USAGE_ACCOUNTING_FAILED",
+    message: "Managed AI is temporarily unavailable. Use your own API key or try again later.",
+  });
+});
+
 test("a document creation run tells the model to create before editing", async () => {
   const persistence = memoryPersistence("user-1");
   let system = "";

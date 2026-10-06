@@ -228,6 +228,22 @@ export function describeRunFailure(error: unknown, transcript: readonly Transcri
   if (code === "AGENT_PERSISTENCE_FAILED") {
     return { code, message: "Could not save agent document changes. The previous version is unchanged." };
   }
+  const managedUsage = describeManagedUsageFailure(code, error);
+  if (managedUsage) return managedUsage;
+  if (transcript.some((entry) => entry.status === "failed" && entry.summary.includes("NO_ACTIVE_DOCUMENT"))) {
+    return { code: "NO_ACTIVE_DOCUMENT", message: "No document was active, and the agent tried to edit before creating one. Retry the request or open a document first." };
+  }
+  if (error instanceof Error && /Invalid '(?:input|tools)\[\d+\]\.name'/.test(error.message)) {
+    return { code: "MODEL_TOOL_NAME_REJECTED", message: "The AI provider rejected a document tool name. Please try another model or contact support." };
+  }
+  return null;
+}
+
+/** Prefer error.code; fall back to known safe managed-AI messages from Cloud overlays. */
+function describeManagedUsageFailure(
+  code: unknown,
+  error: unknown,
+): { code: string; message: string } | null {
   if (code === "MANAGED_USAGE_DISABLED" || code === "MANAGED_TRIAL_DISABLED") {
     return { code: String(code), message: "Managed AI is unavailable. Add your own API key in AI & Models settings." };
   }
@@ -237,11 +253,16 @@ export function describeRunFailure(error: unknown, transcript: readonly Transcri
   if (code === "MANAGED_USAGE_ACCOUNTING_FAILED" || code === "MANAGED_TRIAL_ACCOUNTING_FAILED") {
     return { code: String(code), message: "Managed AI is temporarily unavailable. Use your own API key or try again later." };
   }
-  if (transcript.some((entry) => entry.status === "failed" && entry.summary.includes("NO_ACTIVE_DOCUMENT"))) {
-    return { code: "NO_ACTIVE_DOCUMENT", message: "No document was active, and the agent tried to edit before creating one. Retry the request or open a document first." };
+
+  const message = error instanceof Error ? error.message : typeof error === "string" ? error : "";
+  if (message === "Managed AI is not available.") {
+    return { code: "MANAGED_USAGE_DISABLED", message: "Managed AI is unavailable. Add your own API key in AI & Models settings." };
   }
-  if (error instanceof Error && /Invalid '(?:input|tools)\[\d+\]\.name'/.test(error.message)) {
-    return { code: "MODEL_TOOL_NAME_REJECTED", message: "The AI provider rejected a document tool name. Please try another model or contact support." };
+  if (message === "Managed AI is unavailable.") {
+    return { code: "MANAGED_USAGE_EXHAUSTED", message: "Managed AI credits are exhausted. Add your own API key in AI & Models settings." };
+  }
+  if (message === "Managed AI accounting is unavailable.") {
+    return { code: "MANAGED_USAGE_ACCOUNTING_FAILED", message: "Managed AI is temporarily unavailable. Use your own API key or try again later." };
   }
   return null;
 }
