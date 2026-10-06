@@ -4,6 +4,8 @@
 
 OpenSuite communicates with it only through `packages/engine-client`.
 
+**After a new engine publish:** follow the application bump runbook in [`docs/engine_upgrade.md`](./engine_upgrade.md) (files to touch, tests, Docker, cloud notes).
+
 ## Rule
 
 Application code must never manipulate Office internals as a shortcut around the engine.
