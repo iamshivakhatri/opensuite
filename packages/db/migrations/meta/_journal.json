@@ -141,6 +141,48 @@
       "when": 1790553600000,
       "tag": "0019_completed_with_input_needed",
       "breakpoints": true
+    },
+    {
+      "idx": 20,
+      "version": "7",
+      "when": 1791072000000,
+      "tag": "0020_capability_events",
+      "breakpoints": true
+    },
+    {
+      "idx": 21,
+      "version": "7",
+      "when": 1791072001000,
+      "tag": "0021_capability_kind",
+      "breakpoints": true
+    },
+    {
+      "idx": 22,
+      "version": "7",
+      "when": 1791072002000,
+      "tag": "0022_capability_recommendations",
+      "breakpoints": true
+    },
+    {
+      "idx": 23,
+      "version": "7",
+      "when": 1791072003000,
+      "tag": "0023_style_profiles",
+      "breakpoints": true
+    },
+    {
+      "idx": 24,
+      "version": "7",
+      "when": 1791087151581,
+      "tag": "0024_workspace_brand",
+      "breakpoints": true
+    },
+    {
+      "idx": 25,
+      "version": "7",
+      "when": 1791122860188,
+      "tag": "0025_workspace_asset_images",
+      "breakpoints": true
     }
   ]
 }

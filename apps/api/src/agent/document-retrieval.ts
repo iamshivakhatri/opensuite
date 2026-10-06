@@ -451,7 +451,10 @@ export function formatWorkspaceRetrievedContext(
 ): string {
   const lines = ["WORKSPACE / REQUEST CONTEXT", formatWorkspaceManifest(artifacts, openDocumentId, taggedDocumentIds)];
   lines.push("WORKING SET");
-  for (const artifact of workingSet) lines.push(`- ${artifact.name} (${artifact.format}; ID ${artifact.documentId})`);
+  for (const artifact of workingSet) {
+    const tip = artifact.latestVersionNumber !== undefined ? `tip v${artifact.latestVersionNumber}; ` : "";
+    lines.push(`- ${artifact.name} (${artifact.format}; ID ${artifact.documentId}; ${tip}version ${artifact.versionId})`);
+  }
   if (workingSet.length === 0) lines.push("- No active or tagged documents");
   if (directContent) lines.push(directContent);
   else {

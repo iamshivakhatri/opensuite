@@ -21,7 +21,7 @@ export interface AgentTurnProgress {
   readonly runId: string;
   readonly durationMs: number;
   readonly lines: readonly AgentProgressLine[];
-  readonly outcome: "completed" | "completed_with_input_needed" | "cancelled" | "failed" | "paused";
+  readonly outcome: "completed" | "completed_with_input_needed" | "cancelled" | "failed" | "paused" | "partial";
 }
 
 /** Semantic activity family — used for details recovery grouping. */
@@ -231,6 +231,14 @@ const TOOL_LABELS: Record<string, { active: string; done: string }> = {
     active: "Adding image",
     done: "Added image",
   },
+  "document.insert_image_asset": {
+    active: "Adding image",
+    done: "Added image",
+  },
+  "document.list_image_assets": {
+    active: "Listing images",
+    done: "Listed images",
+  },
   "document.delete_picture": {
     active: "Removing image",
     done: "Removed image",
@@ -240,6 +248,10 @@ const TOOL_LABELS: Record<string, { active: string; done: string }> = {
     done: "Sized image",
   },
   "document.replace_picture": {
+    active: "Replacing image",
+    done: "Replaced image",
+  },
+  "document.replace_image_asset": {
     active: "Replacing image",
     done: "Replaced image",
   },
@@ -291,6 +303,22 @@ const TOOL_LABELS: Record<string, { active: string; done: string }> = {
     active: "Asking for clarification",
     done: "Needs your input",
   },
+  "style.learn_from_document": {
+    active: "Learning document style",
+    done: "Saved style profile",
+  },
+  "style.list_profiles": {
+    active: "Listing saved styles",
+    done: "Listed saved styles",
+  },
+  "style.apply_profile": {
+    active: "Applying saved style",
+    done: "Applied saved style",
+  },
+  "style.get_profile": {
+    active: "Reading saved style",
+    done: "Read saved style",
+  },
   "slides.update_text": {
     active: "Updating slide text",
     done: "Updated slide text",
@@ -302,6 +330,15 @@ const TOOL_LABELS: Record<string, { active: string; done: string }> = {
 };
 
 const READ_TOOLS = new Set([
+  "style.list_profiles",
+  "style.get_profile",
+  "capabilities.list",
+  "capabilities.search",
+  "capabilities.load",
+  "workspace.search_documents",
+  "workspace.inspect_document",
+  "workspace.select_document",
+  "compute.calculator",
   "document.inspect",
   "document.find",
   "document.capabilities",
@@ -337,6 +374,7 @@ export function activityKindForTool(toolName: string): ActivityKind {
   if (toolName === "finish" || toolName === "finish_with_input_needed" || toolName === "request_clarification") return "finish";
   if (READ_TOOLS.has(toolName)) return "read";
   if (LIFECYCLE_TOOLS.has(toolName)) return "lifecycle";
+  if (toolName === "style.apply_profile") return "mutate";
   if (toolName.startsWith("document.") || toolName.startsWith("workspace.")) {
     return "mutate";
   }
@@ -831,9 +869,12 @@ export function activityFamilyForTool(toolName: string): ActivityFamily {
     case "document.set_table_cell_shading":
       return "table";
     case "document.insert_picture":
+    case "document.insert_image_asset":
+    case "document.list_image_assets":
     case "document.delete_picture":
     case "document.set_picture_size":
     case "document.replace_picture":
+    case "document.replace_image_asset":
       return "media";
     case "document.insert_page_break":
     case "document.delete_page_break":
@@ -1041,32 +1082,58 @@ export function liveHeadlineFromActivities(
   return "Working";
 }
 
+function unrecoveredMutateFailures(lines: readonly AgentProgressLine[]): boolean {
+  const recovered = recoveredErrorIds(lines);
+  return technicalProgressLines(visibleAgentProgress(lines)).some(
+    (line) =>
+      line.status === "error" &&
+      !isTerminalLine(line) &&
+      line.toolName &&
+      activityKindForTool(line.toolName) === "mutate" &&
+      !recovered.has(line.id),
+  );
+}
+
 function completionSummaryLabel(lines: readonly AgentProgressLine[]): string {
   const technical = technicalProgressLines(visibleAgentProgress(lines));
   let createdName: string | null = null;
   let hasLifecycle = false;
   let hasMutation = false;
   let hasRead = false;
+  let hasSavedStyle = false;
+  let hasTocInsert = false;
+  let hasOtherMutation = false;
 
   for (const line of technical) {
-    if (!line.toolName) continue;
-    if (LIFECYCLE_TOOLS.has(line.toolName) && line.status === "done") {
+    if (!line.toolName || line.status !== "done") continue;
+    if (line.toolName === "style.learn_from_document") {
+      hasSavedStyle = true;
+    } else if (LIFECYCLE_TOOLS.has(line.toolName)) {
       hasLifecycle = true;
       if (line.label.startsWith("Created ")) {
         createdName = line.label.slice("Created ".length);
       }
-    } else if (READ_TOOLS.has(line.toolName)) {
+    } else if (line.toolName === "document.inspect" || line.toolName === "document.find") {
       hasRead = true;
-    } else if (line.toolName !== "finish" && line.toolName !== "finish_with_input_needed" && line.toolName !== "request_clarification") {
+    } else if (activityKindForTool(line.toolName) === "mutate") {
       hasMutation = true;
+      if (line.toolName === "document.insert_toc") hasTocInsert = true;
+      else hasOtherMutation = true;
     }
   }
 
+  const unrecoveredMutate = unrecoveredMutateFailures(lines);
   if (createdName) return `Created ${createdName}`;
   if (hasLifecycle && !hasMutation) return "Created document";
+  if (hasMutation && unrecoveredMutate) return "Partially updated document";
+  if (!hasMutation && unrecoveredMutate) return "Could not complete requested update";
+  // Auto field-refresh may populate TOC at save; validation still warns when refresh_required remains.
+  if (hasTocInsert && !hasOtherMutation) return "Added table of contents";
+  if (hasTocInsert && hasOtherMutation) return "Updated document";
   if (hasMutation) return "Updated document";
+  if (hasSavedStyle) return "Saved style profile";
   if (hasRead) return "Reviewed document";
-  return "Done";
+  return "Completed";
 }
 
 function completedHeadline(
@@ -1079,7 +1146,17 @@ function completedHeadline(
   if (outcome === "cancelled") {
     return elapsed ? `Stopped after ${elapsed}` : "Stopped";
   }
+  if (outcome === "partial") {
+    const summary = completionSummaryLabel(lines);
+    const label = summary.startsWith("Partially") || summary.startsWith("Could not")
+      ? summary
+      : "Partially updated document";
+    return elapsed ? `${label} · ${elapsed}` : label;
+  }
   if (outcome === "failed") {
+    if (unrecoveredMutateFailures(lines) && completionSummaryLabel(lines).startsWith("Partially")) {
+      return elapsed ? `Partially updated document · ${elapsed}` : "Partially updated document";
+    }
     return elapsed ? `Couldn't complete · ${elapsed}` : "Couldn't complete";
   }
   if (outcome === "paused") {

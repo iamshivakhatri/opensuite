@@ -73,6 +73,7 @@ async function check(
     targetAdvanced?: boolean;
     sourcesUnchanged?: boolean;
     successfulMutations?: string[];
+    unrecoveredFailedMutations?: string[];
     created?: boolean;
     inputNeeded?: boolean;
   } = {},
@@ -85,6 +86,7 @@ async function check(
     targetAdvanced: options.targetAdvanced ?? true,
     sourcesUnchanged: options.sourcesUnchanged ?? true,
     successfulMutations: options.successfulMutations,
+    unrecoveredFailedMutations: options.unrecoveredFailedMutations,
     created: options.created,
     inputNeeded: options.inputNeeded,
   });
@@ -166,6 +168,181 @@ test("successful row insertion explains its matching structural difference", asy
   const checks = await check("September ROWS_ADDED", undefined, { successfulMutations: ["document.insert_table_rows"] });
   assert.equal(checks.find((item) => item.id === "structure")?.status, "pass");
   assert.match(checks.find((item) => item.id === "structure")?.message ?? "", /row count changed as expected: 2 → 4/);
+  assert.equal(checks.find((item) => item.id === "task")?.status, "pass");
+});
+
+test("intentional section count changes are expected, not structure warnings", async () => {
+  const binding = {
+    async inspectDocx(data: Uint8Array, request: { focus: { kind: string } }) {
+      const content = new TextDecoder().decode(data);
+      const sections = content.includes("SECTIONS_2") ? 2 : 1;
+      if (request.focus.kind === "overview") {
+        return { ok: true, overview: { sectionCount: sections, bodyBlockCount: 2, paragraphCount: 2, tableCount: 1 } };
+      }
+      if (request.focus.kind === "body_blocks") {
+        return { ok: true, bodyBlocks: { page: { total: 0, offset: 0, returned: 0, hasMore: false }, items: [] } };
+      }
+      return { ok: true, [request.focus.kind]: { page: { total: 1, offset: 0, returned: 1, hasMore: false }, items: [{ occurrence: 0, handle: "t0", rowCount: 2, isRectangular: true, columns: [{ occurrence: 0, handle: "c0", text: "A" }], rows: [] }] } };
+    },
+    async findDocxText() {
+      return { ok: true, query: "", matchCount: 0, matches: [], diagnostics: [] };
+    },
+  } as unknown as DocxEngineBinding;
+  const checks = await verifyDocumentUpdate({
+    binding,
+    before: bytes("SECTIONS_1"),
+    after: bytes("SECTIONS_2"),
+    instruction: "Add a landscape section",
+    targetAdvanced: true,
+    sourcesUnchanged: true,
+    successfulMutations: ["document.insert_section_break"],
+  });
+  assert.equal(checks.find((item) => item.id === "structure")?.status, "pass");
+  assert.match(checks.find((item) => item.id === "structure")?.message ?? "", /Section count changed as expected: 1 → 2/);
+});
+
+test("unrecovered failed mutations mark the task incomplete", async () => {
+  const checks = await check("September report", undefined, {
+    successfulMutations: ["document.replace_text"],
+    unrecoveredFailedMutations: ["document.set_table_cells_text"],
+  });
+  assert.equal(checks.find((item) => item.id === "task")?.status, "fail");
+  assert.match(checks.find((item) => item.id === "task")?.message ?? "", /Partial update.*set_table_cells_text/);
+});
+
+test("unexpected field loss without field mutations fails verification", async () => {
+  const binding = {
+    async inspectDocx(data: Uint8Array, request: { focus: { kind: string } }) {
+      if (request.focus.kind === "overview") {
+        return { ok: true, overview: { sectionCount: 1, bodyBlockCount: 3, paragraphCount: 3, tableCount: 0 } };
+      }
+      if (request.focus.kind === "body_blocks") {
+        return { ok: true, bodyBlocks: { page: { total: 0, offset: 0, returned: 0, hasMore: false }, items: [] } };
+      }
+      return { ok: true, [request.focus.kind]: { page: { total: 0, offset: 0, returned: 0, hasMore: false }, items: [] } };
+    },
+    async findDocxText() {
+      return { ok: true, query: "", matchCount: 0, matches: [], diagnostics: [] };
+    },
+    async inspectDocxFields(data: Uint8Array) {
+      const hasToc = new TextDecoder().decode(data).includes("TOC");
+      return {
+        ok: true,
+        total: hasToc ? 1 : 0,
+        offset: 0,
+        hasMore: false,
+        fields: hasToc
+          ? [{
+            index: 0, kind: "toc", representation: "complex", instruction: "TOC \\o \"1-3\"",
+            cachedResult: "Update this table of contents in Word.", partName: "word/document.xml",
+            paragraphIndex: 0, structure: "complete", dirty: true, locked: false,
+            headingLevels: [1, 3], truncated: false, diagnostics: [],
+          }]
+          : [],
+        diagnostics: [],
+      };
+    },
+  } as unknown as DocxEngineBinding;
+  const checks = await verifyDocumentUpdate({
+    binding,
+    before: bytes("Heading TOC"),
+    after: bytes("Heading flattened"),
+    instruction: "Rename the executive summary heading",
+    targetAdvanced: true,
+    sourcesUnchanged: true,
+    successfulMutations: ["document.replace_text"],
+  });
+  assert.equal(checks.find((item) => item.id === "fields")?.status, "fail");
+  assert.match(checks.find((item) => item.id === "fields")?.message ?? "", /Unexpected TOC\/field loss/);
+});
+
+test("TOC dirty refresh_required is a warning, not corruption", async () => {
+  const binding = {
+    async inspectDocx(data: Uint8Array, request: { focus: { kind: string } }) {
+      if (request.focus.kind === "overview") {
+        return { ok: true, overview: { sectionCount: 1, bodyBlockCount: 3, paragraphCount: 3, tableCount: 0 } };
+      }
+      if (request.focus.kind === "body_blocks") {
+        return { ok: true, bodyBlocks: { page: { total: 0, offset: 0, returned: 0, hasMore: false }, items: [] } };
+      }
+      return { ok: true, [request.focus.kind]: { page: { total: 0, offset: 0, returned: 0, hasMore: false }, items: [] } };
+    },
+    async findDocxText() {
+      return { ok: true, query: "", matchCount: 0, matches: [], diagnostics: [] };
+    },
+    async inspectDocxFields() {
+      return {
+        ok: true,
+        total: 1,
+        offset: 0,
+        hasMore: false,
+        fields: [{
+          index: 0, kind: "toc", representation: "complex", instruction: "TOC \\o \"1-3\"",
+          cachedResult: "Right-click and select Update Field", partName: "word/document.xml",
+          paragraphIndex: 0, structure: "complete", dirty: true, locked: false,
+          headingLevels: [1, 3], truncated: false, diagnostics: [],
+        }],
+        diagnostics: [],
+      };
+    },
+  } as unknown as DocxEngineBinding;
+  const checks = await verifyDocumentUpdate({
+    binding,
+    before: bytes("Heading"),
+    after: bytes("Heading with TOC"),
+    instruction: "Add a table of contents",
+    targetAdvanced: true,
+    sourcesUnchanged: true,
+    successfulMutations: ["document.insert_toc"],
+  });
+  assert.equal(checks.find((item) => item.id === "fields")?.status, "warning");
+  assert.match(checks.find((item) => item.id === "fields")?.message ?? "", /refresh_required/);
+  assert.equal(checks.find((item) => item.id === "task")?.status, "warning");
+  assert.equal(checks.some((item) => item.status === "fail"), false);
+});
+
+test("populated TOC after refresh clears refresh_required", async () => {
+  const binding = {
+    async inspectDocx(_data: Uint8Array, request: { focus: { kind: string } }) {
+      if (request.focus.kind === "overview") {
+        return { ok: true, overview: { sectionCount: 1, bodyBlockCount: 3, paragraphCount: 3, tableCount: 0 } };
+      }
+      if (request.focus.kind === "body_blocks") {
+        return { ok: true, bodyBlocks: { page: { total: 0, offset: 0, returned: 0, hasMore: false }, items: [] } };
+      }
+      return { ok: true, [request.focus.kind]: { page: { total: 0, offset: 0, returned: 0, hasMore: false }, items: [] } };
+    },
+    async findDocxText() {
+      return { ok: true, query: "", matchCount: 0, matches: [], diagnostics: [] };
+    },
+    async inspectDocxFields() {
+      return {
+        ok: true,
+        total: 1,
+        offset: 0,
+        hasMore: false,
+        fields: [{
+          index: 0, kind: "toc", representation: "complex", instruction: ' TOC \\o "1-3" ',
+          cachedResult: "Introduction1Background1Primary Goal2", partName: "word/document.xml",
+          paragraphIndex: 0, structure: "complete", dirty: null, locked: null,
+          headingLevels: [1, 3], truncated: false, diagnostics: [],
+        }],
+        diagnostics: [],
+      };
+    },
+  } as unknown as DocxEngineBinding;
+  const checks = await verifyDocumentUpdate({
+    binding,
+    before: bytes("Heading"),
+    after: bytes("Heading with populated TOC"),
+    instruction: "Add a table of contents",
+    targetAdvanced: true,
+    sourcesUnchanged: true,
+    successfulMutations: ["document.insert_toc"],
+  });
+  assert.equal(checks.find((item) => item.id === "fields")?.status, "pass");
+  assert.equal(checks.find((item) => item.id === "task")?.status, "pass");
+  assert.equal(checks.some((item) => /refresh_required/i.test(item.message)), false);
 });
 
 test("additive totals reconcile or warn independently of saving", async () => {
@@ -221,4 +398,18 @@ test("table loss without a matching delete remains a warning", async () => {
   const checks = await check("September TABLE_LOST", undefined, { successfulMutations: ["document.insert_table_rows"] });
   assert.equal(checks.find((item) => item.id === "structure")?.status, "warning");
   assert.match(checks.find((item) => item.id === "structure")?.message ?? "", /Table count changed unexpectedly: 1 → 0/);
+});
+
+test('actual resume placeholders require input, while ordinary bracket text stays valid', async () => {
+  const placeholders = ['[Email]', '[Phone]', '[City, State]', '[LinkedIn]', '[Add a key responsibility ...]', '[Degree]', '[Graduation year]'];
+  for (const placeholder of placeholders) {
+    const checks = await check(`Resume ${placeholder}`, 'Create a resume', { inputNeeded: true });
+    const result = checks.find(item => item.id === 'placeholders');
+    assert.equal(result?.status, 'warning', placeholder);
+    assert.equal(result?.message, '1 unresolved values require user input');
+    assert.match(result?.evidence ?? '', new RegExp(placeholder.slice(1, -1).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
+  }
+  assert.equal((await check('[Add a key responsibility with specific details about your most recent project and its measurable business result here]')).find(item => item.id === 'placeholders')?.status, 'warning');
+  assert.equal((await check(placeholders.join(' '), 'Create a resume')).find(item => item.id === 'placeholders')?.message, '7 unresolved placeholder(s)');
+  assert.equal((await check('References [1], [Smith 2024], array [a, b], and units [kg].')).find(item => item.id === 'placeholders')?.status, 'pass');
 });

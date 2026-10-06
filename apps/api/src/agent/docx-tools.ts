@@ -18,6 +18,24 @@ import {
   type BoundDocumentHost,
   type InspectFocus,
 } from "./document-tools.js";
+import { createImageAssetTools } from "./image-asset-tools.js";
+import type { WorkspaceAssetService } from "../workspace-brand/assets.js";
+
+import { applyStylePlan, applyStyleProfileToDocument, styleApplicationSummary } from '../style-profiles/application.js';
+import type { StyleProfileService } from '../style-profiles/service.js';
+import type { StyleFidelityReport } from '../style-profiles/fidelity.js';
+import type { StyleProfileData } from '@opensuite/contracts';
+import type { ResolvedAppearance } from '../document-appearance/resolve.js';
+import { formatFieldRefreshLog, refreshWorkingDocxFields } from "./field-refresh.js";
+
+function docxCaps(binding: DocxEngineBinding): Set<string> {
+  const set = new Set<string>();
+  for (const format of binding.getDocxCapabilities().formats ?? []) {
+    if (format.format !== "docx") continue;
+    for (const capability of format.capabilities ?? []) set.add(capability);
+  }
+  return set;
+}
 
 export interface DocumentTransition {
   readonly kind: "created" | "duplicated";
@@ -28,6 +46,10 @@ export interface DocumentTransition {
 
 export interface PrimaryDocxToolsResult {
   readonly tools: AgentToolSet;
+  readonly applyStyleProfile: (profileId: string, profiles: Pick<StyleProfileService, 'get'>) => Promise<ReturnType<typeof styleApplicationSummary>>;
+  readonly applyResolvedAppearance: (appearance: ResolvedAppearance) => Promise<StyleFidelityReport>;
+  readonly getAppliedStyle: () => StyleProfileData | null;
+  readonly getStyleFidelity: () => StyleFidelityReport | null;
   readonly documentId: string | null;
   readonly getActiveDocumentId: () => string | null;
   readonly getActiveVersionId: () => string | null;
@@ -70,7 +92,7 @@ function collectHandles(value: unknown, handles: Set<string>): void {
 const HANDLE_PRESERVING_MUTATIONS = new Set([
   "set_table_formatting", "set_table_column_widths", "set_table_cell_shading",
   "set_table_cells_formatting", "set_paragraph_formatting", "set_text_formatting",
-  "set_paragraph_style",
+  "set_paragraph_style", "create_style", "update_style",
 ]);
 const SEMANTIC_HANDLE_ALTERNATIVES = new Set([
   "set_table_cells_text", "set_table_cells_formatting", "set_table_cell_shading",
@@ -109,6 +131,8 @@ function createActiveDocxSession(input: {
   let versionId: string | null = null;
   let host: ReturnType<typeof bindDocxDocument> | null = null;
   let dirty = false;
+  let styleFidelity: StyleFidelityReport | null = null;
+  let appliedStyle: StyleProfileData | null = null;
   let workingRevision = 0;
   let workingMutationCount = 0;
   const currentHandles = new Set<string>();
@@ -168,6 +192,16 @@ function createActiveDocxSession(input: {
 
   async function flush(): Promise<void> {
     if (!dirty || !host || !documentId || !versionId) return;
+
+    // Deterministic field refresh before the single version save — no extra model turn.
+    const refresh = await refreshWorkingDocxFields(input.binding, host.currentBytes());
+    if (refresh.result.detail !== "no refreshable fields") {
+      console.info(`[agent] ${formatFieldRefreshLog(refresh.result, refresh.acceptance)}`);
+    }
+    if (refresh.accepted) {
+      host = bindHost({ documentId, versionId, bytes: refresh.bytes });
+    }
+
     const fromVersionId = versionId;
     const appended = await input.documents.appendDocumentVersion({
       documentId,
@@ -204,6 +238,8 @@ function createActiveDocxSession(input: {
     expireHandles("document_rebind");
     lastHandleEvent = "rebind";
     mutationFailures.clear();
+    styleFidelity = null;
+    appliedStyle = null;
   }
 
   function requireHost(): BoundDocumentHost {
@@ -219,6 +255,7 @@ function createActiveDocxSession(input: {
     workingRevision += 1;
     workingMutationCount += applied;
     documentChangedThisTurn = true;
+    styleFidelity = null;
     const preserveHandles = modelTurn !== null && HANDLE_PRESERVING_MUTATIONS.has(capability);
     if (!preserveHandles) expireHandles("mutation_since_inspect");
     lastHandleEvent = preserveHandles ? "compatible_mutation" : "mutation";
@@ -243,6 +280,7 @@ function createActiveDocxSession(input: {
       return result;
     },
     find: (request) => requireHost().find(request),
+    renderLayout: () => requireHost().renderLayout!(),
     mutate: async (capability, operation) => {
       if (!host?.mutate) {
         return {
@@ -348,6 +386,40 @@ function createActiveDocxSession(input: {
     redirectingHost,
     getActiveDocumentId: () => documentId,
     getActiveVersionId: () => versionId,
+    getStyleFidelity: () => styleFidelity,
+    async applyStyleProfile(profileId: string, profiles: Pick<StyleProfileService, 'get'>) {
+      if (!host || !documentId || !versionId) throw new Error('Select a target document before applying a style profile');
+      if (input.editableDocumentId && documentId !== input.editableDocumentId) throw new Error('Document is reference-only');
+      const startingHost = host;
+      const revision = workingRevision;
+      const result = await applyStyleProfileToDocument({
+        profileId, profiles, documents: input.documents, binding: input.binding,
+        ownerUserId: input.ownerUserId, workspaceId: input.workspaceId,
+        documentId, versionId, bytes: host.currentBytes(),
+      });
+      if (host !== startingHost || revision !== workingRevision) throw new Error('Working revision changed during style application');
+      if (result.operationCount) {
+        host = bindHost({ documentId, versionId, bytes: result.bytes });
+        advanceWorkingState(result.operationCount, 'apply_style_profile');
+      }
+      appliedStyle = result.style;
+      styleFidelity = result.fidelity;
+      return styleApplicationSummary(result);
+    },
+    async applyResolvedAppearance(appearance: ResolvedAppearance) {
+      if (!host || !documentId || !versionId) throw new Error('Select a target document before applying appearance');
+      const startingHost = host;
+      const revision = workingRevision;
+      const result = await applyStylePlan(input.binding, host.currentBytes(), appearance.plan, appearance.provenance);
+      if (host !== startingHost || revision !== workingRevision) throw new Error('Working revision changed during appearance application');
+      if (result.operationCount) {
+        host = bindHost({ documentId, versionId, bytes: result.bytes });
+        advanceWorkingState(result.operationCount, 'apply_document_appearance');
+      }
+      styleFidelity = result.fidelity;
+      return result.fidelity;
+    },
+    getAppliedStyle: () => appliedStyle,
     getWorkingRevision: () => workingRevision,
     getWorkingDocument: () => dirty && host && documentId && versionId
       ? { documentId, baseVersionId: versionId, revision: workingRevision, bytes: host.currentBytes() }
@@ -571,6 +643,7 @@ export async function createPrimaryDocxTools(input: {
   readonly versionId: string | null;
   readonly workingDocumentIds?: readonly string[];
   readonly editableDocumentId?: string;
+  readonly workspaceAssets?: Pick<WorkspaceAssetService, "readBytes" | "listImages">;
   readonly onVersionAdvanced?: (event: {
     readonly documentId: string;
     readonly fromVersionId: string;
@@ -628,14 +701,31 @@ export async function createPrimaryDocxTools(input: {
     }
   }
 
+  const caps = docxCaps(input.binding);
+  const imageAssetTools = input.workspaceAssets
+    ? createImageAssetTools({
+        assets: input.workspaceAssets,
+        ownerUserId: input.ownerUserId,
+        workspaceId: input.workspaceId,
+        mutate: (capability, operation) => session.redirectingHost.mutate!(capability, operation),
+        canInsert: caps.has("insert_picture"),
+        canReplace: caps.has("replace_picture"),
+      })
+    : {};
+
   return {
     tools: {
       ...createDocumentTools(session.redirectingHost),
       ...createLifecycleTools(session),
+      ...imageAssetTools,
     },
     documentId: session.getActiveDocumentId(),
     getActiveDocumentId: session.getActiveDocumentId,
     getActiveVersionId: session.getActiveVersionId,
+    applyStyleProfile: session.applyStyleProfile,
+    applyResolvedAppearance: session.applyResolvedAppearance,
+    getAppliedStyle: session.getAppliedStyle,
+    getStyleFidelity: session.getStyleFidelity,
     getWorkingRevision: session.getWorkingRevision,
     getWorkingDocument: session.getWorkingDocument,
     getWorkingMutationCount: session.getWorkingMutationCount,

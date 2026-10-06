@@ -2,6 +2,14 @@ export * from "./transport.js";
 export * from "./engine-client.js";
 export * from "./mock-transport.js";
 export * from "./docx-engine-binding.js";
+export * from "./docx-style-snapshot.js";
+export * from "./docx-sections.js";
+export * from "./docx-styles.js";
+export * from "./docx-layout.js";
+export * from "./docx-images.js";
+export * from "./docx-comments.js";
+export * from "./docx-renderer.js";
+export * from "./docx-field-refresh.js";
 export {
   bindDocxDocument,
   DISPATCHABLE_MUTATION_CAPABILITIES,
@@ -15,3 +23,9 @@ export {
   buildNameRoleTableDocx,
 } from "./__fixtures__/minimal-docx.js";
 export type { DocxBodyBlock } from "./__fixtures__/minimal-docx.js";
+
+export * from "./docx-revisions.js";
+
+export * from "./docx-fields.js";
+
+export * from "./docx-notes.js";

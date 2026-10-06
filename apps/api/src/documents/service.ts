@@ -1,7 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import type { Readable } from "node:stream";
 
-import { and, desc, eq, isNotNull, isNull, max, sql } from "drizzle-orm";
+import { and, desc, eq, gt, inArray, isNotNull, isNull, max, sql } from "drizzle-orm";
 
 import type { Db } from "@opensuite/db";
 import { schema } from "@opensuite/db";
@@ -130,6 +130,7 @@ export type DocumentAccessErrorCode =
   | "DOCUMENT_NOT_FOUND"
   | "DOCUMENT_NOT_IN_TRASH"
   | "PURGE_FAILED"
+  | "RESTORE_FAILED"
   | "STORAGE_OBJECT_MISSING"
   | "INVALID_DOCUMENT_NAME"
   | "WORKSPACE_DELETED"
@@ -939,6 +940,160 @@ export function createDocumentService(
         format: row.format,
         sizeBytes: row.sizeBytes,
         storageKey: row.storageKey,
+      });
+    },
+
+    /**
+     * Recent immutable versions for an owned active document (newest first).
+     * Metadata only — never storage keys.
+     */
+    async listVersions(input: {
+      documentId: string;
+      ownerUserId: string;
+      limit?: number;
+    }): Promise<ListedDocumentVersionDto[]> {
+      const limit = Math.min(Math.max(input.limit ?? 5, 1), 20);
+      const owned = await this.getOwnedDocument({
+        documentId: input.documentId,
+        ownerUserId: input.ownerUserId,
+      });
+      const rows = await db
+        .select({
+          id: schema.documentVersion.id,
+          versionNumber: schema.documentVersion.versionNumber,
+          sizeBytes: schema.documentVersion.sizeBytes,
+          source: schema.documentVersion.source,
+          createdAt: schema.documentVersion.createdAt,
+        })
+        .from(schema.documentVersion)
+        .where(eq(schema.documentVersion.documentId, owned.id))
+        .orderBy(desc(schema.documentVersion.versionNumber))
+        .limit(limit);
+      return rows.map((row) => ({
+        id: row.id,
+        versionNumber: row.versionNumber,
+        sizeBytes: row.sizeBytes,
+        source: row.source,
+        createdAt: row.createdAt.toISOString(),
+      }));
+    },
+
+    /**
+     * Make `versionId` the tip by permanently deleting every newer version
+     * (DB row + object storage + storage accounting). Older versions stay.
+     * Agent runs that referenced discarded versions lose that provenance FK.
+     */
+    async restoreVersion(input: {
+      documentId: string;
+      versionId: string;
+      ownerUserId: string;
+    }): Promise<ListedDocumentDto> {
+      try {
+        await db.transaction(async (tx) => {
+          const locked = await tx.execute(sql`
+            select ${schema.document.id}
+            from ${schema.document}
+            inner join ${schema.workspace}
+              on ${schema.document.workspaceId} = ${schema.workspace.id}
+            where ${schema.document.id} = ${input.documentId}
+              and ${schema.workspace.ownerUserId} = ${input.ownerUserId}
+              and ${schema.document.deletedAt} is null
+              and ${schema.workspace.deletedAt} is null
+            for update
+          `);
+          if (locked.rows.length === 0) {
+            throw new DocumentAccessError(
+              404,
+              "DOCUMENT_NOT_FOUND",
+              "Document not found",
+            );
+          }
+
+          const [target] = await tx
+            .select({
+              id: schema.documentVersion.id,
+              versionNumber: schema.documentVersion.versionNumber,
+            })
+            .from(schema.documentVersion)
+            .where(
+              and(
+                eq(schema.documentVersion.documentId, input.documentId),
+                eq(schema.documentVersion.id, input.versionId),
+              ),
+            )
+            .limit(1);
+          if (!target) {
+            throw new DocumentAccessError(
+              404,
+              "DOCUMENT_NOT_FOUND",
+              "Document version not found",
+            );
+          }
+
+          const discarded = await tx
+            .select({
+              id: schema.documentVersion.id,
+              storageKey: schema.documentVersion.storageKey,
+              sizeBytes: schema.documentVersion.sizeBytes,
+            })
+            .from(schema.documentVersion)
+            .where(
+              and(
+                eq(schema.documentVersion.documentId, input.documentId),
+                gt(schema.documentVersion.versionNumber, target.versionNumber),
+              ),
+            );
+          if (discarded.length === 0) return;
+
+          const reclaimedBytes = discarded.reduce(
+            (total, version) => total + version.sizeBytes,
+            0,
+          );
+          for (const version of discarded) {
+            try {
+              await storage.deleteObject(version.storageKey);
+            } catch (error) {
+              if (!(error instanceof ObjectNotFoundError)) throw error;
+            }
+          }
+
+          const discardedIds = discarded.map((version) => version.id);
+          await tx
+            .update(schema.agentRun)
+            .set({ baseDocumentVersionId: null })
+            .where(inArray(schema.agentRun.baseDocumentVersionId, discardedIds));
+          await tx
+            .update(schema.documentVersion)
+            .set({ parentVersionId: null })
+            .where(inArray(schema.documentVersion.id, discardedIds));
+          await tx
+            .delete(schema.documentVersion)
+            .where(inArray(schema.documentVersion.id, discardedIds));
+          await tx
+            .update(schema.document)
+            .set({ updatedAt: new Date() })
+            .where(eq(schema.document.id, input.documentId));
+          if (reclaimedBytes > 0) {
+            await options.storageAccounting?.release(
+              tx,
+              input.ownerUserId,
+              reclaimedBytes,
+            );
+          }
+        });
+      } catch (error) {
+        if (error instanceof DocumentAccessError) throw error;
+        console.error("[documents] restoreVersion failed", error);
+        throw new DocumentAccessError(
+          500,
+          "RESTORE_FAILED",
+          "Could not restore document version",
+        );
+      }
+
+      return this.getOwnedDocument({
+        documentId: input.documentId,
+        ownerUserId: input.ownerUserId,
       });
     },
 

@@ -1,9 +1,38 @@
+import type { DocxNoteOptions, DocxNoteInspection, DocxInsertNoteOperation, DocxUpdateNoteOperation, DocxDeleteNoteOperation } from "./docx-notes.js";
+import type { DocxFieldOptions, DocxFieldInspection, DocxInsertFieldsOperation, DocxInsertTocOperation } from "./docx-fields.js";
+import type { DocxRevisionDecisionOperation, DocxRevisionOptions, DocxRevisionInspection, DocxInsertTrackedTextOperation, DocxDeleteTrackedTextOperation, DocxReplaceTextWithTrackedChangeOperation } from "./docx-revisions.js";
+import type { DocxCommentOptions, DocxCommentInspection, DocxAddCommentOperation, DocxUpdateCommentOperation, DocxDeleteCommentOperation } from "./docx-comments.js";
 /**
  * Narrow Node-binding surface for opensuite-engine N-API.
  *
  * Hides Buffer details from callers. A future HTTP or remote transport can
  * implement the same shape without changing agents.
  */
+
+import { existsSync } from "node:fs";
+import { isAbsolute, resolve } from "node:path";
+
+import type { DocxSection, DocxSectionInspection, DocxInsertSectionBreakOperation, DocxSetSectionPropertiesOperation, DocxSetSectionHeaderFooterOperation } from "./docx-sections.js";
+
+import type { DocxInsertPictureOperation, DocxSetPictureLayoutOperation, DocxSetPictureSizeOperation, DocxReplacePictureOperation } from "./docx-images.js";
+import type { DocxLayoutOptions, DocxLayoutSnapshot } from "./docx-layout.js";
+import type { DocxStyleOperation, DocxCreateStyleOperation } from "./docx-styles.js";
+import type { DocxStyleSnapshot } from "./docx-style-snapshot.js";
+
+/** Resolved N-API module id: local path when OPENSUITE_ENGINE_PATH is set, else the npm package. */
+export function resolveNativeEngineModuleId(
+  env: NodeJS.ProcessEnv = process.env,
+  cwd: string = process.cwd(),
+): { readonly moduleId: string; readonly fromEnv: boolean } {
+  const configured = env.OPENSUITE_ENGINE_PATH?.trim();
+  if (!configured) {
+    return { moduleId: "@opensuitehq/engine", fromEnv: false };
+  }
+  const moduleId = isAbsolute(configured)
+    ? configured
+    : resolve(cwd, configured);
+  return { moduleId, fromEnv: true };
+}
 
 export interface DocxReplaceTextTarget {
   readonly text: string;
@@ -61,6 +90,25 @@ export type DocxMutationBindingResult = DocxReplaceTextBindingResult;
 
 /** Newer DOCX operations share the same verified-output envelope. */
 export type DocxExtendedOperationName =
+  | "executeDocxInsertNote"
+  | "executeDocxUpdateNote"
+  | "executeDocxDeleteNote"
+  | "executeDocxInsertFields"
+  | "executeDocxInsertToc"
+  | "executeDocxAcceptRevision"
+  | "executeDocxRejectRevision"
+  | "executeDocxInsertTrackedText"
+  | "executeDocxDeleteTrackedText"
+  | "executeDocxReplaceTextWithTrackedChange"
+  | "executeDocxAddComment"
+  | "executeDocxUpdateComment"
+  | "executeDocxDeleteComment"
+  | "executeDocxCreateStyle"
+  | "executeDocxUpdateStyle"
+  | "executeDocxInsertSectionBreak"
+  | "executeDocxSetSectionProperties"
+  | "executeDocxSetSectionHeaderFooter"
+  | "executeDocxSetOddEvenHeaders"
   | "executeDocxSetTextFormatting"
   | "executeDocxSetContentControlText"
   | "executeDocxSetParagraphsList"
@@ -68,6 +116,7 @@ export type DocxExtendedOperationName =
   | "executeDocxInsertPicture"
   | "executeDocxDeletePicture"
   | "executeDocxSetPictureSize"
+  | "executeDocxSetPictureLayout"
   | "executeDocxReplacePicture"
   | "executeDocxInsertPageBreak"
   | "executeDocxDeletePageBreak"
@@ -251,7 +300,12 @@ export interface DocxSetParagraphStyleOperation {
   readonly baseRevision?: string;
 }
 
-export type DocxParagraphAlignment = "left" | "center" | "right";
+/** Matches the Rust MAX_TABLE_CELL_UPDATES bound for text, shading, and formatting. */
+export const DOCX_TABLE_CELL_UPDATE_LIMIT = 100;
+export type DocxParagraphAlignment = "left" | "center" | "right" | "both" | "distribute";
+/** Auto uses 240 units per line (276 = 1.15); exact/atLeast use twips (20 = 1 pt). */
+export interface DocxLineSpacing { readonly value: number; readonly rule?: "auto" | "exact" | "atLeast" }
+export type DocxParagraphProperty = "alignment" | "spacingBeforeTwips" | "spacingAfterTwips" | "lineSpacing" | "leftIndentTwips" | "rightIndentTwips" | "firstLineIndentTwips" | "hangingIndentTwips" | "keepWithNext" | "keepLines";
 
 export interface DocxSetParagraphFormattingOperation {
   readonly target: DocxTextTarget;
@@ -260,10 +314,20 @@ export interface DocxSetParagraphFormattingOperation {
   readonly spacingAfterTwips?: number;
   readonly leftIndentTwips?: number;
   readonly clearLeftIndent?: boolean;
+  readonly lineSpacing?: DocxLineSpacing;
+  readonly rightIndentTwips?: number;
+  readonly firstLineIndentTwips?: number;
+  readonly hangingIndentTwips?: number;
+  readonly keepWithNext?: boolean;
+  readonly keepLines?: boolean;
+  /** Remove declarations and restore inheritance; omitted fields stay unchanged. */
+  readonly clear?: readonly DocxParagraphProperty[];
   readonly baseRevision?: string;
 }
 
+export type DocxTextFormattingProperty = "bold" | "italic" | "fontSizeHalfPoints" | "fontFamily" | "color" | "underline" | "highlight" | "strikethrough" | "verticalAlignment";
 export interface DocxSetTextFormattingOperation {
+  readonly clear?: readonly DocxTextFormattingProperty[];
   readonly target: DocxTextTarget;
   readonly bold?: boolean;
   readonly italic?: boolean;
@@ -315,6 +379,12 @@ export interface DocxFindTextResult {
 
 /** Focus shapes accepted by the DOCX N-API inspectDocx binding. */
 export type DocxInspectFocus =
+  | ({ readonly kind: "notes" } & DocxNoteOptions)
+  | ({ readonly kind: "fields" } & DocxFieldOptions)
+  | ({ readonly kind: "revisions" } & DocxRevisionOptions)
+  | ({ readonly kind: "comments" } & DocxCommentOptions)
+  | ({ readonly kind: "layout" } & DocxLayoutOptions)
+  | { readonly kind: "sections" }
   | { readonly kind: "overview" }
   | {
       readonly kind: "headings";
@@ -371,6 +441,8 @@ export interface DocxInspectHeadingItem {
 }
 
 export interface DocxInspectParagraphItem {
+  /** Existing native list facts; absence means the paragraph is not a list item. */
+  readonly list?: { readonly kind: string; readonly level: number; readonly supported: boolean };
   /** Position among direct body paragraphs; not a mutation selector. */
   readonly index?: number;
   /** Zero-based selector occurrence among matching mutable body paragraphs. */
@@ -445,6 +517,12 @@ export interface DocxInspectContextUnit {
 }
 
 export interface DocxInspectResult {
+  readonly fields?: DocxFieldInspection;
+  readonly revisions?: DocxRevisionInspection;
+  readonly comments?: DocxCommentInspection;
+  readonly notes?: DocxNoteInspection;
+  readonly layout?: DocxLayoutSnapshot;
+  readonly sections?: readonly DocxSection[];
   readonly ok: boolean;
   readonly focus: string;
   readonly overview?: DocxInspectOverview;
@@ -474,6 +552,27 @@ export interface DocxInspectResult {
 }
 
 export interface DocxEngineBinding {
+  inspectDocxFields?(input: Uint8Array, options?: DocxFieldOptions): Promise<DocxFieldInspection>;
+  executeDocxInsertFields?(input: Uint8Array, operation: DocxInsertFieldsOperation): Promise<DocxMutationBindingResult>;
+  executeDocxInsertToc?(input: Uint8Array, operation: DocxInsertTocOperation): Promise<DocxMutationBindingResult>;
+  executeDocxAcceptRevision?(input: Uint8Array, operation: DocxRevisionDecisionOperation): Promise<DocxMutationBindingResult>;
+  executeDocxRejectRevision?(input: Uint8Array, operation: DocxRevisionDecisionOperation): Promise<DocxMutationBindingResult>;
+  executeDocxInsertTrackedText?(input: Uint8Array, operation: DocxInsertTrackedTextOperation): Promise<DocxMutationBindingResult>;
+  executeDocxDeleteTrackedText?(input: Uint8Array, operation: DocxDeleteTrackedTextOperation): Promise<DocxMutationBindingResult>;
+  executeDocxReplaceTextWithTrackedChange?(input: Uint8Array, operation: DocxReplaceTextWithTrackedChangeOperation): Promise<DocxMutationBindingResult>;
+  inspectDocxTrackedChanges?(input: Uint8Array, options?: DocxRevisionOptions): Promise<DocxRevisionInspection>;
+  inspectDocxNotes?(input: Uint8Array, options?: DocxNoteOptions): Promise<DocxNoteInspection>;
+  executeDocxInsertNote?(input: Uint8Array, operation: DocxInsertNoteOperation): Promise<DocxMutationBindingResult>;
+  executeDocxUpdateNote?(input: Uint8Array, operation: DocxUpdateNoteOperation): Promise<DocxMutationBindingResult>;
+  executeDocxDeleteNote?(input: Uint8Array, operation: DocxDeleteNoteOperation): Promise<DocxMutationBindingResult>;
+  inspectDocxComments?(input: Uint8Array, options?: DocxCommentOptions): Promise<DocxCommentInspection>;
+  executeDocxAddComment?(input: Uint8Array, operation: DocxAddCommentOperation): Promise<DocxMutationBindingResult>;
+  executeDocxUpdateComment?(input: Uint8Array, operation: DocxUpdateCommentOperation): Promise<DocxMutationBindingResult>;
+  executeDocxDeleteComment?(input: Uint8Array, operation: DocxDeleteCommentOperation): Promise<DocxMutationBindingResult>;
+  executeDocxInsertSectionBreak?(input: Uint8Array, operation: DocxInsertSectionBreakOperation): Promise<DocxMutationBindingResult>;
+  executeDocxSetSectionProperties?(input: Uint8Array, operation: DocxSetSectionPropertiesOperation): Promise<DocxMutationBindingResult>;
+  executeDocxSetSectionHeaderFooter?(input: Uint8Array, operation: DocxSetSectionHeaderFooterOperation): Promise<DocxMutationBindingResult>;
+  executeDocxSetOddEvenHeaders?(input: Uint8Array, operation: { readonly enabled: boolean }): Promise<DocxMutationBindingResult>;
   getDocxCapabilities(): DocxRuntimeCapabilities;
   /**
    * Deterministic blank DOCX bytes from Rust.
@@ -488,6 +587,12 @@ export interface DocxEngineBinding {
     input: Uint8Array,
     request: DocxInspectRequest,
   ): Promise<DocxInspectResult>;
+  executeDocxInsertPicture?(input: Uint8Array, operation: DocxInsertPictureOperation): Promise<DocxMutationBindingResult>;
+  executeDocxSetPictureLayout?(input: Uint8Array, operation: DocxSetPictureLayoutOperation): Promise<DocxMutationBindingResult>;
+  executeDocxSetPictureSize?(input: Uint8Array, operation: DocxSetPictureSizeOperation): Promise<DocxMutationBindingResult>;
+  executeDocxReplacePicture?(input: Uint8Array, operation: DocxReplacePictureOperation): Promise<DocxMutationBindingResult>;
+  inspectDocxLayout?(input: Uint8Array, options?: DocxLayoutOptions): Promise<DocxLayoutSnapshot>;
+  inspectDocxStyleSnapshot(input: Uint8Array): Promise<DocxStyleSnapshot>;
   executeDocxReplaceText(
     input: Uint8Array,
     operation: DocxReplaceTextOperation,
@@ -560,6 +665,8 @@ export interface DocxEngineBinding {
     input: Uint8Array,
     operation: DocxSetTableCellsFormattingOperation,
   ): Promise<DocxMutationBindingResult>;
+  executeDocxCreateStyle?(input: Uint8Array, operation: DocxCreateStyleOperation): Promise<DocxMutationBindingResult>;
+  executeDocxUpdateStyle?(input: Uint8Array, operation: DocxStyleOperation): Promise<DocxMutationBindingResult>;
   executeDocxExtended?(
     input: Uint8Array,
     name: DocxExtendedOperationName,
@@ -568,6 +675,26 @@ export interface DocxEngineBinding {
 }
 
 type NativeEngineModule = {
+  inspectDocxFields?: (input: Buffer, options?: DocxFieldOptions) => Promise<string>;
+  executeDocxInsertFields?: (input: Buffer, operation: Record<string, unknown>) => Promise<DocxMutationBindingResult>;
+  executeDocxInsertToc?: (input: Buffer, operation: Record<string, unknown>) => Promise<DocxMutationBindingResult>;
+  executeDocxAcceptRevision?: (input: Buffer, operation: Record<string, unknown>) => Promise<DocxMutationBindingResult>;
+  executeDocxRejectRevision?: (input: Buffer, operation: Record<string, unknown>) => Promise<DocxMutationBindingResult>;
+  executeDocxInsertTrackedText?: (input: Buffer, operation: Record<string, unknown>) => Promise<DocxMutationBindingResult>;
+  executeDocxDeleteTrackedText?: (input: Buffer, operation: Record<string, unknown>) => Promise<DocxMutationBindingResult>;
+  executeDocxReplaceTextWithTrackedChange?: (input: Buffer, operation: Record<string, unknown>) => Promise<DocxMutationBindingResult>;
+  inspectDocxTrackedChanges?: (input: Buffer, options?: DocxRevisionOptions) => Promise<string>;
+  inspectDocxNotes?: (input: Buffer, options?: DocxNoteOptions) => Promise<string>;
+  executeDocxInsertNote?: (input: Buffer, operation: Record<string, unknown>) => Promise<DocxMutationBindingResult>;
+  executeDocxUpdateNote?: (input: Buffer, operation: Record<string, unknown>) => Promise<DocxMutationBindingResult>;
+  executeDocxDeleteNote?: (input: Buffer, operation: Record<string, unknown>) => Promise<DocxMutationBindingResult>;
+  inspectDocxComments?: (input: Buffer, options?: DocxCommentOptions) => Promise<string>;
+  executeDocxAddComment?: (input: Buffer, operation: Record<string, unknown>) => Promise<DocxMutationBindingResult>;
+  executeDocxUpdateComment?: (input: Buffer, operation: Record<string, unknown>) => Promise<DocxMutationBindingResult>;
+  executeDocxDeleteComment?: (input: Buffer, operation: Record<string, unknown>) => Promise<DocxMutationBindingResult>;
+  inspectDocxLayout?: (input: Buffer, options?: DocxLayoutOptions) => Promise<string>;
+  executeDocxCreateStyle?: (input: Buffer, operation: Record<string, unknown>) => Promise<DocxMutationBindingResult>;
+  executeDocxUpdateStyle?: (input: Buffer, operation: Record<string, unknown>) => Promise<DocxMutationBindingResult>;
   getDocxCapabilities: () => {
     ok: boolean;
     protocolVersion: number;
@@ -595,6 +722,8 @@ type NativeEngineModule = {
     input: Buffer,
     request: { focus: Record<string, unknown> },
   ) => Promise<DocxInspectResult>;
+  inspectDocxSections?: (input: Buffer) => Promise<string>;
+  inspectDocxStyleSnapshot: (input: Buffer) => Promise<string>;
   executeDocxReplaceText: (
     input: Buffer,
     operation: {
@@ -721,6 +850,14 @@ type NativeEngineModule = {
 
 function toNativeInspectFocus(focus: DocxInspectFocus): Record<string, unknown> {
   switch (focus.kind) {
+    case "fields":
+    case "revisions":
+    case "notes":
+    case "comments":
+    case "layout":
+      return { ...focus };
+    case "sections":
+      return { kind: "sections" };
     case "overview":
       return { kind: "overview" };
     case "headings":
@@ -754,26 +891,39 @@ function toNativeInspectFocus(focus: DocxInspectFocus): Record<string, unknown> 
 export async function createNapiDocxEngineBinding(): Promise<DocxEngineBinding> {
   const { createRequire } = await import("node:module");
   const require = createRequire(import.meta.url);
+  const { moduleId, fromEnv } = resolveNativeEngineModuleId();
+
+  // When OPENSUITE_ENGINE_PATH is set, never fall back to the published package.
+  if (fromEnv && !existsSync(moduleId)) {
+    throw new Error(
+      `OPENSUITE_ENGINE_PATH not found: ${moduleId} (refusing fallback to @opensuitehq/engine)`,
+    );
+  }
 
   let native: NativeEngineModule;
   try {
-    native = require("@opensuitehq/engine") as NativeEngineModule;
+    native = require(moduleId) as NativeEngineModule;
   } catch (error) {
     const message =
       error instanceof Error ? error.message : String(error);
+    if (fromEnv) {
+      throw new Error(
+        `Failed to load local engine at OPENSUITE_ENGINE_PATH=${moduleId} (refusing fallback to @opensuitehq/engine). Underlying error: ${message}`,
+      );
+    }
     throw new Error(
-      `Failed to load @opensuitehq/engine Node binding. Ensure @opensuitehq/engine@0.1.3 is installed for this platform (darwin-arm64, darwin-x64, linux-x64-gnu, linux-arm64-gnu, win32-x64-msvc; glibc only — no musl/Alpine). Underlying error: ${message}`,
+      `Failed to load @opensuitehq/engine Node binding. Ensure @opensuitehq/engine@0.1.4 is installed for this platform (darwin-arm64, darwin-x64, linux-x64-gnu, linux-arm64-gnu, win32-x64-msvc; glibc only — no musl/Alpine). Underlying error: ${message}`,
     );
   }
 
   if (typeof native.createBlankDocx !== "function") {
     throw new Error(
-      "@opensuitehq/engine is missing createBlankDocx — pin/install @opensuitehq/engine@0.1.3",
+      "@opensuitehq/engine is missing createBlankDocx — pin/install @opensuitehq/engine@0.1.4",
     );
   }
   if (typeof native.executeDocxInsertParagraph !== "function") {
     throw new Error(
-      "@opensuitehq/engine is missing executeDocxInsertParagraph — pin/install @opensuitehq/engine@0.1.3",
+      "@opensuitehq/engine is missing executeDocxInsertParagraph — pin/install @opensuitehq/engine@0.1.4",
     );
   }
   for (const name of [
@@ -805,14 +955,14 @@ export async function createNapiDocxEngineBinding(): Promise<DocxEngineBinding> 
   ] as const) {
     if (typeof native[name] !== "function") {
       throw new Error(
-        `@opensuitehq/engine is missing ${name} — pin/install @opensuitehq/engine@0.1.3`,
+        `@opensuitehq/engine is missing ${name} — pin/install @opensuitehq/engine@0.1.4`,
       );
     }
   }
 
   const nativeCapabilities = native.getDocxCapabilities();
-  // Published 0.1.3 implements semantic table paths but does not advertise the
-  // semantic_* capability ids yet — accept by capability id or engineVersion.
+  // Prefer semantic_* capability ids; also accept engineVersion >= 0.1.3 for
+  // older published packages that implemented the paths without advertising ids.
   const supportsSemanticCellTargets =
     nativeSupportsSemanticTableCellTargets(nativeCapabilities);
   const supportsSemanticRowDeletion =
@@ -823,6 +973,21 @@ export async function createNapiDocxEngineBinding(): Promise<DocxEngineBinding> 
       throw new Error("installed native engine does not support semantic table-cell targets");
     }
   };
+
+  async function executeExtended(input: Uint8Array, name: DocxExtendedOperationName, operation: Record<string, unknown>): Promise<DocxMutationBindingResult> {
+    const method = native[name];
+    if (typeof method !== "function") {
+      throw new Error(`@opensuitehq/engine is missing ${name}`);
+    }
+    const response = await (method as (
+      bytes: Buffer,
+      payload: Record<string, unknown>,
+    ) => Promise<{ result: DocxEngineOperationResult; output?: Buffer }>)(
+      Buffer.from(input),
+      operation,
+    );
+    return mapMutationBindingResponse(response);
+  }
 
   return {
     getDocxCapabilities() {
@@ -838,10 +1003,121 @@ export async function createNapiDocxEngineBinding(): Promise<DocxEngineBinding> 
       return native.findDocxText(Buffer.from(input), { text: request.text });
     },
 
+    executeDocxInsertPicture(input, operation) {
+      return executeExtended(input, "executeDocxInsertPicture", { ...operation, imageBytes: Buffer.from(operation.imageBytes) });
+    },
+    executeDocxSetPictureLayout(input, operation) {
+      return executeExtended(input, "executeDocxSetPictureLayout", { ...operation });
+    },
+    executeDocxSetPictureSize(input, operation) {
+      return executeExtended(input, "executeDocxSetPictureSize", { ...operation });
+    },
+    executeDocxReplacePicture(input, operation) {
+      return executeExtended(input, "executeDocxReplacePicture", { ...operation, replacementBytes: Buffer.from(operation.replacementBytes) });
+    },
+    async executeDocxInsertFields(input, operation) {
+      return executeExtended(input, "executeDocxInsertFields", { ...operation });
+    },
+    async executeDocxInsertToc(input, operation) {
+      return executeExtended(input, "executeDocxInsertToc", { ...operation });
+    },
+    async inspectDocxFields(input, options) {
+      if (!native.inspectDocxFields) throw new Error("Local engine is missing inspectDocxFields");
+      return JSON.parse(await native.inspectDocxFields(Buffer.from(input), options)) as DocxFieldInspection;
+    },
+    async executeDocxAcceptRevision(input, operation) {
+      return executeExtended(input, "executeDocxAcceptRevision", { handle: operation.handle });
+    },
+    async executeDocxRejectRevision(input, operation) {
+      return executeExtended(input, "executeDocxRejectRevision", { handle: operation.handle });
+    },
+    async executeDocxInsertTrackedText(input, operation) {
+      if (operation.position !== undefined && operation.position !== "before" && operation.position !== "after") throw new MutationArgError("position must be before or after");
+      return executeExtended(input, "executeDocxInsertTrackedText", { ...operation, target: toNativeTextTarget(operation.target), position: operation.position ?? "after", date: operation.date ?? new Date().toISOString() });
+    },
+    async executeDocxDeleteTrackedText(input, operation) {
+      return executeExtended(input, "executeDocxDeleteTrackedText", { ...operation, target: toNativeTextTarget(operation.target), date: operation.date ?? new Date().toISOString() });
+    },
+    async executeDocxReplaceTextWithTrackedChange(input, operation) {
+      return executeExtended(input, "executeDocxReplaceTextWithTrackedChange", { ...operation, target: toNativeTextTarget(operation.target), date: operation.date ?? new Date().toISOString() });
+    },
+    async executeDocxInsertNote(input, operation) {
+      if (operation.kind !== "footnote" && operation.kind !== "endnote") throw new MutationArgError("kind must be footnote or endnote");
+      return executeExtended(input, "executeDocxInsertNote", { ...operation, target: toNativeTextTarget(operation.target) });
+    },
+    async executeDocxUpdateNote(input, operation) { return executeExtended(input, "executeDocxUpdateNote", { ...operation }); },
+    async executeDocxDeleteNote(input, operation) { return executeExtended(input, "executeDocxDeleteNote", { ...operation }); },
+    async inspectDocxNotes(input, options) {
+      if (!native.inspectDocxNotes) throw new Error("Local engine is missing inspectDocxNotes");
+      return JSON.parse(await native.inspectDocxNotes(Buffer.from(input), options)) as DocxNoteInspection;
+    },
+    async executeDocxAddComment(input, operation) {
+      return executeExtended(input, "executeDocxAddComment", { ...operation, target: toNativeTextTarget(operation.target), date: operation.date ?? new Date().toISOString() });
+    },
+    async executeDocxUpdateComment(input, operation) { return executeExtended(input, "executeDocxUpdateComment", { ...operation }); },
+    async executeDocxDeleteComment(input, operation) { return executeExtended(input, "executeDocxDeleteComment", { ...operation }); },
+    async inspectDocxTrackedChanges(input, options) {
+      if (!native.inspectDocxTrackedChanges) throw new Error("Local engine is missing inspectDocxTrackedChanges");
+      return JSON.parse(await native.inspectDocxTrackedChanges(Buffer.from(input), options)) as DocxRevisionInspection;
+    },
+    async inspectDocxComments(input, options) {
+      if (!native.inspectDocxComments) throw new Error("Local engine is missing inspectDocxComments");
+      return JSON.parse(await native.inspectDocxComments(Buffer.from(input), options)) as DocxCommentInspection;
+    },
+    async inspectDocxLayout(input, options) {
+      if (!native.inspectDocxLayout) throw new Error("Local engine is missing inspectDocxLayout");
+      return JSON.parse(await native.inspectDocxLayout(Buffer.from(input), options)) as DocxLayoutSnapshot;
+    },
     async inspectDocx(input, request) {
+      if (request.focus.kind === "notes") {
+        if (!native.inspectDocxNotes) throw new Error("Local engine is missing inspectDocxNotes");
+        const { kind: _kind, ...options } = request.focus;
+        const notes = JSON.parse(await native.inspectDocxNotes(Buffer.from(input), options)) as DocxNoteInspection;
+        return { ok: notes.ok, focus: "notes", notes, diagnostics: notes.diagnostics.map(d => ({ ...d, severity: notes.ok ? "warning" : "error" })) };
+      }
+      if (request.focus.kind === "fields") {
+        if (!native.inspectDocxFields) throw new Error("Local engine is missing inspectDocxFields");
+        const { kind: _, ...options } = request.focus;
+        const fields = JSON.parse(await native.inspectDocxFields(Buffer.from(input), options)) as DocxFieldInspection;
+        return { ok: fields.ok, focus: "fields", fields, diagnostics: fields.diagnostics.map(d => ({ ...d, severity: fields.ok ? "warning" : "error" })) };
+      }
+      if (request.focus.kind === "revisions") {
+        if (!native.inspectDocxTrackedChanges) throw new Error("Local engine is missing inspectDocxTrackedChanges");
+        const { kind, ...options } = request.focus;
+        const revisions = JSON.parse(await native.inspectDocxTrackedChanges(Buffer.from(input), options)) as DocxRevisionInspection;
+        return { ok: revisions.ok, focus: "revisions", revisions, diagnostics: revisions.diagnostics.map(d => ({ ...d, severity: revisions.ok ? "warning" : "error" })) };
+      }
+      if (request.focus.kind === "comments") {
+        if (!native.inspectDocxComments) throw new Error("Local engine is missing inspectDocxComments");
+        const { kind, ...options } = request.focus;
+        const comments = JSON.parse(await native.inspectDocxComments(Buffer.from(input), options)) as DocxCommentInspection;
+        return { ok: comments.ok, focus: "comments", comments, diagnostics: comments.diagnostics.map(d => ({ ...d, severity: comments.ok ? "warning" : "error" })) };
+      }
+      if (request.focus.kind === "layout") {
+        if (!native.inspectDocxLayout) throw new Error("Local engine is missing inspectDocxLayout");
+        const { kind, ...options } = request.focus;
+        const layout = JSON.parse(await native.inspectDocxLayout(Buffer.from(input), options)) as DocxLayoutSnapshot;
+        return { ok: layout.ok, focus: "layout", layout, diagnostics: layout.diagnostics.map(d => ({ ...d, severity: !layout.ok ? "error" : d.code === "RENDERED_LAYOUT_UNAVAILABLE" ? "info" : "warning" })) };
+      }
+      if (request.focus.kind === "sections") {
+        if (!native.inspectDocxSections) throw new Error("Local engine is missing inspectDocxSections");
+        const result = JSON.parse(await native.inspectDocxSections(Buffer.from(input))) as DocxSectionInspection;
+        return { ...result, focus: "sections" };
+      }
       return native.inspectDocx(Buffer.from(input), {
         focus: toNativeInspectFocus(request.focus),
       });
+    },
+
+    async inspectDocxStyleSnapshot(input) {
+      if (typeof native.inspectDocxStyleSnapshot !== "function") {
+        throw new Error(
+          "installed native engine is missing inspectDocxStyleSnapshot — pin/install @opensuitehq/engine@0.1.4 (or set OPENSUITE_ENGINE_PATH for a local engine build)",
+        );
+      }
+      return JSON.parse(
+        await native.inspectDocxStyleSnapshot(Buffer.from(input)),
+      ) as DocxStyleSnapshot;
     },
 
     async executeDocxReplaceText(input, operation) {
@@ -921,21 +1197,8 @@ export async function createNapiDocxEngineBinding(): Promise<DocxEngineBinding> 
       const response = await native.executeDocxSetParagraphFormatting(
         Buffer.from(input),
         {
+          ...operation,
           target: toNativeTextTarget(operation.target),
-          ...(operation.alignment !== undefined
-            ? { alignment: operation.alignment }
-            : {}),
-          ...(operation.spacingBeforeTwips !== undefined
-            ? { spacingBeforeTwips: operation.spacingBeforeTwips }
-            : {}),
-          ...(operation.spacingAfterTwips !== undefined
-            ? { spacingAfterTwips: operation.spacingAfterTwips }
-            : {}),
-          ...(operation.leftIndentTwips !== undefined ? { leftIndentTwips: operation.leftIndentTwips } : {}),
-          ...(operation.clearLeftIndent !== undefined ? { clearLeftIndent: operation.clearLeftIndent } : {}),
-          ...(operation.baseRevision !== undefined
-            ? { baseRevision: operation.baseRevision }
-            : {}),
         },
       );
       return mapMutationBindingResponse(response);
@@ -945,31 +1208,8 @@ export async function createNapiDocxEngineBinding(): Promise<DocxEngineBinding> 
       const response = await native.executeDocxSetTextFormatting(
         Buffer.from(input),
         {
+          ...operation,
           target: toNativeTextTarget(operation.target),
-          ...(operation.bold !== undefined ? { bold: operation.bold } : {}),
-          ...(operation.italic !== undefined
-            ? { italic: operation.italic }
-            : {}),
-          ...(operation.fontSizeHalfPoints !== undefined
-            ? { fontSizeHalfPoints: operation.fontSizeHalfPoints }
-            : {}),
-          ...(operation.fontFamily !== undefined
-            ? { fontFamily: operation.fontFamily }
-            : {}),
-          ...(operation.clearBold !== undefined ? { clearBold: operation.clearBold } : {}),
-          ...(operation.color !== undefined ? { color: operation.color } : {}),
-          ...(operation.clearColor !== undefined ? { clearColor: operation.clearColor } : {}),
-          ...(operation.underline !== undefined ? { underline: operation.underline } : {}),
-          ...(operation.clearUnderline !== undefined ? { clearUnderline: operation.clearUnderline } : {}),
-          ...(operation.highlight !== undefined ? { highlight: operation.highlight } : {}),
-          ...(operation.clearHighlight !== undefined ? { clearHighlight: operation.clearHighlight } : {}),
-          ...(operation.strikethrough !== undefined ? { strikethrough: operation.strikethrough } : {}),
-          ...(operation.clearStrikethrough !== undefined ? { clearStrikethrough: operation.clearStrikethrough } : {}),
-          ...(operation.verticalAlignment !== undefined ? { verticalAlignment: operation.verticalAlignment } : {}),
-          ...(operation.clearVerticalAlignment !== undefined ? { clearVerticalAlignment: operation.clearVerticalAlignment } : {}),
-          ...(operation.baseRevision !== undefined
-            ? { baseRevision: operation.baseRevision }
-            : {}),
         },
       );
       return mapMutationBindingResponse(response);
@@ -1207,27 +1447,29 @@ export async function createNapiDocxEngineBinding(): Promise<DocxEngineBinding> 
       return mapMutationBindingResponse(response);
     },
 
-    async executeDocxExtended(input, name, operation) {
-      const method = native[name];
-      if (typeof method !== "function") {
-        throw new Error(`@opensuitehq/engine is missing ${name}`);
-      }
-      const response = await (method as (
-        bytes: Buffer,
-        payload: Record<string, unknown>,
-      ) => Promise<{ result: DocxEngineOperationResult; output?: Buffer }>)(
-        Buffer.from(input),
-        operation,
-      );
-      return mapMutationBindingResponse(response);
+    async executeDocxInsertSectionBreak(input, operation) {
+      return executeExtended(input, "executeDocxInsertSectionBreak", { ...operation });
     },
+    async executeDocxSetSectionProperties(input, operation) {
+      return executeExtended(input, "executeDocxSetSectionProperties", { ...operation });
+    },
+    async executeDocxSetSectionHeaderFooter(input, operation) {
+      return executeExtended(input, "executeDocxSetSectionHeaderFooter", { ...operation });
+    },
+    async executeDocxSetOddEvenHeaders(input, operation) {
+      return executeExtended(input, "executeDocxSetOddEvenHeaders", { ...operation });
+    },
+
+    async executeDocxCreateStyle(input, operation) { return executeExtended(input, "executeDocxCreateStyle", { ...operation }); },
+    async executeDocxUpdateStyle(input, operation) { return executeExtended(input, "executeDocxUpdateStyle", { ...operation }); },
+    executeDocxExtended: executeExtended,
   };
 }
 
 /**
  * Authoritative app-side check for semantic table-cell selectors.
  * Prefer capability ids when present; also accept engineVersion >= 0.1.3
- * because published 0.1.3 implements the paths without advertising the ids.
+ * for older packages that implemented the paths without advertising the ids.
  */
 export function nativeSupportsSemanticTableCellTargets(
   capabilities: Pick<DocxRuntimeCapabilities, "engineVersion" | "formats">,

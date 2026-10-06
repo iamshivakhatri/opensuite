@@ -4,7 +4,7 @@ import { MockLanguageModelV4, simulateReadableStream } from "ai/test";
 import { createFinishTool, runAgent, type AgentEvent } from "@opensuite/agent-core-v3";
 import { bindDocxDocument, buildMinimalDocx, createNapiDocxEngineBinding } from "@opensuite/engine-client";
 import { createPrimaryDocxTools } from "./docx-tools.js";
-import { createToolSurface } from "./tool-groups.js";
+import { createToolSurface } from "./capabilities/runtime/tool-surface.js";
 
 type Call = { name: string; input: Record<string, unknown> };
 const inspect: Call = { name: "document.inspect", input: { kind: "tables" } };
@@ -149,7 +149,7 @@ test("paragraph style/formatting, split text formatting, and format batches pres
   const table = run.tables[0]!;
   const { result } = await runTurns(run.session, [[inspect, { name: "document.inspect", input: { kind: "body_blocks" } }], [
     { name: "document.set_paragraph_style", input: { target: { text: "Status" }, style: "Heading 1" } },
-    { name: "document.set_paragraph_formatting", input: { target: { text: "Status" }, alignment: "center" } },
+    { name: "document.set_paragraph_formatting", input: { target: { text: "Status" }, alignment: "both", lineSpacing: { value: 276, rule: "auto" }, hangingIndentTwips: 360, keepWithNext: true, keepLines: true } },
     { name: "document.set_text_formatting", input: { target: { text: "Stat" }, bold: true } },
     { name: "document.batch_paragraph_formatting", input: { operations: [{ target: { text: "Status" }, alignment: "left" }] } },
     { name: "document.set_text_formatting", input: { target: { text: "Item 0" }, italic: true } },
@@ -252,7 +252,7 @@ test("recurring report edits complete on the common surface with zero discovery 
   assert.equal(run.session.getWorkingMutationCount(), 4);
   assert.equal(surface.summary().discoveryTurnCount, 0);
   assert.deepEqual(surface.summary().groupsLoaded, []);
-  assert.ok(result.metrics.modelTurns.every((turn) => turn.exposedToolCount === 15));
+  assert.ok(result.metrics.modelTurns.every((turn) => turn.exposedToolCount === 18));
   await run.session.flush();
   assert.equal(run.appends(), 1);
   const binding = await createNapiDocxEngineBinding();

@@ -101,121 +101,49 @@ missing selectors, deterministic recovery and delegated judgment do not justify
 clarification. The schema is question-only; structured choices are deferred.
 The generic runtime, scheduling and both existing finish tools are unchanged.
 
-## Dynamic tool surface experiment
+## Capability discovery
 
-The API passes one optional `projectTools({ tools, turn, messages })` callback to
-V3. Before each model call, V3 snapshots its returned tool map, builds schema-only
-tools from that snapshot, and uses the same snapshot for execution, scheduling,
-and terminal-tool checks. A hidden tool cannot execute through the full registry.
-Projected runs discard SDK-generated error-result messages before adding the
-runtime's own results, preserving one result per call. Without the callback,
-the original fixed schema map and execution behavior remain unchanged.
+The API owns a process-wide capability catalog in `apps/api/src/agent/capabilities/`.
+The catalog indexes IDs, immediate children, provider-safe tool names, and lexical
+search terms once at startup. It is source-code metadata, not a database catalog.
+A run creates a `CapabilitySession` from the tools actually supplied by the
+engine and host. Empty groups are unavailable for that run.
 
-The API's `tool-groups.ts` selects the already engine/host-filtered tools. Its
-`tools.load_group({ groups: [...] })` tool (provider name `tools_load_group`)
-activates groups for the next model turn. Activation is run-local, monotonic,
-idempotent, and ordered by sorted group/tool names. Unknown or unavailable groups
-fail; a mixed valid/unknown request activates nothing. Groups with no executable
-tools are omitted from the compact prompt index and loader schema.
+The first model turn receives the existing common tools plus
+`capabilities.list`, `capabilities.search`, and `capabilities.load`. Its system
+instruction lists only available root domains. Listing shows immediate children;
+search returns at most eight compact matches. Loading a leaf group or tool is
+run-local, monotonic, and idempotent. Unknown or unavailable IDs fail together.
+The next model turn receives schemas for the newly loaded tools through V3's
+existing `projectTools` callback. V3 executes against that turn's snapshot, so
+hidden tools cannot run in the same turn as the load request.
 
-With the installed engine 0.1.3, the previous run surface had **41 tools**:
-35 document tools, four workspace tools, and two finish tools. There were three
-reads, 36 mutations (including three workspace lifecycle actions), and two finish
-tools. The initial surface in that experiment had **16 tools**: 15 existing common tools plus the
-read-kind loader. `insert_paragraphs` covers both single and multiple paragraphs.
-Workspace duplicate/select/source-inspect remain common to preserve multi-document
-report workflows; both finish paths remain common for missing-source outcomes.
-The clarification escape hatch adds one common tool, making the current initial surface **17 tools**.
-The six reported recurring-update tools need no discovery turn.
+Before Turn 1, the API uses bounded indexed lexical matching on the latest
+request to recommend up to three available dynamic capability leaves. Only
+ID, kind, title, and short description enter the initial prompt; this does not
+load tools or skill bodies. Obvious matches can be loaded directly, while
+`capabilities.list/search` remain available when the shortlist is insufficient.
+`compute.calculator` is the first non-document tool and evaluates arithmetic
+without JavaScript execution. Recommendation events join the existing raw
+capability telemetry and can be compared with later loads and tool use.
 
-| Group | Hidden tools |
-|---|---:|
-| `page_layout` | 5 |
-| `paragraphs` | 6 |
-| `rich_content` | 4 |
-| `table_structure` | 5 |
-| `table_styling` | 4 |
-| `text_formatting` | 2 |
+DOCX specialist groups now live below `document` (paragraphs, text, tables,
+layout, rich content). Common document, workspace, and finish tools keep their
+previous initial exposure. V3 remains unaware of capability structure and DOCX.
+First-turn context budgeting reserves only the projected initial schemas.
 
-Only common tool names and one sentence per group are added to the capability
-list; hidden schemas and the complete hidden-name catalog are not injected.
-Existing operation-specific safety guidance stays in place. Model configuration,
-limits, retrieval, compaction, document validation, scheduling, handle rules,
-provider aliases, and Rust behavior are unchanged. Context budgeting still
-reserves the original full document-tool catalog, keeping this experiment focused
-on the model-visible surface.
-
-Compare these logs during DeepSeek dogfood:
-
-```text
-[agent] tool_surface run=… turn=… exposedToolCount=… exposedToolSchemaChars=… activeGroups=… discoveryTurn=…
-[agent] tool_surface_summary run=… {"initialToolCount":…, "peakToolCount":…, "groupsLoaded":[…], "discoveryTurnCount":…}
-```
-
-`activeGroups` describes the tools exposed on that turn. `discoveryTurn` counts
-turns requesting the loader, including rejected or output-limit-discarded calls.
-Run summaries also log on failure. Generic `metrics.modelTurns[]` stores
-`exposedToolCount` and `exposedToolSchemaChars`, including failed model calls.
-Compare them with existing first reasoning/text/tool timings, reasoning/output
-usage, model duration, and total run duration. No paid model benchmark was run.
-
-The comparable size estimate is `JSON.stringify(schemaOnlyTools).length`, which
-includes provider-safe names, descriptions, and serialized schema wrappers but
-excludes execution functions and runtime traits. Initial schema size changes from
-**36,248 to 11,831 characters (67.4% smaller)**, including the new loader. This is
-not a token count or a measurement of the entire prompt.
-
-### Inventory measured before the experiment
-
-Names below are internal names; the existing provider mapping replaces dots with
-underscores. Per-tool characters count one serialized map entry, excluding the
-outer braces and separating commas. `mutate/lifecycle` retains V3's mutate kind;
-finish tools retain read kind plus the terminal flag. The common column refers
-to the new initial surface. Mutation exposure still requires an engine capability,
-a model schema and a bound host method; batch tools also require `mutateBatch`.
-Binary picture insert/replace, engine-only capabilities, and unwired formats stay
-outside the model-facing inventory.
-
-| Tool | Kind | Schema chars | Common |
-|---|---|---:|---|
-| `document.inspect` | read | 797 | yes |
-| `document.find` | read | 310 | yes |
-| `document.replace_text` | mutate | 800 | yes |
-| `document.insert_paragraph` | mutate | 1,050 | no |
-| `document.insert_paragraphs` | mutate | 1,084 | yes |
-| `document.delete_paragraph` | mutate | 631 | no |
-| `document.set_paragraph_style` | mutate | 829 | yes |
-| `document.set_paragraph_formatting` | mutate | 888 | no |
-| `document.set_text_formatting` | mutate | 1,237 | no |
-| `document.set_table_cells_text` | mutate | 1,866 | yes |
-| `document.insert_table_rows` | mutate | 1,573 | no |
-| `document.insert_table_row` | mutate | 1,529 | no |
-| `document.insert_table_column` | mutate | 1,108 | no |
-| `document.create_table` | mutate | 1,024 | yes |
-| `document.delete_table` | mutate | 886 | no |
-| `document.delete_table_row` | mutate | 1,386 | yes |
-| `document.delete_table_column` | mutate | 993 | no |
-| `document.set_table_formatting` | mutate | 1,207 | no |
-| `document.set_table_column_widths` | mutate | 986 | no |
-| `document.set_table_cell_shading` | mutate | 1,811 | no |
-| `document.set_table_cells_formatting` | mutate | 2,220 | no |
-| `document.set_content_control_text` | mutate | 671 | no |
-| `document.set_paragraphs_list` | mutate | 781 | no |
-| `document.set_hyperlink` | mutate | 673 | no |
-| `document.delete_picture` | mutate | 244 | no |
-| `document.set_picture_size` | mutate | 324 | no |
-| `document.insert_page_break` | mutate | 977 | no |
-| `document.delete_page_break` | mutate | 250 | no |
-| `document.set_page_setup` | mutate | 510 | no |
-| `document.set_header_footer_text` | mutate | 312 | no |
-| `document.set_page_number` | mutate | 369 | no |
-| `document.batch_replace_text` | mutate | 954 | yes |
-| `document.batch_paragraph_styles` | mutate | 1,008 | no |
-| `document.batch_paragraph_formatting` | mutate | 1,141 | no |
-| `document.batch_text_formatting` | mutate | 1,461 | no |
-| `workspace.create_blank_document` | mutate/lifecycle | 343 | yes |
-| `workspace.duplicate_current_document` | mutate/lifecycle | 448 | yes |
-| `workspace.select_document` | mutate/lifecycle | 407 | yes |
-| `workspace.inspect_document` | read | 528 | yes |
-| `finish` | finish | 191 | yes |
-| `finish_with_input_needed` | finish | 399 | yes |
+`agent_capability_event` stores raw discovered, loaded, executed, succeeded,
+and failed events with run, turn, capability ID, model, time, latency, and error
+code. A run buffers events and writes them after settlement; write failure is
+logged without changing the document outcome. Availability is derived from the
+catalog and run bindings, rather than emitting one row per available item.
+Instruction capabilities use the same indexed discovery and run-local load, but
+carry a lazy instruction body rather than a tool name. The API projects loaded
+instructions once into each subsequent model request as delimited task guidance;
+the body never enters the durable transcript or the initial root prompt. Core
+system rules, document targeting, permissions, and engine constraints take
+precedence. The current skill is `skills.scientific-writing.scientific-paper`.
+The projected instruction tokens are counted against that turn's available
+input budget. Raw telemetry stores capability kind; instruction skills emit
+discovered/loaded events, not tool execution events. Web/compute tools,
+connectors, subagents, and rollups remain deferred.

@@ -203,6 +203,7 @@ export function WorkspaceRouteShell({ workspaceId }: { workspaceId: string }) {
       <WorkspaceIde
         workspaceId={workspaceId}
         workspaceName={shell.name}
+        brandPage={pathname === `/app/workspaces/${workspaceId}/brand`}
         document={document}
         documentId={documentId}
         documentPending={

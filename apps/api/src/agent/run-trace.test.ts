@@ -8,7 +8,7 @@ import { jsonSchema } from "ai";
 import { MockLanguageModelV4, simulateReadableStream } from "ai/test";
 import { composeProjectMessages } from "./agent-context.js";
 import { projectInRunObservations } from "./in-run-observation-projection.js";
-import { createToolSurface } from "./tool-groups.js";
+import { createToolSurface } from "./capabilities/runtime/tool-surface.js";
 import { createRunTrace, traceModelSettings, type RunTrace } from "./run-trace.js";
 
 const usage = { inputTokens: { total: 100, noCache: 80, cacheRead: 20, cacheWrite: 0 }, outputTokens: { total: 12, text: 7, reasoning: 5 } };
@@ -36,7 +36,7 @@ async function mockRun(trace?: RunTrace) {
     doStream: async (request) => {
       requests.push(request);
       turn++;
-      const calls = turn === 1 ? [{ id: "inspect-1", name: "document_inspect", input: { kind: "tables" } }, { id: "load-1", name: "tools_load_group", input: { groups: ["text_formatting"] } }]
+      const calls = turn === 1 ? [{ id: "inspect-1", name: "document_inspect", input: { kind: "tables" } }, { id: "load-1", name: "capabilities_load", input: { ids: ["document.text"] } }]
         : turn === 2 ? [{ id: "format-1", name: "document_set_text_formatting", input: { kind: "bold" } }]
           : turn === 3 ? [{ id: "inspect-2", name: "document_inspect", input: { kind: "context" } }] : [];
       return { stream: simulateReadableStream({ chunks: [
@@ -110,9 +110,9 @@ test("mocked real loop traces final requests, dynamic schemas, reasoning, raw re
     const requests = entries.filter((entry) => /— Request$/.test(entry.heading));
     assert.equal(requests.length, 4);
     assert.deepEqual(requests[0]!.value.activeGroups, []);
-    assert.deepEqual(requests[1]!.value.activeGroups, ["text_formatting"]);
-    assert.equal(requests[0]!.value.exposedToolCount, 2);
-    assert.equal(requests[1]!.value.exposedToolCount, 3);
+    assert.deepEqual(requests[1]!.value.activeGroups, ["document.text"]);
+    assert.equal(requests[0]!.value.exposedToolCount, 4);
+    assert.equal(requests[1]!.value.exposedToolCount, 5);
     assert.equal(entries.find((entry) => entry.heading === "### System")!.value, "EXACT SYSTEM");
     const messages = entries.filter((entry) => entry.heading === "### Messages");
     assert.deepEqual(messages[0]!.value, [{ role: "user", content: "CURRENT RETRIEVAL EVIDENCE" }, { role: "user", content: "EXACT USER REQUEST" }]);

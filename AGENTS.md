@@ -62,6 +62,7 @@ Execute obvious safe actions quickly. Inspect and reason when a target is ambigu
 - V3: `pnpm --filter @opensuite/agent-core-v3 typecheck` and `pnpm --filter @opensuite/agent-core-v3 test` when touched.
 - Focused API test: `pnpm --filter @opensuite/api build && node --test apps/api/dist/agent/execution.isolation.test.js` (change the test path as needed).
 - Engine bridge: `pnpm --filter @opensuite/engine-client test` when touched; run Rust tests in the separate `opensuite-engine` checkout when Rust changes.
+- When upgrading `@opensuitehq/engine` (or after an engine `v*.*.*` publish), follow **`docs/engine_upgrade.md`** end-to-end (pins, lockfile Linux binaries, `minimumReleaseAgeExclude`, docs/Docker comments, client completeness, host + Docker acceptance with `OPENSUITE_ENGINE_PATH` unset). Summary: bump `packages/engine-client/package.json`, refresh `pnpm-lock.yaml` (confirm Linux `x64-gnu` / `arm64-gnu` optionals), update `pnpm-workspace.yaml` excludes, and operational pins in `Dockerfile` / `docker-compose.atlas.yml` / `docs/deploy.md` / `docs/engine_integration.md` / current pin lines in `docs/status.md`. Build the API Docker image and require the engine-load check to pass before deploy. Do not deploy an image that lacks its native binding.
 - Before finishing: `git diff --check`. Do not run paid model calls unless asked.
 
 Update `docs/status.md` concisely after meaningful work. Report changes and checks; recommend one next step without doing it unless asked.

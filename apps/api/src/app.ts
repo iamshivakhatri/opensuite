@@ -15,6 +15,7 @@ import {
   type AgentExecutionService,
 } from "./agent/execution.js";
 import type { AgentRunReportSink } from "./agent/agent-run-report.js";
+import { createCapabilityEventSink } from "./agent/capabilities/telemetry/recorder.js";
 import {
   createAgentPersistenceService,
   type AgentPersistenceService,
@@ -42,6 +43,11 @@ import {
   createProviderCredentialService,
   type ProviderCredentialService,
 } from "./credentials/service.js";
+import { createStyleProfileService } from "./style-profiles/service.js";
+import { createWorkspaceAssetService } from "./workspace-brand/assets.js";
+import { createWorkspaceBrandService } from "./workspace-brand/service.js";
+import { registerWorkspaceBrandRoutes } from "./routes/workspace-brand.js";
+import { registerStyleProfileRoutes } from "./routes/style-profiles.js";
 import { createDocumentService } from "./documents/service.js";
 import { createDocumentPreferenceService } from "./documents/preferences.js";
 import { createSearchService } from "./documents/search.js";
@@ -297,6 +303,14 @@ export async function buildApp(
       );
     },
   });
+  const styleProfiles = createStyleProfileService(
+    deps.db, documents,
+    docxBinding ? bytes => docxBinding!.inspectDocxStyleSnapshot(bytes) : undefined,
+  );
+  const workspaceAssets = createWorkspaceAssetService(
+    deps.db, deps.storage, workspaces, storageAccounting,
+  );
+  const workspaceBrand = createWorkspaceBrandService(deps.db, workspaceAssets);
   const preferences = createDocumentPreferenceService(deps.db);
   const managedUsagePolicy = deps.managedUsagePolicy ?? createManagedTrialService(
     createManagedTrialRepository(deps.db),
@@ -316,6 +330,9 @@ export async function buildApp(
     createAgentExecutionService({
       persistence: agentPersistence,
       documents,
+      styleProfiles,
+      workspaceBrand,
+      workspaceAssets,
       ...(docxBinding ? { docxBinding } : {}),
       resolveModel: async (userId: string) => {
         const resolved = await aiModelResolver!.resolve(userId);
@@ -347,6 +364,7 @@ export async function buildApp(
       modelUsage,
       lease: agentExecutionLease,
       managedUsagePolicy,
+      capabilityEventSink: createCapabilityEventSink(deps.db),
       ...(deps.agent?.agentRunReportSink
         ? { agentRunReportSink: deps.agent.agentRunReportSink }
         : {}),
@@ -390,6 +408,8 @@ export async function buildApp(
   registerTrashRoutes(app, deps.auth, workspaces, documents);
   registerStorageRoutes(app, deps.auth, storageAccounting);
   registerSearchRoutes(app, deps.auth, search);
+  registerStyleProfileRoutes(app, deps.auth, styleProfiles);
+  registerWorkspaceBrandRoutes(app, deps.auth, workspaceBrand, workspaceAssets);
   registerAgentRoutes(app, {
     auth: deps.auth,
     persistence: agentPersistence,

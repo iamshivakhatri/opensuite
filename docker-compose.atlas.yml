@@ -3,7 +3,7 @@
 # Cloudflare Tunnel should route api.opensuite.tech to this container port.
 #
 # Container listens on 3000; keep it private behind the tunnel.
-# Engine: @opensuitehq/engine@0.1.3 from npm (bookworm/glibc image).
+# Engine: @opensuitehq/engine@0.1.4 from npm (bookworm/glibc image).
 #
 # First user: ALLOW_SIGNUP=true (+ web NEXT_PUBLIC_ALLOW_SIGNUP=true), then lock.
 

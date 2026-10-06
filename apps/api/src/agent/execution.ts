@@ -1,3 +1,9 @@
+import type { StyleProfileService } from "../style-profiles/service.js";
+import type { WorkspaceBrandService } from '../workspace-brand/service.js';
+import type { WorkspaceAssetService } from '../workspace-brand/assets.js';
+import { requestsSavedStyle, createStyleProfileTools } from "./capabilities/definitions/style-profiles.js";
+import { documentSkillPolicy } from './capabilities/definitions/skills/index.js';
+import { resolveDocumentAppearance, shouldApplyAutomaticBrand } from '../document-appearance/resolve.js';
 import {
   createFinishTool,
   defineTool,
@@ -25,6 +31,7 @@ import type {
   AgentRunReportSink,
   DocumentVersionAdvance,
 } from "./agent-run-report.js";
+import { unrecoveredFailedMutateToolNames } from "./agent-run-report.js";
 import {
   formatDocumentSaved,
   formatDocumentTarget,
@@ -36,6 +43,7 @@ import {
   composeProjectMessages,
   loadHistory,
   prepareContext,
+  toolContext,
 } from "./agent-context.js";
 import {
   createRunEventHandler,
@@ -55,10 +63,17 @@ import {
   releaseLease,
   settleTerminalRunFailure,
 } from "./run-settlement.js";
-import { createToolSurface } from "./tool-groups.js";
+import { createToolSurface } from "./capabilities/runtime/tool-surface.js";
+import { createCapabilityTelemetry, type CapabilityEventSink } from "./capabilities/telemetry/recorder.js";
+import { projectLoadedInstructions } from "./capabilities/runtime/instruction-projection.js";
+import { createStandaloneCapabilityTools } from "./capabilities/catalog.js";
 import { createRunTrace, traceModelSettings, type RunTrace } from "./run-trace.js";
 import { createPrimaryDocxTools } from "./docx-tools.js";
-import { verifyDocumentUpdate } from "./document-verification.js";
+import {
+  hasBlockingVerificationFailure,
+  verifyDocumentUpdate,
+  type DocumentCheck,
+} from "./document-verification.js";
 import { SlimDocumentStructureCache } from "./document-retrieval.js";
 import { generateThreadTitle } from "./thread-title.js";
 import { estimateTokens } from "./context-projection.js";
@@ -134,7 +149,8 @@ export type AgentExecutionErrorCode =
   | "INVALID_CONTINUATION"
   | "AGENT_EXECUTION_FAILED"
   | "AGENT_PERSISTENCE_FAILED"
-  | "DOCX_ENGINE_UNAVAILABLE";
+  | "DOCX_ENGINE_UNAVAILABLE"
+  | "SAVED_STYLE_NOT_APPLIED";
 
 export class AgentExecutionError extends Error {
   constructor(readonly code: AgentExecutionErrorCode, message: string) {
@@ -182,9 +198,13 @@ export interface AgentExecutionServiceDeps {
   > & Partial<Pick<DocumentService, "rename">>;
   readonly resolveModel: (userId: string) => Promise<ResolvedV3ExecutionModel>;
   readonly docxBinding?: DocxEngineBinding;
+  readonly styleProfiles?: StyleProfileService;
+  readonly workspaceBrand?: Pick<WorkspaceBrandService, 'get'>;
+  readonly workspaceAssets?: Pick<WorkspaceAssetService, 'readBytes' | 'listImages'>;
   readonly modelUsage?: ModelUsageService;
   readonly managedUsagePolicy?: ManagedUsagePolicy;
   readonly agentRunReportSink?: AgentRunReportSink;
+  readonly capabilityEventSink?: CapabilityEventSink;
   readonly lease?: AgentExecutionLeaseService;
   /** Test seam — production uses agent-core-v3 `runAgent`. */
   readonly runAgent?: typeof runAgent;
@@ -406,6 +426,51 @@ async function resolvePrimaryDocument(
   }
 }
 
+async function applyAutomaticWorkspaceAppearance(input: {
+  readonly deps: AgentExecutionServiceDeps;
+  readonly toolSurface: ReturnType<typeof createToolSurface>;
+  readonly boundTools: NonNullable<Awaited<ReturnType<typeof createPrimaryDocxTools>>>;
+  readonly workspaceId: string;
+  readonly ownerUserId: string;
+  readonly instruction: string;
+}) {
+  if (!input.deps.workspaceBrand) return;
+  const documentId = input.boundTools.getActiveDocumentId();
+  const isNewDocument = !!documentId && input.boundTools.getTransitions().some((item) => item.kind === 'created' && item.toDocumentId === documentId);
+  const policy = [...input.toolSurface.session.loaded]
+    .sort()
+    .map(documentSkillPolicy)
+    .find((item) => item?.channels.length);
+  if (!shouldApplyAutomaticBrand({ isNewDocument, policy, instruction: input.instruction })) return;
+  const brand = await input.deps.workspaceBrand.get(input.workspaceId, input.ownerUserId);
+  if (!brand) return;
+  const wantsLogo = policy!.channels.includes('logo') && !!brand.logoAssetId;
+  const workspaceLogo = wantsLogo && input.deps.workspaceAssets
+    ? await input.deps.workspaceAssets.readBytes(input.workspaceId, input.ownerUserId, brand.logoAssetId!).catch((error) => {
+      console.warn('[agent] workspace logo unavailable', error);
+      return null;
+    })
+    : undefined;
+  const savedStyle = input.boundTools.getAppliedStyle();
+  const appearance = resolveDocumentAppearance({
+    policy: policy!,
+    workspaceBrand: brand,
+    isNewDocument,
+    ...(wantsLogo ? { workspaceLogo } : {}),
+    ...(savedStyle ? { savedStyle } : {}),
+  });
+  if (Object.keys(appearance.provenance).length) {
+    const fidelity = await input.boundTools.applyResolvedAppearance(appearance);
+    const workspaceFields = fidelity.fields.filter((field) => field.source === 'workspace_brand');
+    const counts = Object.fromEntries(['matched', 'mismatched', 'not_applicable', 'unsupported'].map((status) => [
+      status,
+      workspaceFields.filter((field) => field.status === status).length,
+    ]));
+    const mismatchedFields = workspaceFields.filter((field) => field.status === 'mismatched').map((field) => field.field);
+    console.info(`[agent] appearance workspace_brand ${JSON.stringify({ ...counts, ...(mismatchedFields.length ? { mismatchedFields } : {}) })}`);
+  }
+}
+
 async function runExecution(input: {
   readonly trace?: RunTrace;
   readonly deps: AgentExecutionServiceDeps;
@@ -429,6 +494,7 @@ async function runExecution(input: {
   readonly setWorkingDocumentGetter: (getter: AgentExecutionHandle["getWorkingDocument"]) => void;
 }): Promise<AgentExecutionResult> {
   const transcript = createTranscriptCollector();
+  const capabilityTelemetry = createCapabilityTelemetry(input.run.id, input.model.usageAttribution?.model ?? "unknown", input.deps.capabilityEventSink);
   let boundTools: Awaited<ReturnType<typeof createPrimaryDocxTools>>;
   let flushAttempted = false;
   let persistenceFailure = false;
@@ -498,6 +564,7 @@ async function runExecution(input: {
       versionId: input.run.baseDocumentVersionId,
       workingDocumentIds: input.workingDocumentIds,
       ...(input.editableDocumentId ? { editableDocumentId: input.editableDocumentId } : {}),
+      ...(input.deps.workspaceAssets ? { workspaceAssets: input.deps.workspaceAssets } : {}),
       onDocumentSelected: ({ documentId, versionId }) => {
         input.trace?.write("## Document Target", { documentId, versionId });
         logAgentLine(
@@ -575,15 +642,30 @@ async function runExecution(input: {
     const finish = createFinishTool({
       description: "After your concise final response to the user, call this to end the run.",
     });
+    const requiresSavedStyle = requestsSavedStyle(input.instruction);
     const tools: AgentToolSet = {
       ...(boundTools?.tools ?? {}),
+      ...createStandaloneCapabilityTools(),
+      ...(input.deps.styleProfiles ? createStyleProfileTools({
+        profiles: input.deps.styleProfiles, ownerUserId: input.ownerUserId, workspaceId: input.thread.workspaceId,
+        ...(boundTools ? { applyProfile: (id: string) => boundTools!.applyStyleProfile(id, input.deps.styleProfiles!) } : {}),
+        currentDocument: () => ({ documentId: boundTools?.getActiveDocumentId() ?? null, versionId: boundTools?.getActiveVersionId() ?? null, dirty: (boundTools?.getWorkingMutationCount() ?? 0) > 0 }),
+      }) : {}),
       "workspace.search_documents": createWorkspaceSearchTool({
         documents: input.deps.documents,
         ...(input.deps.docxBinding ? { binding: input.deps.docxBinding } : {}),
         ownerUserId: input.ownerUserId,
         workspaceId: input.thread.workspaceId,
       }),
-      [finish.name]: finish.tool,
+      [finish.name]: requiresSavedStyle ? {
+        ...finish.tool,
+        execute: async (args, context) => {
+          const fidelity = boundTools?.getStyleFidelity();
+          if (!fidelity) throw new Error('Retrieve and apply the requested saved style with style.apply_profile before finishing. If required information is missing, use finish_with_input_needed and disclose it.');
+          if (!fidelity.summary.counts.matched || fidelity.summary.counts.mismatched) throw new Error('Saved style has mismatched fields. Resolve them or finish_with_input_needed and report the unmet style requirement.');
+          return finish.tool.execute!(args, context);
+        },
+      } : finish.tool,
       finish_with_input_needed: defineTool<{ missingInformation: string }, string>({
         kind: "read",
         terminal: true,
@@ -608,10 +690,12 @@ async function runExecution(input: {
       false,
       () => boundTools?.getWorkingRevision() ?? 0,
     );
-    const toolSurface = createToolSurface(tools);
+    const toolSurface = createToolSurface(tools, capabilityTelemetry.record);
+    const recommendations = toolSurface.session.recommend(input.instruction);
     const system = buildAgentOperatingInstruction(
       Object.keys(toolSurface.initialTools).map(providerSafeToolName),
       toolSurface.capabilityIndex,
+      recommendations,
     ) +
       (requestsDocumentChange(input.instruction)
         ? `\n\n${buildDocumentUpdateInstruction()}`
@@ -626,7 +710,7 @@ async function runExecution(input: {
       checkpoint,
       priorMessages,
       system,
-      tools,
+      tools: toolSurface.initialTools,
       instruction: input.instruction,
       ...(input.continuationContext ? { continuationContext: input.continuationContext } : {}),
       activeDocumentId: boundTools?.getActiveDocumentId(),
@@ -729,6 +813,14 @@ async function runExecution(input: {
       } else documentView = undefined;
       const workingRevision = boundTools?.getWorkingRevision() ?? 0;
       const projected = project(messages);
+      // projectMessages runs before the model request. A load call later in this turn
+      // can only change this guidance on the next request.
+      const currentTools = toolSurface.session.projectTools();
+      const instructionBudget = context.safeInputBudgetTokens === undefined ? undefined : Math.max(0,
+        context.safeInputBudgetTokens - estimateTokens(system) - estimateTokens(toolContext(currentTools)) - estimateTokens(JSON.stringify(projected)),
+      );
+      const guidance = projectLoadedInstructions(toolSurface.session, instructionBudget);
+      const modelMessages = guidance ? [...projected, guidance.message] : projected;
       const inRunMessages = projected.slice(initialMessageCount);
       continuation = { turn: ++modelTurn, mode: "provider",
         priorAssistantReasoningReplayed: inRunMessages.some((message) => message.role === "assistant" &&
@@ -738,16 +830,29 @@ async function runExecution(input: {
             part.output.type !== "error-text" && part.output.type !== "error-json" && part.output.type !== "execution-denied" &&
             !("value" in part.output && part.output.value && typeof part.output.value === "object" && (part.output.value as { ok?: unknown }).ok === false))),
         estimatedInRunTokens: estimateTokens(JSON.stringify(inRunMessages)),
+        loadedInstructionTokens: guidance?.estimatedTokens ?? 0,
         workingRevision, snapshotRevision: directSnapshotRevision,
         };
       input.trace?.write(`## Turn ${modelTurn} — Continuation`, continuation);
-      return projected;
+      return modelMessages;
     };
 
     // The one API → agent-core-v3 execution call.
     const executeAgent = input.deps.runAgent ?? runAgent;
-    const verifySavedDocument = async (metrics?: AgentRunMetrics) => {
-      if (!savedTarget || !boundTools?.getWorkingMutationCount() || !input.deps.docxBinding) return;
+    const verifySavedDocument = async (metrics?: AgentRunMetrics): Promise<DocumentCheck[]> => {
+      if (!savedTarget || !boundTools?.getWorkingMutationCount() || !input.deps.docxBinding) {
+        const unrecovered = unrecoveredFailedMutateToolNames(metrics);
+        if (!unrecovered.length) return [];
+        const checks: DocumentCheck[] = [{
+          id: "task",
+          status: "fail",
+          message: `Could not complete requested update: ${unrecovered.join(", ")}`,
+        }];
+        transcript.validation(checks);
+        input.trace?.write("## Validation", checks);
+        logAgentLine(formatValidationChecks(checks));
+        return checks;
+      }
       const target = savedTarget as { documentId: string; fromVersionId: string; versionId: string };
       try {
         const sources = (retrieval?.workingSet ?? []).filter((item) => item.documentId !== target.documentId);
@@ -756,10 +861,12 @@ async function runExecution(input: {
           input.deps.documents.readExactVersionBytes({ documentId: target.documentId, versionId: target.versionId, ownerUserId: input.ownerUserId }),
           ...sources.map((item) => input.deps.documents.getOwnedDocument({ documentId: item.documentId, ownerUserId: input.ownerUserId })),
         ]);
+        const unrecovered = unrecoveredFailedMutateToolNames(metrics);
         const checks = await verifyDocumentUpdate({
           binding: input.deps.docxBinding,
           before: new Uint8Array(before), after: new Uint8Array(after), instruction: input.instruction,
           successfulMutations: metrics?.toolCalls.filter((tool) => tool.kind === "mutate" && tool.outcome === "success").map((tool) => tool.toolName),
+          unrecoveredFailedMutations: unrecovered,
           created: createdDocumentId === target.documentId,
           inputNeeded: isInputNeededTool(metrics?.toolCalls.filter((tool) => tool.outcome === "success" && isFinishTool(tool.toolName)).at(-1)?.toolName),
           targetAdvanced: target.fromVersionId !== target.versionId,
@@ -769,16 +876,25 @@ async function runExecution(input: {
               ? sources.every((item, index) => currentSources[index]?.latestVersion.id === item.versionId)
               : null,
         });
+        const fidelity = boundTools.getStyleFidelity();
+        if (fidelity) {
+          const workspaceBrand = fidelity.fields.some((field) => field.source === 'workspace_brand');
+          checks.push({ id: 'style', status: fidelity.summary.counts.mismatched ? 'warning' : 'pass', message: `${workspaceBrand ? 'Workspace brand appearance' : 'Appearance'}: ${fidelity.summary.counts.matched} matched, ${fidelity.summary.counts.mismatched} mismatched, ${fidelity.summary.counts.not_applicable} not applicable, ${fidelity.summary.counts.unsupported} unsupported` });
+        }
         transcript.validation(checks);
         input.trace?.write("## Validation", checks);
         logAgentLine(formatValidationChecks(checks));
+        return checks;
       } catch {
-        input.trace?.write("## Validation", [{ id: "verification", status: "fail", message: "Saved document could not be verified" }]);
-        transcript.validation([{ id: "verification", status: "fail", message: "Saved document could not be verified" }]);
-        logAgentLine(formatValidationChecks([{ status: "fail", message: "Saved document could not be verified" }]));
+        const checks: DocumentCheck[] = [{ id: "verification", status: "fail", message: "Saved document could not be verified" }];
+        input.trace?.write("## Validation", checks);
+        transcript.validation(checks);
+        logAgentLine(formatValidationChecks(checks));
+        return checks;
       }
     };
     let result;
+    let verificationChecks: DocumentCheck[] = [];
     const handleRunEvent = createRunEventHandler({
       liveEvents: input.liveEvents,
       runId: input.run.id,
@@ -804,18 +920,34 @@ async function runExecution(input: {
           ? { maxOutputTokens: input.model.outputTokenLimit }
           : {}),
         onEvent: (event) => {
+          capabilityTelemetry.runtimeEvent(event, toolSurface.session);
           input.trace?.event(event);
           if (event.type === "model_turn_started") boundTools?.setModelTurn(event.turn);
           if (event.type === "model_turn_completed") toolSurface.recordTurn(event, runShort);
           return handleRunEvent(event);
         },
       });
+      if (isSuccessfulStop(result.stopReason)) {
+        await applyAutomaticWorkspaceAppearance({
+          deps: input.deps,
+          toolSurface,
+          boundTools: boundTools!,
+          workspaceId: input.thread.workspaceId,
+          ownerUserId: input.ownerUserId,
+          instruction: input.instruction,
+        });
+      }
+      const inputNeeded = isInputNeededTool(result.metrics?.toolCalls.filter(tool => tool.outcome === 'success' && isFinishTool(tool.toolName)).at(-1)?.toolName);
+      const fidelity = boundTools?.getStyleFidelity();
+      if (requiresSavedStyle && isSuccessfulStop(result.stopReason) && !inputNeeded && (!fidelity?.summary.counts.matched || fidelity.summary.counts.mismatched)) {
+        throw new AgentExecutionError('SAVED_STYLE_NOT_APPLIED', 'The requested saved style was not applied and verified.');
+      }
       await flushWorking();
-      await verifySavedDocument(result.metrics);
+      verificationChecks = await verifySavedDocument(result.metrics);
     } catch (error) {
       let terminalError = error;
       try { await flushWorking(); } catch (flushError) { terminalError = flushError; }
-      await verifySavedDocument(result?.metrics ?? getRunMetricsFromError(error));
+      verificationChecks = await verifySavedDocument(result?.metrics ?? getRunMetricsFromError(error));
       await emitRunReport({
         trace: input.trace,
         runId: input.run.id,
@@ -846,6 +978,9 @@ async function runExecution(input: {
       console.info(`[agent] tool_surface_summary run=${runShort} ${JSON.stringify(toolSurface.summary())}`);
     }
 
+    const unrecoveredMutates = unrecoveredFailedMutateToolNames(result.metrics);
+    const unfinishedWork = unrecoveredMutates.length > 0 || hasBlockingVerificationFailure(verificationChecks);
+
     await emitRunReport({
       trace: input.trace,
       runId: input.run.id,
@@ -854,7 +989,7 @@ async function runExecution(input: {
       metrics: result.metrics,
       stopReason: result.stopReason,
       cancelled: false,
-      thrown: false,
+      thrown: unfinishedWork,
       initialDocumentId,
       initialVersionId: input.run.baseDocumentVersionId,
       finalDocumentId: boundTools?.getActiveDocumentId() ?? initialDocumentId,
@@ -886,6 +1021,32 @@ async function runExecution(input: {
         liveEvents: input.liveEvents,
         failureCode: failureCodeForStopReason(result.stopReason),
         failureMessage: boundedStopMessage(result.stopReason, versionAdvances.length > 0),
+        transcript: transcript.entries(),
+      });
+    }
+
+    if (unfinishedWork) {
+      transcript.finish();
+      const blocking = verificationChecks.filter((check) => check.status === "fail" && ["open", "target", "task", "comments", "revisions", "fields"].includes(check.id));
+      const preserved = versionAdvances.length > 0;
+      const unresolved = unrecoveredMutates.length
+        ? unrecoveredMutates.join(", ")
+        : blocking.map((check) => check.message).join("; ");
+      return settleTerminalRunFailure({
+        discloseAsAssistant: true,
+        cancelled: false,
+        persistence: input.deps.persistence,
+        ownerUserId: input.ownerUserId,
+        thread: input.thread,
+        userMessage: input.userMessage,
+        run: input.run,
+        liveEvents: input.liveEvents,
+        failureCode: preserved
+          ? unrecoveredMutates.length ? "AGENT_PARTIAL_COMPLETION" : "DOCUMENT_VERIFICATION_FAILED"
+          : unrecoveredMutates.length ? "AGENT_MUTATION_FAILED" : "DOCUMENT_VERIFICATION_FAILED",
+        failureMessage: preserved
+          ? `Updated the document partially. Unresolved: ${unresolved}. Changes made so far were preserved.`
+          : `Could not complete the requested update. ${unresolved}`,
         transcript: transcript.entries(),
       });
     }
@@ -962,6 +1123,8 @@ async function runExecution(input: {
       liveEvents: input.liveEvents,
       transcript: transcript.entries(),
     });
+  } finally {
+    await capabilityTelemetry.flush();
   }
 }
 

@@ -2,7 +2,7 @@
 #   docker build -t opensuite-api .
 # Atlas/Dokploy: docker-compose.atlas.yml (API only; external DB + MinIO).
 #
-# Native engine: @opensuitehq/engine@0.1.3 from npm (glibc platforms only).
+# Native engine: @opensuitehq/engine@0.1.4 from npm (glibc platforms only).
 # Base image is Debian bookworm (glibc) — Alpine/musl is incompatible.
 
 # syntax=docker/dockerfile:1.7
@@ -34,8 +34,13 @@ RUN pnpm --filter @opensuite/api... build
 RUN node --input-type=module -e "import { createNapiDocxEngineBinding } from './packages/engine-client/dist/index.js'; const caps = (await createNapiDocxEngineBinding()).getDocxCapabilities(); if (!caps.ok) throw new Error('DOCX engine capabilities unavailable')"
 
 FROM node:${NODE_VERSION}-bookworm-slim AS runtime
+# LibreOffice Writer (nogui) refreshes TOC/PAGE fields before agent save. Heavy (~400MB+).
 RUN apt-get update \
-  && apt-get install -y --no-install-recommends ca-certificates curl \
+  && apt-get install -y --no-install-recommends \
+    ca-certificates \
+    curl \
+    libreoffice-writer-nogui \
+    fonts-dejavu-core \
   && rm -rf /var/lib/apt/lists/* \
   && corepack enable && corepack prepare pnpm@11.25.0 --activate \
   && groupadd --system --gid 1001 opensuite \

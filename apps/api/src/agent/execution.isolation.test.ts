@@ -6,7 +6,8 @@ import { join } from "node:path";
 
 import { runAgent, type RunAgentResult, type RunModelResult, type V3Model } from "@opensuite/agent-core-v3";
 import { MockLanguageModelV4, simulateReadableStream } from "ai/test";
-import { bindDocxDocument, buildMinimalDocx, createNapiDocxEngineBinding } from "@opensuite/engine-client";
+import sharp from "sharp";
+import { bindDocxDocument, buildMinimalDocx, createNapiDocxEngineBinding, inspectDocxStyleSnapshot } from "@opensuite/engine-client";
 import type { AgentRunReport } from "./agent-run-report.js";
 
 import {
@@ -73,7 +74,7 @@ test("API full trace records retrieval, saved version, validation and durable se
         appendDocumentVersion: async (input) => { versionId = "v2"; versions.set(versionId, Buffer.from(input.bytes)); return { version: { id: versionId, versionNumber: 2 } } as never; },
       },
     });
-    const result = await (await execution.start({ userId: "user-1", threadId: "thread-1", activeDocumentId: "doc-1", instruction: "Replace Before with After" })).result;
+    const result = await (await execution.start({ userId: "user-1", threadId: "thread-1", activeDocumentId: "doc-1", instruction: "Update this document: replace Before with After" })).result;
     assert.equal(result.run.status, "completed");
     assert.equal(versionId, "v2");
     assert.equal(readdirSync(dir).length, 1);
@@ -179,7 +180,7 @@ for (const tracing of [false, true]) {
           },
         },
       });
-      const result = await (await execution.start({ userId: "user-1", threadId: "thread-1", activeDocumentId: "doc-1", instruction: "Replace First, Second and Third, then insert a paragraph" })).result;
+      const result = await (await execution.start({ userId: "user-1", threadId: "thread-1", activeDocumentId: "doc-1", instruction: "Update this document: replace First, Second and Third, then insert a paragraph" })).result;
       assert.equal(result.run.status, "completed");
       assert.equal(appends, 1);
       assert.equal(runtime?.metrics.toolCalls.filter((call) => call.failureCode === "STALE_HANDLE").length, 1);
@@ -246,7 +247,7 @@ test("a failed DIRECT refresh removes the stale view, retries only after another
       },
     },
   });
-  const result = await (await execution.start({ userId: "user-1", threadId: "thread-1", activeDocumentId: "doc-1", instruction: "Replace Small" })).result;
+  const result = await (await execution.start({ userId: "user-1", threadId: "thread-1", activeDocumentId: "doc-1", instruction: "Update this document: replace Small" })).result;
   assert.equal(result.run.status, "completed");
   assert.equal(appends, 1);
   assert.match(JSON.stringify(await realBinding.inspectDocx(saved, { focus: { kind: "body_blocks" } })), /Recovered/);
@@ -632,8 +633,8 @@ test("successful V3 finish_tool settles completed + agent.completed", async () =
   assert.equal(events.some((e) => e.type === "agent.failed"), false);
   assert.ok(sawSystem);
   assert.match(sawSystem!, /You are OpenSuite's document agent/);
-  assert.match(sawSystem!, /AVAILABLE CAPABILITIES/);
-  assert.match(sawSystem!, /Use the finish operation when the requested work is complete/);
+  assert.match(sawSystem!, /INITIAL TOOLS/);
+  assert.match(sawSystem!, /Use finish when the requested work is complete/);
   // Isolation fixture has no bound DOCX → only terminal tools are exposed.
   assert.match(sawSystem!, /- finish/);
   assert.doesNotMatch(sawSystem!.split("OPERATING PRINCIPLES")[0]!, /- document[._]/);
@@ -712,7 +713,7 @@ for (const editFirst of [false, true]) {
         assert.equal(clarification.execute!({ question: "  Which period?  " }, context), "Which period?");
         if (runtimeResults.length) {
           assert.ok(JSON.stringify(input.messages).includes(question), "follow-up includes the durable question");
-          assert.ok(JSON.stringify(input.messages).includes("Change October to November"), "follow-up includes the original request");
+          assert.ok(JSON.stringify(input.messages).includes("Update this document: change October to November"), "follow-up includes the original request");
         }
         const result = await runAgent({ ...input, model });
         runtimeResults.push(result);
@@ -733,7 +734,7 @@ for (const editFirst of [false, true]) {
         },
       });
       const start = (instruction: string) => execution.start({ userId: "user-1", threadId: "thread-1", activeDocumentId: "doc-1", instruction, liveEvents: { emit: (event) => { events.push(event); } } });
-      const first = await (await start("Change October to November and replace Priorities for November with December priorities.")).result;
+      const first = await (await start("Update this document: change October to November and replace Priorities for November with December priorities.")).result;
       assert.equal(first.run.status, "completed_with_input_needed");
       assert.equal(first.run.errorCode, null);
       assert.equal(first.run.resultMessageId, first.assistantMessage?.id);
@@ -752,14 +753,14 @@ for (const editFirst of [false, true]) {
       assert.ok(events.some((event) => event.type === "agent.completed"));
       assert.equal(persistence.steps.filter((step) => step.kind === "narration").length, 0, "question is not duplicated as narration");
       const trace = readFileSync(join(dir, readdirSync(dir)[0]!), "utf8");
-      assert.match(trace, /Tool — request_clarification/);
+      assert.match(trace, /Tool Result — request_clarification/);
       assert.match(trace, /"rawResult":/);
       assert.match(trace, /"stopReason": "finish_tool"/);
       assert.match(trace, /"status": "completed_with_input_needed"/);
       assert.ok(trace.includes(question));
       assert.equal(trace.includes("## Document Version Created"), editFirst);
 
-      const followUp = await (await start("Use October 2026 as the reporting period, with November priorities.")).result;
+      const followUp = await (await start("Update this document: use October 2026 as the reporting period, with November priorities.")).result;
       assert.equal(followUp.thread.id, first.thread.id);
       assert.notEqual(followUp.run.id, first.run.id);
       assert.equal(followUp.run.status, "completed");
@@ -801,6 +802,21 @@ test("known document and provider failures have specific safe explanations", () 
   assert.equal(describeRunFailure(new Error("database password is secret"), []), null);
 });
 
+test("managed AI plain errors still map to actionable user-facing copy", () => {
+  assert.deepEqual(describeRunFailure(new Error("Managed AI is unavailable."), []), {
+    code: "MANAGED_USAGE_EXHAUSTED",
+    message: "Managed AI credits are exhausted. Add your own API key in AI & Models settings.",
+  });
+  assert.deepEqual(describeRunFailure(new Error("Managed AI is not available."), []), {
+    code: "MANAGED_USAGE_DISABLED",
+    message: "Managed AI is unavailable. Add your own API key in AI & Models settings.",
+  });
+  assert.deepEqual(describeRunFailure(new Error("Managed AI accounting is unavailable."), []), {
+    code: "MANAGED_USAGE_ACCOUNTING_FAILED",
+    message: "Managed AI is temporarily unavailable. Use your own API key or try again later.",
+  });
+});
+
 test("a document creation run tells the model to create before editing", async () => {
   const persistence = memoryPersistence("user-1");
   let system = "";
@@ -809,7 +825,7 @@ test("a document creation run tells the model to create before editing", async (
     docxBinding: { getDocxCapabilities: () => ({ ok: true, formats: [] }) } as unknown as AgentExecutionServiceDeps["docxBinding"],
   });
   await (await execution.start({ userId: "user-1", threadId: "thread-1", instruction: "Create a research document" })).result;
-  assert.match(system, /No document is active.*create it before calling any document tool/);
+  assert.match(system, /No document is selected for editing\. Create one for a new-document request/);
 });
 
 test("successful V3 completed (no tools) settles completed", async () => {
@@ -918,7 +934,7 @@ test("later runs restore durable working documents into model context", async ()
   const first = await (await execution.start({
     userId: "user-1",
     threadId: "thread-1",
-    instruction: "first",
+    instruction: "Update this document first",
     activeDocumentId: "doc-a",
     documentIds: ["doc-b"],
   })).result;
@@ -933,7 +949,7 @@ test("later runs restore durable working documents into model context", async ()
     const second = await (await execution.start({
       userId: "user-1",
       threadId: "thread-1",
-      instruction: "second",
+      instruction: "Update this document second",
       activeDocumentId: "doc-b",
       documentIds: ["doc-a"],
     })).result;
@@ -941,8 +957,8 @@ test("later runs restore durable working documents into model context", async ()
   } finally {
     console.info = original;
   }
-  assert.match(String(projected.at(-2)?.content), /WORKING SET\n- B\.docx \(docx; ID doc-b\)\n- A\.docx \(docx; ID doc-a\)/);
-  assert.equal(projected.at(-1)?.content, "second");
+  assert.match(String(projected.at(-2)?.content), /WORKING SET\n- B\.docx \(docx; ID doc-b; tip v1; version v-b\)\n- A\.docx \(docx; ID doc-a; tip v1; version v-a\)/);
+  assert.equal(projected.at(-1)?.content, "Update this document second");
   assert.ok(logs.some((message) =>
     message.includes("[agent] RETRIEVAL") &&
     message.includes("target=B.docx") &&
@@ -1035,6 +1051,7 @@ test("recurring report refresh selects the target, reads the source, and saves o
       },
       readExactVersionBytes: async ({ documentId, versionId }) => {
         if (documentId === "target" && versionId === "target-v1") return target;
+        if (documentId === "target" && versionId === "target-v2") return savedTarget;
         if (documentId === "source" && versionId === "source-v1") return source;
         throw new Error("wrong version");
       },
@@ -1089,6 +1106,73 @@ test("creating a new report does not bind or retrieve a stale active document", 
   });
   const result = await (await execution.start({ userId: "user-1", threadId: "thread-1", activeDocumentId: "old", instruction: "Create a new monthly report" })).result;
   assert.equal(result.run.baseDocumentVersionId, null);
+});
+
+test('scripted report creation applies the loaded skill workspace brand before saving', async () => {
+  const persistence = memoryPersistence('user-1');
+  const binding = await createNapiDocxEngineBinding();
+  const versions = new Map<string, Buffer>();
+  let document = { id: 'report-1', name: 'Q3 report.docx', workspaceId: 'ws-1', format: 'docx', latestVersion: { id: 'v1' } };
+  let brandReads = 0;
+  let logoReads = 0;
+  const logoPng = await sharp({ create: { width: 1600, height: 800, channels: 4, background: '#124733' } }).png().toBuffer();
+  const execution = createAgentExecutionService({
+    ...baseDeps(persistence, async (input) => {
+      const firstTurn = await input.projectTools!({ turn: 1 } as never);
+      await firstTurn['capabilities.load']!.execute!({ ids: ['skills.reporting.analytical-report'] }, {} as never);
+      const tools = await input.projectTools!({ turn: 2 } as never);
+      await tools['workspace.create_blank_document']!.execute!({ title: document.name }, {} as never);
+      await tools['document.insert_paragraphs']!.execute!({ texts: ['Q3 operating report', 'Executive Summary', 'Revenue: $3.8M'], placement: { kind: 'end' } }, {} as never);
+      await tools['document.set_paragraph_style']!.execute!({ target: { text: 'Q3 operating report' }, style: 'Title' }, {} as never);
+      await tools['document.set_paragraph_style']!.execute!({ target: { text: 'Executive Summary' }, style: 'Heading 1' }, {} as never);
+      await tools['document.create_table']!.execute!({ placement: { kind: 'end' }, rows: [['Metric', 'Value'], ['Revenue', '$3.8M']] }, {} as never);
+      return softResult('completed', 'Created.');
+    }),
+    docxBinding: binding,
+    documents: {
+      listInWorkspace: async () => [],
+      getOwnedDocument: async () => document as never,
+      readExactVersionBytes: async ({ versionId }) => versions.get(versionId)!,
+      appendDocumentVersion: async ({ bytes }) => {
+        versions.set('v2', Buffer.from(bytes));
+        document = { ...document, latestVersion: { id: 'v2' } };
+        return { version: { id: 'v2', versionNumber: 2 } } as never;
+      },
+      createBlankDocxDocument: async () => {
+        versions.set('v1', Buffer.from(binding.createBlankDocx()));
+        return { document, version: { id: 'v1', versionNumber: 1 } } as never;
+      },
+      createOfficeDocumentFromBytes: async () => { throw new Error('unused'); },
+    },
+    workspaceBrand: { get: async () => {
+      brandReads++;
+      return { schemaVersion: 1, workspaceId: 'ws-1', createdAt: '', updatedAt: '', logoAssetId: 'logo-1',
+        organization: { name: 'Cincinnati Sports Club', website: '', email: '', phone: '', address: '' },
+        colors: { primary: '#124733', secondary: '#124733', accent: '#124733' }, typography: { headingFont: 'Arial', bodyFont: 'Arial' } };
+    } },
+    workspaceAssets: {
+      listImages: async () => ({ items: [], offset: 0, limit: 20 }),
+      readBytes: async () => {
+        logoReads++;
+        return { bytes: logoPng, contentType: 'image/png' };
+      },
+    },
+  });
+  const result = await (await execution.start({ userId: 'user-1', threadId: 'thread-1', instruction: 'Create a professional quarterly operating report with metrics.' })).result;
+  assert.equal(result.run.status, 'completed');
+  assert.equal(brandReads, 1);
+  assert.equal(logoReads, 1);
+  const snapshot = await inspectDocxStyleSnapshot(new Uint8Array(versions.get('v2')!), binding);
+  assert.equal(snapshot.tables[0]?.firstRowShadingColors[0], '124733');
+  assert.ok(snapshot.typography.textColors.some((color) => color.value === 'FFFFFF'));
+  for (const styleId of ['Title', 'Heading1']) {
+    assert.ok(snapshot.typography.runPatterns.some((pattern) => pattern.paragraphStyleId === styleId && (pattern.effectiveFormatting ?? pattern.directFormatting).color === '124733'), styleId);
+  }
+  assert.ok(snapshot.typography.runPatterns.some((pattern) => (pattern.effectiveFormatting ?? pattern.directFormatting).fontFamily === 'Arial'));
+  const blocks = await binding.inspectDocx(new Uint8Array(versions.get('v2')!), { focus: { kind: 'body_blocks', offset: 0, limit: 1 } });
+  assert.equal(blocks.bodyBlocks?.items[0]?.kind, 'picture');
+  assert.ok((blocks.bodyBlocks?.items[0]?.picture?.widthEmu ?? Infinity) <= 1_371_600);
+  assert.ok((blocks.bodyBlocks?.items[0]?.picture?.heightEmu ?? Infinity) <= 457_200);
 });
 
 test("completed runs persist narration at tool boundaries without duplicating the final answer", async () => {
@@ -1615,7 +1699,7 @@ test("terminal runs flush valid working changes once, including partial and canc
         },
       },
     });
-    const result = await (await execution.start({ userId: "user-1", threadId: "thread-1", activeDocumentId: "doc-1", instruction: "edit", signal: controller.signal, liveEvents: { emit: (event) => { events.push(event); } } })).result;
+    const result = await (await execution.start({ userId: "user-1", threadId: "thread-1", activeDocumentId: "doc-1", instruction: "Edit this document", signal: controller.signal, liveEvents: { emit: (event) => { events.push(event); } } })).result;
     assert.equal(modelCalls, 1, `verification must not add a model turn: ${mode}`);
     assert.equal(persistence.steps.some((step) => step.kind === "validation"), appends > 0 && mode !== "append_fail", mode);
     assert.equal(appends, mode === "read_only" || mode === "fail_before" ? 0 : 1, mode);
@@ -1657,7 +1741,7 @@ test("execution scopes compatible handle reuse to the model turn and saves one v
       table = { handle: inspected.value.tables.items[0]!.handle };
     }
     const calls = [
-      [{ name: "tools_load_group", input: { groups: ["table_styling"] } }, { name: "document_inspect", input: { kind: "tables" } }],
+      [{ name: "capabilities_load", input: { ids: ["document.tables.styling"] } }, { name: "document_inspect", input: { kind: "tables" } }],
       [{ name: "document_set_table_formatting", input: { table, borders: "grid" } }, { name: "document_set_table_column_widths", input: { table, widthsTwips: [3000, 3000] } }],
       [{ name: "document_set_table_column_widths", input: { table, widthsTwips: [2000, 4000] } }, { name: "finish", input: {} }],
       [{ name: "finish", input: {} }],
@@ -1672,7 +1756,7 @@ test("execution scopes compatible handle reuse to the model turn and saves one v
   let runtimeResult: RunAgentResult;
   const deps = baseDeps(persistence, async (input) => {
     assert.ok(input.projectTools);
-    assert.match(input.system!, /table_styling: Change table/);
+    assert.match(input.system!, /document: Read and edit DOCX documents/);
     assert.doesNotMatch(input.system!, /- document_set_table_formatting/);
     runtimeResult = await runAgent({ ...input, model });
     return runtimeResult;
@@ -1695,14 +1779,18 @@ test("execution scopes compatible handle reuse to the model turn and saves one v
     },
   });
   const result = await (await execution.start({
-    userId: "user-1", threadId: "thread-1", activeDocumentId: "doc-1", instruction: "format",
+    userId: "user-1", threadId: "thread-1", activeDocumentId: "doc-1", instruction: "Format this document",
   })).result;
-  assert.equal(result.run.status, "completed");
+  // The second column-width attempt intentionally fails with STALE_HANDLE after
+  // earlier successful edits — preserve those edits but do not claim full success.
+  assert.equal(result.run.status, "failed");
+  assert.equal(result.run.errorCode, "AGENT_PARTIAL_COMPLETION");
   assert.equal(appends, 1);
+  assert.equal(reports[0]?.outcome, "partial");
   assert.equal(reports[0]?.document?.workingMutationCount, 2);
   assert.equal(reports[0]?.document?.finalVersionId, "v2");
   assert.equal(runtimeResult!.stopReason, "finish_tool");
-  assert.deepEqual(runtimeResult!.metrics.modelTurns.map((turn) => turn.exposedToolCount), [18, 22, 22, 22]);
+  assert.deepEqual(runtimeResult!.metrics.modelTurns.map((turn) => turn.exposedToolCount), [21, 25, 25, 25]);
   assert.deepEqual(runtimeResult!.metrics.toolCalls.map((call) => call.failureCode), [undefined, undefined, undefined, undefined, undefined, "STALE_HANDLE", undefined]);
 });
 
@@ -2231,4 +2319,134 @@ test("duplicate cancel is idempotent and does not corrupt a failed run", async (
   });
   assert.equal(failed?.status, "failed");
   assert.equal(failed?.errorCode, "AGENT_EXECUTION_FAILED");
+});
+
+test('explicit learn-style request binds the open saved version and exposes the product capability', async () => {
+  const persistence = memoryPersistence('user-1');
+  const binding = await createNapiDocxEngineBinding();
+  const documentId = '00000000-0000-4000-8000-000000000001';
+  const versionId = '00000000-0000-4000-8000-000000000002';
+  const bytes = Buffer.from(buildMinimalDocx(['A report']));
+  const document = { id: documentId, workspaceId: 'ws-1', name: 'Report.docx', format: 'docx', latestVersion: { id: versionId } };
+  let learned = 0;
+  const deps = baseDeps(persistence, async input => {
+    const initialTools = await input.projectTools!({ turn: 1 } as never);
+    assert.equal(initialTools['style.learn_from_document'], undefined);
+    await input.tools!['capabilities.load']!.execute!({ ids: ['style.learn_from_document'] }, {} as never);
+    const tools = await input.projectTools!({ turn: 2 } as never);
+    assert.ok(tools['style.learn_from_document']);
+    await tools['style.learn_from_document']!.execute!({ name: 'Blue Harbor Operating Report Style' }, {} as never);
+    return softResult('completed', 'Style saved.');
+  });
+  const execution = createAgentExecutionService({ ...deps, docxBinding: binding,
+    documents: { ...deps.documents, getOwnedDocument: async () => document as never, listInWorkspace: async () => [document] as never, readExactVersionBytes: async () => bytes },
+    styleProfiles: { learnFromDocument: async (input: { documentId: string; versionId?: string }) => {
+      learned++;
+      assert.equal(input.documentId, documentId);
+      assert.equal(input.versionId, versionId);
+      const { normalizeStyleSnapshot } = await import('../style-profiles/normalize.js');
+      return { id: documentId, name: 'Report Style', createdAt: '', updatedAt: '', source: { type: 'docx', documentId, versionId, workspaceId: 'ws-1', fileName: 'Report.docx', extractedAt: '', snapshotSchemaVersion: 1, normalizerVersion: 1 }, style: normalizeStyleSnapshot(await binding.inspectDocxStyleSnapshot(bytes)) };
+    } } as never,
+  });
+  const result = await (await execution.start({ userId: 'user-1', threadId: 'thread-1', activeDocumentId: documentId, instruction: 'Learn the document style from this document and save it for future use.' })).result;
+  assert.equal(result.run.status, 'completed');
+  assert.equal(learned, 1);
+  assert.equal(result.run.baseDocumentVersionId, versionId);
+});
+
+test('saved-style completion cannot succeed from assistant text or generic guidance alone', async () => {
+  const persistence = memoryPersistence('user-1');
+  const deps = baseDeps(persistence, async () => softResult('completed', 'I used your saved Resume Style.'));
+  const execution = createAgentExecutionService(deps);
+  const result = await (await execution.start({ userId: 'user-1', threadId: 'thread-1', instruction: 'Use my Resume Style and build me a resume.' })).result;
+  assert.equal(result.run.status, 'failed');
+  assert.match(result.run.errorMessage ?? '', /saved style was not applied and verified/);
+  assert.equal(result.assistantMessage, null);
+});
+
+test("partial successful edits cannot present full-success completion", async () => {
+  const binding = await createNapiDocxEngineBinding();
+  const persistence = memoryPersistence("user-1");
+  let bytes = Buffer.from(buildMinimalDocx(["Start"]));
+  let versionId = "v1";
+  let appends = 0;
+  const reports: AgentRunReport[] = [];
+  const deps = baseDeps(persistence, async (input) => {
+    const call = { toolCallId: "test", messages: [], context: undefined as never };
+    assert.equal((await input.tools!["document.insert_paragraph"]!.execute!({ text: "Kept edit", placement: { kind: "end" } }, call) as { ok: boolean }).ok, true);
+    const base = softResult("finish_tool", "All done");
+    return {
+      ...base,
+      metrics: {
+        ...base.metrics,
+        toolCalls: [
+          { sequence: 1, turn: 1, toolName: "document.insert_paragraph", kind: "mutate", durationMs: 1, outcome: "success" },
+          { sequence: 2, turn: 1, toolName: "document.set_table_cells_text", kind: "mutate", durationMs: 1, outcome: "failure", failureCode: "TABLE_NOT_FOUND" },
+        ],
+      },
+    };
+  });
+  const execution = createAgentExecutionService({
+    ...deps,
+    docxBinding: binding,
+    agentRunReportSink: (report) => { reports.push(report); },
+    documents: {
+      ...deps.documents,
+      getOwnedDocument: async () => ({ id: "doc-1", workspaceId: "ws-1", format: "docx", latestVersion: { id: versionId } }) as never,
+      readExactVersionBytes: async () => bytes,
+      appendDocumentVersion: async (input) => {
+        appends++;
+        bytes = Buffer.from(input.bytes);
+        versionId = "v2";
+        return { version: { id: "v2", versionNumber: 2 } } as never;
+      },
+    },
+  });
+  const result = await (await execution.start({ userId: "user-1", threadId: "thread-1", activeDocumentId: "doc-1", instruction: "Edit this document" })).result;
+  assert.equal(appends, 1);
+  assert.equal(result.run.status, "failed");
+  assert.equal(result.run.errorCode, "AGENT_PARTIAL_COMPLETION");
+  assert.match(result.assistantMessage?.content ?? "", /partially/i);
+  assert.match(result.assistantMessage?.content ?? "", /set_table_cells_text/);
+  assert.equal(reports[0]?.outcome, "partial");
+  assert.equal(persistence.steps.some((step) => step.kind === "validation"), true);
+});
+
+test("failed mutations with no output do not persist a version", async () => {
+  const binding = await createNapiDocxEngineBinding();
+  const persistence = memoryPersistence("user-1");
+  let appends = 0;
+  const reports: AgentRunReport[] = [];
+  const deps = baseDeps(persistence, async () => {
+    const base = softResult("finish_tool", "Done");
+    return {
+      ...base,
+      metrics: {
+        ...base.metrics,
+        toolCalls: [
+          { sequence: 1, turn: 1, toolName: "document.delete_table_row", kind: "mutate", durationMs: 1, outcome: "failure", failureCode: "UNSUPPORTED_STRUCTURAL_DELETE" },
+        ],
+      },
+    };
+  });
+  const execution = createAgentExecutionService({
+    ...deps,
+    docxBinding: binding,
+    agentRunReportSink: (report) => { reports.push(report); },
+    documents: {
+      ...deps.documents,
+      getOwnedDocument: async () => ({ id: "doc-1", workspaceId: "ws-1", format: "docx", latestVersion: { id: "v1" } }) as never,
+      readExactVersionBytes: async () => Buffer.from(buildMinimalDocx(["Start"])),
+      appendDocumentVersion: async () => {
+        appends++;
+        return { version: { id: "v2", versionNumber: 2 } } as never;
+      },
+    },
+  });
+  const result = await (await execution.start({ userId: "user-1", threadId: "thread-1", activeDocumentId: "doc-1", instruction: "Delete the protected row" })).result;
+  assert.equal(appends, 0);
+  assert.equal(result.run.status, "failed");
+  assert.equal(result.run.errorCode, "AGENT_MUTATION_FAILED");
+  assert.equal(reports[0]?.outcome, "failure");
+  assert.equal(reports[0]?.document?.versionAdvances.length ?? 0, 0);
 });

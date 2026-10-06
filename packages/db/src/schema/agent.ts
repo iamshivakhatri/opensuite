@@ -228,6 +228,30 @@ export const agentRun = pgTable(
   (table) => [index("agent_run_thread_id_idx").on(table.threadId)],
 );
 
+/** Raw capability lifecycle facts. The source-code catalog owns definitions. */
+export const agentCapabilityEvent = pgTable(
+  "agent_capability_event",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    runId: uuid("run_id").notNull().references(() => agentRun.id, { onDelete: "cascade" }),
+    turn: integer("turn"),
+    capabilityId: text("capability_id").notNull(),
+    capabilityKind: text("capability_kind"),
+    eventType: text("event_type").notNull(),
+    model: text("model").notNull(),
+    occurredAt: timestamp("occurred_at").defaultNow().notNull(),
+    latencyMs: integer("latency_ms"),
+    errorCode: text("error_code"),
+  },
+  (table) => [
+    index("agent_capability_event_run_idx").on(table.runId),
+    index("agent_capability_event_capability_type_idx").on(table.capabilityId, table.eventType),
+    index("agent_capability_event_model_idx").on(table.model),
+    check("agent_capability_event_event_type_check", sql`${table.eventType} IN ('recommended', 'discovered', 'loaded', 'executed', 'succeeded', 'failed')`),
+    check("agent_capability_event_kind_check", sql`${table.capabilityKind} IN ('group', 'tool', 'instruction')`),
+  ],
+);
+
 /**
  * Database-backed ownership of a user's currently executing agent run.
  * It is coordination data only; agent_run and model_usage_event keep their

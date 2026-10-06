@@ -3,6 +3,7 @@
 import * as React from "react";
 import { useRouter } from "next/navigation";
 
+import { BrandSettingsPage } from "@/components/workspaces/brand/brand-settings-page";
 import { DocumentHeader } from "@/components/documents/document-header";
 import { DocumentNavigationPanel } from "@/components/documents/document-navigation-panel";
 import {
@@ -16,6 +17,7 @@ import {
   deleteDocument,
   downloadDocument,
   renameWorkspace,
+  restoreDocumentVersion,
   setDocumentStarred,
   type ListedDocument,
 } from "@/lib/api";
@@ -47,6 +49,7 @@ export function WorkspaceIde({
   document,
   documentId = null,
   documentPending = false,
+  brandPage = false,
   onWorkspaceRenamed,
 }: {
   workspaceId: string;
@@ -55,6 +58,7 @@ export function WorkspaceIde({
   /** Route document id — drives tab selection before fetch resolves. */
   documentId?: string | null;
   documentPending?: boolean;
+  brandPage?: boolean;
   onWorkspaceRenamed?: (name: string) => void;
 }) {
   const router = useRouter();
@@ -76,6 +80,7 @@ export function WorkspaceIde({
     React.useState<ListedDocument | null>(document);
   const [starred, setStarred] = React.useState(Boolean(document?.starred));
   const [trashOpen, setTrashOpen] = React.useState(false);
+  const [brandDirty, setBrandDirty] = React.useState(false);
   const [discardOpen, setDiscardOpen] = React.useState(false);
   const [renameWorkspaceOpen, setRenameWorkspaceOpen] = React.useState(false);
   const [renameWorkspaceValue, setRenameWorkspaceValue] = React.useState("");
@@ -96,6 +101,12 @@ export function WorkspaceIde({
     loadedVersionId: null,
     latestVersionId: null,
   });
+  /** null = follow tip; otherwise a specific version id to view. */
+  const [selectedVersionId, setSelectedVersionId] = React.useState<string | null>(
+    null,
+  );
+  const [restoreOpen, setRestoreOpen] = React.useState(false);
+  const [restoreBusy, setRestoreBusy] = React.useState(false);
   const [saveRequestId, setSaveRequestId] = React.useState(0);
   const [workingPreview, setWorkingPreview] = React.useState<{ runId: string; documentId: string; baseVersionId: string; revision: number } | null>(null);
   const dragDepth = React.useRef(0);
@@ -118,6 +129,8 @@ export function WorkspaceIde({
   // Reset editor chrome only when the open file identity changes — not on
   // every latestVersion bump (agent writes), which caused header flicker.
   React.useEffect(() => {
+    setSelectedVersionId(null);
+    setRestoreOpen(false);
     setEditorStatus({
       dirty: false,
       saving: false,
@@ -127,6 +140,64 @@ export function WorkspaceIde({
     });
   }, [document?.id]);
 
+  const isDirty = editorStatus.dirty || editorStatus.saving || brandDirty;
+  const viewingHistory = Boolean(
+    activeDocument &&
+      selectedVersionId &&
+      selectedVersionId !== activeDocument.latestVersion.id,
+  );
+
+  function selectVersion(versionId: string) {
+    if (!activeDocument) return;
+    if (isDirty) {
+      toast({
+        tone: "error",
+        title: "Unsaved edits",
+        description: "Save or discard before switching versions.",
+      });
+      return;
+    }
+    setSelectedVersionId(
+      versionId === activeDocument.latestVersion.id ? null : versionId,
+    );
+  }
+
+  async function confirmRestoreVersion() {
+    if (!activeDocument || !selectedVersionId || restoreBusy) return;
+    setRestoreBusy(true);
+    try {
+      const updated = await restoreDocumentVersion(
+        activeDocument.id,
+        selectedVersionId,
+      );
+      setActiveDocument(updated);
+      setSelectedVersionId(null);
+      setRestoreOpen(false);
+      queryClient.setQueryData(queryKeys.document(updated.id), updated);
+      await Promise.all([
+        queryClient.invalidateQueries({
+          queryKey: queryKeys.documentVersions(updated.id),
+        }),
+        queryClient.invalidateQueries({
+          queryKey: queryKeys.workspaceDocuments(workspaceId),
+        }),
+      ]);
+      toast({
+        tone: "success",
+        title: "Version restored",
+        description: `v${updated.latestVersion.versionNumber} is now current. Newer versions were deleted.`,
+      });
+    } catch (error) {
+      toast({
+        tone: "error",
+        title: "Restore failed",
+        description: userFacingError(error, "Could not restore this version."),
+      });
+    } finally {
+      setRestoreBusy(false);
+    }
+  }
+
   React.useEffect(() => {
     writeIdePanelPrefs({
       explorerWidth,
@@ -135,8 +206,6 @@ export function WorkspaceIde({
       agentCollapsed,
     });
   }, [explorerWidth, agentWidth, navCollapsed, agentCollapsed]);
-
-  const isDirty = editorStatus.dirty || editorStatus.saving;
 
   function isTypingTarget(target: EventTarget | null): boolean {
     if (!(target instanceof HTMLElement)) return false;
@@ -171,6 +240,9 @@ export function WorkspaceIde({
 
   const requestNavigate = React.useCallback(
     (href: string): boolean => {
+      if (brandPage && href === `/app/workspaces/${workspaceId}/brand`) {
+        return true;
+      }
       if (!isDirty) return true;
       if (
         activeDocument &&
@@ -182,7 +254,7 @@ export function WorkspaceIde({
       setDiscardOpen(true);
       return false;
     },
-    [activeDocument, isDirty, workspaceId],
+    [activeDocument, brandPage, isDirty, workspaceId],
   );
 
   React.useEffect(() => {
@@ -317,6 +389,7 @@ export function WorkspaceIde({
   }
 
   function onDragEnter(event: React.DragEvent) {
+    if (brandPage) return;
     if (!event.dataTransfer.types.includes("Files")) return;
     event.preventDefault();
     dragDepth.current += 1;
@@ -324,6 +397,7 @@ export function WorkspaceIde({
   }
 
   function onDragLeave(event: React.DragEvent) {
+    if (brandPage) return;
     if (!event.dataTransfer.types.includes("Files")) return;
     event.preventDefault();
     dragDepth.current = Math.max(0, dragDepth.current - 1);
@@ -331,6 +405,7 @@ export function WorkspaceIde({
   }
 
   function onDragOver(event: React.DragEvent) {
+    if (brandPage) return;
     if (!event.dataTransfer.types.includes("Files")) return;
     if (event.defaultPrevented) {
       dragDepth.current = 0;
@@ -342,6 +417,7 @@ export function WorkspaceIde({
   }
 
   function onDrop(event: React.DragEvent) {
+    if (brandPage) return;
     const handledByComposer = event.defaultPrevented;
     event.preventDefault();
     dragDepth.current = 0;
@@ -373,7 +449,7 @@ export function WorkspaceIde({
 
       <DocumentHeader
         workspaceName={workspaceName}
-        document={activeDocument}
+        document={brandPage ? null : activeDocument}
         downloading={downloading}
         onDownload={activeDocument ? () => void handleDownload() : undefined}
         starred={starred}
@@ -393,7 +469,9 @@ export function WorkspaceIde({
           Boolean(activeDocument?.format === "docx") &&
           !editorStatus.saving &&
           !editorStatus.conflict &&
-          Boolean(editorStatus.loadedVersionId)
+          !viewingHistory &&
+          Boolean(editorStatus.loadedVersionId) &&
+          editorStatus.loadedVersionId === editorStatus.latestVersionId
         }
         onSave={
           activeDocument?.format === "docx"
@@ -410,7 +488,10 @@ export function WorkspaceIde({
       <div className="flex min-h-0 flex-1">
         <DocumentNavigationPanel
           workspaceId={workspaceId}
-          activeDocumentId={documentId ?? activeDocument?.id ?? null}
+          activeDocumentId={brandPage ? null : documentId ?? activeDocument?.id ?? null}
+          activeLatestVersionId={activeDocument?.latestVersion.id ?? null}
+          selectedVersionId={selectedVersionId}
+          onSelectVersion={selectVersion}
           collapsed={navCollapsed}
           width={explorerWidth}
           onToggle={() => setNavCollapsed((value) => !value)}
@@ -445,52 +526,73 @@ export function WorkspaceIde({
         ) : null}
 
         <div className="flex min-h-0 min-w-0 flex-1 flex-col">
-          <DocumentOpenTabs
-            workspaceId={workspaceId}
-            activeDocument={activeDocument}
-            activeDocumentId={documentId}
-            revision={tabsRevision}
-            dirtyDocumentId={
-              editorStatus.dirty &&
-              activeDocument &&
-              activeDocument.id === documentId
-                ? activeDocument.id
-                : null
-            }
-            onRequestCloseTab={requestCloseTab}
-            onRequestNavigate={requestNavigate}
-          />
-          {documentId && activeDocument ? (
-            <DocumentSurface
-              key={activeDocument.id}
-              document={activeDocument}
-              saveRequestId={saveRequestId}
-              workingPreview={workingPreview?.documentId === activeDocument.id ? workingPreview : null}
-              onStatusChange={setEditorStatus}
-              onDocumentUpdated={(updated) => {
-                setActiveDocument(updated);
-                queryClient.setQueryData(
-                  queryKeys.document(updated.id),
-                  updated,
-                );
-                void queryClient.invalidateQueries({
-                  queryKey: queryKeys.workspaceDocuments(workspaceId),
-                });
-              }}
+          {brandPage ? (
+            <BrandSettingsPage
+              key={workspaceId}
+              workspaceId={workspaceId}
+              onDirtyChange={setBrandDirty}
             />
-          ) : documentId || documentPending ? (
-            <div className="flex h-full min-h-0 flex-1 items-center justify-center bg-sunken">
-              <p className="os-type-secondary text-ink-faint">Opening file…</p>
-            </div>
           ) : (
-            <WorkspaceHomeCanvas
-              onUpload={() => fileInputRef.current?.click()}
-              onSearch={() => openPalette(true)}
-            />
+            <>
+              <DocumentOpenTabs
+                workspaceId={workspaceId}
+                activeDocument={activeDocument}
+                activeDocumentId={documentId}
+                revision={tabsRevision}
+                dirtyDocumentId={
+                  editorStatus.dirty &&
+                  activeDocument &&
+                  activeDocument.id === documentId
+                    ? activeDocument.id
+                    : null
+                }
+                onRequestCloseTab={requestCloseTab}
+                onRequestNavigate={requestNavigate}
+              />
+              {documentId && activeDocument ? (
+                <DocumentSurface
+                  key={activeDocument.id}
+                  document={activeDocument}
+                  viewVersionId={selectedVersionId}
+                  saveRequestId={saveRequestId}
+                  workingPreview={
+                    viewingHistory
+                      ? null
+                      : workingPreview?.documentId === activeDocument.id
+                        ? workingPreview
+                        : null
+                  }
+                  onStatusChange={setEditorStatus}
+                  onRequestRestore={() => setRestoreOpen(true)}
+                  onDocumentUpdated={(updated) => {
+                    setActiveDocument(updated);
+                    queryClient.setQueryData(
+                      queryKeys.document(updated.id),
+                      updated,
+                    );
+                    void queryClient.invalidateQueries({
+                      queryKey: queryKeys.workspaceDocuments(workspaceId),
+                    });
+                    void queryClient.invalidateQueries({
+                      queryKey: queryKeys.documentVersions(updated.id),
+                    });
+                  }}
+                />
+              ) : documentId || documentPending ? (
+                <div className="flex h-full min-h-0 flex-1 items-center justify-center bg-sunken">
+                  <p className="os-type-secondary text-ink-faint">Opening file…</p>
+                </div>
+              ) : (
+                <WorkspaceHomeCanvas
+                  onUpload={() => fileInputRef.current?.click()}
+                  onSearch={() => openPalette(true)}
+                />
+              )}
+            </>
           )}
         </div>
 
-        {!agentCollapsed ? (
+        {!brandPage && !agentCollapsed ? (
           <ResizeHandle
             side="right"
             onResize={(delta) =>
@@ -503,34 +605,39 @@ export function WorkspaceIde({
             }
           />
         ) : null}
-        <DocumentAgentPanel
-          workspaceId={workspaceId}
-          documentId={documentId}
-          documentName={activeDocument?.name}
-          collapsed={agentCollapsed}
-          width={agentWidth}
-          onToggle={() => setAgentCollapsed((value) => !value)}
-          onDocumentUpdated={(updated) => {
-            setActiveDocument(updated);
-            queryClient.setQueryData(queryKeys.document(updated.id), updated);
-          }}
-          onDocumentCreated={(created) => {
-            queryClient.setQueryData(queryKeys.document(created.id), created);
-            void queryClient.invalidateQueries({
-              queryKey: queryKeys.workspaceDocuments(workspaceId),
-            });
-            setActiveDocument(created);
-          }}
-          onDocumentRenamed={(renamed) => {
-            queryClient.setQueryData(queryKeys.document(renamed.id), renamed);
-            void queryClient.invalidateQueries({ queryKey: queryKeys.workspaceDocuments(workspaceId) });
-            if (activeDocument?.id === renamed.id) setActiveDocument(renamed);
-          }}
-          onDocumentUploaded={() => {
-            void queryClient.invalidateQueries({ queryKey: queryKeys.workspaceDocuments(workspaceId) });
-          }}
-          onWorkingDocumentUpdated={setWorkingPreview}
-        />
+        <div className={brandPage ? "hidden" : "flex min-h-0"}>
+          <DocumentAgentPanel
+            workspaceId={workspaceId}
+            documentId={documentId}
+            documentName={activeDocument?.name}
+            collapsed={agentCollapsed}
+            width={agentWidth}
+            onToggle={() => setAgentCollapsed((value) => !value)}
+            onDocumentUpdated={(updated) => {
+              setActiveDocument(updated);
+              queryClient.setQueryData(queryKeys.document(updated.id), updated);
+              void queryClient.invalidateQueries({
+                queryKey: queryKeys.documentVersions(updated.id),
+              });
+            }}
+            onDocumentCreated={(created) => {
+              queryClient.setQueryData(queryKeys.document(created.id), created);
+              void queryClient.invalidateQueries({
+                queryKey: queryKeys.workspaceDocuments(workspaceId),
+              });
+              setActiveDocument(created);
+            }}
+            onDocumentRenamed={(renamed) => {
+              queryClient.setQueryData(queryKeys.document(renamed.id), renamed);
+              void queryClient.invalidateQueries({ queryKey: queryKeys.workspaceDocuments(workspaceId) });
+              if (activeDocument?.id === renamed.id) setActiveDocument(renamed);
+            }}
+            onDocumentUploaded={() => {
+              void queryClient.invalidateQueries({ queryKey: queryKeys.workspaceDocuments(workspaceId) });
+            }}
+            onWorkingDocumentUpdated={setWorkingPreview}
+          />
+        </div>
       </div>
 
       {draggingOver || uploadingDrop ? (
@@ -627,10 +734,31 @@ export function WorkspaceIde({
         </Dialog>
       ) : null}
 
+      {restoreOpen && activeDocument && selectedVersionId ? (
+        <ConfirmDialog
+          title="Restore this version?"
+          body="Newer versions will be permanently deleted from storage. This cannot be undone. The selected version becomes current and editable."
+          confirmLabel="Restore as current"
+          tone="danger"
+          busy={restoreBusy}
+          onCancel={() => {
+            if (restoreBusy) return;
+            setRestoreOpen(false);
+          }}
+          onConfirm={() => {
+            void confirmRestoreVersion();
+          }}
+        />
+      ) : null}
+
       {discardOpen ? (
         <ConfirmDialog
           title="Discard unsaved changes?"
-          body="You have unsaved edits in this document. Leave without saving?"
+          body={
+            brandPage
+              ? "You have unsaved brand settings. Leave without saving?"
+              : "You have unsaved edits in this document. Leave without saving?"
+          }
           confirmLabel="Discard"
           onCancel={() => {
             setDiscardOpen(false);
@@ -641,6 +769,7 @@ export function WorkspaceIde({
               const target = pendingHref;
               setDiscardOpen(false);
               setPendingHref(null);
+              setBrandDirty(false);
               setEditorStatus((status) => ({ ...status, dirty: false }));
 
               if (!target) return;

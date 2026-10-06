@@ -11,6 +11,7 @@ import {
 export interface BoundDocumentHost {
   capabilities(): unknown;
   inspect(request: { readonly focus: InspectFocus }): Promise<unknown>;
+  renderLayout?(): Promise<unknown>;
   find(request: { readonly text: string }): Promise<unknown>;
   /** Present when writes are wired. */
   mutate?(
@@ -24,6 +25,12 @@ export interface BoundDocumentHost {
 }
 
 export type InspectFocus =
+  | { readonly kind: "notes"; readonly offset?: number; readonly limit?: number }
+  | { readonly kind: "fields"; readonly offset?: number; readonly limit?: number }
+  | { readonly kind: "revisions"; readonly offset?: number; readonly limit?: number }
+  | { readonly kind: "comments"; readonly offset?: number; readonly limit?: number }
+  | { readonly kind: "layout"; readonly blockOffset?: number; readonly blockLimit?: number; readonly sectionIndex?: number }
+  | { readonly kind: "sections" }
   | { readonly kind: "overview" }
   | {
       readonly kind: "headings" | "paragraphs" | "tables" | "body_blocks";
@@ -48,7 +55,7 @@ const findInput = jsonSchema<{ text: string }>({
 });
 
 type InspectToolInput = {
-  kind: InspectFocus["kind"];
+  kind: Exclude<InspectFocus["kind"], "sections" | "layout" | "comments" | "revisions" | "fields" | "notes">;
   offset?: number;
   limit?: number;
   text?: string;
@@ -202,7 +209,108 @@ type MutDef = {
  * Binary picture insert/replace are intentionally omitted (JSON cannot carry Buffer).
  * create_blank_docx is not a bound-document mutation.
  */
+const lineSpacing = {
+  type: "object", additionalProperties: false, required: ["value"],
+  properties: {
+    value: { type: "integer", minimum: 1, description: "Auto: 240 per line, so 276 = 1.15. Exact/atLeast: twips, 20 = 1 pt." },
+    rule: { type: "string", enum: ["auto", "exact", "atLeast"] },
+  },
+};
+const textPropertyNames = ["bold", "italic", "fontSizeHalfPoints", "fontFamily", "color", "underline", "highlight", "strikethrough", "verticalAlignment"];
+const paragraphPropertyNames = ["alignment", "spacingBeforeTwips", "spacingAfterTwips", "lineSpacing", "leftIndentTwips", "rightIndentTwips", "firstLineIndentTwips", "hangingIndentTwips", "keepWithNext", "keepLines"];
+const paragraphProperties = {
+  alignment: { type: "string", enum: ["left", "center", "right", "both", "distribute"] },
+  lineSpacing,
+  spacingBeforeTwips: { type: "integer" }, spacingAfterTwips: { type: "integer" },
+  leftIndentTwips: { type: "integer" }, rightIndentTwips: { type: "integer" },
+  firstLineIndentTwips: { type: "integer" }, hangingIndentTwips: { type: "integer" },
+  keepWithNext: { type: "boolean", description: "Keep this paragraph with the following paragraph." },
+  keepLines: { type: "boolean", description: "Keep all lines of this paragraph on one page." },
+};
+
+const wordStyleProperties = {
+  styleId: { type: "string", description: "Stable Word style ID, for example OpenSuiteReportHeading" },
+  styleType: { type: "string", enum: ["paragraph", "character"] },
+  name: { type: "string", description: "Unique display name; apply paragraph styles using this name" },
+  basedOn: { type: "string", description: "Existing parent style ID, for example Heading1" },
+  next: { type: "string", description: "Existing paragraph style ID" },
+  bold: { type: "boolean" }, italic: { type: "boolean" }, underline: { type: "boolean" },
+  highlight: { type: "string" }, strikethrough: { type: "boolean" },
+  verticalAlignment: { type: "string", enum: ["baseline", "superscript", "subscript"] },
+  fontFamily: { type: "string" }, fontSizeHalfPoints: { type: "integer", minimum: 1, maximum: 65535, description: "32 = 16 pt" },
+  color: { type: "string", pattern: "^([0-9a-fA-F]{6}|auto)$", description: "RGB without #, for example 124733" },
+  ...paragraphProperties,
+  clear: { type: "array", items: { type: "string", enum: ["basedOn", "next", ...textPropertyNames, ...paragraphPropertyNames] }, description: "Remove declarations and restore inheritance. Omitted fields stay unchanged. Twips: 20 = 1 pt." },
+};
+
+const imagePosition = (references: string[]) => ({
+  type: "object", additionalProperties: false, required: ["reference"],
+  properties: {
+    reference: { type: "string", enum: references },
+    alignment: { type: "string", enum: ["start", "center", "end"] },
+    offsetEmu: { type: "integer", minimum: -2147483648, maximum: 2147483647 },
+  },
+  oneOf: [{ required: ["alignment"] }, { required: ["offsetEmu"] }],
+});
 const MUTATION_DEFS: Record<string, MutDef> = {
+  insert_note: {
+    description: "Insert a real footnote or endnote immediately after exact ordinary text in one body paragraph. Plain one-paragraph note text. Independent comments/revisions are preserved; targets inside or crossing protected ranges, fields, wrappers, and tables refuse. Word controls visible numbering; IDs are not displayed note numbers.",
+    inputSchema: op({ kind: { type: "string", enum: ["footnote", "endnote"] }, target: textTarget, text: { type: "string", minLength: 1, maxLength: 32000 } }, ["kind", "target", "text"]),
+  },
+  update_note: {
+    description: "Update a simple one-paragraph note using a fresh inspect_notes handle. Keeps its ID, reference, formatting, and other notes. Complex note bodies are preserved and cannot be edited. Re-inspect after every mutation.",
+    inputSchema: op({ handle: { type: "string", minLength: 1 }, text: { type: "string", minLength: 1, maxLength: 32000 } }, ["handle", "text"]),
+  },
+  delete_note: {
+    description: "Delete an ordinary simple footnote/endnote and its body reference using a fresh inspect_notes handle. Remaining IDs are preserved. Protected references and complex/malformed notes refuse. Re-inspect after every mutation.",
+    inputSchema: op({ handle: { type: "string", minLength: 1 } }, ["handle"]),
+  },
+  insert_fields: {
+    description: "Insert a new paragraph of plain text and real PAGE/NUMPAGES fields. content items use kind text with text, or page/numPages without text. Example: text Page , page, text of , numPages. Body requires placement; footer appends to the single-section default footer and omits placement. Cached values are ? and marked dirty; Word calculates them. Imported fields remain unchanged.",
+    inputSchema: op({ location: { type: "string", enum: ["body", "footer"] }, placement,
+      content: { type: "array", minItems: 1, maxItems: 20, items: { oneOf: [
+        { type: "object", properties: { kind: { const: "text" }, text: { type: "string", maxLength: 32000 } }, required: ["kind", "text"], additionalProperties: false },
+        { type: "object", properties: { kind: { type: "string", enum: ["page", "numPages"] } }, required: ["kind"], additionalProperties: false },
+      ] } } }, ["content"]),
+  },
+  insert_toc: {
+    description: "Insert a real refreshable Word Table of Contents in a new body paragraph, with an optional title paragraph. Heading levels 1 through maxHeadingLevel (default 3, range 1–9). Marked dirty with a refresh placeholder. The runtime refreshes fields via LibreOffice before save when available; otherwise the TOC stays valid with refresh_required. Inspect fields first to avoid an unintended duplicate TOC. No in-engine field evaluation.",
+    inputSchema: op({ placement, maxHeadingLevel: { type: "integer", minimum: 1, maximum: 9 }, title: { type: "string", maxLength: 32000 } }, ["placement"]),
+  },
+  accept_revision: {
+    description: "Accept one supported insertion or deletion using its fresh inspect_tracked_changes handle. Keeps inserted content or removes deleted content. For replacement, decide both records individually and re-inspect after each successful decision. Complex revisions are unsupported.",
+    inputSchema: op({ handle: { type: "string", minLength: 1 } }, ["handle"]),
+  },
+  reject_revision: {
+    description: "Reject one supported insertion or deletion using its fresh inspect_tracked_changes handle. Removes inserted content or restores deleted content with its formatting. For replacement, decide both records individually and re-inspect after each successful decision. Complex revisions are unsupported.",
+    inputSchema: op({ handle: { type: "string", minLength: 1 } }, ["handle"]),
+  },
+  insert_tracked_text: {
+    description: "Insert text as a real Word tracked insertion before/after an exact ordinary text anchor in one body paragraph. Default after. Inherits formatting at the insertion boundary. Author is explicit; date defaults to current UTC. Fields, wrappers, tables, and paragraphs containing revisions are unsupported. Re-inspect after editing.",
+    inputSchema: op({ target: textTarget, text: { type: "string", minLength: 1, maxLength: 32000 }, position: { type: "string", enum: ["before", "after"] }, author: { type: "string", minLength: 1 }, date: { type: "string", description: "UTC ISO timestamp" } }, ["target", "text", "author"]),
+  },
+  delete_tracked_text: {
+    description: "Delete exact ordinary text as a real Word tracked deletion, retaining deleted text and run formatting for review. One body paragraph; simple multiple runs supported. Author explicit; date defaults to current UTC. Fields, wrappers, tables, and paragraphs containing revisions are unsupported. Re-inspect after editing.",
+    inputSchema: op({ target: textTarget, author: { type: "string", minLength: 1 }, date: { type: "string", description: "UTC ISO timestamp" } }, ["target", "author"]),
+  },
+  replace_text_with_tracked_change: {
+    description: "Replace exact ordinary text with real Word deletion + insertion revisions, preserving source formatting. Simple multiple runs require identical formatting. Author explicit; date defaults to current UTC. Fields, wrappers, tables, and paragraphs containing revisions are unsupported. Re-inspect after editing.",
+    inputSchema: op({ target: textTarget, replacement: { type: "string", minLength: 1, maxLength: 32000 }, author: { type: "string", minLength: 1 }, date: { type: "string", description: "UTC ISO timestamp" } }, ["target", "replacement", "author"]),
+  },
+  add_comment: {
+    description: "Attach a standard Word comment to exact text in one ordinary body paragraph, including simple formatted runs. Author is explicit; date defaults to current UTC. Wrappers, fields, revisions, cross-paragraph ranges, and threaded comments are unsupported.",
+    inputSchema: op({ target: textTarget, text: { type: "string", minLength: 1, maxLength: 32000 }, author: { type: "string", minLength: 1 }, initials: { type: "string" }, date: { type: "string", description: "ISO timestamp, e.g. 2026-10-04T12:00:00Z" } }, ["target", "text", "author"]),
+  },
+  update_comment: {
+    description: "Replace plain comment text using a fresh inspect_comments handle. Anchor, author, initials, and date stay unchanged. Inspect again after every edit.",
+    inputSchema: op({ handle: { type: "string" }, text: { type: "string", minLength: 1, maxLength: 32000 } }, ["handle", "text"]),
+  },
+  delete_comment: {
+    description: "Delete a standard comment and its markers using a fresh inspect_comments handle, preserving the selected document text. Inspect again after every edit.",
+    inputSchema: op({ handle: { type: "string" } }, ["handle"]),
+  },
+  create_style: { description: "Create a reusable real Word paragraph or character style. No default-style authoring. basedOn and next use IDs; apply paragraph styles with set_paragraph_style using the display name.", inputSchema: op(wordStyleProperties, ["styleId", "styleType", "name"]) },
+  update_style: { description: "Patch supported properties of one Word style globally. Unspecified properties stay unchanged; clear removes a declaration and restores inheritance. Style type and default flag cannot change.", inputSchema: op(wordStyleProperties, ["styleId", "styleType"]) },
   replace_text: {
     description:
       "Replace one exact text span. Requires target text, zero-based occurrence when ambiguous, expectedCurrentText (must match current content), and replacement.",
@@ -249,18 +357,14 @@ const MUTATION_DEFS: Record<string, MutDef> = {
   },
   set_paragraph_formatting: {
     description:
-      "Set alignment, spacing, or indent on a direct body paragraph, not a table cell (occurrence zero-based when ambiguous).",
+      "Set alignment, spacing, indentation, or keep rules on a direct body paragraph (occurrence zero-based). Twips: 20 = 1 pt. both = justified.",
     inputSchema: op(
       {
         target: textTarget,
-        alignment: {
-          type: "string",
-          enum: ["left", "center", "right", "clear"],
-        },
-        spacingBeforeTwips: { type: "number" },
-        spacingAfterTwips: { type: "number" },
-        leftIndentTwips: { type: "number" },
+        ...paragraphProperties,
+        alignment: { type: "string", enum: [...paragraphProperties.alignment.enum, "clear"] },
         clearLeftIndent: { type: "boolean" },
+        clear: { type: "array", items: { type: "string", enum: paragraphPropertyNames }, description: "Remove direct properties and restore inheritance. Omitted fields stay unchanged." },
       },
       ["target"],
     ),
@@ -273,7 +377,7 @@ const MUTATION_DEFS: Record<string, MutDef> = {
         target: textTarget,
         bold: { type: "boolean" },
         italic: { type: "boolean" },
-        fontSizeHalfPoints: { type: "number" },
+        fontSizeHalfPoints: { type: "integer", minimum: 1, maximum: 65535 },
         fontFamily: { type: "string" },
         clearBold: { type: "boolean" },
         color: { type: "string" },
@@ -289,6 +393,7 @@ const MUTATION_DEFS: Record<string, MutDef> = {
           enum: ["baseline", "superscript", "subscript"],
         },
         clearVerticalAlignment: { type: "boolean" },
+        clear: { type: "array", items: { type: "string", enum: textPropertyNames }, description: "Remove direct properties and restore inheritance. Omitted fields stay unchanged." },
       },
       ["target"],
     ),
@@ -499,14 +604,27 @@ const MUTATION_DEFS: Record<string, MutDef> = {
       "Delete a picture identified by an opaque body_blocks handle.",
     inputSchema: op({ handle: { type: "string" } }, ["handle"]),
   },
+  set_picture_layout: {
+    description: "Patch a supported floating image using a fresh inspect_layout image handle. Omitted properties stay unchanged. Inline/floating conversion and tight/through wrapping are unsupported. EMU: 914,400 per inch. Re-inspect after editing.",
+    inputSchema: op({ handle: { type: "string" }, layout: {
+      type: "object", additionalProperties: false, minProperties: 1,
+      properties: {
+        horizontal: imagePosition(["page", "margin", "column"]),
+        vertical: imagePosition(["page", "margin", "paragraph"]),
+        wrap: { type: "string", enum: ["square", "topAndBottom", "behindText", "inFrontOfText"] },
+        distance: { type: "object", additionalProperties: false, minProperties: 1,
+          properties: Object.fromEntries(["topEmu", "bottomEmu", "leftEmu", "rightEmu"].map(key => [key, { type: "integer", minimum: 0, maximum: 4294967295 }])) },
+      },
+    } }, ["handle", "layout"]),
+  },
   set_picture_size: {
     description:
-      "Resize a picture by opaque handle. Supply exactly one of widthEmu or heightEmu.",
+      "Resize an image using a fresh inspect_layout handle. One dimension preserves aspect ratio; both set exact size. EMU: 914,400 per inch.",
     inputSchema: op(
       {
         handle: { type: "string" },
-        widthEmu: { type: "number" },
-        heightEmu: { type: "number" },
+        widthEmu: { type: "integer", minimum: 1, maximum: 4294967295 },
+        heightEmu: { type: "integer", minimum: 1, maximum: 4294967295 },
       },
       ["handle"],
     ),
@@ -519,6 +637,37 @@ const MUTATION_DEFS: Record<string, MutDef> = {
   delete_page_break: {
     description: "Delete a page break identified by an opaque body_blocks handle.",
     inputSchema: op({ handle: { type: "string" } }, ["handle"]),
+  },
+  insert_section_break: {
+    description: "Insert a real Word section boundary at a body placement. Re-inspect sections and body_blocks after edits.",
+    inputSchema: op({ placement, breakType: { type: "string", enum: ["nextPage", "continuous", "oddPage", "evenPage"] } }, ["placement", "breakType"]),
+  },
+  set_section_properties: {
+    description: "Edit one section using its latest inspected handle. Margins use twips (1440 = one inch). Restart numbering with pageNumberStart or continuePageNumbering=true.",
+    inputSchema: op({
+      handle: { type: "string" },
+      pageSetup: { type: "object", properties: {
+        topMarginTwips: { type: "integer" }, bottomMarginTwips: { type: "integer" },
+        leftMarginTwips: { type: "integer" }, rightMarginTwips: { type: "integer" },
+        paperSize: { type: "string", enum: ["letter", "a4"] }, orientation: { type: "string", enum: ["portrait", "landscape"] },
+      }, additionalProperties: false },
+      differentFirstPage: { type: "boolean" },
+      breakType: { type: "string", enum: ["nextPage", "continuous", "oddPage", "evenPage"] },
+      pageNumberStart: { type: "integer", minimum: 0 }, continuePageNumbering: { type: "boolean" },
+    }, ["handle"]),
+  },
+  set_section_header_footer: {
+    description: "Edit one simple section header/footer variant. text creates independent content; empty text clears it. inherit links to previous; unlink preserves visible content in an independent part. PAGE fields use pageNumber. Other sections retain their content. Enable odd/even explicitly before editing even variants; use differentFirstPage to activate first variants.",
+    inputSchema: op({
+      handle: { type: "string" }, kind: { type: "string", enum: ["header", "footer"] },
+      variant: { type: "string", enum: ["default", "first", "even"] },
+      action: { type: "string", enum: ["text", "pageNumber", "inherit", "unlink"] },
+      text: { type: "string" }, alignment: { type: "string", enum: ["left", "center", "right"] },
+    }, ["handle", "kind", "variant", "action"]),
+  },
+  set_odd_even_headers: {
+    description: "Explicitly enable or disable different odd/even headers and footers for the ENTIRE document. This affects every section; it preserves all variant parts.",
+    inputSchema: op({ enabled: { type: "boolean" } }, ["enabled"]),
   },
   set_page_setup: {
     description:
@@ -613,6 +762,54 @@ export function createDocumentTools(document: BoundDocumentHost): AgentToolSet {
       inputSchema: inspectInput,
       execute: async (input) =>
         document.inspect({ focus: toInspectFocus(input) }),
+    });
+  }
+
+  if (caps.has("layout_snapshot")) {
+    tools["document.inspect_layout"] = defineTool({ kind: "read",
+      description: "Inspect structural section geometry, explicit pagination controls, table/image dimensions, floating-image positions/wrap, fresh image handles, and width warnings. No automatic page positions. Default returns summaries; blockLimit (0–100) and blockOffset request details; sectionIndex selects a zero-based section.",
+      inputSchema: op({ blockOffset: { type: "integer", minimum: 0 }, blockLimit: { type: "integer", minimum: 0, maximum: 100 }, sectionIndex: { type: "integer", minimum: 0 } }),
+      execute: async input => document.inspect({ focus: { kind: "layout", ...input } }),
+    });
+    if (document.renderLayout) tools["document.render_layout"] = defineTool({ kind: "read",
+      description: "Get LibreOffice-derived PDF page count and page dimensions using the optional external renderer. Depends on installed fonts and tools; failures report unavailable, never estimated. Exact block-to-page mapping is unavailable. Does not save a document version.",
+      inputSchema: op({}), execute: () => document.renderLayout!(),
+    });
+  }
+  if (caps.has("inspect_fields")) {
+    tools["document.inspect_fields"] = defineTool({ kind: "read",
+      description: "Inspect Word fields including TOC, PAGE, NUMPAGES, DATE, and unknown instructions. Returns bounded instruction and cached text separately, representation, part/paragraph location, dirty/locked flags when present, common TOC heading levels, and structural diagnostics. Main document and header/footer parts. Default 20, maximum 100 records; text capped at 2000 characters. Dirty means refresh requested; absent flags do not prove results are current. Does not calculate or edit fields.",
+      inputSchema: op({ offset: { type: "integer", minimum: 0 }, limit: { type: "integer", minimum: 1, maximum: 100 } }),
+      execute: async input => document.inspect({ focus: { kind: "fields", ...input } }),
+    });
+  }
+  if (caps.has("inspect_tracked_changes")) {
+    tools["document.inspect_tracked_changes"] = defineTool({ kind: "read",
+      description: "Inspect existing Word tracked insertions/deletions: IDs, author/date, bounded text, source-order paragraph locations, totals, and complex-revision diagnostics. Main document including tables only. Default 20, maximum 100 per page; text/metadata capped at 2000 characters. Current document text includes insertions and excludes deletions. Does not edit or save a version.",
+      inputSchema: op({ offset: { type: "integer", minimum: 0 }, limit: { type: "integer", minimum: 1, maximum: 100 } }),
+      execute: async input => document.inspect({ focus: { kind: "revisions", ...input } }),
+    });
+  }
+  if (caps.has("inspect_notes")) {
+    tools["document.inspect_notes"] = defineTool({ kind: "read",
+      description: "Inspect ordinary footnotes and endnotes, fresh handles, note IDs, text, zero-based body paragraph and source reference indexes, reference counts, structural status, and imported numbering settings. Separators are excluded and protected. IDs differ from visible note numbers. Default 20, maximum 100 records per page; note text capped at 2000 characters. Read-only.",
+      inputSchema: op({ offset: { type: "integer", minimum: 0 }, limit: { type: "integer", minimum: 1, maximum: 100 } }),
+      execute: async input => document.inspect({ focus: { kind: "notes", ...input } }),
+    });
+  }
+  if (caps.has("inspect_comments")) {
+    tools["document.inspect_comments"] = defineTool({ kind: "read",
+      description: "Inspect standard comments, author/date, bounded text, attached text, source-order paragraph locations, fresh handles, and malformed/orphan diagnostics. Default 20; maximum 100 per page. Re-inspect after editing. Resolved state and replies are unavailable.",
+      inputSchema: op({ offset: { type: "integer", minimum: 0 }, limit: { type: "integer", minimum: 1, maximum: 100 } }),
+      execute: async input => document.inspect({ focus: { kind: "comments", ...input } }),
+    });
+  }
+  if (caps.has("inspect_sections")) {
+    tools["document.inspect_sections"] = defineTool({
+      kind: "read",
+      description: "Inspect ordered Word sections with fresh handles, page setup, numbering, and owned/inherited header/footer variants. Re-inspect after every section edit.",
+      inputSchema: op({}),
+      execute: async () => document.inspect({ focus: { kind: "sections" } }),
     });
   }
 

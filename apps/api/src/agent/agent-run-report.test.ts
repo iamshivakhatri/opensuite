@@ -95,6 +95,20 @@ test("deriveRunOutcome: cancelled / partial / failure / success", () => {
     deriveRunOutcome({ versionAdvanceCount: 2 }),
     "success",
   );
+  assert.equal(
+    deriveRunOutcome({
+      versionAdvanceCount: 1,
+      unrecoveredFailedMutates: 1,
+    }),
+    "partial",
+  );
+  assert.equal(
+    deriveRunOutcome({
+      versionAdvanceCount: 0,
+      unrecoveredFailedMutates: 1,
+    }),
+    "failure",
+  );
 });
 
 test("composeAgentRunReport merges runtime metrics + document facts", () => {
@@ -111,7 +125,7 @@ test("composeAgentRunReport merges runtime metrics + document facts", () => {
       { fromVersionId: "ver-1", toVersionId: "ver-2" },
     ],
     engine: {
-      engineVersion: "0.1.3",
+      engineVersion: "0.1.4",
       capabilityFingerprint: ["inspect", "set_table_cells_text"],
     },
     pricing: openrouterInclusivePricing,
@@ -128,7 +142,7 @@ test("composeAgentRunReport merges runtime metrics + document facts", () => {
   assert.equal(report.document?.finalVersionId, "ver-2");
   assert.equal(report.document?.versionAdvances.length, 1);
   assert.equal(report.document?.workingMutationCount, 5);
-  assert.equal(report.engine?.engineVersion, "0.1.3");
+  assert.equal(report.engine?.engineVersion, "0.1.4");
   assert.deepEqual(report.engine?.capabilityFingerprint, ["inspect", "set_table_cells_text"]);
   assert.equal(report.tools[0]!.name, "document.find");
   assert.ok(typeof report.estimatedCostUsd === "number");
@@ -216,7 +230,7 @@ test("run report logs a short DONE block by default and keeps full JSON opt-in",
   assert.match(messages[4] ?? "", /\n    "availableEvidenceTokens": 18000/);
 });
 
-test("success with recovered tool errors does not imply terminal failure", () => {
+test("unrecovered mutate failures after a version advance are partial, not full success", () => {
   const report = composeAgentRunReport({
     runId: "run-recovered",
     instruction: "format table",
@@ -278,7 +292,7 @@ test("success with recovered tool errors does not imply terminal failure", () =>
     versionAdvances: [{ fromVersionId: "v1", toVersionId: "v2" }],
   });
 
-  assert.equal(report.outcome, "success");
+  assert.equal(report.outcome, "partial");
   assert.equal(report.toolCalls, 3);
   assert.equal(countToolsByKind(report.tools, "mutate"), 3);
   assert.equal(countToolsByKind(report.tools, "read"), 0);
@@ -295,7 +309,7 @@ test("success with recovered tool errors does not imply terminal failure", () =>
   } finally {
     console.info = original;
   }
-  assert.match(messages[0] ?? "", /outcome=success|DONE /);
+  assert.match(messages[0] ?? "", /outcome=partial|DONE /);
   assert.match(messages[0] ?? "", /\[agent\] DONE /);
   assert.match(messages[0] ?? "", /toolCalls=3/);
   assert.match(messages[0] ?? "", /versions=1/);
@@ -304,6 +318,39 @@ test("success with recovered tool errors does not imply terminal failure", () =>
   assert.match(messages[2] ?? "", /\[agent\] TOOL-ERROR document\.set_table_formatting TABLE_NOT_FOUND/);
   assert.doesNotMatch(messages[2] ?? "", /recovered/);
   assert.equal(messages.some((m) => m.startsWith("[agent-run-failure]")), false);
+});
+
+test("same-tool recovered mutate errors remain success", () => {
+  const report = composeAgentRunReport({
+    runId: "run-all-recovered",
+    instruction: "format paragraph",
+    metrics: baseMetrics({
+      toolCalls: [
+        {
+          sequence: 1,
+          turn: 1,
+          toolName: "document.set_paragraph_style",
+          kind: "mutate",
+          durationMs: 10,
+          outcome: "failure",
+          failureCode: "STYLE_NOT_FOUND",
+        },
+        {
+          sequence: 2,
+          turn: 1,
+          toolName: "document.set_paragraph_style",
+          kind: "mutate",
+          durationMs: 20,
+          outcome: "success",
+        },
+      ],
+      stopReason: "finish_tool",
+    }),
+    stopReason: "finish_tool",
+    workingMutationCount: 1,
+    versionAdvances: [{ fromVersionId: "v1", toVersionId: "v2" }],
+  });
+  assert.equal(report.outcome, "success");
 });
 
 test("terminal failure stays distinct from recovered tool errors", () => {

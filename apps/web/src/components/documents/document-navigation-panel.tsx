@@ -2,7 +2,7 @@
 
 import * as React from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 
 import {
@@ -42,8 +42,28 @@ import {
   readStoredTabs,
   writeStoredTabs,
 } from "@/components/documents/document-open-tabs";
+import { DocumentVersionsPanel } from "@/components/documents/document-versions-panel";
 import { uploadOfficeFiles } from "@/lib/office-upload";
 import { useToast } from "@/lib/toast";
+
+function Chevron({ direction }: { direction: "left" | "right" }) {
+  return (
+    <svg
+      viewBox="0 0 16 16"
+      fill="none"
+      className="h-3.5 w-3.5"
+      aria-hidden
+    >
+      <path
+        d={direction === "left" ? "M10 3.5 5.5 8l4.5 4.5" : "M6 3.5 10.5 8 6 12.5"}
+        stroke="currentColor"
+        strokeWidth="1.5"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
 
 /**
  * Left explorer for the workspace IDE — all files in the workspace.
@@ -51,6 +71,9 @@ import { useToast } from "@/lib/toast";
 export function DocumentNavigationPanel({
   workspaceId,
   activeDocumentId,
+  activeLatestVersionId = null,
+  selectedVersionId = null,
+  onSelectVersion,
   collapsed,
   onToggle,
   width = 220,
@@ -60,6 +83,9 @@ export function DocumentNavigationPanel({
 }: {
   workspaceId: string;
   activeDocumentId: string | null;
+  activeLatestVersionId?: string | null;
+  selectedVersionId?: string | null;
+  onSelectVersion?: (versionId: string) => void;
   collapsed: boolean;
   onToggle: () => void;
   width?: number;
@@ -69,6 +95,8 @@ export function DocumentNavigationPanel({
   onRequestNavigate?: (href: string) => boolean | void;
 }) {
   const router = useRouter();
+  const brandHref = `/app/workspaces/${workspaceId}/brand`;
+  const brandActive = usePathname() === brandHref;
   const { toast } = useToast();
   const queryClient = useQueryClient();
   const documentsQuery = useQuery({
@@ -257,8 +285,8 @@ export function DocumentNavigationPanel({
           "flex h-full w-10 shrink-0 flex-col items-center border-r border-line bg-sidebar pt-3",
         )}
       >
-        <span className="grid h-7 w-7 place-items-center rounded-[var(--radius-md)] text-[length:var(--text-sm)] text-ink-faint hover:bg-primary-soft hover:text-primary-soft">
-          ›
+        <span className="grid h-7 w-7 place-items-center rounded-[var(--radius-md)] text-ink-faint transition-colors hover:bg-ink/5 hover:text-ink">
+          <Chevron direction="right" />
         </span>
       </button>
     );
@@ -274,11 +302,16 @@ export function DocumentNavigationPanel({
       style={{ width }}
       aria-label="Workspace files"
     >
-      <div className="os-workspace-rail flex items-center gap-1.5 px-2">
-        <div className="min-w-0 flex-1 px-1">
-          <p className="truncate text-[11px] font-semibold uppercase tracking-[0.07em] text-ink-faint">
-            {listLoading ? "Files" : `Files · ${files.length}`}
+      <div className="os-workspace-rail flex items-center gap-1.5 pl-3.5 pr-2">
+        <div className="flex min-w-0 flex-1 items-center gap-2">
+          <p className="truncate text-[11px] font-semibold uppercase tracking-[0.08em] text-ink-soft">
+            Files
           </p>
+          {listLoading ? null : (
+            <span className="rounded-full bg-ink/5 px-1.5 py-px text-[10.5px] font-medium tabular-nums leading-4 text-ink-faint">
+              {files.length}
+            </span>
+          )}
         </div>
         <button
           type="button"
@@ -287,155 +320,185 @@ export function DocumentNavigationPanel({
           aria-label="Hide files"
           className={cn(
             focusRingClass,
-            "grid h-7 w-7 shrink-0 place-items-center rounded-[var(--radius-md)] text-[length:var(--text-sm)] text-ink-faint hover:bg-primary-soft hover:text-primary",
+            "grid h-7 w-7 shrink-0 place-items-center rounded-[var(--radius-md)] text-ink-faint transition-colors hover:bg-ink/5 hover:text-ink",
           )}
         >
-          ‹
+          <Chevron direction="left" />
         </button>
       </div>
 
-      <div
-        className="flex min-h-0 flex-1 flex-col overflow-y-auto [scrollbar-width:thin]"
-        style={{
-          gap: "var(--explorer-list-gap)",
-          padding: "var(--explorer-list-pad)",
-        }}
-      >
-        {loadError ? (
-          <p className="os-type-meta px-2 leading-relaxed text-danger">
-            {loadError}
-          </p>
-        ) : null}
-
-        {listLoading && !loadError ? (
-          <div
-            className="flex flex-col"
-            style={{ gap: "var(--explorer-list-gap)" }}
-            aria-hidden
-          >
-            {Array.from({ length: 6 }, (_, i) => (
-              <div
-                key={i}
-                className="os-shimmer rounded-[var(--radius-md)]"
-                style={{
-                  height: "var(--explorer-row-h)",
-                  width: `${78 - (i % 3) * 10}%`,
-                }}
-              />
-            ))}
-          </div>
-        ) : null}
-
-        {files.map((file) => {
-          const active = file.id === activeDocumentId;
-          return (
-            <div
-              key={file.id}
-              className="group relative"
-              draggable
-              onDragStart={(event) => {
-                event.dataTransfer.setData(
-                  OPENSUITE_DOCUMENT_DRAG_MIME,
-                  encodeDocumentDragPayload({
-                    id: file.id,
-                    name: file.name,
-                    format: file.format,
-                    workspaceId,
-                  }),
-                );
-                event.dataTransfer.effectAllowed = "copy";
-              }}
-            >
-              <Link
-                href={documentPath(workspaceId, file.id)}
-                title={`${file.name} — drag into chat to tag`}
-                prefetch
-                onClick={(event) => {
-                  const href = documentPath(workspaceId, file.id);
-                  if (onRequestNavigate) {
-                    event.preventDefault();
-                    if (onRequestNavigate(href) === false) return;
-                    router.push(href);
-                  }
-                }}
-                className={
-                  cn(
-                    focusRingClass,
-                    "group/file flex w-full items-center gap-2.5 rounded-[var(--radius-md)] pl-2.5 pr-7 text-left os-type-label transition-colors",
-                    active
-                      ? "bg-primary-soft text-primary-hover ring-1 ring-inset ring-primary-line"
-                      : "text-ink-soft hover:bg-primary-soft hover:text-primary",
-                  )
-                }
-                style={{ height: "var(--explorer-row-h)" }}
-                aria-current={active ? "page" : undefined}
-              >
-                <DocumentFormatIcon
-                  format={file.format}
-                  size="sm"
-                  className={
-                    active
-                      ? "text-primary"
-                      : "text-ink-faint group-hover/file:text-primary"
-                  }
-                />
-                <span className="min-w-0 flex-1 truncate leading-none">
-                  {file.name}
-                </span>
-              </Link>
-              <button
-                type="button"
-                title="File actions"
-                aria-label={`Actions for ${file.name}`}
-                aria-haspopup="menu"
-                aria-expanded={menuDocId === file.id}
-                ref={(node) => {
-                  if (node) menuAnchorRefs.current.set(file.id, node);
-                  else menuAnchorRefs.current.delete(file.id);
-                }}
-                onClick={(event) => {
-                  event.preventDefault();
-                  event.stopPropagation();
-                  setMenuDocId((current) =>
-                    current === file.id ? null : file.id,
-                  );
-                }}
-                className={cn(
-                  focusRingClass,
-                  "absolute right-1 top-1/2 grid h-5 w-5 -translate-y-1/2 place-items-center rounded-[var(--radius-sm)] text-[length:var(--text-xs)] text-ink-faint opacity-0 hover:bg-primary-soft hover:text-primary focus-visible:opacity-100 group-hover:opacity-100",
-                )}
-              >
-                ···
-              </button>
-            </div>
-          );
-        })}
-
-        {!listLoading && files.length === 0 ? (
-          <div className="mt-1 rounded-[var(--radius-md)] border border-dashed border-line px-2.5 py-5 text-center">
-            <p className="os-type-label text-ink-soft">No files yet</p>
-            <p className="os-type-meta mt-1.5 leading-relaxed text-ink-faint">
-              Press + to create or upload.
+      <div className="flex min-h-0 flex-1 flex-col">
+        <div
+          className="flex min-h-0 flex-[2] flex-col overflow-y-auto [scrollbar-width:thin]"
+          style={{
+            gap: "var(--explorer-list-gap)",
+            padding: "var(--explorer-list-pad)",
+          }}
+        >
+          {loadError ? (
+            <p className="os-type-meta px-2 leading-relaxed text-danger">
+              {loadError}
             </p>
-          </div>
+          ) : null}
+
+          {listLoading && !loadError ? (
+            <div
+              className="flex flex-col"
+              style={{ gap: "var(--explorer-list-gap)" }}
+              aria-hidden
+            >
+              {Array.from({ length: 6 }, (_, i) => (
+                <div
+                  key={i}
+                  className="os-shimmer rounded-[var(--radius-md)]"
+                  style={{
+                    height: "var(--explorer-row-h)",
+                    width: `${78 - (i % 3) * 10}%`,
+                  }}
+                />
+              ))}
+            </div>
+          ) : null}
+
+          {files.map((file) => {
+            const active = file.id === activeDocumentId;
+            return (
+              <div
+                key={file.id}
+                className="group relative"
+                draggable
+                onDragStart={(event) => {
+                  event.dataTransfer.setData(
+                    OPENSUITE_DOCUMENT_DRAG_MIME,
+                    encodeDocumentDragPayload({
+                      id: file.id,
+                      name: file.name,
+                      format: file.format,
+                      workspaceId,
+                    }),
+                  );
+                  event.dataTransfer.effectAllowed = "copy";
+                }}
+              >
+                <Link
+                  href={documentPath(workspaceId, file.id)}
+                  title={`${file.name} — drag into chat to tag`}
+                  prefetch
+                  onClick={(event) => {
+                    const href = documentPath(workspaceId, file.id);
+                    if (onRequestNavigate) {
+                      event.preventDefault();
+                      if (onRequestNavigate(href) === false) return;
+                      router.push(href);
+                    }
+                  }}
+                  className={cn(
+                    focusRingClass,
+                    "group/file relative flex w-full items-center gap-2.5 rounded-[var(--radius-md)] pl-3 pr-7 text-left os-type-label transition-colors",
+                    active
+                      ? "bg-primary-soft font-medium text-ink before:absolute before:left-0 before:top-1/2 before:h-4 before:w-[3px] before:-translate-y-1/2 before:rounded-r-full before:bg-primary"
+                      : "text-ink-soft hover:bg-ink/5 hover:text-ink",
+                  )}
+                  style={{ height: "var(--explorer-row-h)" }}
+                  aria-current={active ? "page" : undefined}
+                >
+                  <DocumentFormatIcon
+                    format={file.format}
+                    size="sm"
+                    className={
+                      active
+                        ? "text-primary"
+                        : "text-ink-faint group-hover/file:text-ink-soft"
+                    }
+                  />
+                  <span className="min-w-0 flex-1 truncate leading-none">
+                    {file.name}
+                  </span>
+                </Link>
+                <button
+                  type="button"
+                  title="File actions"
+                  aria-label={`Actions for ${file.name}`}
+                  aria-haspopup="menu"
+                  aria-expanded={menuDocId === file.id}
+                  ref={(node) => {
+                    if (node) menuAnchorRefs.current.set(file.id, node);
+                    else menuAnchorRefs.current.delete(file.id);
+                  }}
+                  onClick={(event) => {
+                    event.preventDefault();
+                    event.stopPropagation();
+                    setMenuDocId((current) =>
+                      current === file.id ? null : file.id,
+                    );
+                  }}
+                  className={cn(
+                    focusRingClass,
+                    "absolute right-1 top-1/2 grid h-6 w-6 -translate-y-1/2 place-items-center rounded-[var(--radius-sm)] text-ink-faint opacity-0 transition-opacity hover:bg-ink/10 hover:text-ink focus-visible:opacity-100 group-hover:opacity-100",
+                    menuDocId === file.id && "bg-ink/10 text-ink opacity-100",
+                  )}
+                >
+                  <svg viewBox="0 0 16 16" className="h-3.5 w-3.5" aria-hidden>
+                    <circle cx="3.5" cy="8" r="1.2" fill="currentColor" />
+                    <circle cx="8" cy="8" r="1.2" fill="currentColor" />
+                    <circle cx="12.5" cy="8" r="1.2" fill="currentColor" />
+                  </svg>
+                </button>
+              </div>
+            );
+          })}
+
+          {!listLoading && files.length === 0 ? (
+            <div className="mt-1 rounded-[var(--radius-md)] border border-dashed border-line px-2.5 py-5 text-center">
+              <p className="os-type-label text-ink-soft">No files yet</p>
+              <p className="os-type-meta mt-1.5 leading-relaxed text-ink-faint">
+                Use Add file to create or upload.
+              </p>
+            </div>
+          ) : null}
+        </div>
+
+        {activeDocumentId && onSelectVersion ? (
+          <DocumentVersionsPanel
+            documentId={activeDocumentId}
+            selectedVersionId={selectedVersionId}
+            latestVersionId={activeLatestVersionId}
+            onSelectVersion={onSelectVersion}
+          />
         ) : null}
       </div>
 
-      <div className="shrink-0 px-2.5 py-2.5">
-        <div className="flex items-center justify-end">
-          <button
-            type="button"
-            title="Add file"
-            aria-label="Add file"
-            onClick={() => setAddOpen(true)}
-            className={cn(
-              focusRingClass,
-              "grid h-9 w-9 place-items-center rounded-[var(--radius-md)] bg-primary text-[22px] font-medium leading-none text-on-primary shadow-[0_1px_2px_color-mix(in_srgb,var(--primary)_30%,transparent)] hover:bg-primary-hover",
-            )}
-          >
-            +
-          </button>
-        </div>
+      <div className="shrink-0 border-t border-line p-2.5">
+        <Link
+          href={brandHref}
+          aria-current={brandActive ? "page" : undefined}
+          onClick={(event) => {
+            if (onRequestNavigate?.(brandHref) === false) event.preventDefault();
+          }}
+          className={cn(
+            focusRingClass,
+            "mb-2 flex h-8 items-center rounded-[var(--radius-md)] px-2 text-xs font-medium",
+            brandActive
+              ? "bg-primary-soft text-primary"
+              : "text-ink-soft hover:bg-surface hover:text-ink",
+          )}
+        >
+          Brand &amp; Styles
+        </Link>
+        <button
+          type="button"
+          title="Add file"
+          onClick={() => setAddOpen(true)}
+          className={cn(
+            focusRingClass,
+            "group/add flex h-8 w-full items-center justify-center gap-1.5 rounded-[var(--radius-md)] border border-line bg-surface text-[length:var(--text-xs)] font-medium text-ink-soft shadow-[var(--elevation-xs)] transition-colors hover:border-primary-line hover:bg-primary-soft hover:text-ink",
+          )}
+        >
+          <svg viewBox="0 0 16 16" fill="none" className="h-3.5 w-3.5 text-primary" aria-hidden>
+            <path d="M8 3.25v9.5M3.25 8h9.5" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
+          </svg>
+          Add file
+        </button>
       </div>
 
       {addOpen ? (

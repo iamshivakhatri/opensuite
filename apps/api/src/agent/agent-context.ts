@@ -324,7 +324,7 @@ export async function prepareContext(input: {
   return { messages, workspaceManifest, context, retrieval, reportRetrieval };
 }
 
-function toolContext(tools: AgentToolSet): string {
+export function toolContext(tools: AgentToolSet): string {
   return Object.entries(tools)
     .map(([name, tool]) => `${name}\n${tool.description}\n${JSON.stringify(tool.inputSchema)}`)
     .join("\n");

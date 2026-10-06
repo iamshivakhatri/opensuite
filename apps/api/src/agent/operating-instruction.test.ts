@@ -4,6 +4,30 @@ import { test } from "node:test";
 import { buildAgentOperatingInstruction, buildDocumentUpdateInstruction } from "./operating-instruction.js";
 import { createDocumentTools } from "./document-tools.js";
 
+test("first-turn recommendations stay compact and do not auto-load tools", () => {
+  const system = buildAgentOperatingInstruction(["capabilities.load"], "compute: Deterministic calculations", [
+    { id: "compute.calculator", kind: "tool", title: "Calculator", description: "Deterministic arithmetic" },
+  ]);
+  assert.match(system, /LIKELY RELEVANT CAPABILITIES\n- compute\.calculator \(tool\)/);
+  assert.match(system, /Load an obvious fit directly; use list\/search only when these are insufficient/);
+  assert.doesNotMatch(system, /- compute_calculator\n|inputSchema/);
+});
+
+test("first-turn recommendations show exact available companion IDs for one load call", () => {
+  const system = buildAgentOperatingInstruction(["capabilities.load"], "document: Read and edit DOCX documents", [{
+    id: "styles.career.clean-resume", kind: "instruction", title: "Clean Resume Style", description: "Resume appearance",
+    companionCapabilities: [
+      { id: "document.paragraphs", kind: "group", title: "Paragraphs", description: "Format paragraphs and lists" },
+      { id: "document.text", kind: "group", title: "Text", description: "Change text appearance" },
+    ],
+  }]);
+  assert.match(system, /USEFUL EXECUTABLE CAPABILITIES/);
+  assert.match(system, /- document\.paragraphs \(group\)/);
+  assert.match(system, /- document\.text \(group\)/);
+  assert.match(system, /These exact IDs are available now/);
+  assert.match(system, /one capabilities_load call/);
+});
+
 test("clarification requires material ambiguity and excludes cheap recovery and delegated choices", () => {
   const system = buildAgentOperatingInstruction(["request_clarification", "finish"]);
   assert.match(system, /request_clarification alone, before further edits, only when a requested outcome requires choosing between two or more materially different unsupported interpretations/);
@@ -47,6 +71,12 @@ test("operating instruction starts useful tools without a narrated full plan", (
   assert.match(system, /make only the read needed for the next action/);
   assert.match(system, /Do not spend a model turn narrating or completing a full plan before the first useful tool call/);
   assert.doesNotMatch(system, /plan a coherent set of edits/);
+});
+
+test("operating instruction treats restored tips as authoritative after discarded newer versions", () => {
+  const system = buildAgentOperatingInstruction(["finish"]);
+  assert.match(system, /Bound document tips in this run are authoritative/);
+  assert.match(system, /after a user restore, higher version numbers are permanently deleted/);
 });
 
 test("operating instruction embeds general policy and only exposed tools", () => {
