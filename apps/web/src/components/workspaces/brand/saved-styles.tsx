@@ -6,14 +6,17 @@ import {
   getSavedStyle,
   renameSavedStyle,
   deleteSavedStyle,
+  learnSavedStyle,
   type StyleProfile,
 } from "@/lib/brand-api";
 import { Button } from "@/components/ui/button";
 import { ConfirmDialog, PromptDialog } from "@/components/ui/context-menu";
 import { userFacingError } from "@/components/files/format";
 import { useToast } from "@/lib/toast";
+import { uploadOfficeFiles } from "@/lib/office-upload";
+import { queryKeys } from "@/lib/query-keys";
 
-export function SavedStyles() {
+export function SavedStyles({ workspaceId }: { workspaceId: string }) {
   const [offset, setOffset] = React.useState(0);
   const [detailId, setDetailId] = React.useState<string | null>(null);
   const [rename, setRename] = React.useState<{
@@ -27,6 +30,8 @@ export function SavedStyles() {
   const [busy, setBusy] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
   const client = useQueryClient();
+  const fileRef = React.useRef<HTMLInputElement>(null);
+  const [learning, setLearning] = React.useState(false);
   const { toast } = useToast();
   const list = useQuery({
     queryKey: ["saved-styles", offset],
@@ -54,12 +59,59 @@ export function SavedStyles() {
       setBusy(false);
     }
   }
+  // Upload a DOCX into this workspace, then learn its style from that saved version.
+  async function learnFromUpload(file: File | undefined) {
+    if (!file || learning) return;
+    setLearning(true);
+    setError(null);
+    try {
+      const { uploaded, errors } = await uploadOfficeFiles(workspaceId, [file]);
+      const document = uploaded[0];
+      if (!document || document.format !== "docx") {
+        throw new Error(errors[0] ?? "Only .docx files can be used to learn a style.");
+      }
+      await learnSavedStyle(document.id);
+      await client.invalidateQueries({ queryKey: ["saved-styles"] });
+      await client.invalidateQueries({ queryKey: queryKeys.workspaceDocuments(workspaceId) });
+      setOffset(0);
+      toast({ tone: "success", title: "Style saved", description: `Learned from ${file.name}.` });
+    } catch (err) {
+      setError(userFacingError(err, "Could not learn a style from that file."));
+    } finally {
+      setLearning(false);
+      if (fileRef.current) fileRef.current.value = "";
+    }
+  }
   return (
     <div className="space-y-4">
-      <p className="os-type-secondary text-ink-soft">
-        Your personal styles learned from real documents, available across your workspaces. Brand
-        preferences stay separate.
-      </p>
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <p className="os-type-secondary max-w-[60ch] text-ink-soft">
+          Your personal styles learned from real documents, available across your workspaces. Brand
+          preferences stay separate.
+        </p>
+        <input
+          ref={fileRef}
+          type="file"
+          accept=".docx,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+          className="sr-only"
+          aria-label="Upload a DOCX to learn its style"
+          onChange={(event) => void learnFromUpload(event.target.files?.[0])}
+        />
+        <Button
+          variant="outline"
+          size="sm"
+          disabled={learning}
+          title="The file is added to this workspace so the saved style keeps its source."
+          onClick={() => fileRef.current?.click()}
+        >
+          {learning ? "Learning style…" : "Learn from a document"}
+        </Button>
+      </div>
+      {error && !rename && !remove ? (
+        <p role="alert" className="text-xs text-danger">
+          {error}
+        </p>
+      ) : null}
       {list.isPending ? (
         <p role="status" className="text-ink-soft">
           Loading saved styles…
@@ -75,7 +127,7 @@ export function SavedStyles() {
         </div>
       ) : !list.data?.length ? (
         <p className="py-6 text-sm text-ink-soft">
-          No saved styles on this page. Ask the document agent to learn a style from a saved DOCX.
+          No saved styles yet. Upload a DOCX above, or ask the document agent to learn a style from an open document.
         </p>
       ) : (
         <ul className="divide-y divide-line border-y border-line">

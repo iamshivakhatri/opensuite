@@ -1,6 +1,8 @@
 @import "tailwindcss";
 /* Raw brand palette (the only place brand hex values live). */
 @import "../styles/brand-palette.css";
+/* Landing demos (scaled design stage, camera, cursor). */
+@import "../styles/landing-demo.css";
 
 /*
  * Design tokens from opensuite_v4_modern_minimal.html.

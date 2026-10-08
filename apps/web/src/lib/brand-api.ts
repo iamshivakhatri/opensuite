@@ -66,6 +66,15 @@ export async function listSavedStyles(offset = 0) {
     )
   ).profiles;
 }
+export async function learnSavedStyle(documentId: string) {
+  return (
+    await request<{ profile: StyleProfile }>("/api/style-profiles", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ documentId }),
+    })
+  ).profile;
+}
 export async function getSavedStyle(id: string) {
   return (await request<{ profile: StyleProfile }>(`/api/style-profiles/${id}`)).profile;
 }

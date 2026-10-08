@@ -66,7 +66,7 @@ export function BrandSettingsPage({
           aria-labelledby="tab-styles"
           hidden={tab !== "styles"}
         >
-          {tab === "styles" ? <SavedStyles /> : null}
+          {tab === "styles" ? <SavedStyles workspaceId={workspaceId} /> : null}
         </div>
       </div>
     </main>

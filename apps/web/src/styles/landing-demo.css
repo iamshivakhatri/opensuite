@@ -1,0 +1,85 @@
+/*
+ * Landing product demo (components/marketing/product-demo*.tsx).
+ *
+ * The workspace is laid out once at 1000 x 580 design pixels and scaled to
+ * the container with pure CSS, so the mock never reflows or shifts the page.
+ * A "camera" transform on the inner layer does the zoom between scenes.
+ */
+
+.pd-frame {
+  container-type: inline-size;
+  /* 1000 x 580 workspace window plus its padding. */
+  aspect-ratio: 1080 / 640;
+}
+
+.pd-scale {
+  position: relative;
+  width: 1080px;
+  height: 640px;
+  transform-origin: 0 0;
+  /* unitless ratio of container width to design width */
+  scale: tan(atan2(100cqw, 1080px));
+}
+
+.pd-cam {
+  width: 1000px;
+  height: 580px;
+  transform-origin: 0 0;
+  transition:
+    transform 1.5s cubic-bezier(0.65, 0, 0.35, 1),
+    opacity 0.7s ease;
+  will-change: transform;
+}
+
+.pd-cursor {
+  transition:
+    left 0.9s cubic-bezier(0.45, 0, 0.2, 1),
+    top 0.9s cubic-bezier(0.45, 0, 0.2, 1),
+    opacity 0.3s ease;
+}
+
+.pd-reset,
+.pd-reset * {
+  transition: none !important;
+}
+
+.pd-ripple {
+  animation: pd-ripple 0.6s ease-out both;
+}
+
+@keyframes pd-ripple {
+  from {
+    opacity: 0.55;
+    transform: translate(-50%, -50%) scale(0.2);
+  }
+  to {
+    opacity: 0;
+    transform: translate(-50%, -50%) scale(1.6);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .pd-cam,
+  .pd-cursor {
+    transition: none;
+  }
+}
+
+/* Small illustrations (Brand & styles): a 480 x 340 design stage. */
+.mini-frame {
+  container-type: inline-size;
+  aspect-ratio: 480 / 340;
+}
+
+.mini-scale {
+  width: 480px;
+  height: 340px;
+  transform-origin: 0 0;
+  scale: tan(atan2(100cqw, 480px));
+}
+
+/* Loop restart: snap back to the first frame instead of animating backwards. */
+.mini-reset,
+.mini-reset * {
+  transition: none !important;
+}

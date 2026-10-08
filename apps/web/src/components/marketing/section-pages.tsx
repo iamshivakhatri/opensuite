@@ -1,3 +1,4 @@
+import type { ReactNode } from "react";
 import Link from "next/link";
 
 import { MarketingClose } from "@/components/marketing/marketing-close";
@@ -14,20 +15,78 @@ import {
   GITHUB_URL,
 } from "@/lib/site";
 
+/** One vertical content row: title on the left, short text on the right. */
+function Row({
+  index,
+  title,
+  children,
+}: {
+  index?: string;
+  title: string;
+  children: ReactNode;
+}) {
+  return (
+    <div className="grid gap-3 border-t border-line py-7 lg:grid-cols-12 lg:gap-12">
+      <h2 className="flex items-baseline gap-3 text-[16px] font-medium tracking-[-0.01em] text-ink lg:col-span-4">
+        {index ? <span className="os-label text-primary">{index}</span> : null}
+        {title}
+      </h2>
+      <div className="max-w-[58ch] text-[14.5px] leading-[1.65] text-ink-soft lg:col-span-8">
+        {children}
+      </div>
+    </div>
+  );
+}
+
+const productRows = [
+  {
+    title: "Files live in workspaces",
+    body: "Create a blank document or upload a .docx, and open it in a tabbed workspace. Star, search, and trash files — trashed files stay restorable until you empty the trash — and download the .docx whenever you want.",
+  },
+  {
+    title: "Edit it yourself, or ask",
+    body: "The editor is a normal word processor. The agent panel sits beside it: describe a change, @-tag other files in the workspace if they matter, and watch each step appear as it runs. The document updates while the agent works, and an ambiguous request gets a question instead of a guess.",
+  },
+  {
+    title: "Every run is a version",
+    body: "Agent changes land as one new version. The explorer keeps the latest five versions of the open document: open an older one read-only, or restore it as current. Restoring discards the newer versions, and you confirm first.",
+  },
+  {
+    title: "Your brand and your styles",
+    body: "Save your organization's logo, colors, and fonts per workspace, and styles learned from documents you trust to your account. The agent uses them when it creates a document or when you ask.",
+  },
+  {
+    title: "Your model",
+    body: "Connect your own OpenAI, Anthropic, or OpenRouter key in Settings, or use a provider your operator configured on the server.",
+  },
+];
+
+const agentCanDo = [
+  { name: "Text and formatting", note: "find, replace, insert, restyle" },
+  { name: "Tables", note: "cells, rows, columns, shading, widths" },
+  { name: "Word styles", note: "apply, create, update" },
+  { name: "Page layout", note: "sections, headers, footers, page numbers" },
+  { name: "Tables of contents and fields", note: "refreshed with LibreOffice" },
+  { name: "Comments", note: "simple selections in one paragraph" },
+  { name: "Tracked changes", note: "insert, delete, replace, accept, reject" },
+  { name: "Footnotes and endnotes", note: "simple notes" },
+  { name: "Images", note: "PNG or JPEG from your workspace" },
+];
+
 const runSteps = [
   {
     name: "Understand",
-    body: "OpenSuite reads the document's real structure — headings, paragraphs, tables, and the styles already in use.",
+    body: "OpenSuite reads the document's real structure — headings, paragraphs, tables, and the styles already in use — plus any other workspace file you tag or name.",
     annotation: "document.inspect",
   },
   {
     name: "Locate",
-    body: "It finds the exact passages, cells, or headings your request pointed at — by structure, not by guessing at wording.",
+    body: "It finds the exact passages, cells, or headings your request pointed at — by structure, not by guessing at wording. If it can't tell which one you mean, it asks you.",
     annotation: "document.find",
   },
   {
     name: "Edit",
-    body: "Typed operations apply those changes in place, batched so related edits land together or not at all.",
+    body: "Typed operations apply the changes in place, batched so related edits land together. You see the document update while the run is in progress.",
     annotation: "batch replace",
   },
   {
@@ -37,13 +96,28 @@ const runSteps = [
   },
   {
     name: "Verify",
-    body: "The saved file is checked again for what usually breaks: leftover placeholders, broken totals, stale labels.",
+    body: "The result is checked again for what usually breaks: table totals that stop adding up, leftover placeholders, lost fields, malformed comments or notes. A blocking problem fails the run instead of passing quietly.",
     annotation: "post-save checks",
   },
   {
     name: "Save",
-    body: "The run ends as one new immutable version, alongside whatever came before.",
+    body: "A run that changed the document ends as one new immutable version, alongside whatever came before. Any of the latest five can be restored from the explorer.",
     annotation: "one version",
+  },
+];
+
+const whenStuck = [
+  {
+    title: "It needs an answer",
+    body: "If a request genuinely has two readings, the agent stops and asks instead of guessing. It marks the thread “Needs your input”, and your reply starts a new run in the same thread.",
+  },
+  {
+    title: "It runs out of room",
+    body: "A long request can hit a turn or time limit. Use Continue to pick up where it stopped.",
+  },
+  {
+    title: "A check fails",
+    body: "If verification finds a blocking problem, the run ends as failed rather than as a success with a warning attached.",
   },
 ];
 
@@ -76,8 +150,11 @@ const pipeline = [
 
 const working = [
   "Open, create, edit, download, and version DOCX files in workspaces",
-  "Ask the agent to inspect structure and make targeted edits",
-  "Text, paragraphs, basic formatting, tables, and selected DOCX structure",
+  "Ask the agent to inspect a document and make targeted edits to text, formatting, and tables",
+  "Styles, sections, headers and footers, page numbers, and tables of contents",
+  "Comments, tracked changes, footnotes and endnotes in simple cases",
+  "Insert and replace PNG or JPEG images from your workspace, including your brand logo",
+  "Save your brand, learn styles from documents, and apply them by name",
   "Your own OpenAI, Anthropic, or OpenRouter key — or a server-managed provider",
   "Run the application and its document engine on your own infrastructure",
 ];
@@ -85,6 +162,8 @@ const working = [
 const notYet = [
   "Slides and Sheets editing — PPTX and XLSX can be stored, not edited",
   "Full fidelity on complex or unusual source documents",
+  "Threaded comment replies, and notes or tracked changes in complex structures like tables",
+  "Attaching images in chat, web search, and external connectors",
   "Self-service account and data deletion",
   "A one-command local stack — Postgres, S3, and email are yours to provide",
 ];
@@ -102,7 +181,7 @@ export function ProductPage() {
         index="01"
         label="Product"
         title="The workspace where the document stays the document."
-        lead="File explorer, the open DOCX, and the agent panel that ran the change — the same surfaces you use after sign-in, reconstructed here without live data."
+        lead="A file explorer, a DOCX editor, and an agent panel on one screen. The agent edits the file you have open and leaves a version behind."
       >
         <figure className="mt-12">
           <ProductPreview />
@@ -113,6 +192,37 @@ export function ProductPage() {
             <span className="shrink-0">Interface reconstruction</span>
           </figcaption>
         </figure>
+
+        <div className="mt-14 border-b border-line">
+          {productRows.map((row) => (
+            <Row key={row.title} title={row.title}>
+              {row.body}
+            </Row>
+          ))}
+          <Row title="What the agent can work with">
+            <ul>
+              {agentCanDo.map((item) => (
+                <li
+                  key={item.name}
+                  className="flex items-baseline justify-between gap-4 border-b border-line py-2 first:pt-0 last:border-b-0 last:pb-0"
+                >
+                  <span className="text-ink">{item.name}</span>
+                  <span className="os-annot text-right">{item.note}</span>
+                </li>
+              ))}
+            </ul>
+            <p className="mt-4 text-[13.5px] text-ink-faint">
+              Known limits are listed on{" "}
+              <Link
+                href="/scope"
+                className="text-primary underline-offset-2 hover:underline"
+              >
+                Scope today
+              </Link>
+              .
+            </p>
+          </Row>
+        </div>
       </PageSection>
       <MarketingClose />
     </SiteShell>
@@ -174,6 +284,15 @@ export function HowItWorksPage() {
               </li>
             ))}
           </ol>
+        </div>
+
+        <h2 className="os-label mt-16">When it can&apos;t just finish</h2>
+        <div className="mt-4 border-b border-line">
+          {whenStuck.map((item) => (
+            <Row key={item.title} title={item.title}>
+              {item.body}
+            </Row>
+          ))}
         </div>
       </PageSection>
       <MarketingClose />
@@ -250,23 +369,23 @@ export function ArchitecturePage() {
           </ol>
         </div>
 
-        <div className="mt-10 grid gap-10 sm:grid-cols-2 sm:gap-12">
-          <div>
-            <h2 className="os-label">This repository</h2>
-            <p className="mt-3.5 max-w-[46ch] text-[14.5px] leading-[1.65] text-ink-soft">
-              Accounts, workspaces, object storage, immutable document
-              versions, agent threads and runs, and the web app. It never
-              parses or edits Office XML itself.
-            </p>
-          </div>
-          <div>
-            <h2 className="os-label text-primary">opensuite-engine</h2>
-            <p className="mt-3.5 max-w-[46ch] text-[14.5px] leading-[1.65] text-ink-soft">
-              A separate Rust project that parses DOCX, resolves targets,
-              performs supported mutations, and returns diagnostics. Changing
-              the model changes nothing about how a file is written.
-            </p>
-          </div>
+        <div className="mt-10 border-b border-line">
+          <Row title="Web app and API">
+            Accounts, workspaces, object storage, immutable document versions,
+            agent threads and runs, and the editor. The API never parses or
+            edits Office XML itself.
+          </Row>
+          <Row title="Agent runtime">
+            A generic model-and-tools loop that knows nothing about Office
+            files. The API hands it a small set of typed document tools,
+            loaded as the request needs them — no shell, no filesystem.
+          </Row>
+          <Row title="opensuite-engine">
+            A separate Rust project that parses DOCX, resolves targets,
+            performs supported mutations, and returns diagnostics. It ships as
+            a native package, so changing the model changes nothing about how
+            a file is written.
+          </Row>
         </div>
       </PageSection>
       <MarketingClose />
@@ -320,8 +439,10 @@ export function ScopePage() {
         </div>
 
         <p className="mt-10 max-w-[62ch] border-l-2 border-primary pl-5 text-[14.5px] leading-[1.65] text-ink">
-          DOCX fidelity varies with the source file and the operation. Test
-          documents that matter before relying on the result.
+          DOCX fidelity varies with the source file and the operation. Newer
+          features such as comments, tracked changes, and notes have been
+          checked against LibreOffice; review in Word and Google Docs is still
+          pending. Test documents that matter before relying on the result.
         </p>
       </PageSection>
       <MarketingClose />
@@ -354,8 +475,10 @@ export function OpenSourcePage() {
             </pre>
             <p className="mt-5 max-w-[54ch] text-[14px] leading-[1.6] text-ink-faint">
               Self-hosting needs PostgreSQL, S3-compatible storage, and an
-              email provider. There is no one-command local stack yet, and the
-              README says so too.
+              email provider (Resend). Refreshing tables of contents and page
+              fields also uses LibreOffice, which the Docker image includes.
+              There is no one-command local stack yet, and the README says so
+              too.
             </p>
           </div>
 
