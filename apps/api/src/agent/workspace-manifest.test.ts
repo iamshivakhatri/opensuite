@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { refersToOpenDocument, requestsDocumentChange } from "./document-target.js";
+import { refersToOpenDocument, requestsDocumentChange, resolveDocumentTarget } from "./document-target.js";
 import { formatWorkspaceManifest } from "./workspace-manifest.js";
 
 test("explicit current-document wording binds the open file", () => {
@@ -46,4 +46,32 @@ test("explicit document-style wording binds only this/current/open document", ()
   assert.equal(refersToOpenDocument("Save the document style of the current report"), true);
   assert.equal(refersToOpenDocument("Learn the document style from the board report"), false);
   assert.equal(refersToOpenDocument("Tell me all the styles I have saved."), false);
+});
+
+test("target resolution separates edit targets from references and ambiguous requests", () => {
+  const documents = [
+    { id: "board", name: "Board Report.docx", format: "docx" },
+    { id: "source", name: "Source.docx", format: "docx" },
+  ];
+  for (const [instruction, documentIds, expected] of [
+    ["Update the Board Report using Source", ["source"], "board"],
+    ["Update this document using Source", ["source"], "board"],
+    ["In Board Report, replace the budget value", [], "board"],
+    ["Update Board Report and Source", [], null],
+    ["Replace the table value", ["board", "source"], null],
+    ["Replace the table value using the attached document", ["source"], null],
+    ["Replace the table value from the attached document", ["source"], null],
+    ['Replace the table value from "the attached document"', ["source"], null],
+    ["Update the Missing Report", ["source"], null],
+    ["Create a report using Board Report", ["board"], null],
+    ["Create a new report and update this document", ["board"], null],
+    ["What should I update in Board Report?", [], null],
+    ["Replace the table value from 15 minutes to 10 minutes", ["source"], "source"],
+    ["Replace the table value from 15 minutes to 10 minutes", [], "board"],
+  ] as const) {
+    assert.equal(resolveDocumentTarget({ instruction, openDocumentId: "board", documentIds, documents }), expected, instruction);
+  }
+  assert.equal(resolveDocumentTarget({ instruction: "Update Board Report", openDocumentId: null, documentIds: [],
+    documents: [...documents, { ...documents[0]!, id: "duplicate" }] }), null);
+  assert.equal(resolveDocumentTarget({ instruction: "Replace the table value", openDocumentId: null, documentIds: [], documents }), null);
 });

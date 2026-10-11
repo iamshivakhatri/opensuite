@@ -14,7 +14,7 @@ test("Word styles load dynamically, edit existing styles, and save once", async 
   const session = await createPrimaryDocxTools({
     binding, ownerUserId: "user", workspaceId: "workspace", documentId: "document", versionId: "v1",
     documents: {
-      getOwnedDocument: async () => ({ format: "docx" }) as never,
+      getOwnedDocument: async () => ({ format: "docx", workspaceId: "workspace" }) as never,
       readExactVersionBytes: async () => stored,
       appendDocumentVersion: async ({ bytes, baseVersionId }) => {
         assert.equal(baseVersionId, "v1"); stored=Buffer.from(bytes); appends++;

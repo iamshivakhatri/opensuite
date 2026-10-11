@@ -283,6 +283,8 @@ test("inspect and explicitly select an untagged workspace DOCX before one locked
     versions: new Map([["v2", { number: 1, bytes: Buffer.from(buildMinimalDocx(["Found evidence"])) }]]), latestVersionId: "v2" });
   mem.store.set("outside", { name: "Outside.docx", format: "docx", workspaceId: "ws-2",
     versions: new Map([["v3", { number: 1, bytes: Buffer.from(buildMinimalDocx(["Outside evidence"])) }]]), latestVersionId: "v3" });
+  await assert.rejects(createPrimaryDocxTools({ binding, documents: mem.api, ownerUserId: "user-1", workspaceId: "ws-1",
+    documentId: "outside", versionId: "v3" }), (error: unknown) => (error as { code: string }).code === "DOCUMENT_NOT_FOUND");
   const tools = await createPrimaryDocxTools({ binding, documents: mem.api, ownerUserId: "user-1", workspaceId: "ws-1",
     documentId: "active", versionId: "v1", workingDocumentIds: ["active"] });
   assert.ok(tools);

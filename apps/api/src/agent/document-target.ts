@@ -13,9 +13,48 @@ export function refersToOpenDocument(instruction: string): boolean {
   return [EDIT_THEN_OPEN, REMOVE_FROM_OPEN, IN_OPEN_THEN_EDIT].some((pattern) => pattern.test(` ${instruction}`));
 }
 
-/** Used only to fail clearly when an edit is requested without the DOCX engine. */
+/** Recognize edit requests without choosing a document from reference evidence. */
 export function requestsDocumentChange(instruction: string): boolean {
   if (/^\s*(?:what|which|how|why|where|when)\b/i.test(instruction)) return false;
-  return /\b(?:update|edit|revise|refresh|modify|change|replace|insert|add|remove|delete|format|rewrite|fix)\b/i.test(instruction) ||
-    /\b(?:create|make|draft)\s+(?:(?:a|an|the|new|blank|monthly|annual|quarterly|\d+)\s+){0,4}(?:documents?|docx|files?|reports?)\b/i.test(instruction);
+  return new RegExp(EDIT_VERB, "i").test(instruction) ||
+    requestsNewDocument(instruction);
+}
+
+/** Creation never uses an existing document as the edit target. */
+export function requestsNewDocument(instruction: string): boolean {
+  return /\b(?:create|make|start|draft)\s+(?:(?:a|an|the|brand|new|blank|monthly|annual|quarterly|\d+)\s+){0,5}(?:documents?|docx|files?|reports?|newsletters?|letters?|proposals?|resumes?)\b/i.test(instruction) ||
+    /\b(?:create|make|start|draft)\s+(?:a\s+|an\s+|the\s+)?(?:brand\s+)?new\b/i.test(instruction);
+}
+
+/** Exact target wording wins; relevance scores and reference-only tags never select. */
+export function resolveDocumentTarget(input: {
+  instruction: string;
+  openDocumentId: string | null;
+  documentIds: readonly string[];
+  documents: readonly { id: string; name: string; format: string }[];
+}): string | null {
+  if (requestsNewDocument(input.instruction)) return null;
+  if (refersToOpenDocument(input.instruction)) return input.openDocumentId;
+  if (!requestsDocumentChange(input.instruction)) return null;
+  const editRequest = input.instruction.split(/\b(?:from|using|based on|according to|with data|as (?:a )?reference)\b/i)[0]!;
+  const mentioned = input.documents.filter((document) => {
+    const title = document.name.replace(/\.docx$/i, "").toLowerCase();
+    return title && editRequest.toLowerCase().includes(title);
+  });
+  if (mentioned.length > 1) return null;
+  const targets = mentioned.filter((document) => {
+    const title = document.name.replace(/\.docx$/i, "").replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    if (!title) return false;
+    const name = `(?:["“']?${title}(?:\\.docx)?["”']?)(?![\\p{L}\\p{N}_])`;
+    return new RegExp(`${EDIT_VERB}\\s+(?:the\\s+)?${name}`, "iu").test(editRequest) ||
+      new RegExp(`\\b(?:in|on|within|to|of)\\s+(?:the\\s+)?${name}[^.?!\\n]{0,160}?${EDIT_VERB}|${EDIT_VERB}[^.?!\\n]{0,160}?\\b(?:in|on|within|to|of)\\s+(?:the\\s+)?${name}`, "iu").test(editRequest);
+  });
+  if (targets.length) return targets.length === 1 && targets[0]!.format === "docx" ? targets[0]!.id : null;
+  // A tag alone may be a source. Bind only when the request supplies no source or other target wording.
+  if (/\b(?:from(?!\s+["“']?\d)|using|based on|according to|references?|sources?|other|another|all|across)\b/i.test(input.instruction) ||
+      input.documents.some((document) => input.instruction.toLowerCase().includes(document.name.replace(/\.docx$/i, "").toLowerCase()))) return null;
+  if (!/\b(?:attached|tagged)\s+(?:document|file|report)\b/i.test(input.instruction) &&
+      !/\b(?:table|row|column|cell|paragraph|section|heading|header|footer|value|text|typos?|formatting)\b/i.test(input.instruction)) return null;
+  const ids = [...new Set(input.documentIds)];
+  return ids.length === 1 ? ids[0]! : ids.length === 0 ? input.openDocumentId : null;
 }

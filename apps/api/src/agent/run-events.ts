@@ -150,8 +150,10 @@ export function createTranscriptCollector() {
     validation(checks: readonly DocumentCheck[]) {
       entries.push({ kind: "validation", status: "completed", name: "Document validation", summary: "Document validation", output: { checks } });
     },
-    entries() {
-      return entries;
+    // Save the final target in an existing step so Continue does not depend on the open tab.
+    entries(activeDocumentId?: string | null) {
+      return activeDocumentId ? entries.map((entry, index) => index === entries.length - 1
+        ? { ...entry, output: { ...entry.output, activeDocumentId } } : entry) : entries;
     },
   };
 }

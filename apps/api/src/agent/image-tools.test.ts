@@ -13,7 +13,7 @@ test("image tools load lazily, require inspected handles, and save one verified 
   assert.equal(inserted.result.ok, true);
   let stored = Buffer.from(inserted.output!); let appends = 0;
   const session = await createPrimaryDocxTools({ binding, ownerUserId: "user", workspaceId: "workspace", documentId: "doc", versionId: "v1",
-    documents: { getOwnedDocument: async () => ({ format: "docx" }) as never, readExactVersionBytes: async () => stored,
+    documents: { getOwnedDocument: async () => ({ format: "docx", workspaceId: "workspace" }) as never, readExactVersionBytes: async () => stored,
       appendDocumentVersion: async ({ bytes }: { bytes: Uint8Array }) => { stored = Buffer.from(bytes); appends++; return { version: { id: "v2", versionNumber: 2 } } as never; } } as never,
   });
   assert.ok(session);

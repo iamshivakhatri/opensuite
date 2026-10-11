@@ -11,7 +11,7 @@ test("revision inspection loads lazily, preserves bytes, and saves no version", 
   const before = Buffer.from(bytes);
   let appends = 0;
   const session = await createPrimaryDocxTools({ binding, ownerUserId: "user", workspaceId: "workspace", documentId: "doc", versionId: "v1",
-    documents: { getOwnedDocument: async () => ({ format: "docx" }) as never, readExactVersionBytes: async () => bytes,
+    documents: { getOwnedDocument: async () => ({ format: "docx", workspaceId: "workspace" }) as never, readExactVersionBytes: async () => bytes,
       appendDocumentVersion: async () => { appends++; throw new Error("read must not save"); } } as never,
   });
   assert.ok(session);
@@ -39,7 +39,7 @@ test("tracked change tools load lazily and persist one verified version", async 
   }
   let appends = 0;
   const session = await createPrimaryDocxTools({ binding, ownerUserId: "user", workspaceId: "workspace", documentId: "doc", versionId: "v1",
-    documents: { getOwnedDocument: async () => ({ format: "docx" }) as never, readExactVersionBytes: async () => stored,
+    documents: { getOwnedDocument: async () => ({ format: "docx", workspaceId: "workspace" }) as never, readExactVersionBytes: async () => stored,
       appendDocumentVersion: async ({ bytes }: { bytes: Uint8Array }) => { appends++; stored = Buffer.from(bytes); return { version: { id: "v2", versionNumber: 2 } } as never; } } as never,
   });
   assert.ok(session);
@@ -71,7 +71,7 @@ test("revision decisions use fresh lazy handles and save a resolved replacement 
     stored = (await binding.executeDocxReplaceTextWithTrackedChange!(stored, { target: { text: "$2.1M" }, replacement: "$2.4M", author: "Sarah" })).output!;
     let saves = 0;
     const session = await createPrimaryDocxTools({ binding, ownerUserId: "user", workspaceId: "workspace", documentId: "doc", versionId: "v1",
-      documents: { getOwnedDocument: async () => ({ format: "docx" }) as never, readExactVersionBytes: async () => stored,
+      documents: { getOwnedDocument: async () => ({ format: "docx", workspaceId: "workspace" }) as never, readExactVersionBytes: async () => stored,
         appendDocumentVersion: async ({ bytes }: { bytes: Uint8Array }) => { saves++; stored = Buffer.from(bytes); return { version: { id: "v2", versionNumber: 2 } } as never; } } as never,
     });
     assert.ok(session);

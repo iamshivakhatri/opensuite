@@ -25,7 +25,7 @@ async function createSession() {
   const session = await createPrimaryDocxTools({
     binding, ownerUserId: "user-1", workspaceId: "ws-1", documentId: "doc-1", versionId: "v1",
     documents: {
-      getOwnedDocument: async () => ({ format: "docx" }) as never,
+      getOwnedDocument: async () => ({ format: "docx", workspaceId: "ws-1" }) as never,
       readExactVersionBytes: async () => stored,
       appendDocumentVersion: async ({ bytes, baseVersionId }) => {
         assert.equal(baseVersionId, "v1");

@@ -168,7 +168,7 @@ test("replace_image_asset preserves layout and rich_content loads asset tools la
       },
     },
     documents: {
-      getOwnedDocument: async () => ({ format: "docx" }) as never,
+      getOwnedDocument: async () => ({ format: "docx", workspaceId: "workspace" }) as never,
       readExactVersionBytes: async () => stored,
       appendDocumentVersion: async ({ bytes }: { bytes: Uint8Array }) => {
         stored = Buffer.from(bytes);
@@ -235,7 +235,7 @@ test("replace_image_asset preserves layout and rich_content loads asset tools la
       readBytes: async () => ({ bytes: pngA, contentType: "image/png" }),
     },
     documents: {
-      getOwnedDocument: async () => ({ format: "docx" }) as never,
+      getOwnedDocument: async () => ({ format: "docx", workspaceId: "workspace" }) as never,
       readExactVersionBytes: async () => new Uint8Array(buildMinimalDocx(["Results"])),
       appendDocumentVersion: async () => ({ version: { id: "v2", versionNumber: 2 } }) as never,
     } as never,

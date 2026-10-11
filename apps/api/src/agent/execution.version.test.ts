@@ -53,7 +53,7 @@ test("blank DOCX uses semantic placement and logs rejected handles without chang
   const tools = await createPrimaryDocxTools({
     binding, ownerUserId: "user-1", workspaceId: "ws-1", documentId: "doc-1", versionId: "v1",
     documents: {
-      getOwnedDocument: async () => ({ format: "docx" }) as never,
+      getOwnedDocument: async () => ({ format: "docx", workspaceId: "ws-1" }) as never,
       readExactVersionBytes: async () => blank,
       appendDocumentVersion: async () => { throw new Error("unused"); },
       createBlankDocxDocument: async () => { throw new Error("unused"); },
@@ -193,7 +193,7 @@ test("format and text batches keep partial work, one preview per batch, and one 
   const tools = await createPrimaryDocxTools({
     binding, ownerUserId: "user-1", workspaceId: "ws-1", documentId: "doc-1", versionId: "v1",
     documents: {
-      getOwnedDocument: async () => ({ format: "docx" }) as never,
+      getOwnedDocument: async () => ({ format: "docx", workspaceId: "ws-1" }) as never,
       readExactVersionBytes: async () => stored,
       appendDocumentVersion: async ({ bytes, baseVersionId }) => {
         assert.equal(baseVersionId, "v1");
@@ -271,7 +271,7 @@ test("header shading then table formatting and widths reuse one inspect", async 
   const tools = await createPrimaryDocxTools({
     binding, ownerUserId: "user-1", workspaceId: "ws-1", documentId: "doc-1", versionId: "v1",
     documents: {
-      getOwnedDocument: async () => ({ format: "docx" }) as never,
+      getOwnedDocument: async () => ({ format: "docx", workspaceId: "ws-1" }) as never,
       readExactVersionBytes: async () => stored,
       appendDocumentVersion: async () => { throw new Error("unused"); },
       createBlankDocxDocument: async () => { throw new Error("unused"); },
@@ -311,7 +311,7 @@ test("one structural header formatting call advances preview and expires inspect
   const tools = await createPrimaryDocxTools({
     binding, ownerUserId: "user-1", workspaceId: "ws-1", documentId: "doc-1", versionId: "v1",
     documents: {
-      getOwnedDocument: async () => ({ format: "docx" }) as never,
+      getOwnedDocument: async () => ({ format: "docx", workspaceId: "ws-1" }) as never,
       readExactVersionBytes: async () => Buffer.from(buildMinimalDocx(["Status"])),
       appendDocumentVersion: async () => { throw new Error("unused"); },
       createBlankDocxDocument: async () => { throw new Error("unused"); },
@@ -363,7 +363,7 @@ test("working reads, failed writes, and stale handles keep the last valid state"
     binding,
     ownerUserId: "user-1", workspaceId: "ws-1", documentId: "doc-1", versionId: "v1",
     documents: {
-      getOwnedDocument: async () => ({ format: "docx" }) as never,
+      getOwnedDocument: async () => ({ format: "docx", workspaceId: "ws-1" }) as never,
       readExactVersionBytes: async () => stored,
       appendDocumentVersion: async ({ bytes, baseVersionId }) => {
         assert.equal(baseVersionId, "v1");
@@ -413,7 +413,7 @@ test("working reads, failed writes, and stale handles keep the last valid state"
   const continued = await createPrimaryDocxTools({
     binding, ownerUserId: "user-1", workspaceId: "ws-1", documentId: "doc-1", versionId: "v2",
     documents: {
-      getOwnedDocument: async () => ({ format: "docx" }) as never,
+      getOwnedDocument: async () => ({ format: "docx", workspaceId: "ws-1" }) as never,
       readExactVersionBytes: async () => stored,
       appendDocumentVersion: async () => { throw new Error("unused"); },
       createBlankDocxDocument: async () => { throw new Error("unused"); },
@@ -428,7 +428,7 @@ test("repeated mutation failures nudge once, then success and a new run reset th
   const binding = await createNapiDocxEngineBinding();
   const stored = Buffer.from(buildMinimalDocx(["Start"]));
   const documents = {
-    getOwnedDocument: async () => ({ format: "docx" }) as never,
+    getOwnedDocument: async () => ({ format: "docx", workspaceId: "ws-1" }) as never,
     readExactVersionBytes: async () => stored,
     appendDocumentVersion: async () => { throw new Error("unused"); },
     createBlankDocxDocument: async () => { throw new Error("unused"); },
@@ -474,7 +474,7 @@ test("failed final append leaves the previous persisted version untouched", asyn
   const tools = await createPrimaryDocxTools({
     binding, ownerUserId: "user-1", workspaceId: "ws-1", documentId: "doc-1", versionId: "v1",
     documents: {
-      getOwnedDocument: async () => ({ format: "docx" }) as never,
+      getOwnedDocument: async () => ({ format: "docx", workspaceId: "ws-1" }) as never,
       readExactVersionBytes: async () => original,
       appendDocumentVersion: async () => { throw new Error("storage unavailable"); },
       createBlankDocxDocument: async () => { throw new Error("unused"); },

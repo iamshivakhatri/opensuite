@@ -437,15 +437,16 @@ function createActiveDocxSession(input: {
     flush,
     getTransitions: () => transitions,
     rebind,
-    async selectDocument(selectedDocumentId: string) {
+    async selectDocument(selectedDocumentId: string, selectedVersionId?: string) {
       if (input.editableDocumentId && selectedDocumentId !== input.editableDocumentId) return { ok: false, reasonCode: "DOCUMENT_IS_REFERENCE" };
       if (selectedDocumentId === documentId) return { ok: true, documentId, versionId, alreadyActive: true };
       if (workingMutationCount > 0 || dirty) return { ok: false, reasonCode: "DOCUMENT_ALREADY_EDITED" };
       const document = await input.documents.getOwnedDocument({ documentId: selectedDocumentId, ownerUserId: input.ownerUserId });
       if (document.workspaceId !== input.workspaceId || document.format !== "docx") return { ok: false, reasonCode: "DOCUMENT_NOT_EDITABLE" };
-      const bytes = await input.documents.readExactVersionBytes({ documentId: selectedDocumentId, versionId: document.latestVersion.id, ownerUserId: input.ownerUserId });
-      rebind({ documentId: selectedDocumentId, versionId: document.latestVersion.id, bytes: new Uint8Array(bytes) });
-      input.onDocumentSelected?.({ documentId: selectedDocumentId, versionId: document.latestVersion.id });
+      const selectedVersion = selectedVersionId ?? document.latestVersion.id;
+      const bytes = await input.documents.readExactVersionBytes({ documentId: selectedDocumentId, versionId: selectedVersion, ownerUserId: input.ownerUserId });
+      rebind({ documentId: selectedDocumentId, versionId: selectedVersion, bytes: new Uint8Array(bytes) });
+      input.onDocumentSelected?.({ documentId: selectedDocumentId, versionId: selectedVersion });
       return { ok: true, documentId, versionId, name: document.name };
     },
     async inspectWorkingDocument(selectedDocumentId: string, focus: InspectFocus) {
@@ -691,22 +692,8 @@ export async function createPrimaryDocxTools(input: {
   });
 
   if (input.documentId && input.versionId) {
-    const document = await input.documents.getOwnedDocument({
-      documentId: input.documentId,
-      ownerUserId: input.ownerUserId,
-    });
-    if (document.format === "docx") {
-      const bytes = await input.documents.readExactVersionBytes({
-        documentId: input.documentId,
-        versionId: input.versionId,
-        ownerUserId: input.ownerUserId,
-      });
-      session.rebind({
-        documentId: input.documentId,
-        versionId: input.versionId,
-        bytes: new Uint8Array(bytes),
-      });
-    }
+    const selected = await session.selectDocument(input.documentId, input.versionId);
+    if (!selected.ok) throw new DocumentAccessError(404, "DOCUMENT_NOT_FOUND", "Document is not editable in this workspace");
   }
 
   const caps = docxCaps(input.binding);

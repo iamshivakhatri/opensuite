@@ -82,7 +82,7 @@ import { estimateTokens } from "./context-projection.js";
 import { compactThreadContext, logContextCompaction } from "./context-compaction.js";
 import { buildAgentOperatingInstruction, buildDocumentUpdateInstruction } from "./operating-instruction.js";
 import { createWorkspaceSearchTool } from "./workspace-search.js";
-import { refersToOpenDocument, requestsDocumentChange } from "./document-target.js";
+import { requestsDocumentChange, requestsNewDocument, resolveDocumentTarget } from "./document-target.js";
 import {
   type AgentMessage,
   type AgentPersistenceService,
@@ -237,20 +237,32 @@ export function createAgentExecutionService(deps: AgentExecutionServiceDeps) {
 
     try {
       const model = await resolveModel(deps, input.userId);
-      const openDocument = await resolvePrimaryDocument(
+      const targetInstruction = continuation?.instruction ?? input.instruction;
+      const creatingNewDocument = requestsNewDocument(targetInstruction);
+      const openDocument = creatingNewDocument || continuation?.documentId ? null : await resolvePrimaryDocument(
         deps.documents,
         thread,
         input.userId,
-        input.activeDocumentId,
+        continuation ? undefined : input.activeDocumentId,
       );
-      const creatingNewDocument = /\b(?:create|make|start|draft)\s+(?:a\s+|an\s+|the\s+)?(?:brand\s+)?new\b/i.test(input.instruction);
-      if (!deps.docxBinding && requestsDocumentChange(input.instruction) && (
+      let workspaceDocuments: Awaited<ReturnType<DocumentService["listInWorkspace"]>> | undefined;
+      if (requestsDocumentChange(targetInstruction) && !creatingNewDocument && !continuation?.documentId) {
+        workspaceDocuments = await deps.documents.listInWorkspace(thread.workspaceId, input.userId);
+      }
+      if (!deps.docxBinding && requestsDocumentChange(targetInstruction) && (
         openDocument?.format === "docx" || creatingNewDocument ||
-        (await deps.documents.listInWorkspace(thread.workspaceId, input.userId)).some((document) => document.format === "docx")
+        (workspaceDocuments ?? await deps.documents.listInWorkspace(thread.workspaceId, input.userId)).some((document) => document.format === "docx")
       )) {
         throw new AgentExecutionError("DOCX_ENGINE_UNAVAILABLE", "DOCX editing is unavailable because the document engine did not load. Please try again after the API is restarted with the engine available.");
       }
-      const primaryDocument = !creatingNewDocument && refersToOpenDocument(input.instruction) ? openDocument : null;
+      const targetDocumentId = continuation?.documentId ?? resolveDocumentTarget({
+        instruction: targetInstruction,
+        openDocumentId: openDocument?.documentId ?? null,
+        documentIds: continuation?.documentIds ?? input.documentIds ?? [],
+        documents: workspaceDocuments ?? [],
+      });
+      const primaryDocument = targetDocumentId === openDocument?.documentId ? openDocument
+        : targetDocumentId ? await resolvePrimaryDocument(deps.documents, thread, input.userId, targetDocumentId, workspaceDocuments) : null;
       const persistedWorkingDocumentIds = await deps.persistence.listWorkingDocumentIds({
         threadId: thread.id,
         ownerUserId: input.userId,
@@ -258,6 +270,7 @@ export function createAgentExecutionService(deps: AgentExecutionServiceDeps) {
       const workingDocumentIds = [...new Set([
         ...persistedWorkingDocumentIds,
         ...(openDocument ? [openDocument.documentId] : []),
+        ...(primaryDocument ? [primaryDocument.documentId] : []),
         ...(input.documentIds ?? []),
       ])];
       const started = await deps.persistence.withTransaction(async (tx) => {
@@ -319,6 +332,7 @@ export function createAgentExecutionService(deps: AgentExecutionServiceDeps) {
         openDocumentId: input.activeDocumentId ?? null,
         primaryDocumentFormat: primaryDocument?.format ?? null,
         structureCache,
+        workspaceDocuments,
         ownerUserId: input.userId,
         instruction: input.instruction,
         submittedDocumentIds: [...new Set(input.documentIds ?? [])],
@@ -367,7 +381,7 @@ async function resolveContinuation(
   persistence: AgentPersistenceService,
   input: AgentExecutionInput,
   thread: AgentThread,
-): Promise<{ readonly triggeringMessageId: string; readonly context: string }> {
+): Promise<{ readonly triggeringMessageId: string; readonly context: string; readonly instruction: string; readonly documentIds: readonly string[]; readonly documentId: string | null }> {
   const prior = await persistence.getRun({
     runId: input.continueFromRunId!,
     ownerUserId: input.userId,
@@ -404,6 +418,10 @@ async function resolveContinuation(
     .slice(0, 4).join("; ");
   return {
     triggeringMessageId: original.id,
+    instruction: original.content,
+    documentIds: original.documentIds ?? [],
+    documentId: [...steps].reverse().map((step) => step.output?.activeDocumentId)
+      .find((id): id is string => typeof id === "string") ?? null,
     context: `PREVIOUS RUN PROGRESS (run ${prior.id}; stopped: ${prior.errorCode === "AGENT_DEADLINE" ? "deadline" : "max_turns"})\nOriginal task:\n${original.content}\nCompleted tools: ${formatCounts(completed)}\nFailed tools: ${formatCounts(failures)}${failureReasons ? `\nFailure details: ${failureReasons}` : ""}\nBase document version: ${prior.baseDocumentVersionId ?? "none"}. Resume from the CURRENT bound document state. Do not repeat completed work. Read only where current context lacks an exact target or required structure.`,
   };
 }
@@ -413,11 +431,13 @@ async function resolvePrimaryDocument(
   thread: AgentThread,
   userId: string,
   activeDocumentId: string | undefined,
+  workspaceDocuments?: Awaited<ReturnType<DocumentService["listInWorkspace"]>>,
 ): Promise<{ documentId: string; versionId: string; format: string } | null> {
   const documentId = activeDocumentId ?? thread.documentId;
   if (!documentId) return null;
   try {
-    const document = await documents.getOwnedDocument({ documentId, ownerUserId: userId });
+    const document = workspaceDocuments?.find((document) => document.id === documentId)
+      ?? await documents.getOwnedDocument({ documentId, ownerUserId: userId });
     if (document.workspaceId !== thread.workspaceId) {
       throw new AgentExecutionError("DOCUMENT_NOT_FOUND", "Document is not in this workspace");
     }
@@ -484,6 +504,7 @@ async function runExecution(input: {
   readonly openDocumentId: string | null;
   readonly primaryDocumentFormat: string | null;
   readonly structureCache: SlimDocumentStructureCache;
+  readonly workspaceDocuments?: Awaited<ReturnType<DocumentService["listInWorkspace"]>>;
   readonly ownerUserId: string;
   readonly instruction: string;
   readonly submittedDocumentIds: readonly string[];
@@ -723,7 +744,10 @@ async function runExecution(input: {
       (!boundTools?.getActiveDocumentId() && tools["workspace.create_blank_document"]
         ? "\n\nNo document is selected for editing. Create one for a new-document request, or call workspace_select_document with the intended workspace DOCX ID before using document tools."
         : "") +
-      "\n\nThe OPEN document in the workspace manifest is context. It is selected automatically only for an explicit request to update this, current, or open document. For other edits, inspect or search as needed, then call workspace_select_document for the target before mutating. Search and inspection do not select a target. Keep edits narrow and preserve unrelated structure and formatting.";
+      (boundTools?.getActiveDocumentId()
+        ? `\n\nActive document ID: ${boundTools.getActiveDocumentId()}. Use document tools directly for this target; select another document only to switch targets.`
+        : "") +
+      "\n\nSearch and inspection do not select a target. Keep edits narrow and preserve unrelated structure and formatting.";
 
     const { messages, workspaceManifest, context, retrieval, reportRetrieval } = await prepareContext({
       trace: input.trace,
@@ -740,6 +764,7 @@ async function runExecution(input: {
       cache: input.structureCache,
       binding: input.deps.docxBinding,
       documents: input.deps.documents,
+      workspaceDocuments: input.workspaceDocuments,
       ownerUserId: input.ownerUserId,
       workspaceId: input.thread.workspaceId,
       primaryDocumentId: input.primaryDocumentId,
@@ -1052,7 +1077,7 @@ async function runExecution(input: {
         liveEvents: input.liveEvents,
         failureCode: failureCodeForStopReason(result.stopReason),
         failureMessage: boundedStopMessage(result.stopReason, versionAdvances.length > 0),
-        transcript: transcript.entries(),
+        transcript: transcript.entries(boundTools?.getActiveDocumentId()),
       });
     }
 
@@ -1078,7 +1103,7 @@ async function runExecution(input: {
         failureMessage: preserved
           ? `Updated the document partially. Unresolved: ${unresolved}. Changes made so far were preserved.`
           : `Could not complete the requested update. ${unresolved}`,
-        transcript: transcript.entries(),
+        transcript: transcript.entries(boundTools?.getActiveDocumentId()),
       });
     }
 
@@ -1097,7 +1122,7 @@ async function runExecution(input: {
           .at(-1)?.toolName),
     });
     transcript.finish(finalText);
-    await persistTranscript(input.deps.persistence, input.ownerUserId, input.run.id, transcript.entries());
+    await persistTranscript(input.deps.persistence, input.ownerUserId, input.run.id, transcript.entries(boundTools?.getActiveDocumentId()));
     await input.liveEvents?.emit({ type: "agent.completed", runId: input.run.id, at: new Date().toISOString() });
     void compactThreadContext({
       persistence: input.deps.persistence,
@@ -1135,7 +1160,7 @@ async function runExecution(input: {
       userMessage: input.userMessage,
       run: input.run,
       liveEvents: input.liveEvents,
-      transcript: transcript.entries(),
+      transcript: transcript.entries(boundTools?.getActiveDocumentId()),
     });
   } finally {
     await capabilityTelemetry.flush();

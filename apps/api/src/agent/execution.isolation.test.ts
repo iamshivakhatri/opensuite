@@ -783,6 +783,7 @@ test("managed AI failure keeps a safe, actionable reason on the run", async () =
   const persistence = memoryPersistence("user-1");
   const execution = createAgentExecutionService({
     ...baseDeps(persistence, async () => { throw new Error("model should not run"); }),
+    docxBinding: await createNapiDocxEngineBinding(),
     resolveModel: async () => ({ model: { provider: "test", modelId: "test" } as unknown as AgentModel,
       usageAttribution: { provider: "openrouter", model: "test", credentialSource: "managed" } }),
     managedUsagePolicy: { beforeManagedCall: async () => { throw Object.assign(new Error("Managed AI is not available."), { code: "MANAGED_USAGE_DISABLED" }); },
@@ -1009,7 +1010,7 @@ test("later runs restore durable working documents into model context", async ()
   ));
 });
 
-test("only an explicit current-document request binds the open DOCX before model selection", async () => {
+test("named targets and explicit current-document requests bind before model selection", async () => {
   const persistence = memoryPersistence("user-1");
   const documents = [
     { id: "open", name: "Open.docx", format: "docx", workspaceId: "ws-1", latestVersion: { id: "v-open", versionNumber: 1 }, updatedAt: now() },
@@ -1028,7 +1029,7 @@ test("only an explicit current-document request binds the open DOCX before model
     },
   });
   const named = await (await execution.start({ userId: "user-1", threadId: "thread-1", activeDocumentId: "open", instruction: "Update the Board Report" })).result;
-  assert.equal(named.run.baseDocumentVersionId, null);
+  assert.equal(named.run.baseDocumentVersionId, "v-board");
   assert.match(contexts[0]!, /\[OPEN\] Open\.docx/);
   assert.match(contexts[0]!, /Board Report\.docx \(docx; ID board;/);
   const current = await (await execution.start({ userId: "user-1", threadId: "thread-1", activeDocumentId: "open", instruction: "Update this document" })).result;
@@ -1115,7 +1116,7 @@ test("recurring report refresh selects the target, reads the source, and saves o
     instruction: "Update the August report into the September report using the attached updates. Preserve the existing structure and formatting.",
   })).result;
   assert.equal(result.run.status, "completed");
-  assert.equal(result.run.baseDocumentVersionId, null);
+  assert.equal(result.run.baseDocumentVersionId, "target-v1");
   assert.equal(appends, 1);
   assert.equal(artifacts[1]!.latestVersion.id, "source-v1");
   assert.match(JSON.stringify(await binding.inspectDocx(savedTarget, { focus: { kind: "body_blocks" } })), /September report/);
@@ -2874,4 +2875,130 @@ test("every terminal path bills once, debits once, and settles a truthful durabl
     if (item.saved) assert.match(prior, /tools used: [^\n]*document\.replace_text/, `${item.name}: next turn knows the edit happened`);
     if (item.status === "failed" && item.saved) assert.match(prior, /preserved/, `${item.name}: next turn knows the edit was kept`);
   }
+});
+
+test("Northstar table edit activates before the real model loop without initial search or selection", async () => {
+  const binding = await createNapiDocxEngineBinding();
+  const seed = bindDocxDocument({ binding, bytes: buildMinimalDocx(["Business Impact and KPI Targets"]) });
+  assert.equal((await seed.mutate("create_table", { placement: { kind: "end" }, rows: [
+    ["Metric", "Target After Deployment"], ["Mean Time to Detect", "15 minutes"], ["Availability", "99.9%"],
+  ] })).ok, true);
+  const original = Buffer.from(seed.currentBytes());
+  for (const target of ["tagged", "open", "named"] as const) {
+    const persistence = memoryPersistence("user-1");
+    let saved = original;
+    let versionId = "v1";
+    let appends = 0;
+    let workspaceReads = 0;
+    let activeBeforeModel = false;
+    let turn = 0;
+    let runtime: RunAgentResult | undefined;
+    const edit = { name: "document_set_table_cells_text", input: {
+      table: { headerCells: ["Metric", "Target After Deployment"] }, updates: [{
+        target: { row: { kind: "label", text: "Mean Time to Detect" }, column: { kind: "header", text: "Target After Deployment" } },
+        expectedCurrentText: "15 minutes", replacement: "10 minutes",
+      }],
+    } };
+    const model = new MockLanguageModelV4({ doStream: async (options) => {
+      if (!turn) activeBeforeModel = JSON.stringify(options.prompt[0]).includes("Active document ID: target");
+      const calls = activeBeforeModel ? [edit, { name: "finish", input: {} }] : [
+        { name: "document_inspect", input: { kind: "tables" } },
+        { name: "workspace_search_documents", input: { query: "Northstar" } },
+        { name: "workspace_select_document", input: { documentId: "target" } }, edit, { name: "finish", input: {} },
+      ];
+      const call = calls[turn++]!;
+      return { stream: simulateReadableStream({ chunks: [
+        { type: "stream-start", warnings: [] },
+        { type: "tool-call", toolCallId: `edit-${turn}`, toolName: call.name, input: JSON.stringify(call.input) },
+        { type: "finish", finishReason: { unified: "tool-calls", raw: "tool-calls" }, usage: {
+          inputTokens: { total: 1, noCache: 1, cacheRead: 0, cacheWrite: 0 }, outputTokens: { total: 1, text: 1, reasoning: 0 },
+        } },
+      ] as never[] }) };
+    } });
+    const deps = baseDeps(persistence, async (input) => { runtime = await runAgent({ ...input, model }); return runtime; }, undefined, 128_000);
+    const document = () => ({ id: "target", name: "Northstar deployment report.docx", format: "docx", workspaceId: "ws-1", latestVersion: { id: versionId, versionNumber: appends + 1 } });
+    const source = { id: "source", name: "Unrelated context.docx", format: "docx", workspaceId: "ws-1", latestVersion: { id: "source-v1", versionNumber: 1 } };
+    const execution = createAgentExecutionService({ ...deps, docxBinding: binding, documents: { ...deps.documents,
+      listInWorkspace: async () => { workspaceReads++; return [document(), source] as never; },
+      getOwnedDocument: async ({ documentId }) => {
+        if (documentId === "target") return document() as never;
+        if (documentId === "source") return source as never;
+        throw new Error("missing");
+      },
+      readExactVersionBytes: async ({ documentId, versionId: requested }) => {
+        if (documentId === "source") return Buffer.from(buildMinimalDocx(["Reference only"]));
+        return requested === "v1" ? original : saved;
+      },
+      appendDocumentVersion: async ({ documentId, baseVersionId, bytes }) => {
+        assert.equal(documentId, "target"); assert.equal(baseVersionId, "v1");
+        saved = Buffer.from(bytes); versionId = "v2"; appends++;
+        return { version: { id: versionId, versionNumber: 2 } } as never;
+      },
+    } });
+    const instruction = 'In the "Business Impact and KPI Targets" table, update the "Target After Deployment" value for "Mean Time to Detect" from "15 minutes" to "10 minutes".';
+    const result = await (await execution.start({ userId: "user-1", threadId: "thread-1",
+      instruction: target === "named" ? `Update Northstar deployment report: ${instruction}` : instruction,
+      ...(target === "open" ? { activeDocumentId: "target" } : {}),
+      ...(target === "tagged" ? { documentIds: ["target"] } : {}),
+    })).result;
+    const calls = runtime!.metrics.toolCalls;
+    const measurement = { target, activeBeforeModel,
+      searches: calls.filter((call) => call.toolName === "workspace.search_documents").length,
+      selections: calls.filter((call) => call.toolName === "workspace.select_document").length,
+      missingTargetErrors: calls.filter((call) => call.failureCode === "NO_ACTIVE_DOCUMENT").length,
+      recoveryTurns: activeBeforeModel ? 0 : calls.filter((call) => ["document.inspect", "workspace.search_documents", "workspace.select_document"].includes(call.toolName)).length,
+    };
+    console.info(`PHASE1_MEASUREMENT ${JSON.stringify(measurement)}`);
+    assert.equal(activeBeforeModel, true);
+    assert.equal(measurement.searches + measurement.selections + measurement.missingTargetErrors + measurement.recoveryTurns, 0);
+    assert.equal(workspaceReads, 1, "target resolution reuses the manifest query");
+    assert.equal(result.run.status, "completed"); assert.equal(result.run.baseDocumentVersionId, "v1");
+    assert.equal(appends, 1);
+    const inspected = await binding.inspectDocx(saved, { focus: { kind: "tables" } });
+    assert.match(JSON.stringify(inspected), /10 minutes/); assert.doesNotMatch(JSON.stringify(inspected), /15 minutes/);
+    assert.match(JSON.stringify(inspected), /99.9%/);
+  }
+});
+
+test("Continue restores a switched target from saved steps and validates it again", async () => {
+  const persistence = memoryPersistence("user-1");
+  const binding = await createNapiDocxEngineBinding();
+  const bytes = Buffer.from(buildMinimalDocx(["Continue here"]));
+  const documents = ["first", "second"].map((id) => ({ id, name: `${id}.docx`, format: "docx", workspaceId: "ws-1", latestVersion: { id: `${id}-v1` } }));
+  let continuing = false;
+  let missing = false;
+  let modelCalls = 0;
+  const deps = baseDeps(persistence, async (input) => {
+    modelCalls++;
+    const call = { toolCallId: "switch", messages: [], context: undefined as never };
+    if (!continuing) {
+      assert.equal((await input.tools!["workspace.select_document"]!.execute!({ documentId: "second" }, call) as { ok: boolean }).ok, true);
+      await input.onEvent?.({ type: "tool_completed", toolCallId: "switch", toolName: "workspace.select_document" });
+      return softResult("max_turns");
+    }
+    assert.match(input.system ?? "", /Active document ID: second/);
+    assert.match(JSON.stringify(input.messages), /Current document ID: second; current version: second-v1/);
+    assert.equal((await input.tools!["document.insert_paragraphs"]!.execute!({ texts: ["Resumed"], placement: { kind: "end" } }, call) as { ok: boolean }).ok, true);
+    return softResult("completed", "Done");
+  });
+  const execution = createAgentExecutionService({ ...deps, docxBinding: binding, documents: { ...deps.documents,
+    listInWorkspace: async () => documents as never,
+    getOwnedDocument: async ({ documentId }) => {
+      if (missing && documentId === "second") throw new Error("deleted");
+      return documents.find((document) => document.id === documentId) as never;
+    },
+    readExactVersionBytes: async () => bytes,
+    appendDocumentVersion: async ({ documentId }) => {
+      assert.equal(documentId, "second"); return { version: { id: "second-v2", versionNumber: 2 } } as never;
+    },
+  } });
+  const first = await (await execution.start({ userId: "user-1", threadId: "thread-1", activeDocumentId: "first", instruction: "Update this document" })).result;
+  assert.equal(first.run.errorCode, "AGENT_MAX_TURNS");
+  continuing = true;
+  const resume = () => execution.start({ userId: "user-1", threadId: "thread-1", activeDocumentId: "first", instruction: "Continue", continueFromRunId: first.run.id });
+  const continued = await (await resume()).result;
+  assert.equal(continued.run.baseDocumentVersionId, "second-v1");
+  missing = true;
+  await assert.rejects(resume(), (error: unknown) => (error as { code: string }).code === "DOCUMENT_NOT_FOUND");
+  assert.equal(modelCalls, 2);
 });

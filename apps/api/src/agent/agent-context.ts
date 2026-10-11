@@ -186,6 +186,7 @@ export async function prepareContext(input: {
   readonly cache: SlimDocumentStructureCache;
   readonly binding: DocxEngineBinding | undefined;
   readonly documents: Pick<DocumentService, "listInWorkspace" | "readExactVersionBytes">;
+  readonly workspaceDocuments?: Awaited<ReturnType<DocumentService["listInWorkspace"]>>;
   readonly ownerUserId: string;
   readonly workspaceId: string;
   readonly primaryDocumentId: string | null;
@@ -198,9 +199,9 @@ export async function prepareContext(input: {
     role: message.role,
     content: message.content,
   }));
-  let workspaceDocuments: Awaited<ReturnType<typeof input.documents.listInWorkspace>> | undefined;
+  let workspaceDocuments = input.workspaceDocuments;
   try {
-    workspaceDocuments = await input.documents.listInWorkspace(input.workspaceId, input.ownerUserId);
+    workspaceDocuments ??= await input.documents.listInWorkspace(input.workspaceId, input.ownerUserId);
   } catch (error) {
     input.trace?.write("## Workspace Manifest — Error", error);
     console.warn(`[agent] workspace_manifest_unavailable reason=${summarizeError(error)}`);
