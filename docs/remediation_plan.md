@@ -64,13 +64,13 @@ Do not change: target semantics, mutation algorithms, preservation, working-byte
 **Step A5 — identify the selected module's binary** _(done locally)_
 - [x] **Update** `describeNativeEngine(binding)` follows the selected loader tree and matches the native function exports. The binding keeps its original identity even if environment variables change. Public runtime and both entrypoints share `formatNativeEngineIdentity()` (native version, resolved module, actual `.node`, full SHA-256, overrides). Runtime passes the same binding into the app. Tests cover old-before-new cache order, a nested loader, renamed/direct binaries, and changed environment. A real installed 0.1.4-before-0.1.5 check also passes.
 
-**Step A6 — one engine capability inventory** _(done locally; next engine release required)_
+**Step A6 — one engine capability inventory** _(done; published in 0.1.7)_
 - [x] Rust protocol `DOCX_CAPABILITIES` owns each ID, operation kind, Node export name, and Node availability. N-API reads this directly; the second allowlist is deleted. Feature flags stay separate from callable operations, and Rust-only aliases are not advertised to Node.
 - [x] N-API adds `formats[].operations` with `{ id, kind, nodeExport }`. Engine-client checks that each advertised export exists. Published 0.1.5 remains supported without this optional field.
 - [x] Loader export names come from Rust `#[napi(js_name)]` annotations. A missing TypeScript declaration stops loader generation. Node tests compare inventory, compiled exports, and declarations; matching-host release builds run this check.
 - [x] Product contract tests require every engine capability to have a working agent schema/dispatcher/discovery entry or an explicit separate path (reads, creation, feature flags, binary assets). The new local inventory passes the real product tests. New capabilities cannot be silently skipped by this test.
 
-**Step A7 — engine-owned inputs and generated agent tools** _(done locally; publication is A8)_
+**Step A7 — engine-owned inputs and generated agent tools** _(done; published and verified in A8)_
 
 The compiled Rust N-API inputs now generate TypeScript declarations and JSON
 schemas. JSON schema is a machine-readable description of accepted inputs.
