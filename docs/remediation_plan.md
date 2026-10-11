@@ -21,9 +21,9 @@ Each step is one reviewable change with its own checks. Real-model runs require 
 
 | Step | Phase | What it means | Current state |
 | --- | --- | --- | --- |
-| Define operation inputs once and generate agent tools | **A7** | The engine describes the required inputs for each operation. The product uses that description to build the agent's tool definition instead of maintaining another copy. | Not implemented; A6 centralized capability names and native exports only. |
+| Define operation inputs once and generate agent tools | **A7** | The engine describes the required inputs for each operation. The product uses that description to build the agent's tool definition instead of maintaining another copy. | Mutation inputs, declarations, validation, and dynamic discovery implemented locally. Read-tool generation remains. |
 | Release the engine, update the npm pin, and verify images | **A8**, with Cloud work in **F5–F6** | Publish a new engine package, make OpenSuite install that exact version, then build and check the public and Cloud containers that would run in production. | Not released. Local Cloud ARM64 candidate passed; remote build and real x64 checks remain pending. |
-| Test 10 real reports and proposals repeatedly | **D1** | Keep a fixed set of realistic DOCX files and editing tasks. Compare saved results, preserved content/layout, speed, cost, and unnecessary agent steps before making further changes. | Not started as a fixed baseline; Phase B's scripted table tests already exist. |
+| Test 10 real reports and proposals repeatedly | **D1** | Keep a fixed set of realistic DOCX files and editing tasks. Compare saved results, preserved content/layout, speed, cost, and unnecessary agent steps before making further changes. | Manual browser/Word testing belongs to the user. Fixed document set and results remain pending. |
 
 Recommended order: **A7 → A8 → D1 → measured D/E improvements**. Gathering the
 D1 documents and defining their expected results can start alongside A7; there
@@ -70,18 +70,25 @@ Do not change: target semantics, mutation algorithms, preservation, working-byte
 - [x] Loader export names come from Rust `#[napi(js_name)]` annotations. A missing TypeScript declaration stops loader generation. Node tests compare inventory, compiled exports, and declarations; matching-host release builds run this check.
 - [x] Product contract tests require every engine capability to have a working agent schema/dispatcher/discovery entry or an explicit separate path (reads, creation, feature flags, binary assets). The new local inventory passes the real product tests. New capabilities cannot be silently skipped by this test.
 
-**Step A7 — engine-owned inputs and generated agent tools** _(next; not implemented)_
+**Step A7 — engine-owned inputs and generated agent tools** _(mutation path checked locally; read tools remain)_
 
-Today the engine says an operation exists, but the API separately describes how
-to call it. For example, `replace_text` needs a text target, its expected current
-text, and the replacement. The engine should define those inputs once. A generated
-agent tool schema is the machine-readable form the model uses to send valid inputs.
-The product still controls document access, dynamic loading, saving, and verification.
+The compiled Rust N-API inputs now generate TypeScript declarations and JSON
+schemas. JSON schema is a machine-readable description of accepted inputs.
+Descriptions and extra input restrictions live beside the Rust transport types.
+The engine returns these definitions with its operation inventory. The product
+still controls document access, dynamic loading, saving, and verification.
 
-- [ ] Generate JSON input schemas and operation descriptions from engine transport types, then return them with the inventory. JSON schema means a machine-readable description of accepted inputs.
-- [ ] Replace duplicated API mutation schemas and ordinary dispatch maps with those engine contracts. Keep document/version ownership, asset authorization, saves, and checks in the product. Verify translated inputs before removing existing adapters.
-- [ ] Generate TypeScript declarations from the same transport types; today only exported function names are checked, not every argument field.
-- [ ] Let new supported JSON operations enter dynamic discovery automatically; keep binary operations behind owned asset IDs and group new tools under a small default document group. Preserve next-turn loading and the small initial tool surface.
+- [x] Generate input schemas, integer bounds, descriptions, and declarations from Rust N-API type records. Compile again to embed the generated schemas; native tests compare the compiled metadata with generated files. Unsupported input types stop the build.
+- [x] Replace duplicated API mutation schemas and ordinary dispatch maps. Validate JSON arguments before calling native code; keep existing typed adapters, target guards, owned assets, saved versions, and verification.
+- [x] Let newly advertised JSON mutations enter discovery under `document.more_operations`, with next-turn loading and no growth in the initial tool list. Native byte inputs remain hidden from the model.
+- [x] Support published 0.1.5 with a generated compatibility snapshot. Refresh it with `node packages/engine-client/scripts/update-docx-inputs.mjs ../opensuite-engine/crates/opensuite-node/index.js`; never edit its schemas by hand. New engines supply their live definitions.
+- [ ] Extend engine-generated inputs to the product's read tools and verify newly added reads can be discovered and called. Existing high-level read tools still use product schemas.
+- [ ] Verify packaged consumers and platform builds before A8 publication. No new version has been published or deployed.
+
+Local checkpoint checks: API/dependency build passes; API 428 pass / 23 database
+skips; engine-client 37 pass / 2 optional skips; native 35 pass; changed Rust
+crates lint cleanly and their 7 tests pass. Selected local-engine mutation and
+discovery checks pass. Browser/Word testing remains with the user.
 
 **Step A8 — release and production-image verification** _(after A7; not released)_
 

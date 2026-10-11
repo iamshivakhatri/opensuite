@@ -1,6 +1,7 @@
 import type { CapabilityDefinition } from "../core/registry.js";
 
 export const builtInGroups: CapabilityDefinition[] = [
+  { id: "document.more_operations", parentId: "document", kind: "group", title: "More document operations", description: "Additional operations supplied by the installed document engine", projection: "dynamic" },
   { id: "document.notes", parentId: "document", kind: "group", title: "Footnotes and endnotes", description: "Inspect, insert, edit, and delete ordinary Word notes", aliases: ["footnote", "endnote"], projection: "dynamic" },
   { id: "document.fields", parentId: "document", kind: "group", title: "Fields and table of contents", description: "Inspect Word fields, insert a refreshable table of contents, and add PAGE/NUMPAGES including Page X of Y in a footer", projection: "dynamic" },
   { id: "document.revisions", parentId: "document", kind: "group", title: "Tracked changes", description: "Inspect, author, accept, and reject supported tracked changes", projection: "dynamic" },

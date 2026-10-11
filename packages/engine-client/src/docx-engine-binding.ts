@@ -9,6 +9,7 @@ import type { DocxCommentOptions, DocxCommentInspection, DocxAddCommentOperation
  * implement the same shape without changing agents.
  */
 
+import { docxOperationDefinitions, docxOperationInputError, prepareDocxOperationInput, type DocxOperationDefinition } from "./docx-operation-inputs.js";
 import { createHash } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
 import { isAbsolute, resolve } from "node:path";
@@ -447,12 +448,7 @@ export interface DocxRuntimeCapabilities {
   readonly formats: readonly {
     readonly format: string;
     readonly capabilities: readonly string[];
-    /** Actual callable Node operations, supplied by newer engine builds. */
-    readonly operations?: readonly {
-      readonly id: string;
-      readonly kind: "read" | "mutate" | "create";
-      readonly nodeExport: string;
-    }[];
+    readonly operations?: readonly DocxOperationDefinition[];
   }[];
 }
 
@@ -673,6 +669,8 @@ export interface DocxEngineBinding {
   executeDocxSetSectionHeaderFooter?(input: Uint8Array, operation: DocxSetSectionHeaderFooterOperation): Promise<DocxMutationBindingResult>;
   executeDocxSetOddEvenHeaders?(input: Uint8Array, operation: { readonly enabled: boolean }): Promise<DocxMutationBindingResult>;
   getDocxCapabilities(): DocxRuntimeCapabilities;
+  /** Execute an engine-discovered mutation through validated JSON inputs. */
+  executeDocxOperation?(input: Uint8Array, capability: string, operation: Record<string, unknown>): Promise<DocxMutationBindingResult>;
   /**
    * Deterministic blank DOCX bytes from Rust.
    * Not a DocumentRuntime mutation — no DocumentRef exists yet.
@@ -1055,7 +1053,12 @@ export async function createNapiDocxEngineBinding(): Promise<DocxEngineBinding> 
     }
   }
 
-  const nativeCapabilities = native.getDocxCapabilities();
+  const rawCapabilities = native.getDocxCapabilities();
+  const operations = docxOperationDefinitions(rawCapabilities);
+  const nativeCapabilities: DocxRuntimeCapabilities = {
+    ...rawCapabilities,
+    formats: rawCapabilities.formats.map(format => format.format === "docx" ? { ...format, operations } : format),
+  };
   for (const format of nativeCapabilities.formats) {
     for (const operation of format.operations ?? []) {
       if (typeof (native as unknown as Record<string, unknown>)[operation.nodeExport] !== "function") {
@@ -1094,7 +1097,20 @@ export async function createNapiDocxEngineBinding(): Promise<DocxEngineBinding> 
 
   const binding: DocxEngineBinding = {
     getDocxCapabilities() {
-      return native.getDocxCapabilities();
+      return nativeCapabilities;
+    },
+    async executeDocxOperation(input, capability, operation) {
+      const definition = operations.find(op => op.id === capability && op.kind === "mutate");
+      if (!definition || !definition.jsonInput) throw new MutationArgError(`${capability} requires a supported JSON operation or a typed binary adapter`);
+      const payload = prepareDocxOperationInput(definition, operation);
+      const error = docxOperationInputError(definition, payload);
+      if (error) throw new MutationArgError(`${capability}: ${error}`);
+      // Existing typed adapters retain target guards and compatibility behavior.
+      const adapter = (this as unknown as Record<string, unknown>)[definition.nodeExport];
+      if (typeof adapter === "function") return adapter.call(this, input, payload);
+      const method = (native as unknown as Record<string, unknown>)[definition.nodeExport];
+      if (typeof method !== "function") throw new Error(`Missing native export ${definition.nodeExport}`);
+      return mapMutationBindingResponse(await method(Buffer.from(input), payload));
     },
 
     createBlankDocx() {

@@ -137,3 +137,21 @@ test("a loaded skill appears only on later model turns and composes with loaded 
     [["instruction", "loaded"]]);
   assert.equal(events.some((event) => event.capabilityId === skillId && ["executed", "succeeded"].includes(event.type)), false);
 });
+
+test("new engine JSON operations become discoverable without a product registration", async () => {
+  let calls = 0;
+  const tools = createDocumentTools({
+    capabilities: () => ({ formats: [{ format: "docx", capabilities: ["new_business_edit"], operations: [{
+      id: "new_business_edit", kind: "mutate", nodeExport: "executeDocxNewBusinessEdit", description: "Update a business value",
+      inputSchema: { type: "object", properties: { value: { type: "string" } }, required: ["value"], additionalProperties: false }, jsonInput: true,
+    }] }] }),
+    inspect: async () => ({}), find: async () => ({}), mutate: async (capability, input) => { calls++; return { ok: true, capability, input }; },
+  });
+  const surface = createToolSurface(tools);
+  assert.equal(surface.initialTools["document.new_business_edit"], undefined);
+  assert.ok(surface.session.search("business").capabilities.some(item => item.id === "document.new_business_edit"));
+  assert.equal(surface.session.load(["document.more_operations"]).ok, true);
+  assert.ok(surface.projectTools()["document.new_business_edit"]);
+  await surface.tools["document.new_business_edit"]!.execute!({ value: "New value" }, call);
+  assert.equal(calls, 1);
+});

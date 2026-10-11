@@ -17,9 +17,19 @@ and remains supported. N-API no longer owns a second capability allowlist.
 Release tests compare the inventory with compiled Node exports and TypeScript
 function declarations. Product contract tests check dispatcher, agent schema,
 and dynamic discovery coverage; binary assets have an explicit separate path.
-Input schemas and descriptions still live in the API. Moving those contracts to
-engine-owned transport types is the next step toward automatic new tool exposure;
-this change does not claim that an unknown new operation is already agent-callable.
+Local engine builds generate SDK declarations and JSON input schemas from Rust
+N-API type records. Descriptions and extra restrictions live beside those Rust
+types. Each operation supplies `description`, `inputSchema` (JSON string), and
+`jsonInput`; engine-client parses and validates these definitions. Mutation tools
+use the selected engine's schemas. New JSON mutations join dynamic discovery
+under `document.more_operations`; binary operations retain owned asset adapters.
+The existing high-level read tools still have product-owned schemas.
+
+Published 0.1.5 lacks these definitions and uses the generated
+`packages/engine-client/src/legacy-docx-inputs.json` compatibility snapshot.
+Refresh it from a compiled engine using
+`node packages/engine-client/scripts/update-docx-inputs.mjs ../opensuite-engine/crates/opensuite-node/index.js`.
+Do not edit generated schemas by hand. A new engine release remains pending.
 
 For binary identity, call `describeNativeEngine(binding)` on the actual binding.
 It follows that loader's module tree, matches native exports, and records the full
@@ -100,7 +110,7 @@ exact immutable version N
 * Inspect focuses: overview, headings, paragraphs, tables, body_blocks, context — paged collections use offset/limit (default 20, max 100).
 * `body_blocks`: ordered direct body paragraphs/tables with opaque `handle` (`bN` opaque to TS), optional text / tableHandle; used for insert_paragraph before/after.
 * Occurrence is **zero-based** everywhere at the agent/engine boundary (find matches, inspect `targetOccurrence` / table occurrence, mutation `target.occurrence`). Do not invent 1-based remapping in TypeScript.
-* Model mutation tools require a schema in `MODEL_MUTATION_CAPABILITIES` + a dispatcher in `DISPATCHABLE_MUTATION_CAPABILITIES`. Binary picture insert/replace stay dispatchable but hidden from the model (JSON cannot carry Buffer).
+* Model mutation schemas and dispatch come from the selected engine operation inventory. `MODEL_MUTATION_CAPABILITIES` and `DISPATCHABLE_MUTATION_CAPABILITIES` are compatibility lists for older engines, not registration requirements for new JSON mutations. Binary picture insert/replace stay dispatchable but hidden from the model (JSON cannot carry Buffer).
 * Structural arg mistakes return `VALIDATION_FAILED`; Rust semantic failures (`TARGET_NOT_FOUND`, …) pass through. `DISPATCH_FAILED` is only for unexpected adapter/runtime errors.
 * Occurrence/order from inspect is VERSION-LOCAL — never persist as durable identity.
 * Table inspect returns opaque artifact-local handles (table/column/row/cell). Mutations accept those

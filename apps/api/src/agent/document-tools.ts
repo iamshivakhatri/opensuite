@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 
+import { DOCX_MUTATION_CAPABILITIES, docxOperationDefinitions, docxAgentInputSchema } from "@opensuite/engine-client";
 import { jsonSchema } from "ai";
 import {
   defineTool,
@@ -110,609 +111,6 @@ function op(
   });
 }
 
-const textTarget = {
-  type: "object",
-  properties: {
-    text: { type: "string", description: "Exact text to match" },
-    occurrence: occurrenceField,
-  },
-  required: ["text"],
-  additionalProperties: false,
-};
-
-const placement = {
-  type: "object",
-  description:
-    "Use start/end without a handle at document boundaries, including initial content in a blank document (which has no handles). For before/after, use only a handle from the latest relevant document.inspect; never invent one. Formatting preserves handles within one model turn; handles expire before the next model turn or after other edits.",
-  properties: {
-    kind: { type: "string", enum: ["start", "end", "before", "after"], description: "start/end need no handle; before/after need an inspected body_blocks handle." },
-    handle: {
-      type: "string",
-      description: "Omit for start/end. Required for before/after; copy from the latest relevant document.inspect.",
-    },
-  },
-  required: ["kind"],
-  additionalProperties: false,
-};
-
-const tableTarget = {
-  type: "object",
-  description:
-    "Use exact current headerCells and occurrence when known. Inspect for a missing selector or needed handle. Handles survive read-only turns; content/structure edits clear them immediately, while formatting edits may preserve them only within the edited turn. Occurrence is zero-based.",
-  properties: {
-    handle: { type: "string" },
-    headerCells: { type: "array", items: { type: "string" } },
-    occurrence: occurrenceField,
-  },
-  additionalProperties: false,
-};
-
-const rowAnchor = {
-  type: "object",
-  description: "Row selector. Use firstCellText/occurrence when unambiguous; inspect only when a current row handle is needed.",
-  properties: {
-    handle: { type: "string" },
-    firstCellText: { type: "string" },
-    occurrence: occurrenceField,
-  },
-  additionalProperties: false,
-};
-
-const semanticRowTarget = {
-  type: "object",
-  properties: {
-    kind: { type: "string", enum: ["header", "label", "index"] },
-    text: { type: "string", description: "First-cell row label for kind=label." },
-    occurrence: occurrenceField,
-    index: { type: "integer", description: "Zero-based row position for kind=index." },
-    expectedFirstCellText: { type: "string", description: "Required for kind=index; prevents a shifted row from being edited." },
-  },
-  required: ["kind"],
-  additionalProperties: false,
-};
-
-const deleteRowTarget = {
-  type: "object",
-  description: "Prefer kind=label with text and occurrence when needed, or kind=index with expectedFirstCellText. Use a handle only when these cannot express the row. Older firstCellText + occurrence remains supported.",
-  properties: { ...semanticRowTarget.properties, ...rowAnchor.properties },
-  additionalProperties: false,
-};
-
-const semanticCellTarget = {
-  type: "object",
-  description: "Prefer row + column. Use a handle only when these selectors cannot express the cell. Legacy rowLabel + columnHeader remains supported for data cells.",
-  properties: {
-    row: semanticRowTarget,
-    column: { type: "object", properties: {
-      kind: { type: "string", enum: ["first", "header", "index"] },
-      text: { type: "string", description: "First-row column header for kind=header." },
-      occurrence: occurrenceField,
-      index: { type: "integer", description: "Zero-based column position for kind=index." },
-      expectedHeaderText: { type: "string", description: "Required for kind=index; prevents a shifted column from being edited." },
-    }, required: ["kind"], additionalProperties: false },
-    handle: { type: "string" },
-    rowLabel: { type: "string" },
-    columnHeader: { type: "string" },
-    occurrence: occurrenceField,
-  },
-  additionalProperties: false,
-};
-
-const strings = { type: "array", items: { type: "string" } };
-const stringRows = { type: "array", items: strings };
-
-type MutDef = {
-  readonly description: string;
-  readonly inputSchema: ReturnType<typeof op>;
-};
-
-/**
- * Model-facing mutation contracts. A capability is exposed only when:
- * engine advertises it AND it appears here AND host.mutate is bound.
- * Binary picture insert/replace are intentionally omitted (JSON cannot carry Buffer).
- * create_blank_docx is not a bound-document mutation.
- */
-const lineSpacing = {
-  type: "object", additionalProperties: false, required: ["value"],
-  properties: {
-    value: { type: "integer", minimum: 1, description: "Auto: 240 per line, so 276 = 1.15. Exact/atLeast: twips, 20 = 1 pt." },
-    rule: { type: "string", enum: ["auto", "exact", "atLeast"] },
-  },
-};
-const textPropertyNames = ["bold", "italic", "fontSizeHalfPoints", "fontFamily", "color", "underline", "highlight", "strikethrough", "verticalAlignment"];
-const paragraphPropertyNames = ["alignment", "spacingBeforeTwips", "spacingAfterTwips", "lineSpacing", "leftIndentTwips", "rightIndentTwips", "firstLineIndentTwips", "hangingIndentTwips", "keepWithNext", "keepLines"];
-const paragraphProperties = {
-  alignment: { type: "string", enum: ["left", "center", "right", "both", "distribute"] },
-  lineSpacing,
-  spacingBeforeTwips: { type: "integer" }, spacingAfterTwips: { type: "integer" },
-  leftIndentTwips: { type: "integer" }, rightIndentTwips: { type: "integer" },
-  firstLineIndentTwips: { type: "integer" }, hangingIndentTwips: { type: "integer" },
-  keepWithNext: { type: "boolean", description: "Keep this paragraph with the following paragraph." },
-  keepLines: { type: "boolean", description: "Keep all lines of this paragraph on one page." },
-};
-
-const wordStyleProperties = {
-  styleId: { type: "string", description: "Stable Word style ID, for example OpenSuiteReportHeading" },
-  styleType: { type: "string", enum: ["paragraph", "character"] },
-  name: { type: "string", description: "Unique display name; apply paragraph styles using this name" },
-  basedOn: { type: "string", description: "Existing parent style ID, for example Heading1" },
-  next: { type: "string", description: "Existing paragraph style ID" },
-  bold: { type: "boolean" }, italic: { type: "boolean" }, underline: { type: "boolean" },
-  highlight: { type: "string" }, strikethrough: { type: "boolean" },
-  verticalAlignment: { type: "string", enum: ["baseline", "superscript", "subscript"] },
-  fontFamily: { type: "string" }, fontSizeHalfPoints: { type: "integer", minimum: 1, maximum: 65535, description: "32 = 16 pt" },
-  color: { type: "string", pattern: "^([0-9a-fA-F]{6}|auto)$", description: "RGB without #, for example 124733" },
-  ...paragraphProperties,
-  clear: { type: "array", items: { type: "string", enum: ["basedOn", "next", ...textPropertyNames, ...paragraphPropertyNames] }, description: "Remove declarations and restore inheritance. Omitted fields stay unchanged. Twips: 20 = 1 pt." },
-};
-
-const imagePosition = (references: string[]) => ({
-  type: "object", additionalProperties: false, required: ["reference"],
-  properties: {
-    reference: { type: "string", enum: references },
-    alignment: { type: "string", enum: ["start", "center", "end"] },
-    offsetEmu: { type: "integer", minimum: -2147483648, maximum: 2147483647 },
-  },
-  oneOf: [{ required: ["alignment"] }, { required: ["offsetEmu"] }],
-});
-const MUTATION_DEFS: Record<string, MutDef> = {
-  insert_note: {
-    description: "Insert a real footnote or endnote immediately after exact ordinary text in one body paragraph. Plain one-paragraph note text. Independent comments/revisions are preserved; targets inside or crossing protected ranges, fields, wrappers, and tables refuse. Word controls visible numbering; IDs are not displayed note numbers.",
-    inputSchema: op({ kind: { type: "string", enum: ["footnote", "endnote"] }, target: textTarget, text: { type: "string", minLength: 1, maxLength: 32000 } }, ["kind", "target", "text"]),
-  },
-  update_note: {
-    description: "Update a simple one-paragraph note using a fresh inspect_notes handle. Keeps its ID, reference, formatting, and other notes. Complex note bodies are preserved and cannot be edited. Re-inspect after every mutation.",
-    inputSchema: op({ handle: { type: "string", minLength: 1 }, text: { type: "string", minLength: 1, maxLength: 32000 } }, ["handle", "text"]),
-  },
-  delete_note: {
-    description: "Delete an ordinary simple footnote/endnote and its body reference using a fresh inspect_notes handle. Remaining IDs are preserved. Protected references and complex/malformed notes refuse. Re-inspect after every mutation.",
-    inputSchema: op({ handle: { type: "string", minLength: 1 } }, ["handle"]),
-  },
-  insert_fields: {
-    description: "Insert a new paragraph of plain text and real PAGE/NUMPAGES fields. content items use kind text with text, or page/numPages without text. Example: text Page , page, text of , numPages. Body requires placement; footer appends to the single-section default footer and omits placement. Cached values are ? and marked dirty; Word calculates them. Imported fields remain unchanged.",
-    inputSchema: op({ location: { type: "string", enum: ["body", "footer"] }, placement,
-      content: { type: "array", minItems: 1, maxItems: 20, items: { oneOf: [
-        { type: "object", properties: { kind: { const: "text" }, text: { type: "string", maxLength: 32000 } }, required: ["kind", "text"], additionalProperties: false },
-        { type: "object", properties: { kind: { type: "string", enum: ["page", "numPages"] } }, required: ["kind"], additionalProperties: false },
-      ] } } }, ["content"]),
-  },
-  insert_toc: {
-    description: "Insert a real refreshable Word Table of Contents in a new body paragraph, with an optional title paragraph. Heading levels 1 through maxHeadingLevel (default 3, range 1–9). Marked dirty with a refresh placeholder. The runtime refreshes fields via LibreOffice before save when available; otherwise the TOC stays valid with refresh_required. Inspect fields first to avoid an unintended duplicate TOC. No in-engine field evaluation.",
-    inputSchema: op({ placement, maxHeadingLevel: { type: "integer", minimum: 1, maximum: 9 }, title: { type: "string", maxLength: 32000 } }, ["placement"]),
-  },
-  accept_revision: {
-    description: "Accept one supported insertion or deletion using its fresh inspect_tracked_changes handle. Keeps inserted content or removes deleted content. For replacement, decide both records individually and re-inspect after each successful decision. Complex revisions are unsupported.",
-    inputSchema: op({ handle: { type: "string", minLength: 1 } }, ["handle"]),
-  },
-  reject_revision: {
-    description: "Reject one supported insertion or deletion using its fresh inspect_tracked_changes handle. Removes inserted content or restores deleted content with its formatting. For replacement, decide both records individually and re-inspect after each successful decision. Complex revisions are unsupported.",
-    inputSchema: op({ handle: { type: "string", minLength: 1 } }, ["handle"]),
-  },
-  insert_tracked_text: {
-    description: "Insert text as a real Word tracked insertion before/after an exact ordinary text anchor in one body paragraph. Default after. Inherits formatting at the insertion boundary. Author is explicit; date defaults to current UTC. Fields, wrappers, tables, and paragraphs containing revisions are unsupported. Re-inspect after editing.",
-    inputSchema: op({ target: textTarget, text: { type: "string", minLength: 1, maxLength: 32000 }, position: { type: "string", enum: ["before", "after"] }, author: { type: "string", minLength: 1 }, date: { type: "string", description: "UTC ISO timestamp" } }, ["target", "text", "author"]),
-  },
-  delete_tracked_text: {
-    description: "Delete exact ordinary text as a real Word tracked deletion, retaining deleted text and run formatting for review. One body paragraph; simple multiple runs supported. Author explicit; date defaults to current UTC. Fields, wrappers, tables, and paragraphs containing revisions are unsupported. Re-inspect after editing.",
-    inputSchema: op({ target: textTarget, author: { type: "string", minLength: 1 }, date: { type: "string", description: "UTC ISO timestamp" } }, ["target", "author"]),
-  },
-  replace_text_with_tracked_change: {
-    description: "Replace exact ordinary text with real Word deletion + insertion revisions, preserving source formatting. Simple multiple runs require identical formatting. Author explicit; date defaults to current UTC. Fields, wrappers, tables, and paragraphs containing revisions are unsupported. Re-inspect after editing.",
-    inputSchema: op({ target: textTarget, replacement: { type: "string", minLength: 1, maxLength: 32000 }, author: { type: "string", minLength: 1 }, date: { type: "string", description: "UTC ISO timestamp" } }, ["target", "replacement", "author"]),
-  },
-  add_comment: {
-    description: "Attach a standard Word comment to exact text in one ordinary body paragraph, including simple formatted runs. Author is explicit; date defaults to current UTC. Wrappers, fields, revisions, cross-paragraph ranges, and threaded comments are unsupported.",
-    inputSchema: op({ target: textTarget, text: { type: "string", minLength: 1, maxLength: 32000 }, author: { type: "string", minLength: 1 }, initials: { type: "string" }, date: { type: "string", description: "ISO timestamp, e.g. 2026-10-04T12:00:00Z" } }, ["target", "text", "author"]),
-  },
-  update_comment: {
-    description: "Replace plain comment text using a fresh inspect_comments handle. Anchor, author, initials, and date stay unchanged. Inspect again after every edit.",
-    inputSchema: op({ handle: { type: "string" }, text: { type: "string", minLength: 1, maxLength: 32000 } }, ["handle", "text"]),
-  },
-  delete_comment: {
-    description: "Delete a standard comment and its markers using a fresh inspect_comments handle, preserving the selected document text. Inspect again after every edit.",
-    inputSchema: op({ handle: { type: "string" } }, ["handle"]),
-  },
-  create_style: { description: "Create a reusable real Word paragraph or character style. No default-style authoring. basedOn and next use IDs; apply paragraph styles with set_paragraph_style using the display name.", inputSchema: op(wordStyleProperties, ["styleId", "styleType", "name"]) },
-  update_style: { description: "Patch supported properties of one Word style globally. Unspecified properties stay unchanged; clear removes a declaration and restores inheritance. Style type and default flag cannot change.", inputSchema: op(wordStyleProperties, ["styleId", "styleType"]) },
-  replace_text: {
-    description:
-      "Replace one exact text span. Requires target text, zero-based occurrence when ambiguous, expectedCurrentText (must match current content), and replacement.",
-    inputSchema: op(
-      {
-        target: textTarget,
-        expectedCurrentText: { type: "string" },
-        replacement: { type: "string" },
-      },
-      ["target", "expectedCurrentText", "replacement"],
-    ),
-  },
-  insert_paragraph: {
-    description:
-      "Insert one paragraph. For a blank document, use placement {kind: \"end\"} or {kind: \"start\"} without a handle.",
-    inputSchema: op({ text: { type: "string" }, placement }, [
-      "text",
-      "placement",
-    ]),
-  },
-  insert_paragraphs: {
-    description:
-      "Insert multiple paragraphs. For a blank document, use placement {kind: \"end\"} or {kind: \"start\"} without a handle.",
-    inputSchema: op({ texts: strings, placement }, ["texts", "placement"]),
-  },
-  delete_paragraph: {
-    description:
-      "Delete a paragraph identified by exact text target (occurrence zero-based when ambiguous).",
-    inputSchema: op({ target: textTarget }, ["target"]),
-  },
-  set_paragraph_style: {
-    description:
-      "Set or clear a direct body paragraph style by display name (e.g. 'Heading 1'), not styleId. Does not format table cells. Target via exact text + zero-based occurrence. Omit style to clear.",
-    inputSchema: op(
-      {
-        target: textTarget,
-        style: {
-          type: "string",
-          description: "Style display name such as 'Heading 1'. Omit to clear.",
-        },
-      },
-      ["target"],
-    ),
-  },
-  set_paragraph_formatting: {
-    description:
-      "Set alignment, spacing, indentation, or keep rules on a direct body paragraph (occurrence zero-based). Twips: 20 = 1 pt. both = justified.",
-    inputSchema: op(
-      {
-        target: textTarget,
-        ...paragraphProperties,
-        alignment: { type: "string", enum: [...paragraphProperties.alignment.enum, "clear"] },
-        clearLeftIndent: { type: "boolean" },
-        clear: { type: "array", items: { type: "string", enum: paragraphPropertyNames }, description: "Remove direct properties and restore inheritance. Omitted fields stay unchanged." },
-      },
-      ["target"],
-    ),
-  },
-  set_text_formatting: {
-    description:
-      "Format exact body text or partial text spans, including supported simple table-cell runs. For known whole table cells, use set_table_cells_formatting. Occurrence is zero-based when ambiguous.",
-    inputSchema: op(
-      {
-        target: textTarget,
-        bold: { type: "boolean" },
-        italic: { type: "boolean" },
-        fontSizeHalfPoints: { type: "integer", minimum: 1, maximum: 65535 },
-        fontFamily: { type: "string" },
-        clearBold: { type: "boolean" },
-        color: { type: "string" },
-        clearColor: { type: "boolean" },
-        underline: { type: "boolean" },
-        clearUnderline: { type: "boolean" },
-        highlight: { type: "string" },
-        clearHighlight: { type: "boolean" },
-        strikethrough: { type: "boolean" },
-        clearStrikethrough: { type: "boolean" },
-        verticalAlignment: {
-          type: "string",
-          enum: ["baseline", "superscript", "subscript"],
-        },
-        clearVerticalAlignment: { type: "boolean" },
-        clear: { type: "array", items: { type: "string", enum: textPropertyNames }, description: "Remove direct properties and restore inheritance. Omitted fields stay unchanged." },
-      },
-      ["target"],
-    ),
-  },
-  set_table_cells_text: {
-    description:
-      "Update known cells in one table. Select each by row (header, label, or checked index) and column (first, header, or checked index); use occurrence for duplicate labels. All selectors use the original table state, so headers and row labels can change in this call. Each update needs expectedCurrentText and replacement.",
-    inputSchema: op(
-      {
-        table: tableTarget,
-        updates: {
-          type: "array",
-          items: {
-            type: "object",
-            properties: {
-              target: semanticCellTarget,
-              expectedCurrentText: { type: "string" },
-              replacement: { type: "string" },
-            },
-            required: ["target", "expectedCurrentText", "replacement"],
-            additionalProperties: false,
-          },
-        },
-      },
-      ["table", "updates"],
-    ),
-  },
-  insert_table_rows: {
-    description: "Insert several contiguous, known rows in one call after a row anchor; prefer this over repeated insert_table_row calls.",
-    inputSchema: op(
-      { table: tableTarget, after: rowAnchor, rows: stringRows },
-      ["table", "after", "rows"],
-    ),
-  },
-  insert_table_row: {
-    description: "Insert one table row after an anchor; use insert_table_rows when several contiguous rows are known.",
-    inputSchema: op(
-      { table: tableTarget, after: rowAnchor, cells: strings },
-      ["table", "after", "cells"],
-    ),
-  },
-  insert_table_column: {
-    description: "Insert a table column (header + one cell per existing row).",
-    inputSchema: op(
-      {
-        table: tableTarget,
-        header: { type: "string" },
-        cells: strings,
-        afterColumnHeader: { type: "string" },
-        afterColumnHandle: { type: "string" },
-      },
-      ["table", "header", "cells"],
-    ),
-  },
-  create_table: {
-    description: "Create a table at a paragraph placement.",
-    inputSchema: op({ rows: stringRows, placement }, ["rows", "placement"]),
-  },
-  delete_table: {
-    description: "Delete a table.",
-    inputSchema: op({ table: tableTarget }, ["table"]),
-  },
-  delete_table_row: {
-    description: "Delete a known table row using table + row. Prefer row {kind: 'label', text, occurrence?} or a checked index; a handle is only needed when these cannot express the row.",
-    inputSchema: op({ table: tableTarget, row: deleteRowTarget }, ["table", "row"]),
-  },
-  delete_table_column: {
-    description: "Delete a table column by header or column handle.",
-    inputSchema: op(
-      {
-        table: tableTarget,
-        columnHeader: { type: "string" },
-        columnHandle: { type: "string" },
-      },
-      ["table"],
-    ),
-  },
-  set_table_formatting: {
-    description: "Set table alignment/margins/borders.",
-    inputSchema: op(
-      {
-        table: tableTarget,
-        alignment: {
-          type: "string",
-          enum: ["left", "center", "right", "clear"],
-        },
-        cellMarginTopTwips: { type: "number" },
-        cellMarginRightTwips: { type: "number" },
-        cellMarginBottomTwips: { type: "number" },
-        cellMarginLeftTwips: { type: "number" },
-        borders: { type: "string", enum: ["grid", "none", "clear"] },
-      },
-      ["table"],
-    ),
-  },
-  set_table_column_widths: {
-    description: "Set table column widths in twips.",
-    inputSchema: op(
-      {
-        table: tableTarget,
-        widthsTwips: { type: "array", items: { type: "number" } },
-      },
-      ["table", "widthsTwips"],
-    ),
-  },
-  set_table_cell_shading: {
-    description: "Shade known table cells in one call using table + row + column, including header and first-column cells. Fill is 6-digit RGB without #; omit fill to clear. Use set_table_cells_formatting for fill and text together.",
-    inputSchema: op(
-      {
-        table: tableTarget,
-        updates: {
-          type: "array",
-          items: {
-            type: "object",
-            properties: {
-              target: semanticCellTarget,
-              fill: { type: "string" },
-            },
-            required: ["target"],
-            additionalProperties: false,
-          },
-        },
-      },
-      ["table", "updates"],
-    ),
-  },
-  set_table_cells_formatting: {
-    description:
-      "Format known whole table cells using table + row + column, including header and first-column cells, without find or inspect handles. Format all relevant cells in one call; set fill and direct text formatting together when needed. Supports fill (6-digit RGB), bold, italic, font family, font size in half-points, and text color. Handles remain available for cells that need them.",
-    inputSchema: op(
-      {
-        table: tableTarget,
-        updates: {
-          type: "array",
-          minItems: 1,
-          maxItems: 100,
-          items: {
-            type: "object",
-            properties: {
-              target: semanticCellTarget,
-              fill: { type: "string" },
-              textFormatting: {
-                type: "object",
-                properties: {
-                  bold: { type: "boolean" },
-                  italic: { type: "boolean" },
-                  fontFamily: { type: "string" },
-                  fontSizeHalfPoints: { type: "number" },
-                  color: { type: "string" },
-                },
-                additionalProperties: false,
-              },
-            },
-            required: ["target"],
-            additionalProperties: false,
-          },
-        },
-      },
-      ["table", "updates"],
-    ),
-  },
-  set_content_control_text: {
-    description: "Set content-control text by tag and/or alias.",
-    inputSchema: op(
-      {
-        target: {
-          type: "object",
-          properties: {
-            tag: { type: "string" },
-            alias: { type: "string" },
-            occurrence: occurrenceField,
-          },
-          additionalProperties: false,
-        },
-        expectedCurrentText: { type: "string" },
-        replacement: { type: "string" },
-      },
-      ["target", "expectedCurrentText", "replacement"],
-    ),
-  },
-  set_paragraphs_list: {
-    description: "Apply list formatting to one or more paragraph text targets.",
-    inputSchema: op(
-      {
-        targets: { type: "array", items: textTarget },
-        kind: { type: "string", enum: ["bullet", "decimal", "none"] },
-        level: { type: "number", enum: [0, 1, 2] },
-        continueFromPrevious: { type: "boolean" },
-      },
-      ["targets", "kind"],
-    ),
-  },
-  set_hyperlink: {
-    description: "Add or clear an external hyperlink on a text target.",
-    inputSchema: op(
-      {
-        target: textTarget,
-        url: {
-          type: "string",
-          description: "External URL. Omit to clear the hyperlink.",
-        },
-      },
-      ["target"],
-    ),
-  },
-  delete_picture: {
-    description:
-      "Delete a picture identified by an opaque body_blocks handle.",
-    inputSchema: op({ handle: { type: "string" } }, ["handle"]),
-  },
-  set_picture_layout: {
-    description: "Patch a supported floating image using a fresh inspect_layout image handle. Omitted properties stay unchanged. Inline/floating conversion and tight/through wrapping are unsupported. EMU: 914,400 per inch. Re-inspect after editing.",
-    inputSchema: op({ handle: { type: "string" }, layout: {
-      type: "object", additionalProperties: false, minProperties: 1,
-      properties: {
-        horizontal: imagePosition(["page", "margin", "column"]),
-        vertical: imagePosition(["page", "margin", "paragraph"]),
-        wrap: { type: "string", enum: ["square", "topAndBottom", "behindText", "inFrontOfText"] },
-        distance: { type: "object", additionalProperties: false, minProperties: 1,
-          properties: Object.fromEntries(["topEmu", "bottomEmu", "leftEmu", "rightEmu"].map(key => [key, { type: "integer", minimum: 0, maximum: 4294967295 }])) },
-      },
-    } }, ["handle", "layout"]),
-  },
-  set_picture_size: {
-    description:
-      "Resize an image using a fresh inspect_layout handle. One dimension preserves aspect ratio; both set exact size. EMU: 914,400 per inch.",
-    inputSchema: op(
-      {
-        handle: { type: "string" },
-        widthEmu: { type: "integer", minimum: 1, maximum: 4294967295 },
-        heightEmu: { type: "integer", minimum: 1, maximum: 4294967295 },
-      },
-      ["handle"],
-    ),
-  },
-  insert_page_break: {
-    description:
-      "Insert a page break at a paragraph placement (start/end/before/after).",
-    inputSchema: op({ placement }, ["placement"]),
-  },
-  delete_page_break: {
-    description: "Delete a page break identified by an opaque body_blocks handle.",
-    inputSchema: op({ handle: { type: "string" } }, ["handle"]),
-  },
-  insert_section_break: {
-    description: "Insert a real Word section boundary at a body placement. Re-inspect sections and body_blocks after edits.",
-    inputSchema: op({ placement, breakType: { type: "string", enum: ["nextPage", "continuous", "oddPage", "evenPage"] } }, ["placement", "breakType"]),
-  },
-  set_section_properties: {
-    description: "Edit one section using its latest inspected handle. Margins use twips (1440 = one inch). Restart numbering with pageNumberStart or continuePageNumbering=true.",
-    inputSchema: op({
-      handle: { type: "string" },
-      pageSetup: { type: "object", properties: {
-        topMarginTwips: { type: "integer" }, bottomMarginTwips: { type: "integer" },
-        leftMarginTwips: { type: "integer" }, rightMarginTwips: { type: "integer" },
-        paperSize: { type: "string", enum: ["letter", "a4"] }, orientation: { type: "string", enum: ["portrait", "landscape"] },
-      }, additionalProperties: false },
-      differentFirstPage: { type: "boolean" },
-      breakType: { type: "string", enum: ["nextPage", "continuous", "oddPage", "evenPage"] },
-      pageNumberStart: { type: "integer", minimum: 0 }, continuePageNumbering: { type: "boolean" },
-    }, ["handle"]),
-  },
-  set_section_header_footer: {
-    description: "Edit one simple section header/footer variant. text creates independent content; empty text clears it. inherit links to previous; unlink preserves visible content in an independent part. PAGE fields use pageNumber. Other sections retain their content. Enable odd/even explicitly before editing even variants; use differentFirstPage to activate first variants.",
-    inputSchema: op({
-      handle: { type: "string" }, kind: { type: "string", enum: ["header", "footer"] },
-      variant: { type: "string", enum: ["default", "first", "even"] },
-      action: { type: "string", enum: ["text", "pageNumber", "inherit", "unlink"] },
-      text: { type: "string" }, alignment: { type: "string", enum: ["left", "center", "right"] },
-    }, ["handle", "kind", "variant", "action"]),
-  },
-  set_odd_even_headers: {
-    description: "Explicitly enable or disable different odd/even headers and footers for the ENTIRE document. This affects every section; it preserves all variant parts.",
-    inputSchema: op({ enabled: { type: "boolean" } }, ["enabled"]),
-  },
-  set_page_setup: {
-    description:
-      "Update section page margins, paper size (letter/a4), or orientation when section properties exist.",
-    inputSchema: op({
-      topMarginTwips: { type: "number" },
-      rightMarginTwips: { type: "number" },
-      bottomMarginTwips: { type: "number" },
-      leftMarginTwips: { type: "number" },
-      paperSize: { type: "string", enum: ["letter", "a4"] },
-      orientation: { type: "string", enum: ["portrait", "landscape"] },
-    }),
-  },
-  set_header_footer_text: {
-    description: "Set or clear header/footer text.",
-    inputSchema: op(
-      {
-        kind: { type: "string", enum: ["header", "footer"] },
-        text: {
-          type: "string",
-          description: "Omit to clear the text.",
-        },
-      },
-      ["kind"],
-    ),
-  },
-  set_page_number: {
-    description: "Set or remove page-number fields in header/footer.",
-    inputSchema: op(
-      {
-        kind: { type: "string", enum: ["header", "footer"] },
-        alignment: {
-          type: "string",
-          enum: ["left", "center", "right"],
-          description: "Omit to remove the page number.",
-        },
-      },
-      ["kind"],
-    ),
-  },
-};
-
 const BATCH_TOOLS = {
   replace_text: "batch_replace_text",
   set_paragraph_style: "batch_paragraph_styles",
@@ -720,16 +118,15 @@ const BATCH_TOOLS = {
   set_text_formatting: "batch_text_formatting",
 } as const;
 
-/** Capabilities with a real model schema + dispatcher path. Sorted. */
+/** Binary-only operations remain behind owned workspace asset tools. */
+export const HIDDEN_BINARY_MUTATION_CAPABILITIES = Object.freeze(["insert_picture", "replace_picture"] as const);
+/** Compatibility list; actual tools come from the selected engine's inputs. */
 export const MODEL_MUTATION_CAPABILITIES = Object.freeze(
-  Object.keys(MUTATION_DEFS).sort(),
+  DOCX_MUTATION_CAPABILITIES.filter(id => !HIDDEN_BINARY_MUTATION_CAPABILITIES.includes(id as "insert_picture" | "replace_picture")),
 );
 
-/** Binary-only; dispatchable via host but never model-exposed. */
-export const HIDDEN_BINARY_MUTATION_CAPABILITIES = Object.freeze([
-  "insert_picture",
-  "replace_picture",
-] as const);
+const engineDocumentTools = new WeakSet<object>();
+export const isEngineDocumentTool = (tool: object) => engineDocumentTools.has(tool);
 
 const READ_CAPS = {
   inspect: "inspect",
@@ -754,7 +151,11 @@ function docxCapabilitySet(capabilities: unknown): Set<string> {
 
 /** agent-core AgentTools for the live loop. Names match product progress labels. */
 export function createDocumentTools(document: BoundDocumentHost): AgentToolSet {
-  const caps = docxCapabilitySet(document.capabilities());
+  const capabilities = document.capabilities();
+  const caps = docxCapabilitySet(capabilities);
+  const definitions = new Map(docxOperationDefinitions(capabilities)
+    .filter(op => op.kind === "mutate" && op.jsonInput)
+    .map(op => [op.id, { description: op.description, inputSchema: jsonSchema<Record<string, unknown>>(docxAgentInputSchema(op)) }]));
   const tools: AgentToolSet = {};
   const effectKeys = (input: unknown, output: unknown) =>
     mutationEffectKeys(input, output, document.documentId?.() ?? undefined);
@@ -830,7 +231,7 @@ export function createDocumentTools(document: BoundDocumentHost): AgentToolSet {
 
   if (document.mutate) {
     const mutate = document.mutate.bind(document);
-    for (const [capability, def] of Object.entries(MUTATION_DEFS)) {
+    for (const [capability, def] of definitions) {
       if (!caps.has(capability)) continue;
       const toolName = `document.${capability}`;
       tools[toolName] = defineTool({
@@ -841,13 +242,14 @@ export function createDocumentTools(document: BoundDocumentHost): AgentToolSet {
         execute: async (input) =>
           mutate(capability, (input ?? {}) as Record<string, unknown>),
       });
+      engineDocumentTools.add(tools[toolName]!);
     }
   }
 
   if (document.mutateBatch) {
     const mutateBatch = document.mutateBatch.bind(document);
     for (const [capability, name] of Object.entries(BATCH_TOOLS)) {
-      if (!caps.has(capability)) continue;
+      if (!caps.has(capability) || !definitions.has(capability)) continue;
       tools[`document.${name}`] = defineTool({
         kind: "mutate",
         description: `Apply several independent ${capability} operations in order. Stops on the first failure; earlier successful edits remain. Use known text targets only.${
@@ -864,7 +266,7 @@ export function createDocumentTools(document: BoundDocumentHost): AgentToolSet {
               type: "array",
               minItems: 1,
               maxItems: 100,
-              items: MUTATION_DEFS[capability]!.inputSchema.jsonSchema,
+              items: definitions.get(capability)!.inputSchema.jsonSchema,
             },
           },
           required: ["operations"],

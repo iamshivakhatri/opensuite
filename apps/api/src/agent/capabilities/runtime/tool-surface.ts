@@ -1,5 +1,7 @@
 import { jsonSchema } from "ai";
 import { defineTool, type AgentEvent, type AgentToolSet } from "@opensuite/agent-core";
+import { isEngineDocumentTool } from "../../document-tools.js";
+import { CapabilityRegistry, type CapabilityDefinition } from "../core/registry.js";
 import { capabilityRegistry } from "../catalog.js";
 import { CapabilitySession, type CapabilityEvent } from "../core/session.js";
 
@@ -24,7 +26,12 @@ export function createToolSurface(tools: AgentToolSet, emit?: (event: Capability
       execute: ({ ids }) => session.load(ids, turn),
     }),
   };
-  session = new CapabilitySession(capabilityRegistry, { ...tools, ...discovery }, emit);
+  const additions: CapabilityDefinition[] = Object.entries(tools)
+    .filter(([name, tool]) => !capabilityRegistry.byToolName.has(name) && isEngineDocumentTool(tool))
+    .map(([name, tool]) => ({ id: name, parentId: "document.more_operations", kind: "tool", toolName: name,
+      title: name.slice("document.".length).replaceAll("_", " "), description: typeof tool.description === "string" ? tool.description : name, projection: "dynamic" }));
+  const registry = additions.length ? new CapabilityRegistry([...capabilityRegistry.byId.values(), ...additions]) : capabilityRegistry;
+  session = new CapabilitySession(registry, { ...tools, ...discovery }, emit);
   const initialTools = session.projectTools();
   let peakToolCount = Object.keys(initialTools).length;
   let discoveryTurnCount = 0;

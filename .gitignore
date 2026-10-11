@@ -85,6 +85,7 @@ notes.txt
 .gstack/
 
 *.json
+!packages/engine-client/src/legacy-docx-inputs.json
 !packages/db/migrations/meta/0024_snapshot.json
 !packages/db/migrations/meta/0025_snapshot.json
 

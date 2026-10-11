@@ -6,6 +6,7 @@ import {
   buildMinimalDocx,
   createNapiDocxEngineBinding,
   DISPATCHABLE_MUTATION_CAPABILITIES,
+  docxOperationDefinitions,
 } from "@opensuite/engine-client";
 
 import {
@@ -44,6 +45,7 @@ test("real bound DOCX exposes only executable mutation tools with agent-core kin
   const bytes = new Uint8Array(buildMinimalDocx(["Contract proof"]));
   const bound = bindDocxDocument({ binding, bytes, versionId: "v1" });
   const tools = createDocumentTools(bound);
+  const definitions = docxOperationDefinitions(bound.capabilities());
 
   assert.equal(tools["document.capabilities"], undefined);
   assert.equal(tools["document.inspect"]?.kind, "read");
@@ -56,13 +58,11 @@ test("real bound DOCX exposes only executable mutation tools with agent-core kin
   for (const name of mutationNames) {
     const capability = name.slice("document.".length);
     assert.ok(
-      (MODEL_MUTATION_CAPABILITIES as readonly string[]).includes(capability),
+      definitions.some(op => op.id === capability && op.kind === "mutate" && op.jsonInput),
       `${name} exposed without model contract`,
     );
     assert.ok(
-      (DISPATCHABLE_MUTATION_CAPABILITIES as readonly string[]).includes(
-        capability,
-      ),
+      definitions.some(op => op.id === capability && op.kind === "mutate"),
       `${name} exposed without dispatcher`,
     );
     assert.equal(typeof tools[name]?.execute, "function");
@@ -93,7 +93,7 @@ test("real bound DOCX exposes only executable mutation tools with agent-core kin
     if (otherCapabilities.has(cap)) {
       continue;
     }
-    assert.ok((MODEL_MUTATION_CAPABILITIES as readonly string[]).includes(cap),
+    assert.ok(definitions.some(op => op.id === cap && op.kind === "mutate" && op.jsonInput),
       `Engine capability ${cap} needs an agent schema or an explicit product policy`);
     assert.ok(tools[`document.${cap}`], `missing model tool for ${cap}`);
     assert.equal(surface.session.load([`document.${cap}`]).ok, true,
@@ -101,10 +101,8 @@ test("real bound DOCX exposes only executable mutation tools with agent-core kin
     assert.ok(surface.projectTools()[`document.${cap}`], `${cap} cannot be loaded`);
   }
 
-  const operations = bound.capabilities().formats.find((f) => f.format === "docx")?.operations;
-  if (operations) {
-    assert.deepEqual(operations.filter((op) => op.kind === "mutate").map((op) => op.id).sort(),
-      [...DISPATCHABLE_MUTATION_CAPABILITIES].sort(), "engine operations and client dispatch must agree");
+  for (const operation of definitions.filter(op => op.kind === "mutate" && op.jsonInput)) {
+    assert.ok(tools[`document.${operation.id}`], `${operation.id} must use its engine contract`);
   }
 });
 

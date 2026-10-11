@@ -29,3 +29,5 @@ export * from "./docx-revisions.js";
 export * from "./docx-fields.js";
 
 export * from "./docx-notes.js";
+
+export * from "./docx-operation-inputs.js";

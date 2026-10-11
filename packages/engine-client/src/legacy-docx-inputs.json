@@ -1,0 +1,3779 @@
+[
+  {
+    "id": "inspect",
+    "kind": "read",
+    "nodeExport": "inspectDocx",
+    "description": "Inspects bounded DOCX text context away from Node's event loop.",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "after": {
+          "maximum": 4294967295,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "before": {
+          "maximum": 4294967295,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "focus": {
+          "additionalProperties": false,
+          "properties": {
+            "after": {
+              "maximum": 4294967295,
+              "minimum": 0,
+              "type": "integer"
+            },
+            "before": {
+              "maximum": 4294967295,
+              "minimum": 0,
+              "type": "integer"
+            },
+            "kind": {
+              "type": "string"
+            },
+            "limit": {
+              "maximum": 4294967295,
+              "minimum": 0,
+              "type": "integer"
+            },
+            "occurrence": {
+              "maximum": 4294967295,
+              "minimum": 0,
+              "type": "integer"
+            },
+            "offset": {
+              "maximum": 4294967295,
+              "minimum": 0,
+              "type": "integer"
+            },
+            "tableHandle": {
+              "type": "string"
+            },
+            "text": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        "target": {
+          "additionalProperties": false,
+          "description": "Compatibility input for the original context-only binding.",
+          "properties": {
+            "occurrence": {
+              "description": "Zero-based occurrence among matching targets. Same convention as find.matches[].occurrence and inspect paragraphs.targetOccurrence / tables.occurrence. Omit when the match is unique.",
+              "maximum": 4294967295,
+              "minimum": 0,
+              "type": "integer"
+            },
+            "text": {
+              "description": "Exact text to match",
+              "type": "string"
+            }
+          },
+          "required": [
+            "text"
+          ],
+          "type": "object"
+        }
+      },
+      "required": [],
+      "type": "object"
+    },
+    "jsonInput": true
+  },
+  {
+    "id": "style_snapshot",
+    "kind": "read",
+    "nodeExport": "inspectDocxStyleSnapshot",
+    "description": "Inspects the bounded DOCX formatting system away from Node's event loop.",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {},
+      "required": [],
+      "type": "object"
+    },
+    "jsonInput": true
+  },
+  {
+    "id": "inspect_notes",
+    "kind": "read",
+    "nodeExport": "inspectDocxNotes",
+    "description": "inspect Docx Notes",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "limit": {
+          "maximum": 4294967295,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "offset": {
+          "maximum": 4294967295,
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [],
+      "type": "object"
+    },
+    "jsonInput": true
+  },
+  {
+    "id": "insert_note",
+    "kind": "mutate",
+    "nodeExport": "executeDocxInsertNote",
+    "description": "Insert a real footnote or endnote immediately after exact ordinary text in one body paragraph. Plain one-paragraph note text. Independent comments/revisions are preserved; targets inside or crossing protected ranges, fields, wrappers, and tables refuse. Word controls visible numbering; IDs are not displayed note numbers.",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "enum": [
+            "footnote",
+            "endnote"
+          ],
+          "type": "string"
+        },
+        "target": {
+          "additionalProperties": false,
+          "properties": {
+            "occurrence": {
+              "description": "Zero-based occurrence among matching targets. Same convention as find.matches[].occurrence and inspect paragraphs.targetOccurrence / tables.occurrence. Omit when the match is unique.",
+              "maximum": 4294967295,
+              "minimum": 0,
+              "type": "integer"
+            },
+            "text": {
+              "description": "Exact text to match",
+              "type": "string"
+            }
+          },
+          "required": [
+            "text"
+          ],
+          "type": "object"
+        },
+        "text": {
+          "maxLength": 32000,
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind",
+        "target",
+        "text"
+      ],
+      "type": "object"
+    },
+    "jsonInput": true
+  },
+  {
+    "id": "update_note",
+    "kind": "mutate",
+    "nodeExport": "executeDocxUpdateNote",
+    "description": "Update a simple one-paragraph note using a fresh inspect_notes handle. Keeps its ID, reference, formatting, and other notes. Complex note bodies are preserved and cannot be edited. Re-inspect after every mutation.",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "handle": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "text": {
+          "maxLength": 32000,
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "handle",
+        "text"
+      ],
+      "type": "object"
+    },
+    "jsonInput": true
+  },
+  {
+    "id": "delete_note",
+    "kind": "mutate",
+    "nodeExport": "executeDocxDeleteNote",
+    "description": "Delete an ordinary simple footnote/endnote and its body reference using a fresh inspect_notes handle. Remaining IDs are preserved. Protected references and complex/malformed notes refuse. Re-inspect after every mutation.",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "handle": {
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "handle"
+      ],
+      "type": "object"
+    },
+    "jsonInput": true
+  },
+  {
+    "id": "inspect_comments",
+    "kind": "read",
+    "nodeExport": "inspectDocxComments",
+    "description": "inspect Docx Comments",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "limit": {
+          "maximum": 4294967295,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "offset": {
+          "maximum": 4294967295,
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [],
+      "type": "object"
+    },
+    "jsonInput": true
+  },
+  {
+    "id": "inspect_fields",
+    "kind": "read",
+    "nodeExport": "inspectDocxFields",
+    "description": "inspect Docx Fields",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "limit": {
+          "maximum": 4294967295,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "offset": {
+          "maximum": 4294967295,
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [],
+      "type": "object"
+    },
+    "jsonInput": true
+  },
+  {
+    "id": "insert_fields",
+    "kind": "mutate",
+    "nodeExport": "executeDocxInsertFields",
+    "description": "Insert a new paragraph of plain text and real PAGE/NUMPAGES fields. content items use kind text with text, or page/numPages without text. Example: text Page , page, text of , numPages. Body requires placement; footer appends to the single-section default footer and omits placement. Cached values are ? and marked dirty; Word calculates them. Imported fields remain unchanged.",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "content": {
+          "items": {
+            "additionalProperties": false,
+            "oneOf": [
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "kind": {
+                    "const": "text"
+                  },
+                  "text": {
+                    "maxLength": 32000,
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "kind",
+                  "text"
+                ],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "kind": {
+                    "enum": [
+                      "page",
+                      "numPages"
+                    ],
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "kind"
+                ],
+                "type": "object"
+              }
+            ],
+            "properties": {
+              "kind": {
+                "type": "string"
+              },
+              "text": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind"
+            ],
+            "type": "object"
+          },
+          "maxItems": 20,
+          "minItems": 1,
+          "type": "array"
+        },
+        "location": {
+          "description": "Body (default) requires placement. Footer appends to a single-section default footer.",
+          "enum": [
+            "body",
+            "footer"
+          ],
+          "type": "string"
+        },
+        "placement": {
+          "additionalProperties": false,
+          "description": "Use start/end without a handle at document boundaries, including initial content in a blank document (which has no handles). For before/after, use only a handle from the latest relevant document.inspect; never invent one. Formatting preserves handles within one model turn; handles expire before the next model turn or after other edits.",
+          "properties": {
+            "handle": {
+              "description": "Omit for start/end. Required for before/after; copy from the latest relevant document.inspect.",
+              "type": "string"
+            },
+            "kind": {
+              "description": "start/end need no handle; before/after need an inspected body_blocks handle.",
+              "enum": [
+                "start",
+                "end",
+                "before",
+                "after"
+              ],
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        }
+      },
+      "required": [
+        "content"
+      ],
+      "type": "object"
+    },
+    "jsonInput": true
+  },
+  {
+    "id": "insert_toc",
+    "kind": "mutate",
+    "nodeExport": "executeDocxInsertToc",
+    "description": "Insert a real refreshable Word Table of Contents in a new body paragraph, with an optional title paragraph. Heading levels 1 through maxHeadingLevel (default 3, range 1–9). Marked dirty with a refresh placeholder. Inspect fields first to avoid an unintended duplicate TOC. No in-engine field evaluation.",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "maxHeadingLevel": {
+          "maximum": 9,
+          "minimum": 1,
+          "type": "integer"
+        },
+        "placement": {
+          "additionalProperties": false,
+          "description": "Use start/end without a handle at document boundaries, including initial content in a blank document (which has no handles). For before/after, use only a handle from the latest relevant document.inspect; never invent one. Formatting preserves handles within one model turn; handles expire before the next model turn or after other edits.",
+          "properties": {
+            "handle": {
+              "description": "Omit for start/end. Required for before/after; copy from the latest relevant document.inspect.",
+              "type": "string"
+            },
+            "kind": {
+              "description": "start/end need no handle; before/after need an inspected body_blocks handle.",
+              "enum": [
+                "start",
+                "end",
+                "before",
+                "after"
+              ],
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        "title": {
+          "maxLength": 32000,
+          "type": "string"
+        }
+      },
+      "required": [
+        "placement"
+      ],
+      "type": "object"
+    },
+    "jsonInput": true
+  },
+  {
+    "id": "inspect_tracked_changes",
+    "kind": "read",
+    "nodeExport": "inspectDocxTrackedChanges",
+    "description": "inspect Docx Tracked Changes",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "limit": {
+          "maximum": 4294967295,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "offset": {
+          "maximum": 4294967295,
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [],
+      "type": "object"
+    },
+    "jsonInput": true
+  },
+  {
+    "id": "accept_revision",
+    "kind": "mutate",
+    "nodeExport": "executeDocxAcceptRevision",
+    "description": "Accept one supported insertion or deletion using its fresh inspect_tracked_changes handle. Keeps inserted content or removes deleted content. For replacement, decide both records individually and re-inspect after each successful decision. Complex revisions are unsupported.",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "handle": {
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "handle"
+      ],
+      "type": "object"
+    },
+    "jsonInput": true
+  },
+  {
+    "id": "reject_revision",
+    "kind": "mutate",
+    "nodeExport": "executeDocxRejectRevision",
+    "description": "Reject one supported insertion or deletion using its fresh inspect_tracked_changes handle. Removes inserted content or restores deleted content with its formatting. For replacement, decide both records individually and re-inspect after each successful decision. Complex revisions are unsupported.",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "handle": {
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "handle"
+      ],
+      "type": "object"
+    },
+    "jsonInput": true
+  },
+  {
+    "id": "insert_tracked_text",
+    "kind": "mutate",
+    "nodeExport": "executeDocxInsertTrackedText",
+    "description": "Insert text as a real Word tracked insertion before/after an exact ordinary text anchor in one body paragraph. Default after. Inherits formatting at the insertion boundary. Author is explicit; the client supplies current UTC when date is omitted. Fields, wrappers, tables, and paragraphs containing revisions are unsupported. Re-inspect after editing.",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "author": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "date": {
+          "description": "UTC ISO timestamp",
+          "type": "string",
+          "x-client-default": "currentUtc"
+        },
+        "position": {
+          "enum": [
+            "before",
+            "after"
+          ],
+          "type": "string"
+        },
+        "target": {
+          "additionalProperties": false,
+          "properties": {
+            "occurrence": {
+              "description": "Zero-based occurrence among matching targets. Same convention as find.matches[].occurrence and inspect paragraphs.targetOccurrence / tables.occurrence. Omit when the match is unique.",
+              "maximum": 4294967295,
+              "minimum": 0,
+              "type": "integer"
+            },
+            "text": {
+              "description": "Exact text to match",
+              "type": "string"
+            }
+          },
+          "required": [
+            "text"
+          ],
+          "type": "object"
+        },
+        "text": {
+          "maxLength": 32000,
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "target",
+        "text",
+        "author",
+        "date"
+      ],
+      "type": "object"
+    },
+    "jsonInput": true
+  },
+  {
+    "id": "delete_tracked_text",
+    "kind": "mutate",
+    "nodeExport": "executeDocxDeleteTrackedText",
+    "description": "Delete exact ordinary text as a real Word tracked deletion, retaining deleted text and run formatting for review. One body paragraph; simple multiple runs supported. Author explicit; the client supplies current UTC when date is omitted. Fields, wrappers, tables, and paragraphs containing revisions are unsupported. Re-inspect after editing.",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "author": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "date": {
+          "description": "UTC ISO timestamp",
+          "type": "string",
+          "x-client-default": "currentUtc"
+        },
+        "target": {
+          "additionalProperties": false,
+          "properties": {
+            "occurrence": {
+              "description": "Zero-based occurrence among matching targets. Same convention as find.matches[].occurrence and inspect paragraphs.targetOccurrence / tables.occurrence. Omit when the match is unique.",
+              "maximum": 4294967295,
+              "minimum": 0,
+              "type": "integer"
+            },
+            "text": {
+              "description": "Exact text to match",
+              "type": "string"
+            }
+          },
+          "required": [
+            "text"
+          ],
+          "type": "object"
+        }
+      },
+      "required": [
+        "target",
+        "author",
+        "date"
+      ],
+      "type": "object"
+    },
+    "jsonInput": true
+  },
+  {
+    "id": "replace_text_with_tracked_change",
+    "kind": "mutate",
+    "nodeExport": "executeDocxReplaceTextWithTrackedChange",
+    "description": "Replace exact ordinary text with real Word deletion + insertion revisions, preserving source formatting. Simple multiple runs require identical formatting. Author explicit; the client supplies current UTC when date is omitted. Fields, wrappers, tables, and paragraphs containing revisions are unsupported. Re-inspect after editing.",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "author": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "date": {
+          "description": "UTC ISO timestamp",
+          "type": "string",
+          "x-client-default": "currentUtc"
+        },
+        "replacement": {
+          "maxLength": 32000,
+          "minLength": 1,
+          "type": "string"
+        },
+        "target": {
+          "additionalProperties": false,
+          "properties": {
+            "occurrence": {
+              "description": "Zero-based occurrence among matching targets. Same convention as find.matches[].occurrence and inspect paragraphs.targetOccurrence / tables.occurrence. Omit when the match is unique.",
+              "maximum": 4294967295,
+              "minimum": 0,
+              "type": "integer"
+            },
+            "text": {
+              "description": "Exact text to match",
+              "type": "string"
+            }
+          },
+          "required": [
+            "text"
+          ],
+          "type": "object"
+        }
+      },
+      "required": [
+        "target",
+        "replacement",
+        "author",
+        "date"
+      ],
+      "type": "object"
+    },
+    "jsonInput": true
+  },
+  {
+    "id": "add_comment",
+    "kind": "mutate",
+    "nodeExport": "executeDocxAddComment",
+    "description": "Attach a standard Word comment to exact text in one ordinary body paragraph, including simple formatted runs. Author is explicit; the client supplies current UTC when date is omitted. Wrappers, fields, revisions, cross-paragraph ranges, and threaded comments are unsupported.",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "author": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "date": {
+          "description": "Explicit ISO timestamp. The engine-client supplies the current time when omitted.",
+          "type": "string",
+          "x-client-default": "currentUtc"
+        },
+        "initials": {
+          "type": "string"
+        },
+        "target": {
+          "additionalProperties": false,
+          "properties": {
+            "occurrence": {
+              "description": "Zero-based occurrence among matching targets. Same convention as find.matches[].occurrence and inspect paragraphs.targetOccurrence / tables.occurrence. Omit when the match is unique.",
+              "maximum": 4294967295,
+              "minimum": 0,
+              "type": "integer"
+            },
+            "text": {
+              "description": "Exact text to match",
+              "type": "string"
+            }
+          },
+          "required": [
+            "text"
+          ],
+          "type": "object"
+        },
+        "text": {
+          "maxLength": 32000,
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "target",
+        "text",
+        "author",
+        "date"
+      ],
+      "type": "object"
+    },
+    "jsonInput": true
+  },
+  {
+    "id": "update_comment",
+    "kind": "mutate",
+    "nodeExport": "executeDocxUpdateComment",
+    "description": "Replace plain comment text using a fresh inspect_comments handle. Anchor, author, initials, and date stay unchanged. Inspect again after every edit.",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "handle": {
+          "type": "string"
+        },
+        "text": {
+          "maxLength": 32000,
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "handle",
+        "text"
+      ],
+      "type": "object"
+    },
+    "jsonInput": true
+  },
+  {
+    "id": "delete_comment",
+    "kind": "mutate",
+    "nodeExport": "executeDocxDeleteComment",
+    "description": "Delete a standard comment and its markers using a fresh inspect_comments handle, preserving the selected document text. Inspect again after every edit.",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "handle": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "handle"
+      ],
+      "type": "object"
+    },
+    "jsonInput": true
+  },
+  {
+    "id": "replace_text",
+    "kind": "mutate",
+    "nodeExport": "executeDocxReplaceText",
+    "description": "Runs DOCX replacement away from Node's event loop and returns a Promise.\nReplace one exact text span. Requires target text, zero-based occurrence when ambiguous, expectedCurrentText (must match current content), and replacement.",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "baseRevision": {
+          "type": "string"
+        },
+        "expectedCurrentText": {
+          "type": "string"
+        },
+        "replacement": {
+          "type": "string"
+        },
+        "target": {
+          "additionalProperties": false,
+          "properties": {
+            "occurrence": {
+              "description": "Zero-based occurrence among matching targets. Same convention as find.matches[].occurrence and inspect paragraphs.targetOccurrence / tables.occurrence. Omit when the match is unique.",
+              "maximum": 4294967295,
+              "minimum": 0,
+              "type": "integer"
+            },
+            "text": {
+              "description": "Exact text to match",
+              "type": "string"
+            }
+          },
+          "required": [
+            "text"
+          ],
+          "type": "object"
+        }
+      },
+      "required": [
+        "target",
+        "expectedCurrentText",
+        "replacement"
+      ],
+      "type": "object"
+    },
+    "jsonInput": true
+  },
+  {
+    "id": "create_blank_docx",
+    "kind": "create",
+    "nodeExport": "createBlankDocx",
+    "description": "Creates a valid empty DOCX without touching the filesystem.",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {},
+      "required": [],
+      "type": "object"
+    },
+    "jsonInput": true
+  },
+  {
+    "id": "body_blocks",
+    "kind": "read",
+    "nodeExport": "inspectDocx",
+    "description": "Inspects bounded DOCX text context away from Node's event loop.",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "after": {
+          "maximum": 4294967295,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "before": {
+          "maximum": 4294967295,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "focus": {
+          "additionalProperties": false,
+          "properties": {
+            "after": {
+              "maximum": 4294967295,
+              "minimum": 0,
+              "type": "integer"
+            },
+            "before": {
+              "maximum": 4294967295,
+              "minimum": 0,
+              "type": "integer"
+            },
+            "kind": {
+              "type": "string"
+            },
+            "limit": {
+              "maximum": 4294967295,
+              "minimum": 0,
+              "type": "integer"
+            },
+            "occurrence": {
+              "maximum": 4294967295,
+              "minimum": 0,
+              "type": "integer"
+            },
+            "offset": {
+              "maximum": 4294967295,
+              "minimum": 0,
+              "type": "integer"
+            },
+            "tableHandle": {
+              "type": "string"
+            },
+            "text": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        "target": {
+          "additionalProperties": false,
+          "description": "Compatibility input for the original context-only binding.",
+          "properties": {
+            "occurrence": {
+              "description": "Zero-based occurrence among matching targets. Same convention as find.matches[].occurrence and inspect paragraphs.targetOccurrence / tables.occurrence. Omit when the match is unique.",
+              "maximum": 4294967295,
+              "minimum": 0,
+              "type": "integer"
+            },
+            "text": {
+              "description": "Exact text to match",
+              "type": "string"
+            }
+          },
+          "required": [
+            "text"
+          ],
+          "type": "object"
+        }
+      },
+      "required": [],
+      "type": "object"
+    },
+    "jsonInput": true
+  },
+  {
+    "id": "insert_page_break",
+    "kind": "mutate",
+    "nodeExport": "executeDocxInsertPageBreak",
+    "description": "Insert a page break at a paragraph placement (start/end/before/after).",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "baseRevision": {
+          "type": "string"
+        },
+        "placement": {
+          "additionalProperties": false,
+          "description": "Use start/end without a handle at document boundaries, including initial content in a blank document (which has no handles). For before/after, use only a handle from the latest relevant document.inspect; never invent one. Formatting preserves handles within one model turn; handles expire before the next model turn or after other edits.",
+          "properties": {
+            "handle": {
+              "description": "Omit for start/end. Required for before/after; copy from the latest relevant document.inspect.",
+              "type": "string"
+            },
+            "kind": {
+              "description": "start/end need no handle; before/after need an inspected body_blocks handle.",
+              "enum": [
+                "start",
+                "end",
+                "before",
+                "after"
+              ],
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        }
+      },
+      "required": [
+        "placement"
+      ],
+      "type": "object"
+    },
+    "jsonInput": true
+  },
+  {
+    "id": "delete_page_break",
+    "kind": "mutate",
+    "nodeExport": "executeDocxDeletePageBreak",
+    "description": "Delete a page break identified by an opaque body_blocks handle.",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "baseRevision": {
+          "type": "string"
+        },
+        "handle": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "handle"
+      ],
+      "type": "object"
+    },
+    "jsonInput": true
+  },
+  {
+    "id": "set_page_setup",
+    "kind": "mutate",
+    "nodeExport": "executeDocxSetPageSetup",
+    "description": "Update section page margins, paper size (letter/a4), or orientation when section properties exist.",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "baseRevision": {
+          "type": "string"
+        },
+        "bottomMarginTwips": {
+          "maximum": 2147483647,
+          "minimum": -2147483648,
+          "type": "integer"
+        },
+        "leftMarginTwips": {
+          "maximum": 2147483647,
+          "minimum": -2147483648,
+          "type": "integer"
+        },
+        "orientation": {
+          "enum": [
+            "portrait",
+            "landscape"
+          ],
+          "type": "string"
+        },
+        "paperSize": {
+          "enum": [
+            "letter",
+            "a4"
+          ],
+          "type": "string"
+        },
+        "rightMarginTwips": {
+          "maximum": 2147483647,
+          "minimum": -2147483648,
+          "type": "integer"
+        },
+        "topMarginTwips": {
+          "maximum": 2147483647,
+          "minimum": -2147483648,
+          "type": "integer"
+        }
+      },
+      "required": [],
+      "type": "object"
+    },
+    "jsonInput": true
+  },
+  {
+    "id": "set_header_footer_text",
+    "kind": "mutate",
+    "nodeExport": "executeDocxSetHeaderFooterText",
+    "description": "Set or clear header/footer text.",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "baseRevision": {
+          "type": "string"
+        },
+        "kind": {
+          "enum": [
+            "header",
+            "footer"
+          ],
+          "type": "string"
+        },
+        "text": {
+          "description": "Omit to clear the text.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind"
+      ],
+      "type": "object"
+    },
+    "jsonInput": true
+  },
+  {
+    "id": "set_page_number",
+    "kind": "mutate",
+    "nodeExport": "executeDocxSetPageNumber",
+    "description": "Set or remove page-number fields in header/footer.",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "alignment": {
+          "description": "Omit to remove the page number.",
+          "enum": [
+            "left",
+            "center",
+            "right"
+          ],
+          "type": "string"
+        },
+        "baseRevision": {
+          "type": "string"
+        },
+        "kind": {
+          "enum": [
+            "header",
+            "footer"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind"
+      ],
+      "type": "object"
+    },
+    "jsonInput": true
+  },
+  {
+    "id": "inspect_sections",
+    "kind": "read",
+    "nodeExport": "inspectDocxSections",
+    "description": "inspect Docx Sections",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {},
+      "required": [],
+      "type": "object"
+    },
+    "jsonInput": true
+  },
+  {
+    "id": "layout_snapshot",
+    "kind": "read",
+    "nodeExport": "inspectDocxLayout",
+    "description": "inspect Docx Layout",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "blockLimit": {
+          "maximum": 4294967295,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "blockOffset": {
+          "maximum": 4294967295,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "sectionIndex": {
+          "maximum": 4294967295,
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [],
+      "type": "object"
+    },
+    "jsonInput": true
+  },
+  {
+    "id": "insert_section_break",
+    "kind": "mutate",
+    "nodeExport": "executeDocxInsertSectionBreak",
+    "description": "Insert a real Word section boundary at a body placement. Re-inspect sections and body_blocks after edits.",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "breakType": {
+          "enum": [
+            "nextPage",
+            "continuous",
+            "oddPage",
+            "evenPage"
+          ],
+          "type": "string"
+        },
+        "placement": {
+          "additionalProperties": false,
+          "description": "Use start/end without a handle at document boundaries, including initial content in a blank document (which has no handles). For before/after, use only a handle from the latest relevant document.inspect; never invent one. Formatting preserves handles within one model turn; handles expire before the next model turn or after other edits.",
+          "properties": {
+            "handle": {
+              "description": "Omit for start/end. Required for before/after; copy from the latest relevant document.inspect.",
+              "type": "string"
+            },
+            "kind": {
+              "description": "start/end need no handle; before/after need an inspected body_blocks handle.",
+              "enum": [
+                "start",
+                "end",
+                "before",
+                "after"
+              ],
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        }
+      },
+      "required": [
+        "placement",
+        "breakType"
+      ],
+      "type": "object"
+    },
+    "jsonInput": true
+  },
+  {
+    "id": "set_section_properties",
+    "kind": "mutate",
+    "nodeExport": "executeDocxSetSectionProperties",
+    "description": "Edit one section using its latest inspected handle. Margins use twips (1440 = one inch). Restart numbering with pageNumberStart or continuePageNumbering=true.",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "breakType": {
+          "enum": [
+            "nextPage",
+            "continuous",
+            "oddPage",
+            "evenPage"
+          ],
+          "type": "string"
+        },
+        "continuePageNumbering": {
+          "type": "boolean"
+        },
+        "differentFirstPage": {
+          "type": "boolean"
+        },
+        "handle": {
+          "type": "string"
+        },
+        "pageNumberStart": {
+          "maximum": 4294967295,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "pageSetup": {
+          "additionalProperties": false,
+          "properties": {
+            "baseRevision": {
+              "type": "string"
+            },
+            "bottomMarginTwips": {
+              "maximum": 2147483647,
+              "minimum": -2147483648,
+              "type": "integer"
+            },
+            "leftMarginTwips": {
+              "maximum": 2147483647,
+              "minimum": -2147483648,
+              "type": "integer"
+            },
+            "orientation": {
+              "enum": [
+                "portrait",
+                "landscape"
+              ],
+              "type": "string"
+            },
+            "paperSize": {
+              "enum": [
+                "letter",
+                "a4"
+              ],
+              "type": "string"
+            },
+            "rightMarginTwips": {
+              "maximum": 2147483647,
+              "minimum": -2147483648,
+              "type": "integer"
+            },
+            "topMarginTwips": {
+              "maximum": 2147483647,
+              "minimum": -2147483648,
+              "type": "integer"
+            }
+          },
+          "required": [],
+          "type": "object"
+        }
+      },
+      "required": [
+        "handle"
+      ],
+      "type": "object"
+    },
+    "jsonInput": true
+  },
+  {
+    "id": "set_section_header_footer",
+    "kind": "mutate",
+    "nodeExport": "executeDocxSetSectionHeaderFooter",
+    "description": "Edit one simple section header/footer variant. text creates independent content; empty text clears it. inherit links to previous; unlink preserves visible content in an independent part. PAGE fields use pageNumber. Other sections retain their content. Enable odd/even explicitly before editing even variants; use differentFirstPage to activate first variants.",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "action": {
+          "enum": [
+            "text",
+            "pageNumber",
+            "inherit",
+            "unlink"
+          ],
+          "type": "string"
+        },
+        "alignment": {
+          "enum": [
+            "left",
+            "center",
+            "right"
+          ],
+          "type": "string"
+        },
+        "handle": {
+          "type": "string"
+        },
+        "kind": {
+          "enum": [
+            "header",
+            "footer"
+          ],
+          "type": "string"
+        },
+        "text": {
+          "type": "string"
+        },
+        "variant": {
+          "enum": [
+            "default",
+            "first",
+            "even"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "handle",
+        "kind",
+        "variant",
+        "action"
+      ],
+      "type": "object"
+    },
+    "jsonInput": true
+  },
+  {
+    "id": "set_odd_even_headers",
+    "kind": "mutate",
+    "nodeExport": "executeDocxSetOddEvenHeaders",
+    "description": "Explicitly enable or disable different odd/even headers and footers for the ENTIRE document. This affects every section; it preserves all variant parts.",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "enabled"
+      ],
+      "type": "object"
+    },
+    "jsonInput": true
+  },
+  {
+    "id": "insert_paragraph",
+    "kind": "mutate",
+    "nodeExport": "executeDocxInsertParagraph",
+    "description": "Runs DOCX paragraph insertion away from Node's event loop and returns a Promise.\nInsert one paragraph. For a blank document, use placement {kind: \"end\"} or {kind: \"start\"} without a handle.",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "baseRevision": {
+          "type": "string"
+        },
+        "placement": {
+          "additionalProperties": false,
+          "description": "Use start/end without a handle at document boundaries, including initial content in a blank document (which has no handles). For before/after, use only a handle from the latest relevant document.inspect; never invent one. Formatting preserves handles within one model turn; handles expire before the next model turn or after other edits.",
+          "properties": {
+            "handle": {
+              "description": "Omit for start/end. Required for before/after; copy from the latest relevant document.inspect.",
+              "type": "string"
+            },
+            "kind": {
+              "description": "start/end need no handle; before/after need an inspected body_blocks handle.",
+              "enum": [
+                "start",
+                "end",
+                "before",
+                "after"
+              ],
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        "text": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "text",
+        "placement"
+      ],
+      "type": "object"
+    },
+    "jsonInput": true
+  },
+  {
+    "id": "insert_paragraphs",
+    "kind": "mutate",
+    "nodeExport": "executeDocxInsertParagraphs",
+    "description": "Insert multiple paragraphs. For a blank document, use placement {kind: \"end\"} or {kind: \"start\"} without a handle.",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "baseRevision": {
+          "type": "string"
+        },
+        "placement": {
+          "additionalProperties": false,
+          "description": "Use start/end without a handle at document boundaries, including initial content in a blank document (which has no handles). For before/after, use only a handle from the latest relevant document.inspect; never invent one. Formatting preserves handles within one model turn; handles expire before the next model turn or after other edits.",
+          "properties": {
+            "handle": {
+              "description": "Omit for start/end. Required for before/after; copy from the latest relevant document.inspect.",
+              "type": "string"
+            },
+            "kind": {
+              "description": "start/end need no handle; before/after need an inspected body_blocks handle.",
+              "enum": [
+                "start",
+                "end",
+                "before",
+                "after"
+              ],
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        "texts": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "texts",
+        "placement"
+      ],
+      "type": "object"
+    },
+    "jsonInput": true
+  },
+  {
+    "id": "delete_paragraph",
+    "kind": "mutate",
+    "nodeExport": "executeDocxDeleteParagraph",
+    "description": "Delete a paragraph identified by exact text target (occurrence zero-based when ambiguous).",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "baseRevision": {
+          "type": "string"
+        },
+        "target": {
+          "additionalProperties": false,
+          "properties": {
+            "occurrence": {
+              "description": "Zero-based occurrence among matching targets. Same convention as find.matches[].occurrence and inspect paragraphs.targetOccurrence / tables.occurrence. Omit when the match is unique.",
+              "maximum": 4294967295,
+              "minimum": 0,
+              "type": "integer"
+            },
+            "text": {
+              "description": "Exact text to match",
+              "type": "string"
+            }
+          },
+          "required": [
+            "text"
+          ],
+          "type": "object"
+        }
+      },
+      "required": [
+        "target"
+      ],
+      "type": "object"
+    },
+    "jsonInput": true
+  },
+  {
+    "id": "set_content_control_text",
+    "kind": "mutate",
+    "nodeExport": "executeDocxSetContentControlText",
+    "description": "Set content-control text by tag and/or alias.",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "baseRevision": {
+          "type": "string"
+        },
+        "expectedCurrentText": {
+          "type": "string"
+        },
+        "replacement": {
+          "type": "string"
+        },
+        "target": {
+          "additionalProperties": false,
+          "properties": {
+            "alias": {
+              "type": "string"
+            },
+            "occurrence": {
+              "description": "Zero-based occurrence among matching targets. Same convention as find.matches[].occurrence and inspect paragraphs.targetOccurrence / tables.occurrence. Omit when the match is unique.",
+              "maximum": 4294967295,
+              "minimum": 0,
+              "type": "integer"
+            },
+            "tag": {
+              "type": "string"
+            }
+          },
+          "required": [],
+          "type": "object"
+        }
+      },
+      "required": [
+        "target",
+        "expectedCurrentText",
+        "replacement"
+      ],
+      "type": "object"
+    },
+    "jsonInput": true
+  },
+  {
+    "id": "set_paragraph_formatting",
+    "kind": "mutate",
+    "nodeExport": "executeDocxSetParagraphFormatting",
+    "description": "Set alignment, spacing, indentation, or keep rules on a direct body paragraph (occurrence zero-based). Twips: 20 = 1 pt. both = justified.",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "alignment": {
+          "enum": [
+            "left",
+            "center",
+            "right",
+            "both",
+            "distribute",
+            "clear"
+          ],
+          "type": "string"
+        },
+        "baseRevision": {
+          "type": "string"
+        },
+        "clear": {
+          "description": "Remove direct properties and restore inheritance. Omitted fields stay unchanged.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "clearLeftIndent": {
+          "type": "boolean"
+        },
+        "firstLineIndentTwips": {
+          "maximum": 2147483647,
+          "minimum": -2147483648,
+          "type": "integer"
+        },
+        "hangingIndentTwips": {
+          "maximum": 2147483647,
+          "minimum": -2147483648,
+          "type": "integer"
+        },
+        "keepLines": {
+          "description": "Keep all lines of this paragraph on one page.",
+          "type": "boolean"
+        },
+        "keepWithNext": {
+          "description": "Keep this paragraph with the following paragraph.",
+          "type": "boolean"
+        },
+        "leftIndentTwips": {
+          "maximum": 2147483647,
+          "minimum": -2147483648,
+          "type": "integer"
+        },
+        "lineSpacing": {
+          "additionalProperties": false,
+          "properties": {
+            "rule": {
+              "enum": [
+                "auto",
+                "exact",
+                "atLeast"
+              ],
+              "type": "string"
+            },
+            "value": {
+              "description": "Auto uses 240 units per line; exact/atLeast use twips (20 per point).",
+              "maximum": 4294967295,
+              "minimum": 1,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "value"
+          ],
+          "type": "object"
+        },
+        "rightIndentTwips": {
+          "maximum": 2147483647,
+          "minimum": -2147483648,
+          "type": "integer"
+        },
+        "spacingAfterTwips": {
+          "maximum": 2147483647,
+          "minimum": -2147483648,
+          "type": "integer"
+        },
+        "spacingBeforeTwips": {
+          "maximum": 2147483647,
+          "minimum": -2147483648,
+          "type": "integer"
+        },
+        "target": {
+          "additionalProperties": false,
+          "properties": {
+            "occurrence": {
+              "description": "Zero-based occurrence among matching targets. Same convention as find.matches[].occurrence and inspect paragraphs.targetOccurrence / tables.occurrence. Omit when the match is unique.",
+              "maximum": 4294967295,
+              "minimum": 0,
+              "type": "integer"
+            },
+            "text": {
+              "description": "Exact text to match",
+              "type": "string"
+            }
+          },
+          "required": [
+            "text"
+          ],
+          "type": "object"
+        }
+      },
+      "required": [
+        "target"
+      ],
+      "type": "object"
+    },
+    "jsonInput": true
+  },
+  {
+    "id": "set_text_formatting",
+    "kind": "mutate",
+    "nodeExport": "executeDocxSetTextFormatting",
+    "description": "Format exact body text or partial text spans, including supported simple table-cell runs. For known whole table cells, use set_table_cells_formatting. Occurrence is zero-based when ambiguous.",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "baseRevision": {
+          "type": "string"
+        },
+        "bold": {
+          "type": "boolean"
+        },
+        "clear": {
+          "description": "Remove direct properties and restore inheritance. Omitted fields stay unchanged.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "clearBold": {
+          "type": "boolean"
+        },
+        "clearColor": {
+          "type": "boolean"
+        },
+        "clearHighlight": {
+          "type": "boolean"
+        },
+        "clearStrikethrough": {
+          "type": "boolean"
+        },
+        "clearUnderline": {
+          "type": "boolean"
+        },
+        "clearVerticalAlignment": {
+          "type": "boolean"
+        },
+        "color": {
+          "type": "string"
+        },
+        "fontFamily": {
+          "type": "string"
+        },
+        "fontSizeHalfPoints": {
+          "maximum": 65535,
+          "minimum": 1,
+          "type": "integer"
+        },
+        "highlight": {
+          "type": "string"
+        },
+        "italic": {
+          "type": "boolean"
+        },
+        "strikethrough": {
+          "type": "boolean"
+        },
+        "target": {
+          "additionalProperties": false,
+          "properties": {
+            "occurrence": {
+              "description": "Zero-based occurrence among matching targets. Same convention as find.matches[].occurrence and inspect paragraphs.targetOccurrence / tables.occurrence. Omit when the match is unique.",
+              "maximum": 4294967295,
+              "minimum": 0,
+              "type": "integer"
+            },
+            "text": {
+              "description": "Exact text to match",
+              "type": "string"
+            }
+          },
+          "required": [
+            "text"
+          ],
+          "type": "object"
+        },
+        "underline": {
+          "type": "boolean"
+        },
+        "verticalAlignment": {
+          "enum": [
+            "baseline",
+            "superscript",
+            "subscript"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "target"
+      ],
+      "type": "object"
+    },
+    "jsonInput": true
+  },
+  {
+    "id": "set_hyperlink",
+    "kind": "mutate",
+    "nodeExport": "executeDocxSetHyperlink",
+    "description": "Add or clear an external hyperlink on a text target.",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "baseRevision": {
+          "type": "string"
+        },
+        "target": {
+          "additionalProperties": false,
+          "properties": {
+            "occurrence": {
+              "description": "Zero-based occurrence among matching targets. Same convention as find.matches[].occurrence and inspect paragraphs.targetOccurrence / tables.occurrence. Omit when the match is unique.",
+              "maximum": 4294967295,
+              "minimum": 0,
+              "type": "integer"
+            },
+            "text": {
+              "description": "Exact text to match",
+              "type": "string"
+            }
+          },
+          "required": [
+            "text"
+          ],
+          "type": "object"
+        },
+        "url": {
+          "description": "External URL. Omit to clear the hyperlink.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "target"
+      ],
+      "type": "object"
+    },
+    "jsonInput": true
+  },
+  {
+    "id": "set_paragraph_style",
+    "kind": "mutate",
+    "nodeExport": "executeDocxSetParagraphStyle",
+    "description": "Set or clear a direct body paragraph style by display name (e.g. 'Heading 1'), not styleId. Does not format table cells. Target via exact text + zero-based occurrence. Omit style to clear.",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "baseRevision": {
+          "type": "string"
+        },
+        "style": {
+          "description": "Style display name such as 'Heading 1'. Omit to clear.",
+          "type": "string"
+        },
+        "target": {
+          "additionalProperties": false,
+          "properties": {
+            "occurrence": {
+              "description": "Zero-based occurrence among matching targets. Same convention as find.matches[].occurrence and inspect paragraphs.targetOccurrence / tables.occurrence. Omit when the match is unique.",
+              "maximum": 4294967295,
+              "minimum": 0,
+              "type": "integer"
+            },
+            "text": {
+              "description": "Exact text to match",
+              "type": "string"
+            }
+          },
+          "required": [
+            "text"
+          ],
+          "type": "object"
+        }
+      },
+      "required": [
+        "target"
+      ],
+      "type": "object"
+    },
+    "jsonInput": true
+  },
+  {
+    "id": "create_style",
+    "kind": "mutate",
+    "nodeExport": "executeDocxCreateStyle",
+    "description": "Create a reusable real Word paragraph or character style. No default-style authoring. basedOn and next use IDs; apply paragraph styles with set_paragraph_style using the display name.",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "alignment": {
+          "enum": [
+            "left",
+            "center",
+            "right",
+            "both",
+            "distribute"
+          ],
+          "type": "string"
+        },
+        "baseRevision": {
+          "type": "string"
+        },
+        "basedOn": {
+          "description": "Existing parent style ID, for example Heading1",
+          "type": "string"
+        },
+        "bold": {
+          "type": "boolean"
+        },
+        "clear": {
+          "description": "Remove declarations and restore inheritance. Omitted fields stay unchanged. Twips: 20 = 1 pt.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "color": {
+          "description": "RGB without #, for example 124733",
+          "pattern": "^([0-9a-fA-F]{6}|auto)$",
+          "type": "string"
+        },
+        "firstLineIndentTwips": {
+          "maximum": 2147483647,
+          "minimum": -2147483648,
+          "type": "integer"
+        },
+        "fontFamily": {
+          "type": "string"
+        },
+        "fontSizeHalfPoints": {
+          "description": "32 = 16 pt",
+          "maximum": 65535,
+          "minimum": 1,
+          "type": "integer"
+        },
+        "hangingIndentTwips": {
+          "maximum": 2147483647,
+          "minimum": -2147483648,
+          "type": "integer"
+        },
+        "highlight": {
+          "type": "string"
+        },
+        "italic": {
+          "type": "boolean"
+        },
+        "keepLines": {
+          "description": "Keep all lines of this paragraph on one page.",
+          "type": "boolean"
+        },
+        "keepWithNext": {
+          "description": "Keep this paragraph with the following paragraph.",
+          "type": "boolean"
+        },
+        "leftIndentTwips": {
+          "maximum": 2147483647,
+          "minimum": -2147483648,
+          "type": "integer"
+        },
+        "lineSpacing": {
+          "additionalProperties": false,
+          "properties": {
+            "rule": {
+              "enum": [
+                "auto",
+                "exact",
+                "atLeast"
+              ],
+              "type": "string"
+            },
+            "value": {
+              "description": "Auto uses 240 units per line; exact/atLeast use twips (20 per point).",
+              "maximum": 4294967295,
+              "minimum": 1,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "value"
+          ],
+          "type": "object"
+        },
+        "name": {
+          "description": "Unique display name; apply paragraph styles using this name",
+          "type": "string"
+        },
+        "next": {
+          "description": "Existing paragraph style ID",
+          "type": "string"
+        },
+        "rightIndentTwips": {
+          "maximum": 2147483647,
+          "minimum": -2147483648,
+          "type": "integer"
+        },
+        "spacingAfterTwips": {
+          "maximum": 2147483647,
+          "minimum": -2147483648,
+          "type": "integer"
+        },
+        "spacingBeforeTwips": {
+          "maximum": 2147483647,
+          "minimum": -2147483648,
+          "type": "integer"
+        },
+        "strikethrough": {
+          "type": "boolean"
+        },
+        "styleId": {
+          "description": "Stable Word style ID, for example OpenSuiteReportHeading",
+          "type": "string"
+        },
+        "styleType": {
+          "enum": [
+            "paragraph",
+            "character"
+          ],
+          "type": "string"
+        },
+        "underline": {
+          "type": "boolean"
+        },
+        "verticalAlignment": {
+          "enum": [
+            "baseline",
+            "superscript",
+            "subscript"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "styleId",
+        "styleType",
+        "name"
+      ],
+      "type": "object"
+    },
+    "jsonInput": true
+  },
+  {
+    "id": "update_style",
+    "kind": "mutate",
+    "nodeExport": "executeDocxUpdateStyle",
+    "description": "Patch supported properties of one Word style globally. Unspecified properties stay unchanged; clear removes a declaration and restores inheritance. Style type and default flag cannot change.",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "alignment": {
+          "enum": [
+            "left",
+            "center",
+            "right",
+            "both",
+            "distribute"
+          ],
+          "type": "string"
+        },
+        "baseRevision": {
+          "type": "string"
+        },
+        "basedOn": {
+          "description": "Existing parent style ID, for example Heading1",
+          "type": "string"
+        },
+        "bold": {
+          "type": "boolean"
+        },
+        "clear": {
+          "description": "Remove declarations and restore inheritance. Omitted fields stay unchanged. Twips: 20 = 1 pt.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "color": {
+          "description": "RGB without #, for example 124733",
+          "pattern": "^([0-9a-fA-F]{6}|auto)$",
+          "type": "string"
+        },
+        "firstLineIndentTwips": {
+          "maximum": 2147483647,
+          "minimum": -2147483648,
+          "type": "integer"
+        },
+        "fontFamily": {
+          "type": "string"
+        },
+        "fontSizeHalfPoints": {
+          "description": "32 = 16 pt",
+          "maximum": 65535,
+          "minimum": 1,
+          "type": "integer"
+        },
+        "hangingIndentTwips": {
+          "maximum": 2147483647,
+          "minimum": -2147483648,
+          "type": "integer"
+        },
+        "highlight": {
+          "type": "string"
+        },
+        "italic": {
+          "type": "boolean"
+        },
+        "keepLines": {
+          "description": "Keep all lines of this paragraph on one page.",
+          "type": "boolean"
+        },
+        "keepWithNext": {
+          "description": "Keep this paragraph with the following paragraph.",
+          "type": "boolean"
+        },
+        "leftIndentTwips": {
+          "maximum": 2147483647,
+          "minimum": -2147483648,
+          "type": "integer"
+        },
+        "lineSpacing": {
+          "additionalProperties": false,
+          "properties": {
+            "rule": {
+              "enum": [
+                "auto",
+                "exact",
+                "atLeast"
+              ],
+              "type": "string"
+            },
+            "value": {
+              "description": "Auto uses 240 units per line; exact/atLeast use twips (20 per point).",
+              "maximum": 4294967295,
+              "minimum": 1,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "value"
+          ],
+          "type": "object"
+        },
+        "name": {
+          "description": "Unique display name; apply paragraph styles using this name",
+          "type": "string"
+        },
+        "next": {
+          "description": "Existing paragraph style ID",
+          "type": "string"
+        },
+        "rightIndentTwips": {
+          "maximum": 2147483647,
+          "minimum": -2147483648,
+          "type": "integer"
+        },
+        "spacingAfterTwips": {
+          "maximum": 2147483647,
+          "minimum": -2147483648,
+          "type": "integer"
+        },
+        "spacingBeforeTwips": {
+          "maximum": 2147483647,
+          "minimum": -2147483648,
+          "type": "integer"
+        },
+        "strikethrough": {
+          "type": "boolean"
+        },
+        "styleId": {
+          "description": "Stable Word style ID, for example OpenSuiteReportHeading",
+          "type": "string"
+        },
+        "styleType": {
+          "enum": [
+            "paragraph",
+            "character"
+          ],
+          "type": "string"
+        },
+        "underline": {
+          "type": "boolean"
+        },
+        "verticalAlignment": {
+          "enum": [
+            "baseline",
+            "superscript",
+            "subscript"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "styleId",
+        "styleType"
+      ],
+      "type": "object"
+    },
+    "jsonInput": true
+  },
+  {
+    "id": "set_paragraphs_list",
+    "kind": "mutate",
+    "nodeExport": "executeDocxSetParagraphsList",
+    "description": "Apply list formatting to one or more paragraph text targets.",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "baseRevision": {
+          "type": "string"
+        },
+        "continueFromPrevious": {
+          "type": "boolean"
+        },
+        "kind": {
+          "enum": [
+            "bullet",
+            "decimal",
+            "none"
+          ],
+          "type": "string"
+        },
+        "level": {
+          "enum": [
+            0,
+            1,
+            2
+          ],
+          "maximum": 4294967295,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "targets": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "occurrence": {
+                "description": "Zero-based occurrence among matching targets. Same convention as find.matches[].occurrence and inspect paragraphs.targetOccurrence / tables.occurrence. Omit when the match is unique.",
+                "maximum": 4294967295,
+                "minimum": 0,
+                "type": "integer"
+              },
+              "text": {
+                "description": "Exact text to match",
+                "type": "string"
+              }
+            },
+            "required": [
+              "text"
+            ],
+            "type": "object"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "targets",
+        "kind"
+      ],
+      "type": "object"
+    },
+    "jsonInput": true
+  },
+  {
+    "id": "replace_picture",
+    "kind": "mutate",
+    "nodeExport": "executeDocxReplacePicture",
+    "description": "Replace a picture with supplied image bytes, preserving its layout.",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "baseRevision": {
+          "type": "string"
+        },
+        "contentType": {
+          "type": "string"
+        },
+        "handle": {
+          "type": "string"
+        },
+        "replacementBytes": {
+          "contentEncoding": "base64",
+          "type": "string",
+          "x-native-binary": true
+        }
+      },
+      "required": [
+        "handle",
+        "replacementBytes",
+        "contentType"
+      ],
+      "type": "object"
+    },
+    "jsonInput": false
+  },
+  {
+    "id": "delete_picture",
+    "kind": "mutate",
+    "nodeExport": "executeDocxDeletePicture",
+    "description": "Delete a picture identified by an opaque body_blocks handle.",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "baseRevision": {
+          "type": "string"
+        },
+        "handle": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "handle"
+      ],
+      "type": "object"
+    },
+    "jsonInput": true
+  },
+  {
+    "id": "set_picture_size",
+    "kind": "mutate",
+    "nodeExport": "executeDocxSetPictureSize",
+    "description": "Resize an image using a fresh inspect_layout handle. One dimension preserves aspect ratio; both set exact size. EMU: 914,400 per inch.",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "baseRevision": {
+          "type": "string"
+        },
+        "handle": {
+          "type": "string"
+        },
+        "heightEmu": {
+          "maximum": 4294967295,
+          "minimum": 1,
+          "type": "integer"
+        },
+        "widthEmu": {
+          "maximum": 4294967295,
+          "minimum": 1,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "handle"
+      ],
+      "type": "object"
+    },
+    "jsonInput": true
+  },
+  {
+    "id": "set_picture_layout",
+    "kind": "mutate",
+    "nodeExport": "executeDocxSetPictureLayout",
+    "description": "Patch a supported floating image using a fresh inspect_layout image handle. Omitted properties stay unchanged. Inline/floating conversion and tight/through wrapping are unsupported. EMU: 914,400 per inch. Re-inspect after editing.",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "baseRevision": {
+          "type": "string"
+        },
+        "handle": {
+          "type": "string"
+        },
+        "layout": {
+          "additionalProperties": false,
+          "minProperties": 1,
+          "properties": {
+            "distance": {
+              "additionalProperties": false,
+              "minProperties": 1,
+              "properties": {
+                "bottomEmu": {
+                  "maximum": 4294967295,
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "leftEmu": {
+                  "maximum": 4294967295,
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "rightEmu": {
+                  "maximum": 4294967295,
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "topEmu": {
+                  "maximum": 4294967295,
+                  "minimum": 0,
+                  "type": "integer"
+                }
+              },
+              "required": [],
+              "type": "object"
+            },
+            "horizontal": {
+              "additionalProperties": false,
+              "oneOf": [
+                {
+                  "required": [
+                    "alignment"
+                  ]
+                },
+                {
+                  "required": [
+                    "offsetEmu"
+                  ]
+                }
+              ],
+              "properties": {
+                "alignment": {
+                  "description": "start/end mean left/right horizontally, top/bottom vertically.",
+                  "enum": [
+                    "start",
+                    "center",
+                    "end"
+                  ],
+                  "type": "string"
+                },
+                "offsetEmu": {
+                  "maximum": 2147483647,
+                  "minimum": -2147483648,
+                  "type": "integer"
+                },
+                "reference": {
+                  "enum": [
+                    "page",
+                    "margin",
+                    "column",
+                    "paragraph"
+                  ],
+                  "type": "string"
+                }
+              },
+              "required": [
+                "reference"
+              ],
+              "type": "object"
+            },
+            "vertical": {
+              "additionalProperties": false,
+              "oneOf": [
+                {
+                  "required": [
+                    "alignment"
+                  ]
+                },
+                {
+                  "required": [
+                    "offsetEmu"
+                  ]
+                }
+              ],
+              "properties": {
+                "alignment": {
+                  "description": "start/end mean left/right horizontally, top/bottom vertically.",
+                  "enum": [
+                    "start",
+                    "center",
+                    "end"
+                  ],
+                  "type": "string"
+                },
+                "offsetEmu": {
+                  "maximum": 2147483647,
+                  "minimum": -2147483648,
+                  "type": "integer"
+                },
+                "reference": {
+                  "enum": [
+                    "page",
+                    "margin",
+                    "column",
+                    "paragraph"
+                  ],
+                  "type": "string"
+                }
+              },
+              "required": [
+                "reference"
+              ],
+              "type": "object"
+            },
+            "wrap": {
+              "enum": [
+                "square",
+                "topAndBottom",
+                "behindText",
+                "inFrontOfText"
+              ],
+              "type": "string"
+            }
+          },
+          "required": [],
+          "type": "object"
+        }
+      },
+      "required": [
+        "handle",
+        "layout"
+      ],
+      "type": "object"
+    },
+    "jsonInput": true
+  },
+  {
+    "id": "insert_picture",
+    "kind": "mutate",
+    "nodeExport": "executeDocxInsertPicture",
+    "description": "Insert a PNG or JPEG from supplied image bytes.",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "altText": {
+          "type": "string"
+        },
+        "baseRevision": {
+          "type": "string"
+        },
+        "heightEmu": {
+          "maximum": 9007199254740991,
+          "minimum": -9007199254740991,
+          "type": "integer"
+        },
+        "imageBytes": {
+          "contentEncoding": "base64",
+          "type": "string",
+          "x-native-binary": true
+        },
+        "layout": {
+          "additionalProperties": false,
+          "minProperties": 1,
+          "properties": {
+            "distance": {
+              "additionalProperties": false,
+              "minProperties": 1,
+              "properties": {
+                "bottomEmu": {
+                  "maximum": 4294967295,
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "leftEmu": {
+                  "maximum": 4294967295,
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "rightEmu": {
+                  "maximum": 4294967295,
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "topEmu": {
+                  "maximum": 4294967295,
+                  "minimum": 0,
+                  "type": "integer"
+                }
+              },
+              "required": [],
+              "type": "object"
+            },
+            "horizontal": {
+              "additionalProperties": false,
+              "oneOf": [
+                {
+                  "required": [
+                    "alignment"
+                  ]
+                },
+                {
+                  "required": [
+                    "offsetEmu"
+                  ]
+                }
+              ],
+              "properties": {
+                "alignment": {
+                  "description": "start/end mean left/right horizontally, top/bottom vertically.",
+                  "enum": [
+                    "start",
+                    "center",
+                    "end"
+                  ],
+                  "type": "string"
+                },
+                "offsetEmu": {
+                  "maximum": 2147483647,
+                  "minimum": -2147483648,
+                  "type": "integer"
+                },
+                "reference": {
+                  "enum": [
+                    "page",
+                    "margin",
+                    "column",
+                    "paragraph"
+                  ],
+                  "type": "string"
+                }
+              },
+              "required": [
+                "reference"
+              ],
+              "type": "object"
+            },
+            "vertical": {
+              "additionalProperties": false,
+              "oneOf": [
+                {
+                  "required": [
+                    "alignment"
+                  ]
+                },
+                {
+                  "required": [
+                    "offsetEmu"
+                  ]
+                }
+              ],
+              "properties": {
+                "alignment": {
+                  "description": "start/end mean left/right horizontally, top/bottom vertically.",
+                  "enum": [
+                    "start",
+                    "center",
+                    "end"
+                  ],
+                  "type": "string"
+                },
+                "offsetEmu": {
+                  "maximum": 2147483647,
+                  "minimum": -2147483648,
+                  "type": "integer"
+                },
+                "reference": {
+                  "enum": [
+                    "page",
+                    "margin",
+                    "column",
+                    "paragraph"
+                  ],
+                  "type": "string"
+                }
+              },
+              "required": [
+                "reference"
+              ],
+              "type": "object"
+            },
+            "wrap": {
+              "enum": [
+                "square",
+                "topAndBottom",
+                "behindText",
+                "inFrontOfText"
+              ],
+              "type": "string"
+            }
+          },
+          "required": [],
+          "type": "object"
+        },
+        "placement": {
+          "additionalProperties": false,
+          "properties": {
+            "handle": {
+              "description": "Omit for start/end. Required for before/after; copy from the latest relevant document.inspect.",
+              "type": "string"
+            },
+            "kind": {
+              "description": "start/end need no handle; before/after need an inspected body_blocks handle.",
+              "enum": [
+                "start",
+                "end",
+                "before",
+                "after"
+              ],
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        "widthEmu": {
+          "maximum": 9007199254740991,
+          "minimum": -9007199254740991,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "imageBytes",
+        "placement"
+      ],
+      "type": "object"
+    },
+    "jsonInput": false
+  },
+  {
+    "id": "insert_table_row",
+    "kind": "mutate",
+    "nodeExport": "executeDocxInsertTableRow",
+    "description": "Runs DOCX table-row insertion away from Node's event loop and returns a Promise.\nInsert one table row after an anchor; use insert_table_rows when several contiguous rows are known.",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "after": {
+          "additionalProperties": false,
+          "description": "Row selector. Use firstCellText/occurrence when unambiguous; inspect only when a current row handle is needed.",
+          "properties": {
+            "firstCellText": {
+              "type": "string"
+            },
+            "handle": {
+              "type": "string"
+            },
+            "occurrence": {
+              "description": "Zero-based occurrence among matching targets. Same convention as find.matches[].occurrence and inspect paragraphs.targetOccurrence / tables.occurrence. Omit when the match is unique.",
+              "maximum": 4294967295,
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          "required": [],
+          "type": "object"
+        },
+        "baseRevision": {
+          "type": "string"
+        },
+        "cells": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "table": {
+          "additionalProperties": false,
+          "description": "Use exact current headerCells and occurrence when known. Inspect for a missing selector or needed handle. Handles survive read-only turns; content/structure edits clear them immediately, while formatting edits may preserve them only within the edited turn. Occurrence is zero-based.",
+          "properties": {
+            "handle": {
+              "type": "string"
+            },
+            "headerCells": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "occurrence": {
+              "description": "Zero-based occurrence among matching targets. Same convention as find.matches[].occurrence and inspect paragraphs.targetOccurrence / tables.occurrence. Omit when the match is unique.",
+              "maximum": 4294967295,
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          "required": [],
+          "type": "object"
+        }
+      },
+      "required": [
+        "table",
+        "after",
+        "cells"
+      ],
+      "type": "object"
+    },
+    "jsonInput": true
+  },
+  {
+    "id": "insert_table_rows",
+    "kind": "mutate",
+    "nodeExport": "executeDocxInsertTableRows",
+    "description": "Runs DOCX multi-row insertion away from Node's event loop and returns a Promise.\nInsert several contiguous, known rows in one call after a row anchor; prefer this over repeated insert_table_row calls.",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "after": {
+          "additionalProperties": false,
+          "description": "Row selector. Use firstCellText/occurrence when unambiguous; inspect only when a current row handle is needed.",
+          "properties": {
+            "firstCellText": {
+              "type": "string"
+            },
+            "handle": {
+              "type": "string"
+            },
+            "occurrence": {
+              "description": "Zero-based occurrence among matching targets. Same convention as find.matches[].occurrence and inspect paragraphs.targetOccurrence / tables.occurrence. Omit when the match is unique.",
+              "maximum": 4294967295,
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          "required": [],
+          "type": "object"
+        },
+        "baseRevision": {
+          "type": "string"
+        },
+        "rows": {
+          "items": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "type": "array"
+        },
+        "table": {
+          "additionalProperties": false,
+          "description": "Use exact current headerCells and occurrence when known. Inspect for a missing selector or needed handle. Handles survive read-only turns; content/structure edits clear them immediately, while formatting edits may preserve them only within the edited turn. Occurrence is zero-based.",
+          "properties": {
+            "handle": {
+              "type": "string"
+            },
+            "headerCells": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "occurrence": {
+              "description": "Zero-based occurrence among matching targets. Same convention as find.matches[].occurrence and inspect paragraphs.targetOccurrence / tables.occurrence. Omit when the match is unique.",
+              "maximum": 4294967295,
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          "required": [],
+          "type": "object"
+        }
+      },
+      "required": [
+        "table",
+        "after",
+        "rows"
+      ],
+      "type": "object"
+    },
+    "jsonInput": true
+  },
+  {
+    "id": "set_table_cells_text",
+    "kind": "mutate",
+    "nodeExport": "executeDocxSetTableCellsText",
+    "description": "Runs DOCX multi-cell text replacement away from Node's event loop and returns a Promise.\nUpdate known cells in one table. Select each by row (header, label, or checked index) and column (first, header, or checked index); use occurrence for duplicate labels. All selectors use the original table state, so headers and row labels can change in this call. Each update needs expectedCurrentText and replacement.",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "baseRevision": {
+          "type": "string"
+        },
+        "table": {
+          "additionalProperties": false,
+          "description": "Use exact current headerCells and occurrence when known. Inspect for a missing selector or needed handle. Handles survive read-only turns; content/structure edits clear them immediately, while formatting edits may preserve them only within the edited turn. Occurrence is zero-based.",
+          "properties": {
+            "handle": {
+              "type": "string"
+            },
+            "headerCells": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "occurrence": {
+              "description": "Zero-based occurrence among matching targets. Same convention as find.matches[].occurrence and inspect paragraphs.targetOccurrence / tables.occurrence. Omit when the match is unique.",
+              "maximum": 4294967295,
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          "required": [],
+          "type": "object"
+        },
+        "updates": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "expectedCurrentText": {
+                "type": "string"
+              },
+              "replacement": {
+                "type": "string"
+              },
+              "target": {
+                "additionalProperties": false,
+                "description": "Prefer row + column. Use a handle only when these selectors cannot express the cell. Legacy rowLabel + columnHeader remains supported for data cells.",
+                "properties": {
+                  "column": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "expectedHeaderText": {
+                        "description": "Required for kind=index; prevents a shifted column from being edited.",
+                        "type": "string"
+                      },
+                      "index": {
+                        "description": "Zero-based column position for kind=index.",
+                        "maximum": 4294967295,
+                        "minimum": 0,
+                        "type": "integer"
+                      },
+                      "kind": {
+                        "enum": [
+                          "first",
+                          "header",
+                          "index"
+                        ],
+                        "type": "string"
+                      },
+                      "occurrence": {
+                        "description": "Zero-based occurrence among matching targets. Same convention as find.matches[].occurrence and inspect paragraphs.targetOccurrence / tables.occurrence. Omit when the match is unique.",
+                        "maximum": 4294967295,
+                        "minimum": 0,
+                        "type": "integer"
+                      },
+                      "text": {
+                        "description": "First-row column header for kind=header.",
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "kind"
+                    ],
+                    "type": "object"
+                  },
+                  "columnHeader": {
+                    "type": "string"
+                  },
+                  "handle": {
+                    "type": "string"
+                  },
+                  "occurrence": {
+                    "description": "Zero-based occurrence among matching targets. Same convention as find.matches[].occurrence and inspect paragraphs.targetOccurrence / tables.occurrence. Omit when the match is unique.",
+                    "maximum": 4294967295,
+                    "minimum": 0,
+                    "type": "integer"
+                  },
+                  "row": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "expectedFirstCellText": {
+                        "description": "Required for kind=index; prevents a shifted row from being edited.",
+                        "type": "string"
+                      },
+                      "index": {
+                        "description": "Zero-based row position for kind=index.",
+                        "maximum": 4294967295,
+                        "minimum": 0,
+                        "type": "integer"
+                      },
+                      "kind": {
+                        "enum": [
+                          "header",
+                          "label",
+                          "index"
+                        ],
+                        "type": "string"
+                      },
+                      "occurrence": {
+                        "description": "Zero-based occurrence among matching targets. Same convention as find.matches[].occurrence and inspect paragraphs.targetOccurrence / tables.occurrence. Omit when the match is unique.",
+                        "maximum": 4294967295,
+                        "minimum": 0,
+                        "type": "integer"
+                      },
+                      "text": {
+                        "description": "First-cell row label for kind=label.",
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "kind"
+                    ],
+                    "type": "object"
+                  },
+                  "rowLabel": {
+                    "type": "string"
+                  }
+                },
+                "required": [],
+                "type": "object"
+              }
+            },
+            "required": [
+              "target",
+              "expectedCurrentText",
+              "replacement"
+            ],
+            "type": "object"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "table",
+        "updates"
+      ],
+      "type": "object"
+    },
+    "jsonInput": true
+  },
+  {
+    "id": "insert_table_column",
+    "kind": "mutate",
+    "nodeExport": "executeDocxInsertTableColumn",
+    "description": "Insert a table column (header + one cell per existing row).",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "afterColumnHandle": {
+          "type": "string"
+        },
+        "afterColumnHeader": {
+          "type": "string"
+        },
+        "baseRevision": {
+          "type": "string"
+        },
+        "cells": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "header": {
+          "type": "string"
+        },
+        "table": {
+          "additionalProperties": false,
+          "description": "Use exact current headerCells and occurrence when known. Inspect for a missing selector or needed handle. Handles survive read-only turns; content/structure edits clear them immediately, while formatting edits may preserve them only within the edited turn. Occurrence is zero-based.",
+          "properties": {
+            "handle": {
+              "type": "string"
+            },
+            "headerCells": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "occurrence": {
+              "description": "Zero-based occurrence among matching targets. Same convention as find.matches[].occurrence and inspect paragraphs.targetOccurrence / tables.occurrence. Omit when the match is unique.",
+              "maximum": 4294967295,
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          "required": [],
+          "type": "object"
+        }
+      },
+      "required": [
+        "table",
+        "header",
+        "cells"
+      ],
+      "type": "object"
+    },
+    "jsonInput": true
+  },
+  {
+    "id": "create_table",
+    "kind": "mutate",
+    "nodeExport": "executeDocxCreateTable",
+    "description": "Create a table at a paragraph placement.",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "baseRevision": {
+          "type": "string"
+        },
+        "placement": {
+          "additionalProperties": false,
+          "description": "Use start/end without a handle at document boundaries, including initial content in a blank document (which has no handles). For before/after, use only a handle from the latest relevant document.inspect; never invent one. Formatting preserves handles within one model turn; handles expire before the next model turn or after other edits.",
+          "properties": {
+            "handle": {
+              "description": "Omit for start/end. Required for before/after; copy from the latest relevant document.inspect.",
+              "type": "string"
+            },
+            "kind": {
+              "description": "start/end need no handle; before/after need an inspected body_blocks handle.",
+              "enum": [
+                "start",
+                "end",
+                "before",
+                "after"
+              ],
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        "rows": {
+          "items": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "rows",
+        "placement"
+      ],
+      "type": "object"
+    },
+    "jsonInput": true
+  },
+  {
+    "id": "delete_table",
+    "kind": "mutate",
+    "nodeExport": "executeDocxDeleteTable",
+    "description": "Delete a table.",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "baseRevision": {
+          "type": "string"
+        },
+        "table": {
+          "additionalProperties": false,
+          "description": "Use exact current headerCells and occurrence when known. Inspect for a missing selector or needed handle. Handles survive read-only turns; content/structure edits clear them immediately, while formatting edits may preserve them only within the edited turn. Occurrence is zero-based.",
+          "properties": {
+            "handle": {
+              "type": "string"
+            },
+            "headerCells": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "occurrence": {
+              "description": "Zero-based occurrence among matching targets. Same convention as find.matches[].occurrence and inspect paragraphs.targetOccurrence / tables.occurrence. Omit when the match is unique.",
+              "maximum": 4294967295,
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          "required": [],
+          "type": "object"
+        }
+      },
+      "required": [
+        "table"
+      ],
+      "type": "object"
+    },
+    "jsonInput": true
+  },
+  {
+    "id": "delete_table_row",
+    "kind": "mutate",
+    "nodeExport": "executeDocxDeleteTableRow",
+    "description": "Delete a known table row using table + row. Prefer row {kind: 'label', text, occurrence?} or a checked index; a handle is only needed when these cannot express the row.",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "baseRevision": {
+          "type": "string"
+        },
+        "row": {
+          "additionalProperties": false,
+          "description": "Prefer kind=label with text and occurrence when needed, or kind=index with expectedFirstCellText. Use a handle only when these cannot express the row. Older firstCellText + occurrence remains supported.",
+          "properties": {
+            "expectedFirstCellText": {
+              "description": "Required for kind=index; prevents a shifted row from being edited.",
+              "type": "string"
+            },
+            "firstCellText": {
+              "type": "string"
+            },
+            "handle": {
+              "type": "string"
+            },
+            "index": {
+              "description": "Zero-based row position for kind=index.",
+              "maximum": 4294967295,
+              "minimum": 0,
+              "type": "integer"
+            },
+            "kind": {
+              "enum": [
+                "header",
+                "label",
+                "index"
+              ],
+              "type": "string"
+            },
+            "occurrence": {
+              "description": "Zero-based occurrence among matching targets. Same convention as find.matches[].occurrence and inspect paragraphs.targetOccurrence / tables.occurrence. Omit when the match is unique.",
+              "maximum": 4294967295,
+              "minimum": 0,
+              "type": "integer"
+            },
+            "text": {
+              "description": "First-cell row label for kind=label.",
+              "type": "string"
+            }
+          },
+          "required": [],
+          "type": "object"
+        },
+        "table": {
+          "additionalProperties": false,
+          "description": "Use exact current headerCells and occurrence when known. Inspect for a missing selector or needed handle. Handles survive read-only turns; content/structure edits clear them immediately, while formatting edits may preserve them only within the edited turn. Occurrence is zero-based.",
+          "properties": {
+            "handle": {
+              "type": "string"
+            },
+            "headerCells": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "occurrence": {
+              "description": "Zero-based occurrence among matching targets. Same convention as find.matches[].occurrence and inspect paragraphs.targetOccurrence / tables.occurrence. Omit when the match is unique.",
+              "maximum": 4294967295,
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          "required": [],
+          "type": "object"
+        }
+      },
+      "required": [
+        "table",
+        "row"
+      ],
+      "type": "object"
+    },
+    "jsonInput": true
+  },
+  {
+    "id": "delete_table_column",
+    "kind": "mutate",
+    "nodeExport": "executeDocxDeleteTableColumn",
+    "description": "Delete a table column by header or column handle.",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "baseRevision": {
+          "type": "string"
+        },
+        "columnHandle": {
+          "type": "string"
+        },
+        "columnHeader": {
+          "type": "string"
+        },
+        "table": {
+          "additionalProperties": false,
+          "description": "Use exact current headerCells and occurrence when known. Inspect for a missing selector or needed handle. Handles survive read-only turns; content/structure edits clear them immediately, while formatting edits may preserve them only within the edited turn. Occurrence is zero-based.",
+          "properties": {
+            "handle": {
+              "type": "string"
+            },
+            "headerCells": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "occurrence": {
+              "description": "Zero-based occurrence among matching targets. Same convention as find.matches[].occurrence and inspect paragraphs.targetOccurrence / tables.occurrence. Omit when the match is unique.",
+              "maximum": 4294967295,
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          "required": [],
+          "type": "object"
+        }
+      },
+      "required": [
+        "table"
+      ],
+      "type": "object"
+    },
+    "jsonInput": true
+  },
+  {
+    "id": "set_table_formatting",
+    "kind": "mutate",
+    "nodeExport": "executeDocxSetTableFormatting",
+    "description": "Set table alignment/margins/borders.",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "alignment": {
+          "enum": [
+            "left",
+            "center",
+            "right",
+            "clear"
+          ],
+          "type": "string"
+        },
+        "baseRevision": {
+          "type": "string"
+        },
+        "borders": {
+          "enum": [
+            "grid",
+            "none",
+            "clear"
+          ],
+          "type": "string"
+        },
+        "cellMarginBottomTwips": {
+          "maximum": 4294967295,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "cellMarginLeftTwips": {
+          "maximum": 4294967295,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "cellMarginRightTwips": {
+          "maximum": 4294967295,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "cellMarginTopTwips": {
+          "maximum": 4294967295,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "table": {
+          "additionalProperties": false,
+          "description": "Use exact current headerCells and occurrence when known. Inspect for a missing selector or needed handle. Handles survive read-only turns; content/structure edits clear them immediately, while formatting edits may preserve them only within the edited turn. Occurrence is zero-based.",
+          "properties": {
+            "handle": {
+              "type": "string"
+            },
+            "headerCells": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "occurrence": {
+              "description": "Zero-based occurrence among matching targets. Same convention as find.matches[].occurrence and inspect paragraphs.targetOccurrence / tables.occurrence. Omit when the match is unique.",
+              "maximum": 4294967295,
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          "required": [],
+          "type": "object"
+        }
+      },
+      "required": [
+        "table"
+      ],
+      "type": "object"
+    },
+    "jsonInput": true
+  },
+  {
+    "id": "set_table_column_widths",
+    "kind": "mutate",
+    "nodeExport": "executeDocxSetTableColumnWidths",
+    "description": "Set table column widths in twips.",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "baseRevision": {
+          "type": "string"
+        },
+        "table": {
+          "additionalProperties": false,
+          "description": "Use exact current headerCells and occurrence when known. Inspect for a missing selector or needed handle. Handles survive read-only turns; content/structure edits clear them immediately, while formatting edits may preserve them only within the edited turn. Occurrence is zero-based.",
+          "properties": {
+            "handle": {
+              "type": "string"
+            },
+            "headerCells": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "occurrence": {
+              "description": "Zero-based occurrence among matching targets. Same convention as find.matches[].occurrence and inspect paragraphs.targetOccurrence / tables.occurrence. Omit when the match is unique.",
+              "maximum": 4294967295,
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          "required": [],
+          "type": "object"
+        },
+        "widthsTwips": {
+          "items": {
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "table",
+        "widthsTwips"
+      ],
+      "type": "object"
+    },
+    "jsonInput": true
+  },
+  {
+    "id": "set_table_cell_shading",
+    "kind": "mutate",
+    "nodeExport": "executeDocxSetTableCellShading",
+    "description": "Shade known table cells in one call using table + row + column, including header and first-column cells. Fill is 6-digit RGB without #; omit fill to clear. Use set_table_cells_formatting for fill and text together.",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "baseRevision": {
+          "type": "string"
+        },
+        "table": {
+          "additionalProperties": false,
+          "description": "Use exact current headerCells and occurrence when known. Inspect for a missing selector or needed handle. Handles survive read-only turns; content/structure edits clear them immediately, while formatting edits may preserve them only within the edited turn. Occurrence is zero-based.",
+          "properties": {
+            "handle": {
+              "type": "string"
+            },
+            "headerCells": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "occurrence": {
+              "description": "Zero-based occurrence among matching targets. Same convention as find.matches[].occurrence and inspect paragraphs.targetOccurrence / tables.occurrence. Omit when the match is unique.",
+              "maximum": 4294967295,
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          "required": [],
+          "type": "object"
+        },
+        "updates": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "fill": {
+                "type": "string"
+              },
+              "target": {
+                "additionalProperties": false,
+                "description": "Prefer row + column. Use a handle only when these selectors cannot express the cell. Legacy rowLabel + columnHeader remains supported for data cells.",
+                "properties": {
+                  "column": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "expectedHeaderText": {
+                        "description": "Required for kind=index; prevents a shifted column from being edited.",
+                        "type": "string"
+                      },
+                      "index": {
+                        "description": "Zero-based column position for kind=index.",
+                        "maximum": 4294967295,
+                        "minimum": 0,
+                        "type": "integer"
+                      },
+                      "kind": {
+                        "enum": [
+                          "first",
+                          "header",
+                          "index"
+                        ],
+                        "type": "string"
+                      },
+                      "occurrence": {
+                        "description": "Zero-based occurrence among matching targets. Same convention as find.matches[].occurrence and inspect paragraphs.targetOccurrence / tables.occurrence. Omit when the match is unique.",
+                        "maximum": 4294967295,
+                        "minimum": 0,
+                        "type": "integer"
+                      },
+                      "text": {
+                        "description": "First-row column header for kind=header.",
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "kind"
+                    ],
+                    "type": "object"
+                  },
+                  "columnHeader": {
+                    "type": "string"
+                  },
+                  "handle": {
+                    "type": "string"
+                  },
+                  "occurrence": {
+                    "description": "Zero-based occurrence among matching targets. Same convention as find.matches[].occurrence and inspect paragraphs.targetOccurrence / tables.occurrence. Omit when the match is unique.",
+                    "maximum": 4294967295,
+                    "minimum": 0,
+                    "type": "integer"
+                  },
+                  "row": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "expectedFirstCellText": {
+                        "description": "Required for kind=index; prevents a shifted row from being edited.",
+                        "type": "string"
+                      },
+                      "index": {
+                        "description": "Zero-based row position for kind=index.",
+                        "maximum": 4294967295,
+                        "minimum": 0,
+                        "type": "integer"
+                      },
+                      "kind": {
+                        "enum": [
+                          "header",
+                          "label",
+                          "index"
+                        ],
+                        "type": "string"
+                      },
+                      "occurrence": {
+                        "description": "Zero-based occurrence among matching targets. Same convention as find.matches[].occurrence and inspect paragraphs.targetOccurrence / tables.occurrence. Omit when the match is unique.",
+                        "maximum": 4294967295,
+                        "minimum": 0,
+                        "type": "integer"
+                      },
+                      "text": {
+                        "description": "First-cell row label for kind=label.",
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "kind"
+                    ],
+                    "type": "object"
+                  },
+                  "rowLabel": {
+                    "type": "string"
+                  }
+                },
+                "required": [],
+                "type": "object"
+              }
+            },
+            "required": [
+              "target"
+            ],
+            "type": "object"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "table",
+        "updates"
+      ],
+      "type": "object"
+    },
+    "jsonInput": true
+  },
+  {
+    "id": "set_table_cells_formatting",
+    "kind": "mutate",
+    "nodeExport": "executeDocxSetTableCellsFormatting",
+    "description": "Format known whole table cells using table + row + column, including header and first-column cells, without find or inspect handles. Format all relevant cells in one call; set fill and direct text formatting together when needed. Supports fill (6-digit RGB), bold, italic, font family, font size in half-points, and text color. Handles remain available for cells that need them.",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "baseRevision": {
+          "type": "string"
+        },
+        "table": {
+          "additionalProperties": false,
+          "description": "Use exact current headerCells and occurrence when known. Inspect for a missing selector or needed handle. Handles survive read-only turns; content/structure edits clear them immediately, while formatting edits may preserve them only within the edited turn. Occurrence is zero-based.",
+          "properties": {
+            "handle": {
+              "type": "string"
+            },
+            "headerCells": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "occurrence": {
+              "description": "Zero-based occurrence among matching targets. Same convention as find.matches[].occurrence and inspect paragraphs.targetOccurrence / tables.occurrence. Omit when the match is unique.",
+              "maximum": 4294967295,
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          "required": [],
+          "type": "object"
+        },
+        "updates": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "fill": {
+                "type": "string"
+              },
+              "target": {
+                "additionalProperties": false,
+                "description": "Prefer row + column. Use a handle only when these selectors cannot express the cell. Legacy rowLabel + columnHeader remains supported for data cells.",
+                "properties": {
+                  "column": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "expectedHeaderText": {
+                        "description": "Required for kind=index; prevents a shifted column from being edited.",
+                        "type": "string"
+                      },
+                      "index": {
+                        "description": "Zero-based column position for kind=index.",
+                        "maximum": 4294967295,
+                        "minimum": 0,
+                        "type": "integer"
+                      },
+                      "kind": {
+                        "enum": [
+                          "first",
+                          "header",
+                          "index"
+                        ],
+                        "type": "string"
+                      },
+                      "occurrence": {
+                        "description": "Zero-based occurrence among matching targets. Same convention as find.matches[].occurrence and inspect paragraphs.targetOccurrence / tables.occurrence. Omit when the match is unique.",
+                        "maximum": 4294967295,
+                        "minimum": 0,
+                        "type": "integer"
+                      },
+                      "text": {
+                        "description": "First-row column header for kind=header.",
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "kind"
+                    ],
+                    "type": "object"
+                  },
+                  "columnHeader": {
+                    "type": "string"
+                  },
+                  "handle": {
+                    "type": "string"
+                  },
+                  "occurrence": {
+                    "description": "Zero-based occurrence among matching targets. Same convention as find.matches[].occurrence and inspect paragraphs.targetOccurrence / tables.occurrence. Omit when the match is unique.",
+                    "maximum": 4294967295,
+                    "minimum": 0,
+                    "type": "integer"
+                  },
+                  "row": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "expectedFirstCellText": {
+                        "description": "Required for kind=index; prevents a shifted row from being edited.",
+                        "type": "string"
+                      },
+                      "index": {
+                        "description": "Zero-based row position for kind=index.",
+                        "maximum": 4294967295,
+                        "minimum": 0,
+                        "type": "integer"
+                      },
+                      "kind": {
+                        "enum": [
+                          "header",
+                          "label",
+                          "index"
+                        ],
+                        "type": "string"
+                      },
+                      "occurrence": {
+                        "description": "Zero-based occurrence among matching targets. Same convention as find.matches[].occurrence and inspect paragraphs.targetOccurrence / tables.occurrence. Omit when the match is unique.",
+                        "maximum": 4294967295,
+                        "minimum": 0,
+                        "type": "integer"
+                      },
+                      "text": {
+                        "description": "First-cell row label for kind=label.",
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "kind"
+                    ],
+                    "type": "object"
+                  },
+                  "rowLabel": {
+                    "type": "string"
+                  }
+                },
+                "required": [],
+                "type": "object"
+              },
+              "textFormatting": {
+                "additionalProperties": false,
+                "properties": {
+                  "bold": {
+                    "type": "boolean"
+                  },
+                  "color": {
+                    "type": "string"
+                  },
+                  "fontFamily": {
+                    "type": "string"
+                  },
+                  "fontSizeHalfPoints": {
+                    "maximum": 4294967295,
+                    "minimum": 0,
+                    "type": "integer"
+                  },
+                  "italic": {
+                    "type": "boolean"
+                  }
+                },
+                "required": [],
+                "type": "object"
+              }
+            },
+            "required": [
+              "target"
+            ],
+            "type": "object"
+          },
+          "maxItems": 100,
+          "minItems": 1,
+          "type": "array"
+        }
+      },
+      "required": [
+        "table",
+        "updates"
+      ],
+      "type": "object"
+    },
+    "jsonInput": true
+  },
+  {
+    "id": "find_text",
+    "kind": "read",
+    "nodeExport": "findDocxText",
+    "description": "Finds DOCX text away from Node's event loop and returns semantic results.",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "text": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "text"
+      ],
+      "type": "object"
+    },
+    "jsonInput": true
+  },
+  {
+    "id": "inspect_context",
+    "kind": "read",
+    "nodeExport": "inspectDocx",
+    "description": "Inspects bounded DOCX text context away from Node's event loop.",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "after": {
+          "maximum": 4294967295,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "before": {
+          "maximum": 4294967295,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "focus": {
+          "additionalProperties": false,
+          "properties": {
+            "after": {
+              "maximum": 4294967295,
+              "minimum": 0,
+              "type": "integer"
+            },
+            "before": {
+              "maximum": 4294967295,
+              "minimum": 0,
+              "type": "integer"
+            },
+            "kind": {
+              "type": "string"
+            },
+            "limit": {
+              "maximum": 4294967295,
+              "minimum": 0,
+              "type": "integer"
+            },
+            "occurrence": {
+              "maximum": 4294967295,
+              "minimum": 0,
+              "type": "integer"
+            },
+            "offset": {
+              "maximum": 4294967295,
+              "minimum": 0,
+              "type": "integer"
+            },
+            "tableHandle": {
+              "type": "string"
+            },
+            "text": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        "target": {
+          "additionalProperties": false,
+          "description": "Compatibility input for the original context-only binding.",
+          "properties": {
+            "occurrence": {
+              "description": "Zero-based occurrence among matching targets. Same convention as find.matches[].occurrence and inspect paragraphs.targetOccurrence / tables.occurrence. Omit when the match is unique.",
+              "maximum": 4294967295,
+              "minimum": 0,
+              "type": "integer"
+            },
+            "text": {
+              "description": "Exact text to match",
+              "type": "string"
+            }
+          },
+          "required": [
+            "text"
+          ],
+          "type": "object"
+        }
+      },
+      "required": [],
+      "type": "object"
+    },
+    "jsonInput": true
+  }
+]

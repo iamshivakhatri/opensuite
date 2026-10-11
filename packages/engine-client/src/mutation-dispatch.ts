@@ -1,102 +1,18 @@
-import type {
-  DocxEngineBinding,
-  DocxExtendedOperationName,
-  DocxMutationBindingResult,
-} from "./docx-engine-binding.js";
+import type { DocxEngineBinding, DocxMutationBindingResult } from "./docx-engine-binding.js";
+import { DOCX_MUTATION_CAPABILITIES, docxOperationDefinitions } from "./docx-operation-inputs.js";
 
-/** Direct typed binding methods (args shaped by engine-client). */
-const DIRECT: Record<string, keyof DocxEngineBinding> = {
-  insert_note: "executeDocxInsertNote",
-  update_note: "executeDocxUpdateNote",
-  delete_note: "executeDocxDeleteNote",
-  insert_fields: "executeDocxInsertFields",
-  insert_toc: "executeDocxInsertToc",
-  accept_revision: "executeDocxAcceptRevision",
-  reject_revision: "executeDocxRejectRevision",
-  insert_tracked_text: "executeDocxInsertTrackedText",
-  delete_tracked_text: "executeDocxDeleteTrackedText",
-  replace_text_with_tracked_change: "executeDocxReplaceTextWithTrackedChange",
-  add_comment: "executeDocxAddComment",
-  update_comment: "executeDocxUpdateComment",
-  delete_comment: "executeDocxDeleteComment",
-  create_style: "executeDocxCreateStyle",
-  update_style: "executeDocxUpdateStyle",
-  replace_text: "executeDocxReplaceText",
-  insert_paragraph: "executeDocxInsertParagraph",
-  insert_paragraphs: "executeDocxInsertParagraphs",
-  delete_paragraph: "executeDocxDeleteParagraph",
-  set_paragraph_style: "executeDocxSetParagraphStyle",
-  set_paragraph_formatting: "executeDocxSetParagraphFormatting",
-  set_text_formatting: "executeDocxSetTextFormatting",
-  set_table_cells_text: "executeDocxSetTableCellsText",
-  insert_table_rows: "executeDocxInsertTableRows",
-  insert_table_column: "executeDocxInsertTableColumn",
-  create_table: "executeDocxCreateTable",
-  delete_table: "executeDocxDeleteTable",
-  delete_table_row: "executeDocxDeleteTableRow",
-  delete_table_column: "executeDocxDeleteTableColumn",
-  set_table_formatting: "executeDocxSetTableFormatting",
-  set_table_column_widths: "executeDocxSetTableColumnWidths",
-  set_table_cell_shading: "executeDocxSetTableCellShading",
-  set_table_cells_formatting: "executeDocxSetTableCellsFormatting",
-};
-
-/**
- * Extended N-API methods. Includes binary picture ops that are dispatchable
- * programmatically but must NOT be model-exposed (JSON cannot carry Buffer).
- */
-const EXTENDED: Record<string, DocxExtendedOperationName> = {
-  set_content_control_text: "executeDocxSetContentControlText",
-  set_paragraphs_list: "executeDocxSetParagraphsList",
-  set_hyperlink: "executeDocxSetHyperlink",
-  insert_picture: "executeDocxInsertPicture",
-  delete_picture: "executeDocxDeletePicture",
-  set_picture_size: "executeDocxSetPictureSize",
-  set_picture_layout: "executeDocxSetPictureLayout",
-  replace_picture: "executeDocxReplacePicture",
-  insert_page_break: "executeDocxInsertPageBreak",
-  delete_page_break: "executeDocxDeletePageBreak",
-  set_page_setup: "executeDocxSetPageSetup",
-  insert_section_break: "executeDocxInsertSectionBreak",
-  set_section_properties: "executeDocxSetSectionProperties",
-  set_section_header_footer: "executeDocxSetSectionHeaderFooter",
-  set_odd_even_headers: "executeDocxSetOddEvenHeaders",
-  set_header_footer_text: "executeDocxSetHeaderFooterText",
-  set_page_number: "executeDocxSetPageNumber",
-  insert_table_row: "executeDocxInsertTableRow",
-};
-
-/** Every capability the bound host can dispatch (model + programmatic). */
-export const DISPATCHABLE_MUTATION_CAPABILITIES = Object.freeze(
-  [...Object.keys(DIRECT), ...Object.keys(EXTENDED)].sort(),
-);
-
-export type DispatchableMutationCapability =
-  (typeof DISPATCHABLE_MUTATION_CAPABILITIES)[number];
+/** Compatibility inventory; live bindings dispatch from their engine metadata. */
+export const DISPATCHABLE_MUTATION_CAPABILITIES = DOCX_MUTATION_CAPABILITIES;
+export type DispatchableMutationCapability = string;
 
 export async function dispatchMutation(
-  binding: DocxEngineBinding,
-  bytes: Uint8Array,
-  capability: string,
-  operation: Record<string, unknown>,
+  binding: DocxEngineBinding, bytes: Uint8Array, capability: string, operation: Record<string, unknown>,
 ): Promise<DocxMutationBindingResult> {
-  const direct = DIRECT[capability];
-  if (direct) {
-    const method = binding[direct];
-    if (typeof method !== "function") {
-      throw new Error(`${capability} is not available on this binding`);
-    }
-    return (
-      method as (
-        input: Uint8Array,
-        operation: never,
-      ) => Promise<DocxMutationBindingResult>
-    ).call(binding, bytes, operation as never);
-  }
-
-  const extended = EXTENDED[capability];
-  if (!extended || !binding.executeDocxExtended) {
-    throw new Error(`Unsupported mutation capability: ${capability}`);
-  }
-  return binding.executeDocxExtended(bytes, extended, operation);
+  const definition = docxOperationDefinitions(binding.getDocxCapabilities()).find(op => op.id === capability && op.kind === "mutate");
+  if (!definition) throw new Error(`Unsupported mutation capability: ${capability}`);
+  if (definition.jsonInput && binding.executeDocxOperation) return binding.executeDocxOperation(bytes, capability, operation);
+  const method = (binding as unknown as Record<string, unknown>)[definition.nodeExport];
+  if (typeof method === "function") return method.call(binding, bytes, operation);
+  if (binding.executeDocxExtended) return binding.executeDocxExtended(bytes, definition.nodeExport as Parameters<NonNullable<DocxEngineBinding["executeDocxExtended"]>>[1], operation);
+  throw new Error(`${capability} requires a typed binary adapter`);
 }

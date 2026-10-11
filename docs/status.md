@@ -5,7 +5,7 @@ _Read this before starting any work. Keep it a concise current-state handoff, no
 ## What Exists
 
 * Engine identity now belongs to the loaded binding: selected module tree, actual native export match, full SHA-256, captured version/environment, and one shared public/Cloud log format. Runtime passes that binding into the app. Mixed real 0.1.4/0.1.5 loading reports 0.1.5 correctly; nested/renamed/direct binary and changed-env regressions pass.
-* Capability inventory is centralized in the sibling Rust protocol (local changes awaiting a new release). N-API emits operation ID/kind/export metadata directly; client validates exports. Native release tests check inventory/exports/declarations; product tests check schema/dispatch/dynamic discovery coverage. Input schemas/descriptions and typed argument adapters remain in the product; automatic new engine-to-agent tool generation is the next contract step. Published npm pin remains 0.1.5.
+* Rust owns capability IDs and N-API input definitions. Local builds generate SDK declarations, JSON schemas, descriptions, and numeric bounds; the compiled engine supplies them to mutation tools. Duplicate API mutation schemas and dispatch maps are removed; new JSON mutations join dynamic discovery under `document.more_operations`. Existing typed target guards and binary asset handling remain. Published 0.1.5 uses a generated compatibility snapshot; npm pin is unchanged. Read-tool generation and the new release remain pending (A7–A8).
 
 
 * Local-engine footnotes and endnotes: lazy `document.notes` exposes bounded inspection, insert-after ordinary body text, simple note text updates, and safe deletion of reference + record together. A shared Rust implementation preserves imported note IDs, separators, formatting, numbering settings, and unrelated parts; fresh handles protect targeting. Rich/multi-paragraph notes are inspected/preserved but not edited/deleted. Malformed, orphaned, or duplicate references refuse. The existing run-local lifecycle saves once, and note verification blocks malformed output. No numbering UI, citation framework, npm pin, dependency, or Agent Core change. LibreOffice-produced import preservation and render checks passed; manual Word/Google Docs review remains pending.
@@ -67,4 +67,11 @@ _Read this before starting any work. Keep it a concise current-state handoff, no
 
 ## Recommended Next Step
 
-Follow the clarified remediation order: A7 defines operation inputs once in the engine and generates agent tool schemas; A8 releases the engine, updates the npm pin, and verifies public/Cloud images (Cloud parity/pinning is F5–F6); D1 builds the fixed 10-document baseline for recurring reports, proposals, and branded DOCX edits. Gathering D1 examples can overlap A7. Use D1 results to choose later D/E changes. Cloud linux/arm64 candidate built from a clean archive of public `f01c31f8ba3260576603ee1846559891b8a2bb52`; build/runtime native acceptance, Cloud imports, LibreOffice/font presence, and real TOC/PAGE refresh pass. Production GitHub-fetch build and a real x64 build remain pending. Tests: API 427 pass / 23 DB skips, core 40 pass, engine-client 36 pass / 2 optional skips, native 33 pass, Rust workspace 234 pass, Cloud 9 pass / 2 DB skips; API/web/core/Cloud typechecks pass. Changed Rust crates lint cleanly; full workspace lint fails on existing PPTX warnings. No push, engine publish, deployment, or paid model calls. Your live-status UI changes remain uncommitted and separate.
+Finish A7 read-tool generation, then A8 package/platform checks, publication,
+exact npm pin updates, and public/Cloud image verification. D1 manual document
+and browser/Word testing belongs to the user; its fixed set and results remain
+pending. Current mutation checkpoint: API build passes, API 428 pass / 23 DB
+skips, engine-client 37 pass / 2 optional skips, native 35 pass, changed Rust
+crates lint cleanly with 7 tests passing. Selected local-engine mutation and
+discovery checks pass. No new publication, deployment, or paid model calls.
+The user's live-status UI changes remain separate.
