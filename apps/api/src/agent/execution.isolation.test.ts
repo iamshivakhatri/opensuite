@@ -643,7 +643,8 @@ test("successful agent-core finish_tool settles completed + agent.completed", as
 
 test("missing requested data preserves work and settles as input needed", async () => {
   const persistence = memoryPersistence("user-1");
-  const execution = createAgentExecutionService(baseDeps(persistence, async (input) => {
+  const reports: AgentRunReport[] = [];
+  const execution = createAgentExecutionService({ ...baseDeps(persistence, async (input) => {
     assert.ok(input.tools?.finish_with_input_needed);
     await input.onEvent?.({ type: "text_delta", delta: "KPIs updated. Budget unchanged; new budget figures are needed." });
     await input.onEvent?.({ type: "tool_started", toolCallId: "finish-1", toolName: "finish_with_input_needed" });
@@ -651,10 +652,11 @@ test("missing requested data preserves work and settles as input needed", async 
     await input.onEvent?.({ type: "tool_completed", toolCallId: "finish-1", toolName: "finish_with_input_needed" });
     const result = softResult("finish_tool", "KPIs updated. Budget unchanged; new budget figures are needed.");
     return { ...result, metrics: { ...result.metrics, toolCalls: [{ sequence: 0, turn: 1, toolName: "finish_with_input_needed", kind: "read", durationMs: 0, outcome: "success" }] } };
-  }));
+  }), agentRunReportSink: (report) => { reports.push(report); } });
   const result = await (await execution.start({ userId: "user-1", threadId: "thread-1", instruction: "Update KPIs and budget" })).result;
   assert.equal(result.run.status, "completed_with_input_needed");
   assert.equal(result.run.errorCode, null);
+  assert.equal(reports[0]?.outcome, "partial");
   assert.match(result.assistantMessage?.content ?? "", /Budget unchanged/);
   assert.deepEqual(persistence.steps.map((step) => step.name), ["finish_with_input_needed"]);
 });
@@ -3001,4 +3003,95 @@ test("Continue restores a switched target from saved steps and validates it agai
   missing = true;
   await assert.rejects(resume(), (error: unknown) => (error as { code: string }).code === "DOCUMENT_NOT_FOUND");
   assert.equal(modelCalls, 2);
+});
+
+test("Northstar header formatting recovers the first-column selector and saves verified formatting", async () => {
+  const binding = await createNapiDocxEngineBinding();
+  const seed = bindDocxDocument({ binding, bytes: buildMinimalDocx(["Business Impact and KPI Targets"]) });
+  const rows = [["Metric", "Baseline", "Target After Deployment"], ["Mean Time to Detect", "15 minutes", "10 minutes"]];
+  assert.equal((await seed.mutate("create_table", { placement: { kind: "end" }, rows })).ok, true);
+  const table = { headerCells: rows[0] };
+  const update = (column: unknown) => ({ target: { row: { kind: "header" }, column }, fill: "D9E2F3", textFormatting: { bold: true } });
+  const { result, state, binding: runtimeBinding } = await runScriptedDocx({
+    bytes: Buffer.from(seed.currentBytes()), instruction: "Format this document: bold and shade all three KPI table headers.",
+    turns: [
+      { calls: [{ name: "capabilities_load", input: { ids: ["document.tables.styling"] } }] },
+      { calls: [{ name: "document_set_table_cells_formatting", input: { table, updates: rows[0]!.map(text => update({ kind: "header", text })) } }] },
+      { calls: [{ name: "document_set_table_cells_formatting", input: { table, updates: [update({ kind: "first" }), ...rows[0]!.slice(1).map(text => update({ kind: "header", text }))] } }] },
+      { text: "Updated and saved the KPI headers.", calls: [{ name: "finish", input: {} }] },
+    ],
+  });
+  const report = state.reports[0]!;
+  console.info(`PHASE2_MEASUREMENT ${JSON.stringify({ scenario: "KPI header", outcome: report.outcome, recovered: report.tools.find(tool => tool.outcome === "failure")?.recovered })}`);
+  assert.equal(result.run.status, "completed", result.run.errorMessage ?? "");
+  assert.equal(report.outcome, "success");
+  assert.equal(report.failures[0]?.code, "TABLE_COLUMN_NOT_FOUND");
+  assert.equal(report.tools.find(tool => tool.outcome === "failure")?.recovered, true);
+  assert.equal(state.appends, 1);
+  assert.equal(result.assistantMessage?.content, "Updated and saved the KPI headers.");
+  const snapshot = await inspectDocxStyleSnapshot(state.bytes, runtimeBinding);
+  assert.equal(snapshot.tables[0]?.firstRowBoldRunCount, 3);
+  assert.equal(snapshot.tables[0]?.shadingColors.find(color => color.value === "D9E2F3")?.count, 3);
+  assert.ok(state.persistence.steps.some(step => step.status === "failed"), "historical errors remain in the transcript");
+});
+
+test("client-pricing batch failure recovers through individual replacements without hiding a remaining client reference", async () => {
+  for (const complete of [true, false]) {
+    const operations = [
+      { target: { text: "Old Client" }, expectedCurrentText: "Old Client", replacement: "Blue Harbor" },
+      ...[["Subtotal 100", "Subtotal 200"], ["Tax 10", "Tax 20"], ["Total 110", "Total 220"]].map(([text, replacement]) => ({ target: { text }, expectedCurrentText: text, replacement })),
+    ];
+    const { result, state, binding } = await runScriptedDocx({
+      bytes: Buffer.from(buildMinimalDocx(["Proposal for Old Client", "Prepared for Old Client", "Subtotal 100", "Tax 10", "Total 110"])),
+      instruction: "Update this document: replace all Old Client references with Blue Harbor and update subtotal, tax and total to 200, 20 and 220.",
+      turns: [
+        { calls: [{ name: "document_batch_replace_text", input: { operations } }] },
+        { calls: [{ name: "document_replace_text", input: { ...operations[0], target: { text: "Old Client", occurrence: 0 } } }] },
+        ...(complete ? [{ calls: [{ name: "document_replace_text", input: operations[0] }] }] : []),
+        { calls: operations.slice(1).map(input => ({ name: "document_replace_text", input })) },
+        { text: "Updated all client references and pricing.", calls: [{ name: "finish", input: {} }] },
+      ],
+    });
+    const report = state.reports[0]!;
+    console.info(`PHASE2_MEASUREMENT ${JSON.stringify({ scenario: complete ? "client-pricing recovered" : "client-pricing incomplete", outcome: report.outcome, recovered: report.tools.find(tool => tool.outcome === "failure")?.recovered })}`);
+    assert.equal(report.outcome, complete ? "success" : "partial");
+    assert.equal(result.run.status, complete ? "completed" : "failed");
+    assert.equal(report.failures[0]?.code, "TARGET_AMBIGUOUS");
+    assert.equal(report.tools.find(tool => tool.outcome === "failure")?.recovered, complete);
+    assert.equal(state.appends, 1);
+    assert.equal((await binding.findDocxText(state.bytes, { text: "Old Client" })).matchCount, complete ? 0 : 1);
+    assert.equal((await binding.findDocxText(state.bytes, { text: "Blue Harbor" })).matchCount, complete ? 2 : 1);
+    for (const text of ["Subtotal 200", "Tax 20", "Total 220"]) assert.equal((await binding.findDocxText(state.bytes, { text })).matchCount, 1);
+    if (!complete) {
+      assert.equal(result.run.errorCode, "AGENT_PARTIAL_COMPLETION");
+      assert.match(result.assistantMessage?.content ?? "", /partially[\s\S]*batch_replace_text/);
+      assert.notEqual(result.assistantMessage?.content, "Updated all client references and pricing.");
+    }
+  }
+});
+
+test("recovering the first mutation does not hide a skipped sibling", async () => {
+  for (const retrySibling of [false, true]) {
+    const replace = (text: string) => ({ target: { text }, expectedCurrentText: text, replacement: `${text} updated` });
+    const { result, state, binding } = await runScriptedDocx({
+      bytes: Buffer.from(buildMinimalDocx(["KPI A", "KPI B"])), instruction: "Update this document: update KPI A and KPI B.",
+      turns: [
+        { calls: [
+          { name: "document_replace_text", input: { ...replace("KPI A"), expectedCurrentText: "Wrong guard" } },
+          { name: "document_replace_text", input: replace("KPI B") },
+        ] },
+        { calls: [{ name: "document_replace_text", input: replace("KPI A") }] },
+        ...(retrySibling ? [{ calls: [{ name: "document_replace_text", input: replace("KPI B") }] }] : []),
+        { text: "Updated both KPIs.", calls: [{ name: "finish", input: {} }] },
+      ],
+    });
+    const report = state.reports[0]!;
+    const skipped = report.tools.find(tool => tool.failureCode === "PRIOR_MUTATION_FAILED");
+    assert.ok(skipped);
+    assert.equal(skipped.recovered, retrySibling);
+    assert.equal(report.outcome, retrySibling ? "success" : "partial");
+    assert.equal(result.run.status, retrySibling ? "completed" : "failed");
+    assert.equal(state.appends, 1);
+    assert.equal((await binding.findDocxText(state.bytes, { text: "KPI B updated" })).matchCount, retrySibling ? 1 : 0);
+  }
 });

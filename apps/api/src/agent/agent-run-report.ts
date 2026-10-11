@@ -5,6 +5,8 @@ import {
   type StopReason,
 } from "@opensuite/agent-core";
 
+import { BATCH_TOOLS } from "./document-tools.js";
+
 import type { ProviderCredentialProvider } from "../credentials/types.js";
 import {
   estimateModelCost,
@@ -20,7 +22,7 @@ import {
 /**
  * Run telemetry vocabulary (AgentRunReport + compact log):
  * - modelTurns / turns — model invocation cycles
- * - toolCalls — tool invocations executed (any kind / outcome)
+ * - toolCalls — executed calls plus mutations rejected by the runtime guard
  * - tools[].kind read|mutate|other — per-call classification
  * - document.workingMutationCount / editsApplied — successful logical
  *   mutations on the run-local working document (batch items count each)
@@ -28,7 +30,7 @@ import {
  *   document_version advances (normally 0–1 per run; not working revisions)
  * - failures[] — structured events (tool attempt errors, runtime bounds,
  *   model errors). `outcome` is authoritative for terminal run result.
- *   Same-tool later success for the exact work recovers a tool error; unrecovered mutate
+ *   Later success for the exact work recovers a tool error; unrecovered mutate
  *   failures make a finish_tool stop `partial` (with a version) or `failure`.
  * Compact logs use toolErrors= for tool-source count only.
  */
@@ -213,6 +215,7 @@ export interface ComposeAgentRunReportInput {
   /** Product stop reason when the run returned normally from agent-core. */
   readonly stopReason?: StopReason | MetricsStopReason;
   readonly cancelled?: boolean;
+  readonly inputNeeded?: boolean;
   /** True when the runtime threw (model/infra error path). */
   readonly thrown?: boolean;
   readonly initialDocumentId?: string | null;
@@ -229,27 +232,29 @@ export interface ComposeAgentRunReportInput {
   readonly pricingProvider?: ProviderCredentialProvider;
 }
 
-/** Mutate tool names with failed work that no same-tool success redid. */
+/** Mutate attempts that remain unresolved, including work skipped by the mutation guard. */
 export function unrecoveredFailedMutateToolNames(
   metrics: AgentRunMetrics | null | undefined,
 ): string[] {
-  if (!metrics) return [];
-  const mutates = metrics.toolCalls.filter((call) => call.kind === "mutate");
-  const failedNames = new Set(mutates.filter((call) => call.outcome === "failure").map((call) => call.toolName));
-  return [...failedNames].filter((name) => !failedWorkRecovered(mutates.filter((call) => call.toolName === name)));
+  const calls = metrics?.toolCalls ?? [];
+  const unresolved = calls.filter(call => call.kind === "mutate" && call.outcome === "failure" &&
+    !failedMutationRecovered(call, calls));
+  return [...new Set(unresolved.map(call => call.toolName))];
 }
 
-/**
- * A later success must match both the exact target and requested change.
- * Missing identities, changed handles, and earlier successes prove nothing
- * about a failed edit. Repeated failed attempts may share one successful retry.
- */
-function failedWorkRecovered(calls: readonly AgentRunMetrics["toolCalls"][number][]): boolean {
-  const failures = calls.filter((call) => call.outcome === "failure");
-  const successes = calls.filter((call) => call.outcome === "success");
-  return failures.every((failed) => failed.effectKeys?.length &&
-    failed.effectKeys.every((key) => key !== "|" && key !== "" && successes.some((success) =>
-      success.sequence > failed.sequence && success.effectKeys?.includes(key))));
+function mutationName(name: string): string {
+  const batch = Object.entries(BATCH_TOOLS).find(([, tool]) => name === `document.${tool}`);
+  return batch ? `document.${batch[0]}` : name;
+}
+
+/** Match every exact target + effect, across a batch wrapper or its individual operation. */
+function failedMutationRecovered(failed: AgentRunMetrics["toolCalls"][number], calls: AgentRunMetrics["toolCalls"]): boolean {
+  if (!failed.effectKeys?.length) return false;
+  // shortcut: other changed selectors stay unresolved; broader matches need evidence of the saved target.
+  return failed.effectKeys.every(key => key !== "|" && key !== "" &&
+    calls.some(success => success.outcome === "success" && success.kind === "mutate" &&
+      success.sequence > failed.sequence && mutationName(success.toolName) === mutationName(failed.toolName) &&
+      success.effectKeys?.includes(key)));
 }
 
 /**
@@ -263,6 +268,7 @@ function failedWorkRecovered(calls: readonly AgentRunMetrics["toolCalls"][number
 export function deriveRunOutcome(input: {
   readonly cancelled?: boolean;
   readonly terminalFailure?: boolean;
+  readonly inputNeeded?: boolean;
   readonly versionAdvanceCount: number;
   readonly unrecoveredFailedMutates?: number;
 }): AgentRunOutcome {
@@ -271,6 +277,7 @@ export function deriveRunOutcome(input: {
   if (input.terminalFailure) return "failure";
   if ((input.unrecoveredFailedMutates ?? 0) > 0 && input.versionAdvanceCount > 0) return "partial";
   if ((input.unrecoveredFailedMutates ?? 0) > 0) return "failure";
+  if (input.inputNeeded) return "partial";
   return "success";
 }
 
@@ -325,6 +332,7 @@ export function composeAgentRunReport(
     terminalFailure,
     versionAdvanceCount: advances.length,
     unrecoveredFailedMutates,
+    inputNeeded: input.inputNeeded,
   });
 
   const modelTimeMs = input.metrics.modelTurns.reduce(
@@ -397,8 +405,7 @@ export function composeAgentRunReport(
         ? { failureCode: call.failureCode }
         : {}),
       ...(call.kind === "mutate" && call.outcome === "failure" ? {
-        recovered: failedWorkRecovered([call, ...input.metrics.toolCalls.filter(later =>
-          later.toolName === call.toolName && later.sequence > call.sequence)]),
+        recovered: failedMutationRecovered(call, input.metrics.toolCalls),
       } : {}),
     })),
     usage: {

@@ -503,6 +503,8 @@ export async function verifyDocumentUpdate(input: {
         ? `Partial update: unresolved operations: ${unrecovered.join(", ")}`
         : `Could not complete requested update: ${unrecovered.join(", ")}`,
     });
+  } else if (input.inputNeeded) {
+    checks.push({ id: "task", status: "warning", message: "Available work completed; requested work still needs input" });
   } else if (refreshRequired) {
     checks.push({
       id: "task",
@@ -510,7 +512,7 @@ export async function verifyDocumentUpdate(input: {
       message: "Update requires external field refresh (refresh_required)",
     });
   } else if (mutations.length) {
-    checks.push({ id: "task", status: "pass", message: "Requested mutations completed" });
+    checks.push({ id: "task", status: "pass", message: "Recorded document mutations completed; no unresolved mutation attempts" });
   }
   return checks;
 }

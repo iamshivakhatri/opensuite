@@ -273,7 +273,7 @@ export async function runAgent(input: RunAgentInput): Promise<RunAgentResult> {
       for (const call of mutations) {
         if (input.signal?.aborted) throw abortReason(input.signal);
         if (failedMutationCallId) {
-          recordSkip({ input: turnInput, call, results, reason: "PRIOR_MUTATION_FAILED", failedToolCallId: failedMutationCallId });
+          recordSkip({ input: turnInput, call, results, metrics, turn: turns, reason: "PRIOR_MUTATION_FAILED", failedToolCallId: failedMutationCallId });
           continue;
         }
         const outcome = await runCall({
@@ -346,7 +346,7 @@ async function runCall(args: {
       toolName,
       reason: "FUSE_TRIPPED",
     });
-    recordSkip({ input, call, results, reason: "FUSE_TRIPPED" });
+    recordSkip({ input, call, results, metrics, turn, reason: "FUSE_TRIPPED" });
     return "skipped";
   }
 
@@ -354,14 +354,6 @@ async function runCall(args: {
 
   const sequence = metrics.allocToolSequence();
   const kind = toolKindMetric(tool);
-  const effects = (output: unknown) => {
-    try {
-      const keys = tool?.effectKeys?.(call.input, output) ?? [];
-      return keys.length ? { effectKeys: [...keys] } : {};
-    } catch {
-      return {};
-    }
-  };
   const started = now();
   if (input.onDiagnostic) emitDiagnostic(input.onDiagnostic, "tool_started", {
     turn, toolCallId, toolName, modelFacingName: providerToolName, arguments: call.input, startedAtMs: started,
@@ -404,7 +396,7 @@ async function runCall(args: {
         ...(softFailure.reasonCode !== undefined
           ? { failureCode: softFailure.reasonCode }
           : {}),
-        ...effects(output),
+        ...toolEffects(tool, call.input, output),
       });
       await input.onEvent?.({
         type: "tool_failed",
@@ -422,7 +414,7 @@ async function runCall(args: {
       kind,
       durationMs: completed - started,
       outcome: "success",
-      ...effects(output),
+      ...toolEffects(tool, call.input, output),
     });
     await input.onEvent?.({ type: "tool_completed", toolCallId, toolName });
     return "ok";
@@ -454,7 +446,7 @@ async function runCall(args: {
       durationMs,
       outcome: "failure",
       failureCode: compactFailureCode(message),
-      ...effects(undefined),
+      ...toolEffects(tool, call.input, undefined),
     });
     results.set(toolCallId, {
       type: "tool-result",
@@ -479,14 +471,33 @@ function compactFailureCode(message: string): string {
   return "TOOL_FAILED";
 }
 
+function toolEffects(tool: AgentTool | undefined, input: unknown, output: unknown) {
+  try {
+    const keys = tool?.effectKeys?.(input, output) ?? [];
+    return keys.length ? { effectKeys: [...keys] } : {};
+  } catch {
+    return {};
+  }
+}
+
 function recordSkip(args: {
   readonly input: RunAgentInput;
   readonly call: ToolCall;
   readonly results: Map<string, ToolResultPart>;
   readonly reason: ToolSkipReason;
   readonly failedToolCallId?: string;
+  readonly metrics: RunMetricsCollector;
+  readonly turn: number;
 }): void {
   const { call, results, reason } = args;
+  const toolName = resolveToolName(args.input.tools, call.toolName);
+  const tool = args.input.tools?.[toolName];
+  // An unexecuted mutation is still outstanding work for the host to resolve.
+  if (tool?.kind === "mutate") args.metrics.recordToolCall({
+    sequence: args.metrics.allocToolSequence(), turn: args.turn, toolName, kind: "mutate",
+    durationMs: 0, outcome: "failure", failureCode: reason,
+    ...toolEffects(tool, call.input, undefined),
+  });
   results.set(call.toolCallId, {
     type: "tool-result",
     toolCallId: call.toolCallId,

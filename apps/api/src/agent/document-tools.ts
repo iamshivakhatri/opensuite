@@ -74,7 +74,7 @@ function op(
   });
 }
 
-const BATCH_TOOLS = {
+export const BATCH_TOOLS = {
   replace_text: "batch_replace_text",
   set_paragraph_style: "batch_paragraph_styles",
   set_paragraph_formatting: "batch_paragraph_formatting",
@@ -227,9 +227,14 @@ export function createDocumentTools(document: BoundDocumentHost): AgentToolSet {
 const TARGET_FIELDS = new Set(["table", "target", "targets", "row", "after", "placement", "columnHeader", "styleId"]);
 
 /**
- * One `target|effect` key per unit of attempted work: each batch operation from
- * the first failed one, each table update, or the whole call. Preserve exact
- * selectors and values: changed handles cannot prove the same object was edited.
+ * One or more `target|effect` keys per unit of attempted work: each batch
+ * operation from the first failed one, each table update, or the whole call.
+ * Preserve exact selectors and values: changed handles cannot prove the same
+ * object was edited.
+ *
+ * Always emit a document-agnostic key. When `documentId` is set, also emit a
+ * document-scoped key so recovery can match "edit before select_document" to
+ * the later bound retry, while still refusing cross-document matches.
  */
 export function mutationEffectKeys(input: unknown, output: unknown, documentId?: string): string[] {
   const record = isRecord(input) ? input : {};
@@ -241,15 +246,39 @@ export function mutationEffectKeys(input: unknown, output: unknown, documentId?:
     const { updates, ...shared } = record;
     units = updates.filter(isRecord).map((update) => ({ ...shared, ...update }));
   }
-  return units.map((unit) => {
-    const target: Record<string, unknown> = documentId ? { documentId } : {};
+  const keys: string[] = [];
+  for (const unit of units) {
+    const target: Record<string, unknown> = {};
     const effect: Record<string, unknown> = {};
-    for (const [key, value] of Object.entries(unit)) {
+    for (const [key, value] of Object.entries(normalizeFirstColumn(unit))) {
       if (key === "expectedCurrentText" || key === "baseRevision") continue;
       (TARGET_FIELDS.has(key) ? target : effect)[key] = value;
     }
-    return `${identityHash(target)}|${identityHash(effect)}`;
-  });
+    const effectHash = identityHash(effect);
+    const agnostic = `${identityHash(target)}|${effectHash}`;
+    keys.push(agnostic);
+    if (documentId) {
+      const scoped = `${identityHash({ documentId, ...target })}|${effectHash}`;
+      if (scoped !== agnostic) keys.push(scoped);
+    }
+  }
+  return keys;
+}
+
+/** The engine's header selector excludes column zero; its explicit first selector means the same cell. */
+function normalizeFirstColumn(unit: Record<string, unknown>): Record<string, unknown> {
+  const table = isRecord(unit.table) ? unit.table : {};
+  const target = isRecord(unit.target) ? unit.target : {};
+  const column = isRecord(target.column) ? target.column : {};
+  const headers = Array.isArray(table.headerCells) ? table.headerCells : [];
+  const text = typeof column.text === "string" ? column.text.trim() : null;
+  if (!table.handle && column.kind === "header" && text !== null &&
+      typeof headers[0] === "string" && headers[0].trim() === text &&
+      headers.filter(header => typeof header === "string" && header.trim() === text).length === 1 &&
+      (column.occurrence === undefined || column.occurrence === 0)) {
+    return { ...unit, target: { ...target, column: { kind: "first" } } };
+  }
+  return unit;
 }
 
 function identityHash(value: Record<string, unknown>): string {

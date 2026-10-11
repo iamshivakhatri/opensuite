@@ -304,6 +304,8 @@ export async function emitRunReport(input: {
         : {}),
       cancelled: input.cancelled,
       thrown: input.thrown,
+      inputNeeded: (input.stopReason ?? input.metrics.stopReason) === "finish_tool" &&
+        isInputNeededTool(input.metrics.toolCalls.filter(call => call.outcome === "success" && isFinishTool(call.toolName)).at(-1)?.toolName),
       initialDocumentId: input.initialDocumentId,
       finalDocumentId: input.finalDocumentId,
       initialVersionId: input.initialVersionId,

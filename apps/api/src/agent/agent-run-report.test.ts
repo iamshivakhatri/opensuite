@@ -75,6 +75,7 @@ const openrouterInclusivePricing: ModelPricingEntry = {
 };
 
 test("deriveRunOutcome: cancelled / partial / failure / success", () => {
+  assert.equal(deriveRunOutcome({ versionAdvanceCount: 0, inputNeeded: true }), "partial");
   assert.equal(
     deriveRunOutcome({ cancelled: true, versionAdvanceCount: 0 }),
     "cancelled",
@@ -688,15 +689,43 @@ test("failed mutate work needs a later success for the exact target and change",
     table: { headerCells: ["Name", "Role"] },
     updates: [{ target: { row: { kind: "label", text: row }, column: { kind: "header", text: "Role" } }, expectedCurrentText: "x", replacement }],
   });
-  const call = (sequence: number, outcome: "success" | "failure", input: unknown, toolName = "document.set_table_cells_text") => ({
-    sequence, turn: sequence, toolName, kind: "mutate" as const, durationMs: 1, outcome, effectKeys: mutationEffectKeys(input, undefined),
+  const call = (
+    sequence: number,
+    outcome: "success" | "failure",
+    input: unknown,
+    toolName = "document.set_table_cells_text",
+    documentId?: string,
+  ) => ({
+    sequence, turn: sequence, toolName, kind: "mutate" as const, durationMs: 1, outcome,
+    effectKeys: mutationEffectKeys(input, undefined, documentId),
   });
   const unrecovered = (...toolCalls: ReturnType<typeof call>[]) => unrecoveredFailedMutateToolNames(baseMetrics({ toolCalls }));
 
   assert.deepEqual(unrecovered(call(1, "failure", cell("Sam", "CFO")), call(2, "success", cell("Ada", "Founder"))), ["document.set_table_cells_text"]);
   assert.deepEqual(unrecovered(call(1, "failure", cell("Sam", "CFO")), call(2, "success", cell("Sam", "CFO"))), []);
+  const report = composeAgentRunReport({
+    runId: "separate-failures", instruction: "update both cells",
+    metrics: baseMetrics({ toolCalls: [
+      call(1, "failure", cell("Sam", "CFO")), call(2, "success", cell("Sam", "CFO")),
+      call(3, "failure", cell("Ada", "Founder")),
+    ] }),
+    versionAdvances: [{ fromVersionId: "v1", toVersionId: "v2" }],
+  });
+  assert.equal(report.outcome, "partial");
+  assert.equal(report.tools[0]?.recovered, true, "a later unrelated failure does not erase earlier recovery");
+  assert.equal(report.tools[2]?.recovered, false);
   assert.deepEqual(unrecovered(call(1, "failure", cell("Sam", "CFO")), call(2, "success", cell("Ada", "CFO"))), ["document.set_table_cells_text"]);
   assert.deepEqual(unrecovered(call(1, "failure", cell("Ada", "Founder")), call(2, "success", cell("Ada", "Owner"))), ["document.set_table_cells_text"]);
+  // Unbound NO_ACTIVE_DOCUMENT failure recovers after select_document + same edit.
+  assert.deepEqual(unrecovered(call(1, "failure", cell("Sam", "CFO")), call(2, "success", cell("Sam", "CFO"), "document.set_table_cells_text", "doc-1")), []);
+  // Cross-document success does not recover a document-scoped failure.
+  assert.deepEqual(
+    unrecovered(
+      call(1, "failure", cell("Sam", "CFO"), "document.set_table_cells_text", "doc-1"),
+      call(2, "success", cell("Sam", "CFO"), "document.set_table_cells_text", "doc-2"),
+    ),
+    ["document.set_table_cells_text"],
+  );
   // A corrected selector alone does not prove the original edit was completed.
   const replace = (text: string) => ({ target: { text }, expectedCurrentText: text, replacement: "Team list" });
   assert.deepEqual(unrecovered(call(1, "failure", replace("Team rostr"), "document.replace_text"), call(2, "success", replace("Team roster"), "document.replace_text")), ["document.replace_text"]);
@@ -716,6 +745,13 @@ test("failed mutate work needs a later success for the exact target and change",
 });
 
 test("edit identities preserve case, spacing, and nested handles", () => {
+  const header = (table: unknown, column: unknown) => ({ table, target: { column }, textFormatting: { bold: true } });
+  for (const table of [{ headerCells: ["Name", "Name"] }, { handle: "table-1", headerCells: ["Name"] }]) {
+    assert.notDeepEqual(
+      mutationEffectKeys(header(table, { kind: "header", text: "Name" }), undefined),
+      mutationEffectKeys(header(table, { kind: "first" }), undefined),
+    );
+  }
   const replace = (replacement: string) => ({ target: { text: "Company" }, expectedCurrentText: "Company", replacement });
   for (const replacement of ["COMPANY", "Company ", "Company  name", "company"]) {
     assert.notDeepEqual(mutationEffectKeys(replace("Company"), undefined), mutationEffectKeys(replace(replacement), undefined));
@@ -723,6 +759,12 @@ test("edit identities preserve case, spacing, and nested handles", () => {
   assert.notDeepEqual(mutationEffectKeys({ target: { handle: "cell-1" }, replacement: "CEO" }, undefined), mutationEffectKeys({ target: { handle: "cell-2" }, replacement: "CEO" }, undefined));
   assert.deepEqual(mutationEffectKeys(replace("Name"), undefined), mutationEffectKeys({ replacement: "Name", expectedCurrentText: "Updated guard", target: { text: "Company" } }, undefined));
   assert.notDeepEqual(mutationEffectKeys(replace("Name"), undefined, "doc-1"), mutationEffectKeys(replace("Name"), undefined, "doc-2"));
+  // Bound edits include the unbound key so select_document retries can recover.
+  const unbound = mutationEffectKeys(replace("Name"), undefined);
+  const bound = mutationEffectKeys(replace("Name"), undefined, "doc-1");
+  assert.equal(unbound.length, 1);
+  assert.ok(bound.includes(unbound[0]!));
+  assert.ok(bound.length > unbound.length);
 });
 
 test("a failed batch requires all remaining edits to succeed without relying on missing identities", () => {

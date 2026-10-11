@@ -198,7 +198,7 @@ export async function settleTerminalRunFailure(input: {
   }
 
   if (!input.cancelled && input.expectedStop === undefined) {
-    console.error(`[agent] run=${runShort} failed reason=${summarizeError(input.error)}`);
+    console.error(`[agent] run=${runShort} failed reason=${input.error === undefined ? failureMessage : summarizeError(input.error)}`);
   }
 
   return {

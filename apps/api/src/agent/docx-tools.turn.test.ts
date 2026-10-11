@@ -169,7 +169,8 @@ test("a structural row delete expires sibling cell handles and keeps the failure
     { name: "document.set_table_cell_shading", input: { table: { handle: table.handle }, updates: [{ target: { handle: table.rows[1]!.cellHandles[0] }, fill: "FFFFFF" }] } },
     widths(table.handle),
   ]]);
-  assert.equal(result.metrics.toolCalls.at(-1)?.failureCode, "STALE_HANDLE");
+  assert.equal(result.metrics.toolCalls.at(-2)?.failureCode, "STALE_HANDLE");
+  assert.equal(result.metrics.toolCalls.at(-1)?.failureCode, "PRIOR_MUTATION_FAILED");
   assert.ok(events.some((event) => event.type === "tool_skipped" && event.reason === "PRIOR_MUTATION_FAILED"));
   assert.equal(run.session.getWorkingMutationCount(), 2);
   await run.session.flush();
@@ -181,7 +182,8 @@ test("a genuine invalid width stops later siblings and preserves the earlier for
   const run = await createSession();
   const handle = run.tables[0]!.handle;
   const { result, events } = await runTurns(run.session, [[inspect], [format(handle), widths(handle, [3000]), widths(handle)]]);
-  assert.equal(result.metrics.toolCalls.at(-1)?.failureCode, "INVALID_OPERATION");
+  assert.equal(result.metrics.toolCalls.at(-2)?.failureCode, "INVALID_OPERATION");
+  assert.equal(result.metrics.toolCalls.at(-1)?.failureCode, "PRIOR_MUTATION_FAILED");
   assert.ok(events.some((event) => event.type === "tool_skipped" && event.reason === "PRIOR_MUTATION_FAILED"));
   assert.deepEqual(run.revisions, [1]);
   const expected = bindDocxDocument({ binding: await createNapiDocxEngineBinding(), bytes: run.initial });

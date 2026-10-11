@@ -556,6 +556,7 @@ test("a failed mutation skips later mutations in the same batch", async () => {
     m2: defineTool<{ n: number }, { ok: true }>({
       kind: "mutate",
       description: "m2",
+      effectKeys: () => ["second|change"],
       inputSchema: nSchema,
       execute: async () => {
         m2Ran = true;
@@ -565,7 +566,7 @@ test("a failed mutation skips later mutations in the same batch", async () => {
   };
 
   const events: string[] = [];
-  await runAgent({
+  const result = await runAgent({
     model,
     messages: [{ role: "user", content: "go" }],
     tools,
@@ -574,6 +575,8 @@ test("a failed mutation skips later mutations in the same batch", async () => {
     },
   });
   assert.equal(m2Ran, false);
+  assert.equal(result.metrics.toolCalls[1]?.failureCode, "PRIOR_MUTATION_FAILED");
+  assert.deepEqual(result.metrics.toolCalls[1]?.effectKeys, ["second|change"]);
   assert.ok(events.includes("tool_failed"));
   assert.ok(events.includes("tool_skipped"));
 });
