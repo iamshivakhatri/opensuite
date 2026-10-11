@@ -133,7 +133,7 @@ engine development only, build `opensuite-engine/crates/opensuite-node`, then se
 `OPENSUITE_ENGINE_PATH` in the repo-root `.env` (see `.env.example`) to that checkout's
 `index.js`. Prefer an absolute path. The API `load-env` picks it up on boot; the boot
 line logs `source=OPENSUITE_ENGINE_PATH` vs `source=npm`, plus the loaded `.node` `binary=`,
-a short `sha256=`, any `NAPI_RS_*` loader `overrides=`, and `semanticCells=`/`semanticRows=`
+the full `sha256=`, any `NAPI_RS_*` loader `overrides=`, and `semanticCells=`/`semanticRows=`
 support. `source=npm` alone does not prove the npm binary ran; check `binary=` and
 `overrides=`. When the env var is set, a missing or unloadable path errors — there is no
 silent fallback to the published package.

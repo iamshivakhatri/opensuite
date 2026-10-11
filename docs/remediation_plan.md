@@ -40,9 +40,9 @@ Do not change: target semantics, mutation algorithms, preservation, working-byte
 - [x] **Update** `native-acceptance.mjs` now requires both advertised semantic IDs. The `>= 0.1.3` version fallback stays in engine-client for older/override binaries.
 - [x] Verified: host acceptance PASS (overrides unset); engine-client 34/34; API 413 pass / 2 known failures; full arm64 API image builds, acceptance PASS in build stage and runtime container, `soffice` present; npm 0.1.5 loads on linux/amd64 (`linux-x64-gnu`, both IDs). Full amd64 image build under QEMU crashes in libuv after `pnpm install` (emulation bug) — confirm on a real x64 builder at deploy.
 
-**Step A4 — Cloud engine check matches runtime** _(done locally; Cloud uncommitted)_
+**Step A4 — Cloud engine check matches runtime** _(done locally; remote release pending)_
 - [x] **Update** public and Cloud `deploy/docker-entrypoint.sh` boot checks now use engine-client `createNapiDocxEngineBinding()` + `describeNativeEngine()` (honours `OPENSUITE_ENGINE_PATH` / `NAPI_RS_*`) and log version, binary, overrides; still warn-only. Verified in the public image: npm binary reported; a bad `OPENSUITE_ENGINE_PATH` now warns (old check said "engine ok").
-- [x] **Add** Cloud `Dockerfile` public stage runs `native-acceptance.mjs` after the build. Cloud image build cannot be verified until public `main` contains the script — push public first.
+- [x] **Add** Cloud `Dockerfile` public stage runs `native-acceptance.mjs` after the build. Cloud linux/arm64 candidate build passed from a clean archive of public commit `f01c31f8ba3260576603ee1846559891b8a2bb52` (only the GitHub fetch was replaced with this local source). Build-stage and finished-container native acceptance passed; Cloud runtime imports and real TOC/PAGE field refresh passed. The production GitHub-fetch build still requires that public commit to be pushed.
 
 **Step A5 — identify the selected module's binary** _(done locally)_
 - [x] **Update** `describeNativeEngine(binding)` follows the selected loader tree and matches the native function exports. The binding keeps its original identity even if environment variables change. Public runtime and both entrypoints share `formatNativeEngineIdentity()` (native version, resolved module, actual `.node`, full SHA-256, overrides). Runtime passes the same binding into the app. Tests cover old-before-new cache order, a nested loader, renamed/direct binaries, and changed environment. A real installed 0.1.4-before-0.1.5 check also passes.
@@ -60,7 +60,7 @@ Do not change: target semantics, mutation algorithms, preservation, working-byte
 - [ ] Let new supported JSON operations enter dynamic discovery automatically; keep binary operations behind owned asset IDs and group new tools under a small default document group. Preserve next-turn loading and the small initial tool surface.
 - [ ] Release the changed engine under a new version, update the product pin/lockfile using `engine_upgrade.md`, and verify Linux images. Local Rust changes do not update the published npm binary.
 
-Phase A is complete once A5 passes and the reviewed public/Cloud image is built and verified; pushing alone is not deployment evidence.
+A5 and local Cloud candidate checks pass. Remote release/deployment checks remain pending; pushing alone is not deployment evidence. The new inventory must be released under a new engine version before npm consumers receive it.
 
 ## Phase B — Semantic features through the product loop
 
@@ -120,10 +120,10 @@ Do not change DB history, migrations, the public runtime seam, or stable contrac
 
 - [ ] **F1 Remove** `agent/in-run-observation-projection.ts` and its tests; replace fixtures in `run-trace.test.ts`.
 - [ ] **F2 Remove** `engine-client` `engine-client.ts`, `transport.ts`, `mock-transport.ts` and tests after checking exported-contract consumers.
-- [x] **F3 Remove** `packages/agent-core-v2` entirely (no production imports) and **rename** `agent-core-v3` → `packages/agent-core` / `@opensuite/agent-core`. Also renamed `V3Model` → `AgentModel`, `ResolvedV3ExecutionModel` → `ResolvedExecutionModel`, `[agent-v3]` logs → `[agent]`, `agent:v3:eval` → `agent:eval`; dropped the `[agent] runtime=v3` boot line. Kept the persisted `v3-<runId>` assistant message-id prefix. Updated API deps/tsconfig, lockfile, public `Dockerfile`, Cloud `Dockerfile` (uncommitted), and docs. **Deploy order:** push public first, then Cloud — Cloud builds public `main` and its old Dockerfile copies `agent-core-v2`/`-v3` paths.
+- [x] **F3 Remove** `packages/agent-core-v2` entirely (no production imports) and **rename** `agent-core-v3` → `packages/agent-core` / `@opensuite/agent-core`. Also renamed `V3Model` → `AgentModel`, `ResolvedV3ExecutionModel` → `ResolvedExecutionModel`, `[agent-v3]` logs → `[agent]`, `agent:v3:eval` → `agent:eval`; dropped the `[agent] runtime=v3` boot line. Kept the persisted `v3-<runId>` assistant message-id prefix. Updated API deps/tsconfig, lockfile, public `Dockerfile`, Cloud `Dockerfile`, and docs. **Deploy order:** publish the reviewed public commit first, then Cloud — its default source now comes from `deploy/opensuite-ref`, and copied paths use `agent-core`.
 - [ ] **F4 Update** share one TOC-refresh predicate between `field-refresh.ts` and verification.
-- [ ] **F5 Add** LibreOffice (`libreoffice-writer-nogui` + fonts) to Cloud runtime Docker stage. Can go any time.
-- [ ] **F6 Update** Cloud Docker pins a fixed public commit instead of moving `main`.
+- [x] **F5 Add** LibreOffice (`libreoffice-writer-nogui` + `fonts-dejavu-core`) to Cloud runtime. Candidate linux/arm64 image contains Writer 7.4.7.2 / DejaVu Sans; real dirty TOC/PAGE field refresh passes offline as the runtime user.
+- [x] **F6 Update** Cloud defaults to the one SHA in `deploy/opensuite-ref` (`f01c31f8ba3260576603ee1846559891b8a2bb52`). Compose leaves the override empty. Docker accepts only a full 40-character SHA and verifies fetched HEAD; a build with `OPENSUITE_REF=main` is rejected. Default remote fetch remains unverified until this local public commit is pushed.
 - [ ] **F7 Update** Cloud: one source pipeline for the overlay (no hand-maintained JS beside TS); remove duplicated report persistence in `production-server.js`.
 - [ ] **F8 Update** move credit/display-grant vocabulary and legacy managed-trial codes out of public core where possible.
 - [ ] **F9 Update (optional)** rename `docx-tools.ts` → `document-session.ts`; split binding contracts from the binding implementation in `docx-engine-binding.ts`.
