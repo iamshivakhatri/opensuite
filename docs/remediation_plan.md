@@ -8,18 +8,35 @@ Labels: **Update** = change existing behavior, **Remove** = delete dead code, **
 
 | Phase | Goal | Depends on |
 | --- | --- | --- |
-| A | Engine capability identity is provable | — |
-| B | Semantic table features covered through the product loop | A |
+| A | One engine capability/input definition, proven binary identity, verified release | — |
+| B | Semantic table features covered through the product loop | A identity/support checks |
 | C | Completion, validation, and accounting are truthful | can overlap B |
-| D | Measure and reduce context/decision overhead | A–C |
+| D | Measure real-document results and reduce unnecessary work | A–C checks; sample collection can overlap |
 | E | Smaller initial tool surface | D measurements |
 | F | Remove dead paths, tighten Cloud parity | B–C coverage (Cloud LibreOffice can go earlier) |
 
 Each step is one reviewable change with its own checks. Real-model runs require explicit approval.
 
-## Phase A — Engine capability identity
+## What to do next, in plain English
 
-Problem: the N-API manifest drops `semantic_table_cell_targets` and `semantic_table_row_deletion` (the Rust protocol has them), so engine-client relies on `engineVersion >= 0.1.3`. Loader overrides (`OPENSUITE_ENGINE_PATH`, `NAPI_RS_NATIVE_LIBRARY_PATH`, package-local `.node`, WASI flags) mean the npm pin does not prove which binary ran.
+| Step | Phase | What it means | Current state |
+| --- | --- | --- | --- |
+| Define operation inputs once and generate agent tools | **A7** | The engine describes the required inputs for each operation. The product uses that description to build the agent's tool definition instead of maintaining another copy. | Not implemented; A6 centralized capability names and native exports only. |
+| Release the engine, update the npm pin, and verify images | **A8**, with Cloud work in **F5–F6** | Publish a new engine package, make OpenSuite install that exact version, then build and check the public and Cloud containers that would run in production. | Not released. Local Cloud ARM64 candidate passed; remote build and real x64 checks remain pending. |
+| Test 10 real reports and proposals repeatedly | **D1** | Keep a fixed set of realistic DOCX files and editing tasks. Compare saved results, preserved content/layout, speed, cost, and unnecessary agent steps before making further changes. | Not started as a fixed baseline; Phase B's scripted table tests already exist. |
+
+Recommended order: **A7 → A8 → D1 → measured D/E improvements**. Gathering the
+D1 documents and defining their expected results can start alongside A7; there
+is no need to wait for a release to collect examples. Ten documents is a useful
+starting sample, not a claim that ten tests prove the product is ready.
+
+Update this file after each work step: mark what changed, record the checks,
+and distinguish implemented locally, published, and deployed. Leave unfinished
+or unverified items unchecked.
+
+## Phase A — Engine capabilities, inputs, and release checks
+
+Original audit problem: the N-API manifest dropped `semantic_table_cell_targets` and `semantic_table_row_deletion` (the Rust protocol had them), so engine-client relied on `engineVersion >= 0.1.3`. The published 0.1.5 fixes those missing IDs. Loader overrides (`OPENSUITE_ENGINE_PATH`, `NAPI_RS_NATIVE_LIBRARY_PATH`, package-local `.node`, WASI flags) still mean the npm pin alone does not prove which binary ran; A5 verifies the selected binary. A6–A7 extend this work to one engine capability/input definition.
 
 Do not change: target semantics, mutation algorithms, preservation, working-byte lifecycle. Keep the version fallback until every deployed engine advertises the IDs.
 
@@ -53,12 +70,31 @@ Do not change: target semantics, mutation algorithms, preservation, working-byte
 - [x] Loader export names come from Rust `#[napi(js_name)]` annotations. A missing TypeScript declaration stops loader generation. Node tests compare inventory, compiled exports, and declarations; matching-host release builds run this check.
 - [x] Product contract tests require every engine capability to have a working agent schema/dispatcher/discovery entry or an explicit separate path (reads, creation, feature flags, binary assets). The new local inventory passes the real product tests. New capabilities cannot be silently skipped by this test.
 
-**Step A7 — engine-owned input contracts** _(next; not implemented)_
+**Step A7 — engine-owned inputs and generated agent tools** _(next; not implemented)_
+
+Today the engine says an operation exists, but the API separately describes how
+to call it. For example, `replace_text` needs a text target, its expected current
+text, and the replacement. The engine should define those inputs once. A generated
+agent tool schema is the machine-readable form the model uses to send valid inputs.
+The product still controls document access, dynamic loading, saving, and verification.
+
 - [ ] Generate JSON input schemas and operation descriptions from engine transport types, then return them with the inventory. JSON schema means a machine-readable description of accepted inputs.
 - [ ] Replace duplicated API mutation schemas and ordinary dispatch maps with those engine contracts. Keep document/version ownership, asset authorization, saves, and checks in the product. Verify translated inputs before removing existing adapters.
 - [ ] Generate TypeScript declarations from the same transport types; today only exported function names are checked, not every argument field.
 - [ ] Let new supported JSON operations enter dynamic discovery automatically; keep binary operations behind owned asset IDs and group new tools under a small default document group. Preserve next-turn loading and the small initial tool surface.
-- [ ] Release the changed engine under a new version, update the product pin/lockfile using `engine_upgrade.md`, and verify Linux images. Local Rust changes do not update the published npm binary.
+
+**Step A8 — release and production-image verification** _(after A7; not released)_
+
+Changing local Rust files does not change the engine installed by the product.
+The npm pin is the exact package version OpenSuite installs. A production image
+is the built container containing the API, native engine, and required programs.
+
+- [ ] Release the reviewed engine changes under a new, unused npm version using the engine's `docs/releasing.md`; verify the published platform packages.
+- [ ] Update OpenSuite's exact npm dependency and lockfile using `docs/engine_upgrade.md`, including platform packages, release-age exclusions, and operational version references.
+- [ ] Build and check the public image with engine overrides unset: native version, selected binary/hash, advertised operations, and semantic edits must pass.
+- [ ] Publish the reviewed public commit and update Cloud's single `deploy/opensuite-ref` pin (**F6**). Build Cloud through its real GitHub-fetch path; verify native edits and LibreOffice field refresh (**F5**) in the finished container.
+- [ ] Verify on real Linux x64 and ARM64 builders. The local ARM64 candidate and npm x64 load check do not prove a complete production x64 build.
+- [ ] Record release and image evidence here. Mark deployment separately, only after it actually happens.
 
 A5 and local Cloud candidate checks pass. Remote release/deployment checks remain pending; pushing alone is not deployment evidence. The new inventory must be released under a new engine version before npm consumers receive it.
 
@@ -95,11 +131,11 @@ Do not change: credit pricing, mutation scheduling, safe partial-save behavior.
 - [x] **C10 Update** `refersToOpenDocument()` binds edit verbs (add/insert/remove/delete/replace/bold/shade/fix…) followed by "this/current/open document|doc|file|report", "in this document, <verb>", and "remove … from this document"; "from/using/based on/like this document" stays a source. Cases added to `workspace-manifest.test.ts`.
 - [ ] **C9 Remove (later)** legacy `loadHistory()` fallback that uses a following assistant row when the linked result is absent — only after confirming no old rows depend on it.
 
-## Phase D — Context and decision overhead
+## Phase D — Real-document baseline and context/decision overhead
 
 Do not strip same-run provider reasoning/tool exchanges or weaken target safety.
 
-- [ ] **D1 Add** fixed task set with recorded provider responses; record model turns, time to first useful tool, context/schema size, redundant reads, final document equality.
+- [ ] **D1 Add** a fixed starting set of **10 real DOCX reports, proposals, and branded documents**, with specific edits and expected results. Reuse the same files/tasks when comparing changes. Tasks should include updating reporting dates and KPI tables, replacing proposal details, applying a saved style, and keeping branding and untouched content intact. Check saved text/tables/styles, untouched package content, visible layout, and truthful success/partial/failure messages. Record model turns, time to first useful tool, total duration, context/schema size, redundant reads, and cost. Start with scripted/replayed responses; collecting or running paid model responses requires explicit approval. Use the results to choose D/E improvements; this baseline does not itself add new product features.
 - [ ] **D2 Add** observability: full request duration (retrieval, save, validation, settlement), save/DB timing, validation timing, tool count/schema chars in the persisted run report, SDK retry counts.
 - [ ] **D3 Update** skip candidate map/evidence work when DIRECT is complete, if D1 shows it is unused.
 - [ ] **D4 Update** rename `plannerEvidence*` → `documentContext*` and `hierarchical` mode → `document_maps`.
