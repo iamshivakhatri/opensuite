@@ -11,7 +11,7 @@ OpenSuite communicates with it only through `packages/engine-client`.
 The Rust protocol's `DOCX_CAPABILITIES` inventory declares IDs, operation kinds,
 Node export names, and Node availability. New engine builds return callable
 operations in `getDocxCapabilities().formats[].operations`; engine-client passes
-this through and checks the named exports. The npm 0.1.5 pin predates this metadata
+this through and checks the named exports. Older npm 0.1.5 predates this metadata
 and remains supported. N-API no longer owns a second capability allowlist.
 
 Release tests compare the inventory with compiled Node exports and TypeScript
@@ -33,7 +33,8 @@ Published 0.1.5 lacks these definitions and uses the generated
 `packages/engine-client/src/legacy-docx-inputs.json` compatibility snapshot.
 Refresh it from a compiled engine using
 `node packages/engine-client/scripts/update-docx-inputs.mjs ../opensuite-engine/crates/opensuite-node/index.js`.
-Do not edit generated schemas by hand. A new engine release remains pending.
+Do not edit generated schemas by hand. Published 0.1.7 supplies these definitions
+and is the current exact npm pin.
 
 For binary identity, call `describeNativeEngine(binding)` on the actual binding.
 It follows that loader's module tree, matches native exports, and records the full

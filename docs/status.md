@@ -5,7 +5,7 @@ _Read this before starting any work. Keep it a concise current-state handoff, no
 ## What Exists
 
 * Engine identity now belongs to the loaded binding: selected module tree, actual native export match, full SHA-256, captured version/environment, and one shared public/Cloud log format. Runtime passes that binding into the app. Mixed real 0.1.4/0.1.5 loading reports 0.1.5 correctly; nested/renamed/direct binary and changed-env regressions pass.
-* Rust owns capability IDs and N-API input definitions. Local builds generate SDK declarations, JSON schemas, descriptions, and numeric bounds; the compiled engine supplies them to mutation tools. Duplicate API mutation schemas and dispatch maps are removed; new JSON mutations join dynamic discovery under `document.more_operations`. Existing typed target guards and binary asset handling remain. Published 0.1.7 supplies these definitions; older 0.1.5 uses a generated compatibility snapshot. Read inputs are generated too; a shared bound-byte reader decodes engine-declared JSON results and registers returned handles without saving. A7 is complete and released in 0.1.7; A8 production image checks are running.
+* Rust owns capability IDs and N-API input definitions. Local builds generate SDK declarations, JSON schemas, descriptions, and numeric bounds; the compiled engine supplies them to mutation tools. Duplicate API mutation schemas and dispatch maps are removed; new JSON mutations join dynamic discovery under `document.more_operations`. Existing typed target guards and binary asset handling remain. Published 0.1.7 supplies these definitions; older 0.1.5 uses a generated compatibility snapshot. Read inputs are generated too; a shared bound-byte reader decodes engine-declared JSON results and registers returned handles without saving. A7 is complete and released in 0.1.7; A8 public/Cloud images pass on native Linux x64 and ARM64; no deployment was performed.
 
 
 * Local-engine footnotes and endnotes: lazy `document.notes` exposes bounded inspection, insert-after ordinary body text, simple note text updates, and safe deletion of reference + record together. A shared Rust implementation preserves imported note IDs, separators, formatting, numbering settings, and unrelated parts; fresh handles protect targeting. Rich/multi-paragraph notes are inspected/preserved but not edited/deleted. Malformed, orphaned, or duplicate references refuse. The existing run-local lifecycle saves once, and note verification blocks malformed output. No numbering UI, citation framework, npm pin, dependency, or Agent Core change. LibreOffice-produced import preservation and render checks passed; manual Word/Google Docs review remains pending.
@@ -67,11 +67,19 @@ _Read this before starting any work. Keep it a concise current-state handoff, no
 
 ## Recommended Next Step
 
-Complete A8 public/Cloud image verification. Engine 0.1.7 is published and pinned;
-all five platform builds and a clean npm consumer pass. Host native acceptance
-passes without overrides; real Linux x64/ARM64 image workflows are prepared. D1 manual document
-and browser/Word testing belongs to the user. The checklist and results sheet are
-prepared; its fixed ten-business-document set and results remain pending. Current mutation checkpoint: API build passes, API 429 pass / 23 DB
-skips, engine-client 39 pass / 2 optional skips, native 35 pass, changed Rust
-crates lint cleanly with 7 tests passing. All 14 selected local-engine input/read/discovery checks pass. No new publication, deployment, or paid model calls.
+Run D1's [manual document checklist](document_test_checklist.md) and record results
+in [the results sheet](document_test_results.csv). Ten representative business
+documents and manual browser/Word results remain pending. Fix content loss,
+wrong targets, false success, and saved-version failures first; use measured
+results to choose later D/E improvements.
+
+A7–A8 are complete: engine 0.1.7 is published and pinned; all five platform builds,
+six npm packages, clean npm consumer and host native acceptance pass. Public and
+Cloud production images pass semantic edits, fonts, real TOC/PAGE refresh and
+Cloud imports on native Linux x64 and ARM64. Cloud fetches reviewed public commit
+`0f438b5119ea02b3070befd459170249cb0121ec`. Evidence is in the remediation plan.
+API 429 pass / 23 DB skips, engine-client 39 pass / 2 optional skips, native 35
+pass, 203 release-relevant Rust tests pass; API/web and generated SDK typechecks
+pass. Existing workspace-wide PPTX lint warnings remain outside the DOCX release
+checks. No production deployment, browser/Word tests, or paid model calls.
 The user's live-status UI changes remain separate.

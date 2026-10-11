@@ -21,8 +21,8 @@ Each step is one reviewable change with its own checks. Real-model runs require 
 
 | Step | Phase | What it means | Current state |
 | --- | --- | --- | --- |
-| Define operation inputs once and generate agent tools | **A7** | The engine describes the required inputs for each operation. The product uses that description to build the agent's tool definition instead of maintaining another copy. | Completed locally: generated mutation/read inputs, validation, and dynamic discovery. Publication is A8. |
-| Release the engine, update the npm pin, and verify images | **A8**, with Cloud work in **F5–F6** | Publish a new engine package, make OpenSuite install that exact version, then build and check the public and Cloud containers that would run in production. | 0.1.7 published and pinned; all five packages, clean npm consumer, and host acceptance pass. Public/Cloud image checks running. |
+| Define operation inputs once and generate agent tools | **A7** | The engine describes the required inputs for each operation. The product uses that description to build the agent's tool definition instead of maintaining another copy. | Complete and published in 0.1.7: generated mutation/read inputs, validation, and dynamic discovery. |
+| Release the engine, update the npm pin, and verify images | **A8**, with Cloud work in **F5–F6** | Publish a new engine package, make OpenSuite install that exact version, then build and check the public and Cloud containers that would run in production. | Complete: 0.1.7 published/pinned; all six packages and public/Cloud native x64/ARM64 image checks pass. Not deployed. |
 | Test 10 real reports and proposals repeatedly | **D1** | Keep a fixed set of realistic DOCX files and editing tasks. Compare saved results, preserved content/layout, speed, cost, and unnecessary agent steps before making further changes. | Checklist and results sheet prepared. User runs manual tests; ten-business-document results remain pending. |
 
 Recommended order: **A7 → A8 → D1 → measured D/E improvements**. Gathering the
@@ -57,7 +57,7 @@ Do not change: target semantics, mutation algorithms, preservation, working-byte
 - [x] **Update** `native-acceptance.mjs` now requires both advertised semantic IDs. The `>= 0.1.3` version fallback stays in engine-client for older/override binaries.
 - [x] Verified: host acceptance PASS (overrides unset); engine-client 34/34; API 413 pass / 2 known failures; full arm64 API image builds, acceptance PASS in build stage and runtime container, `soffice` present; npm 0.1.5 loads on linux/amd64 (`linux-x64-gnu`, both IDs). Full amd64 image build under QEMU crashes in libuv after `pnpm install` (emulation bug) — confirm on a real x64 builder at deploy.
 
-**Step A4 — Cloud engine check matches runtime** _(done locally; remote release pending)_
+**Step A4 — Cloud engine check matches runtime** _(done; real remote image builds verified in A8)_
 - [x] **Update** public and Cloud `deploy/docker-entrypoint.sh` boot checks now use engine-client `createNapiDocxEngineBinding()` + `describeNativeEngine()` (honours `OPENSUITE_ENGINE_PATH` / `NAPI_RS_*`) and log version, binary, overrides; still warn-only. Verified in the public image: npm binary reported; a bad `OPENSUITE_ENGINE_PATH` now warns (old check said "engine ok").
 - [x] **Add** Cloud `Dockerfile` public stage runs `native-acceptance.mjs` after the build. Cloud linux/arm64 candidate build passed from a clean archive of public commit `f01c31f8ba3260576603ee1846559891b8a2bb52` (only the GitHub fetch was replaced with this local source). Build-stage and finished-container native acceptance passed; Cloud runtime imports and real TOC/PAGE field refresh passed. The production GitHub-fetch build still requires that public commit to be pushed.
 
@@ -83,7 +83,7 @@ still controls document access, dynamic loading, saving, and verification.
 - [x] Let newly advertised JSON mutations enter discovery under `document.more_operations`, with next-turn loading and no growth in the initial tool list. Native byte inputs remain hidden from the model.
 - [x] Support published 0.1.5 with a generated compatibility snapshot. Refresh it with `node packages/engine-client/scripts/update-docx-inputs.mjs ../opensuite-engine/crates/opensuite-node/index.js`; never edit its schemas by hand. New engines supply their live definitions.
 - [x] Generate read-tool inputs from Rust too. Preserve familiar read names and wrapper results; new reads use a shared bound-byte executor and dynamic discovery. Engine metadata says when read results need JSON decoding. Returned handles join the current run; reads do not save versions. Tests prove a new native read needs no named client adapter and can be discovered/loaded.
-- [ ] Verify packaged consumers and platform builds before A8 publication. No new version has been published or deployed.
+- [x] Verified packaged consumers and all five platform builds; engine 0.1.7 is published. Deployment remains separate.
 
 Local checkpoint checks: API/dependency build passes; API 429 pass / 23 database
 skips; engine-client 39 pass / 2 optional skips; native 35 pass; changed Rust
@@ -91,7 +91,7 @@ crates lint cleanly and their 7 tests pass. All 14 selected local-engine input/r
 Repeated native builds now clear the correct target-specific adapter cache before
 generating declarations; Rust compiler caching no longer leaves missing records. Browser/Word testing remains with the user.
 
-**Step A8 — release and production-image verification** _(0.1.7 published and pinned; image checks running)_
+**Step A8 — release and production-image verification** _(done; published and image-verified, not deployed)_
 
 Changing local Rust files does not change the engine installed by the product.
 The npm pin is the exact package version OpenSuite installs. A production image
@@ -99,16 +99,16 @@ is the built container containing the API, native engine, and required programs.
 
 - [x] Released engine 0.1.7 through `docs/releasing.md`; all five platform builds and all six npm packages verified. Clean published consumer loads 0.1.7 with native input definitions; host acceptance passes with no overrides. macOS ARM64 native SHA-256: `b5dd955cb5b29d197eaa6ecd69522e28696e89655c3f8f50558ec5647ecc8ce2`.
 - [x] Updated OpenSuite's exact 0.1.7 dependency and lockfile, all five platforms including both Linux packages, release-age exclusions, active documentation/ops strings and version assertions. API 429 pass / 23 DB skips; engine-client 39 pass / 2 optional skips; API/web typechecks pass.
-- [ ] Build and check the public image with engine overrides unset: native version, selected binary/hash, advertised operations, and semantic edits must pass.
-- [ ] Publish the reviewed public commit and update Cloud's single `deploy/opensuite-ref` pin (**F6**). Build Cloud through its real GitHub-fetch path; verify native edits and LibreOffice field refresh (**F5**) in the finished container.
-- [ ] Verify on real Linux x64 and ARM64 builders. The local ARM64 candidate and npm x64 load check do not prove a complete production x64 build.
-- [ ] Record release and image evidence here. Mark deployment separately, only after it actually happens.
+- [x] Public image passes with overrides unset, native version/binary/hash, advertised operations, and semantic edits. Native Linux x64 and ARM64 finished images also pass fonts and real TOC/PAGE refresh. [Public image workflow](https://github.com/iamshivakhatri/opensuite/actions/runs/38171860699).
+- [x] Pushed reviewed public commit `0f438b5119ea02b3070befd459170249cb0121ec`; Cloud pin updated in `f29da67b79a4c03c91f15bf65ebad6a28d0f1707`. Cloud builds through its real GitHub fetch; finished images pass native edits, fonts, TOC/PAGE refresh, and Cloud module imports on both architectures. [Cloud image workflow](https://github.com/iamshivakhatri/opensuite-cloud/actions/runs/38171883906).
+- [x] Both image workflows passed on native `ubuntu-24.04` (x64) and `ubuntu-24.04-arm` runners. Local public and Cloud ARM64 builds/checks pass too; Cloud uses the real remote fetch. Linux ARM64 native SHA-256: `ef67360eafe1fdb21ffd6a6012c25329fef6a9209c6d15397937881b2cef91fd`.
+- [x] Release and image evidence recorded above. No production deployment was performed.
 
 The 0.1.6 platform workflow stopped before publishing any packages: Windows needed `fileURLToPath` for its generated-input test. Fixed that test and tightened local artifact reuse with an exact release-version marker. The packaged-consumer check now asserts native/package version equality; the release script also checks generated SDK types.
 
-The repaired 0.1.7 passed Rust formatting/check/lint, 203 release-relevant tests, native build/35 tests, SDK typecheck, and packaged-consumer create/edit/reopen checks. Tag `v0.1.7` was pushed. Publishing workflow: https://github.com/iamshivakhatri/opensuite-engine/actions/runs/38171231769. Publishing succeeded: all six npm packages verified. Registry propagation initially omitted macOS ARM64 from pnpm; a fresh engine dependency resolution restored all five platform entries. Container verification is running. General workspace CI still fails on existing PPTX lint warnings outside the DOCX release checks.
+The repaired 0.1.7 passed Rust formatting/check/lint, 203 release-relevant tests, native build/35 tests, SDK typecheck, and packaged-consumer create/edit/reopen checks. Tag `v0.1.7` was pushed. Publishing workflow: https://github.com/iamshivakhatri/opensuite-engine/actions/runs/38171231769. Publishing succeeded: all six npm packages verified. Registry propagation initially omitted macOS ARM64 from pnpm; a fresh engine dependency resolution restored all five platform entries. Both production image workflows passed. General workspace CI still fails on existing PPTX lint warnings outside the DOCX release checks.
 
-A5 and local Cloud candidate checks pass. Remote release/deployment checks remain pending; pushing alone is not deployment evidence. The new inventory must be released under a new engine version before npm consumers receive it.
+A5–A8 are now verified with the released engine and real public/Cloud container builds. This verifies packaging and runtime programs; it does not replace user testing of editing, visual layout, API/database behavior, or production deployment.
 
 ## Phase B — Semantic features through the product loop
 
@@ -171,8 +171,8 @@ Do not change DB history, migrations, the public runtime seam, or stable contrac
 - [ ] **F2 Remove** `engine-client` `engine-client.ts`, `transport.ts`, `mock-transport.ts` and tests after checking exported-contract consumers.
 - [x] **F3 Remove** `packages/agent-core-v2` entirely (no production imports) and **rename** `agent-core-v3` → `packages/agent-core` / `@opensuite/agent-core`. Also renamed `V3Model` → `AgentModel`, `ResolvedV3ExecutionModel` → `ResolvedExecutionModel`, `[agent-v3]` logs → `[agent]`, `agent:v3:eval` → `agent:eval`; dropped the `[agent] runtime=v3` boot line. Kept the persisted `v3-<runId>` assistant message-id prefix. Updated API deps/tsconfig, lockfile, public `Dockerfile`, Cloud `Dockerfile`, and docs. **Deploy order:** publish the reviewed public commit first, then Cloud — its default source now comes from `deploy/opensuite-ref`, and copied paths use `agent-core`.
 - [ ] **F4 Update** share one TOC-refresh predicate between `field-refresh.ts` and verification.
-- [x] **F5 Add** LibreOffice (`libreoffice-writer-nogui` + `fonts-dejavu-core`) to Cloud runtime. Candidate linux/arm64 image contains Writer 7.4.7.2 / DejaVu Sans; real dirty TOC/PAGE field refresh passes offline as the runtime user.
-- [x] **F6 Update** Cloud defaults to the one SHA in `deploy/opensuite-ref` (`f01c31f8ba3260576603ee1846559891b8a2bb52`). Compose leaves the override empty. Docker accepts only a full 40-character SHA and verifies fetched HEAD; a build with `OPENSUITE_REF=main` is rejected. Default remote fetch remains unverified until this local public commit is pushed.
+- [x] **F5 Add** LibreOffice (`libreoffice-writer-nogui` + `fonts-dejavu-core`) to Cloud runtime. Finished native x64/ARM64 images pass installed-font and real dirty TOC/PAGE refresh checks as the runtime user (A8 evidence above).
+- [x] **F6 Update** Cloud defaults to the one SHA in `deploy/opensuite-ref` (`0f438b5119ea02b3070befd459170249cb0121ec`). Compose leaves the override empty. Docker accepts only a full 40-character SHA and verifies fetched HEAD; a build with `OPENSUITE_REF=main` is rejected. Default remote fetch and Cloud module imports pass in native x64/ARM64 finished images (A8 evidence above).
 - [ ] **F7 Update** Cloud: one source pipeline for the overlay (no hand-maintained JS beside TS); remove duplicated report persistence in `production-server.js`.
 - [ ] **F8 Update** move credit/display-grant vocabulary and legacy managed-trial codes out of public core where possible.
 - [ ] **F9 Update (optional)** rename `docx-tools.ts` → `document-session.ts`; split binding contracts from the binding implementation in `docx-engine-binding.ts`.
