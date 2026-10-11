@@ -671,6 +671,7 @@ export interface DocxEngineBinding {
   getDocxCapabilities(): DocxRuntimeCapabilities;
   /** Execute an engine-discovered mutation through validated JSON inputs. */
   executeDocxOperation?(input: Uint8Array, capability: string, operation: Record<string, unknown>): Promise<DocxMutationBindingResult>;
+  readDocxOperation?(input: Uint8Array, capability: string, request: Record<string, unknown>): Promise<unknown>;
   /**
    * Deterministic blank DOCX bytes from Rust.
    * Not a DocumentRuntime mutation — no DocumentRef exists yet.
@@ -1098,6 +1099,15 @@ export async function createNapiDocxEngineBinding(): Promise<DocxEngineBinding> 
   const binding: DocxEngineBinding = {
     getDocxCapabilities() {
       return nativeCapabilities;
+    },
+    async readDocxOperation(input, capability, request) {
+      const definition = operations.find(op => op.id === capability && op.kind === "read" && op.jsonInput);
+      if (!definition) throw new MutationArgError(`Unsupported read operation: ${capability}`);
+      const error = docxOperationInputError(definition, request);
+      if (error) throw new MutationArgError(`${capability}: ${error}`);
+      const method = (native as unknown as Record<string, (bytes: Buffer, request: Record<string, unknown>) => Promise<unknown>>)[definition.nodeExport]!;
+      const result = await method(Buffer.from(input), request);
+      return definition.jsonOutput ? JSON.parse(result as string) : result;
     },
     async executeDocxOperation(input, capability, operation) {
       const definition = operations.find(op => op.id === capability && op.kind === "mutate");

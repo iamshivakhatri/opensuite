@@ -23,7 +23,11 @@ types. Each operation supplies `description`, `inputSchema` (JSON string), and
 `jsonInput`; engine-client parses and validates these definitions. Mutation tools
 use the selected engine's schemas. New JSON mutations join dynamic discovery
 under `document.more_operations`; binary operations retain owned asset adapters.
-The existing high-level read tools still have product-owned schemas.
+Read tools also use generated schemas. Familiar names and product wrappers remain;
+new read operations use a shared bound-byte executor. `jsonOutput` tells the client
+when a native read returns encoded JSON. Returned handles join the current run;
+reads do not save document versions. `body_blocks` and `inspect_context` share
+`document.inspect` instead of adding duplicate tools.
 
 Published 0.1.5 lacks these definitions and uses the generated
 `packages/engine-client/src/legacy-docx-inputs.json` compatibility snapshot.

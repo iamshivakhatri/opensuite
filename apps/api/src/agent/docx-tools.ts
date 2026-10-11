@@ -281,6 +281,13 @@ function createActiveDocxSession(input: {
       return result;
     },
     find: (request) => requireHost().find(request),
+    readOperation: input.binding.readDocxOperation ? async (capability, request) => {
+      const result = await requireHost().readOperation!(capability, request);
+      collectHandles(result, currentHandles);
+      for (const handle of currentHandles) expiredHandles.delete(handle);
+      lastHandleEvent = "inspect";
+      return result;
+    } : undefined,
     renderLayout: () => requireHost().renderLayout!(),
     mutate: async (capability, operation) => {
       if (!host?.mutate) {

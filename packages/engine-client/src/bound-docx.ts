@@ -70,6 +70,9 @@ export function bindDocxDocument(input: {
     find(request: DocxFindTextRequest): Promise<DocxFindTextResult> {
       return binding.findDocxText(bytes, request);
     },
+    readOperation: binding.readDocxOperation
+      ? (capability: string, request: Record<string, unknown>) => binding.readDocxOperation!(bytes, capability, request)
+      : undefined,
     renderLayout() { return renderDocxLayout(bytes); },
     currentVersionId(): string | undefined {
       return versionId;

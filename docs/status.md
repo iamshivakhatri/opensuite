@@ -5,7 +5,7 @@ _Read this before starting any work. Keep it a concise current-state handoff, no
 ## What Exists
 
 * Engine identity now belongs to the loaded binding: selected module tree, actual native export match, full SHA-256, captured version/environment, and one shared public/Cloud log format. Runtime passes that binding into the app. Mixed real 0.1.4/0.1.5 loading reports 0.1.5 correctly; nested/renamed/direct binary and changed-env regressions pass.
-* Rust owns capability IDs and N-API input definitions. Local builds generate SDK declarations, JSON schemas, descriptions, and numeric bounds; the compiled engine supplies them to mutation tools. Duplicate API mutation schemas and dispatch maps are removed; new JSON mutations join dynamic discovery under `document.more_operations`. Existing typed target guards and binary asset handling remain. Published 0.1.5 uses a generated compatibility snapshot; npm pin is unchanged. Read-tool generation and the new release remain pending (A7–A8).
+* Rust owns capability IDs and N-API input definitions. Local builds generate SDK declarations, JSON schemas, descriptions, and numeric bounds; the compiled engine supplies them to mutation tools. Duplicate API mutation schemas and dispatch maps are removed; new JSON mutations join dynamic discovery under `document.more_operations`. Existing typed target guards and binary asset handling remain. Published 0.1.5 uses a generated compatibility snapshot; npm pin is unchanged. Read inputs are generated too; a shared bound-byte reader decodes engine-declared JSON results and registers returned handles without saving. A7 is complete locally; A8 publication and platform/image checks remain.
 
 
 * Local-engine footnotes and endnotes: lazy `document.notes` exposes bounded inspection, insert-after ordinary body text, simple note text updates, and safe deletion of reference + record together. A shared Rust implementation preserves imported note IDs, separators, formatting, numbering settings, and unrelated parts; fresh handles protect targeting. Rich/multi-paragraph notes are inspected/preserved but not edited/deleted. Malformed, orphaned, or duplicate references refuse. The existing run-local lifecycle saves once, and note verification blocks malformed output. No numbering UI, citation framework, npm pin, dependency, or Agent Core change. LibreOffice-produced import preservation and render checks passed; manual Word/Google Docs review remains pending.
@@ -67,11 +67,10 @@ _Read this before starting any work. Keep it a concise current-state handoff, no
 
 ## Recommended Next Step
 
-Finish A7 read-tool generation, then A8 package/platform checks, publication,
+Complete A8 package/platform checks, publication,
 exact npm pin updates, and public/Cloud image verification. D1 manual document
 and browser/Word testing belongs to the user; its fixed set and results remain
-pending. Current mutation checkpoint: API build passes, API 428 pass / 23 DB
-skips, engine-client 37 pass / 2 optional skips, native 35 pass, changed Rust
-crates lint cleanly with 7 tests passing. Selected local-engine mutation and
-discovery checks pass. No new publication, deployment, or paid model calls.
+pending. Current mutation checkpoint: API build passes, API 429 pass / 23 DB
+skips, engine-client 39 pass / 2 optional skips, native 35 pass, changed Rust
+crates lint cleanly with 7 tests passing. All 14 selected local-engine input/read/discovery checks pass. No new publication, deployment, or paid model calls.
 The user's live-status UI changes remain separate.

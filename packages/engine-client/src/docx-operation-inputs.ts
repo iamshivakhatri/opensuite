@@ -9,6 +9,7 @@ export interface DocxOperationDefinition {
   readonly description: string;
   readonly inputSchema: Record<string, unknown>;
   readonly jsonInput: boolean;
+  readonly jsonOutput: boolean;
 }
 
 // Generated from Rust for engines predating input metadata. Never edit by hand.
@@ -39,6 +40,7 @@ export function docxOperationDefinitions(capabilities: unknown): readonly DocxOp
         description: typeof value.description === "string" ? value.description : legacy?.description ?? value.id,
         inputSchema: schema,
         jsonInput: typeof value.jsonInput === "boolean" ? value.jsonInput : legacy?.jsonInput ?? false,
+        jsonOutput: typeof value.jsonOutput === "boolean" ? value.jsonOutput : legacy?.jsonOutput ?? false,
       };
     });
 }

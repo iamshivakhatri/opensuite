@@ -31,11 +31,20 @@
               "type": "integer"
             },
             "kind": {
+              "enum": [
+                "overview",
+                "headings",
+                "paragraphs",
+                "tables",
+                "body_blocks",
+                "table_rows",
+                "context"
+              ],
               "type": "string"
             },
             "limit": {
-              "maximum": 4294967295,
-              "minimum": 0,
+              "maximum": 100,
+              "minimum": 1,
               "type": "integer"
             },
             "occurrence": {
@@ -84,7 +93,8 @@
       "required": [],
       "type": "object"
     },
-    "jsonInput": true
+    "jsonInput": true,
+    "jsonOutput": false
   },
   {
     "id": "style_snapshot",
@@ -97,19 +107,20 @@
       "required": [],
       "type": "object"
     },
-    "jsonInput": true
+    "jsonInput": true,
+    "jsonOutput": true
   },
   {
     "id": "inspect_notes",
     "kind": "read",
     "nodeExport": "inspectDocxNotes",
-    "description": "inspect Docx Notes",
+    "description": "Inspect ordinary footnotes and endnotes, fresh handles, note IDs, text, zero-based body paragraph and source reference indexes, reference counts, structural status, and imported numbering settings. Separators are excluded and protected. IDs differ from visible note numbers. Default 20, maximum 100 records per page; note text capped at 2000 characters. Read-only.",
     "inputSchema": {
       "additionalProperties": false,
       "properties": {
         "limit": {
-          "maximum": 4294967295,
-          "minimum": 0,
+          "maximum": 100,
+          "minimum": 1,
           "type": "integer"
         },
         "offset": {
@@ -121,7 +132,8 @@
       "required": [],
       "type": "object"
     },
-    "jsonInput": true
+    "jsonInput": true,
+    "jsonOutput": true
   },
   {
     "id": "insert_note",
@@ -170,7 +182,8 @@
       ],
       "type": "object"
     },
-    "jsonInput": true
+    "jsonInput": true,
+    "jsonOutput": false
   },
   {
     "id": "update_note",
@@ -196,7 +209,8 @@
       ],
       "type": "object"
     },
-    "jsonInput": true
+    "jsonInput": true,
+    "jsonOutput": false
   },
   {
     "id": "delete_note",
@@ -216,19 +230,20 @@
       ],
       "type": "object"
     },
-    "jsonInput": true
+    "jsonInput": true,
+    "jsonOutput": false
   },
   {
     "id": "inspect_comments",
     "kind": "read",
     "nodeExport": "inspectDocxComments",
-    "description": "inspect Docx Comments",
+    "description": "Inspect standard comments, author/date, bounded text, attached text, source-order paragraph locations, fresh handles, and malformed/orphan diagnostics. Default 20; maximum 100 per page. Re-inspect after editing. Resolved state and replies are unavailable.",
     "inputSchema": {
       "additionalProperties": false,
       "properties": {
         "limit": {
-          "maximum": 4294967295,
-          "minimum": 0,
+          "maximum": 100,
+          "minimum": 1,
           "type": "integer"
         },
         "offset": {
@@ -240,19 +255,20 @@
       "required": [],
       "type": "object"
     },
-    "jsonInput": true
+    "jsonInput": true,
+    "jsonOutput": true
   },
   {
     "id": "inspect_fields",
     "kind": "read",
     "nodeExport": "inspectDocxFields",
-    "description": "inspect Docx Fields",
+    "description": "Inspect Word fields including TOC, PAGE, NUMPAGES, DATE, and unknown instructions. Returns bounded instruction and cached text separately, representation, part/paragraph location, dirty/locked flags when present, common TOC heading levels, and structural diagnostics. Main document and header/footer parts. Default 20, maximum 100 records; text capped at 2000 characters. Dirty means refresh requested; absent flags do not prove results are current. Does not calculate or edit fields.",
     "inputSchema": {
       "additionalProperties": false,
       "properties": {
         "limit": {
-          "maximum": 4294967295,
-          "minimum": 0,
+          "maximum": 100,
+          "minimum": 1,
           "type": "integer"
         },
         "offset": {
@@ -264,7 +280,8 @@
       "required": [],
       "type": "object"
     },
-    "jsonInput": true
+    "jsonInput": true,
+    "jsonOutput": true
   },
   {
     "id": "insert_fields",
@@ -367,7 +384,8 @@
       ],
       "type": "object"
     },
-    "jsonInput": true
+    "jsonInput": true,
+    "jsonOutput": false
   },
   {
     "id": "insert_toc",
@@ -416,19 +434,20 @@
       ],
       "type": "object"
     },
-    "jsonInput": true
+    "jsonInput": true,
+    "jsonOutput": false
   },
   {
     "id": "inspect_tracked_changes",
     "kind": "read",
     "nodeExport": "inspectDocxTrackedChanges",
-    "description": "inspect Docx Tracked Changes",
+    "description": "Inspect existing Word tracked insertions/deletions: IDs, author/date, bounded text, source-order paragraph locations, totals, and complex-revision diagnostics. Main document including tables only. Default 20, maximum 100 per page; text/metadata capped at 2000 characters. Current document text includes insertions and excludes deletions. Does not edit or save a version.",
     "inputSchema": {
       "additionalProperties": false,
       "properties": {
         "limit": {
-          "maximum": 4294967295,
-          "minimum": 0,
+          "maximum": 100,
+          "minimum": 1,
           "type": "integer"
         },
         "offset": {
@@ -440,7 +459,8 @@
       "required": [],
       "type": "object"
     },
-    "jsonInput": true
+    "jsonInput": true,
+    "jsonOutput": true
   },
   {
     "id": "accept_revision",
@@ -460,7 +480,8 @@
       ],
       "type": "object"
     },
-    "jsonInput": true
+    "jsonInput": true,
+    "jsonOutput": false
   },
   {
     "id": "reject_revision",
@@ -480,7 +501,8 @@
       ],
       "type": "object"
     },
-    "jsonInput": true
+    "jsonInput": true,
+    "jsonOutput": false
   },
   {
     "id": "insert_tracked_text",
@@ -539,7 +561,8 @@
       ],
       "type": "object"
     },
-    "jsonInput": true
+    "jsonInput": true,
+    "jsonOutput": false
   },
   {
     "id": "delete_tracked_text",
@@ -585,7 +608,8 @@
       ],
       "type": "object"
     },
-    "jsonInput": true
+    "jsonInput": true,
+    "jsonOutput": false
   },
   {
     "id": "replace_text_with_tracked_change",
@@ -637,7 +661,8 @@
       ],
       "type": "object"
     },
-    "jsonInput": true
+    "jsonInput": true,
+    "jsonOutput": false
   },
   {
     "id": "add_comment",
@@ -692,7 +717,8 @@
       ],
       "type": "object"
     },
-    "jsonInput": true
+    "jsonInput": true,
+    "jsonOutput": false
   },
   {
     "id": "update_comment",
@@ -717,7 +743,8 @@
       ],
       "type": "object"
     },
-    "jsonInput": true
+    "jsonInput": true,
+    "jsonOutput": false
   },
   {
     "id": "delete_comment",
@@ -736,7 +763,8 @@
       ],
       "type": "object"
     },
-    "jsonInput": true
+    "jsonInput": true,
+    "jsonOutput": false
   },
   {
     "id": "replace_text",
@@ -782,7 +810,8 @@
       ],
       "type": "object"
     },
-    "jsonInput": true
+    "jsonInput": true,
+    "jsonOutput": false
   },
   {
     "id": "create_blank_docx",
@@ -795,7 +824,8 @@
       "required": [],
       "type": "object"
     },
-    "jsonInput": true
+    "jsonInput": true,
+    "jsonOutput": false
   },
   {
     "id": "body_blocks",
@@ -829,11 +859,20 @@
               "type": "integer"
             },
             "kind": {
+              "enum": [
+                "overview",
+                "headings",
+                "paragraphs",
+                "tables",
+                "body_blocks",
+                "table_rows",
+                "context"
+              ],
               "type": "string"
             },
             "limit": {
-              "maximum": 4294967295,
-              "minimum": 0,
+              "maximum": 100,
+              "minimum": 1,
               "type": "integer"
             },
             "occurrence": {
@@ -882,7 +921,8 @@
       "required": [],
       "type": "object"
     },
-    "jsonInput": true
+    "jsonInput": true,
+    "jsonOutput": false
   },
   {
     "id": "insert_page_break",
@@ -925,7 +965,8 @@
       ],
       "type": "object"
     },
-    "jsonInput": true
+    "jsonInput": true,
+    "jsonOutput": false
   },
   {
     "id": "delete_page_break",
@@ -947,7 +988,8 @@
       ],
       "type": "object"
     },
-    "jsonInput": true
+    "jsonInput": true,
+    "jsonOutput": false
   },
   {
     "id": "set_page_setup",
@@ -998,7 +1040,8 @@
       "required": [],
       "type": "object"
     },
-    "jsonInput": true
+    "jsonInput": true,
+    "jsonOutput": false
   },
   {
     "id": "set_header_footer_text",
@@ -1028,7 +1071,8 @@
       ],
       "type": "object"
     },
-    "jsonInput": true
+    "jsonInput": true,
+    "jsonOutput": false
   },
   {
     "id": "set_page_number",
@@ -1063,31 +1107,33 @@
       ],
       "type": "object"
     },
-    "jsonInput": true
+    "jsonInput": true,
+    "jsonOutput": false
   },
   {
     "id": "inspect_sections",
     "kind": "read",
     "nodeExport": "inspectDocxSections",
-    "description": "inspect Docx Sections",
+    "description": "Inspect ordered Word sections with fresh handles, page setup, numbering, and owned/inherited header/footer variants. Re-inspect after every section edit.",
     "inputSchema": {
       "additionalProperties": false,
       "properties": {},
       "required": [],
       "type": "object"
     },
-    "jsonInput": true
+    "jsonInput": true,
+    "jsonOutput": true
   },
   {
     "id": "layout_snapshot",
     "kind": "read",
     "nodeExport": "inspectDocxLayout",
-    "description": "inspect Docx Layout",
+    "description": "Inspect structural section geometry, explicit pagination controls, table/image dimensions, floating-image positions/wrap, fresh image handles, and width warnings. No automatic page positions. Default returns summaries; blockLimit (0–100) and blockOffset request details; sectionIndex selects a zero-based section.",
     "inputSchema": {
       "additionalProperties": false,
       "properties": {
         "blockLimit": {
-          "maximum": 4294967295,
+          "maximum": 100,
           "minimum": 0,
           "type": "integer"
         },
@@ -1105,7 +1151,8 @@
       "required": [],
       "type": "object"
     },
-    "jsonInput": true
+    "jsonInput": true,
+    "jsonOutput": true
   },
   {
     "id": "insert_section_break",
@@ -1155,7 +1202,8 @@
       ],
       "type": "object"
     },
-    "jsonInput": true
+    "jsonInput": true,
+    "jsonOutput": false
   },
   {
     "id": "set_section_properties",
@@ -1238,7 +1286,8 @@
       ],
       "type": "object"
     },
-    "jsonInput": true
+    "jsonInput": true,
+    "jsonOutput": false
   },
   {
     "id": "set_section_header_footer",
@@ -1295,7 +1344,8 @@
       ],
       "type": "object"
     },
-    "jsonInput": true
+    "jsonInput": true,
+    "jsonOutput": false
   },
   {
     "id": "set_odd_even_headers",
@@ -1314,7 +1364,8 @@
       ],
       "type": "object"
     },
-    "jsonInput": true
+    "jsonInput": true,
+    "jsonOutput": false
   },
   {
     "id": "insert_paragraph",
@@ -1361,7 +1412,8 @@
       ],
       "type": "object"
     },
-    "jsonInput": true
+    "jsonInput": true,
+    "jsonOutput": false
   },
   {
     "id": "insert_paragraphs",
@@ -1411,7 +1463,8 @@
       ],
       "type": "object"
     },
-    "jsonInput": true
+    "jsonInput": true,
+    "jsonOutput": false
   },
   {
     "id": "delete_paragraph",
@@ -1449,7 +1502,8 @@
       ],
       "type": "object"
     },
-    "jsonInput": true
+    "jsonInput": true,
+    "jsonOutput": false
   },
   {
     "id": "set_content_control_text",
@@ -1495,7 +1549,8 @@
       ],
       "type": "object"
     },
-    "jsonInput": true
+    "jsonInput": true,
+    "jsonOutput": false
   },
   {
     "id": "set_paragraph_formatting",
@@ -1615,7 +1670,8 @@
       ],
       "type": "object"
     },
-    "jsonInput": true
+    "jsonInput": true,
+    "jsonOutput": false
   },
   {
     "id": "set_text_formatting",
@@ -1712,7 +1768,8 @@
       ],
       "type": "object"
     },
-    "jsonInput": true
+    "jsonInput": true,
+    "jsonOutput": false
   },
   {
     "id": "set_hyperlink",
@@ -1754,7 +1811,8 @@
       ],
       "type": "object"
     },
-    "jsonInput": true
+    "jsonInput": true,
+    "jsonOutput": false
   },
   {
     "id": "set_paragraph_style",
@@ -1796,7 +1854,8 @@
       ],
       "type": "object"
     },
-    "jsonInput": true
+    "jsonInput": true,
+    "jsonOutput": false
   },
   {
     "id": "create_style",
@@ -1955,7 +2014,8 @@
       ],
       "type": "object"
     },
-    "jsonInput": true
+    "jsonInput": true,
+    "jsonOutput": false
   },
   {
     "id": "update_style",
@@ -2113,7 +2173,8 @@
       ],
       "type": "object"
     },
-    "jsonInput": true
+    "jsonInput": true,
+    "jsonOutput": false
   },
   {
     "id": "set_paragraphs_list",
@@ -2176,7 +2237,8 @@
       ],
       "type": "object"
     },
-    "jsonInput": true
+    "jsonInput": true,
+    "jsonOutput": false
   },
   {
     "id": "replace_picture",
@@ -2208,7 +2270,8 @@
       ],
       "type": "object"
     },
-    "jsonInput": false
+    "jsonInput": false,
+    "jsonOutput": false
   },
   {
     "id": "delete_picture",
@@ -2230,7 +2293,8 @@
       ],
       "type": "object"
     },
-    "jsonInput": true
+    "jsonInput": true,
+    "jsonOutput": false
   },
   {
     "id": "set_picture_size",
@@ -2262,7 +2326,8 @@
       ],
       "type": "object"
     },
-    "jsonInput": true
+    "jsonInput": true,
+    "jsonOutput": false
   },
   {
     "id": "set_picture_layout",
@@ -2418,7 +2483,8 @@
       ],
       "type": "object"
     },
-    "jsonInput": true
+    "jsonInput": true,
+    "jsonOutput": false
   },
   {
     "id": "insert_picture",
@@ -2612,7 +2678,8 @@
       ],
       "type": "object"
     },
-    "jsonInput": false
+    "jsonInput": false,
+    "jsonOutput": false
   },
   {
     "id": "insert_table_row",
@@ -2682,7 +2749,8 @@
       ],
       "type": "object"
     },
-    "jsonInput": true
+    "jsonInput": true,
+    "jsonOutput": false
   },
   {
     "id": "insert_table_rows",
@@ -2755,7 +2823,8 @@
       ],
       "type": "object"
     },
-    "jsonInput": true
+    "jsonInput": true,
+    "jsonOutput": false
   },
   {
     "id": "set_table_cells_text",
@@ -2915,7 +2984,8 @@
       ],
       "type": "object"
     },
-    "jsonInput": true
+    "jsonInput": true,
+    "jsonOutput": false
   },
   {
     "id": "insert_table_column",
@@ -2974,7 +3044,8 @@
       ],
       "type": "object"
     },
-    "jsonInput": true
+    "jsonInput": true,
+    "jsonOutput": false
   },
   {
     "id": "create_table",
@@ -3027,7 +3098,8 @@
       ],
       "type": "object"
     },
-    "jsonInput": true
+    "jsonInput": true,
+    "jsonOutput": false
   },
   {
     "id": "delete_table",
@@ -3069,7 +3141,8 @@
       ],
       "type": "object"
     },
-    "jsonInput": true
+    "jsonInput": true,
+    "jsonOutput": false
   },
   {
     "id": "delete_table_row",
@@ -3154,7 +3227,8 @@
       ],
       "type": "object"
     },
-    "jsonInput": true
+    "jsonInput": true,
+    "jsonOutput": false
   },
   {
     "id": "delete_table_column",
@@ -3202,7 +3276,8 @@
       ],
       "type": "object"
     },
-    "jsonInput": true
+    "jsonInput": true,
+    "jsonOutput": false
   },
   {
     "id": "set_table_formatting",
@@ -3281,7 +3356,8 @@
       ],
       "type": "object"
     },
-    "jsonInput": true
+    "jsonInput": true,
+    "jsonOutput": false
   },
   {
     "id": "set_table_column_widths",
@@ -3332,7 +3408,8 @@
       ],
       "type": "object"
     },
-    "jsonInput": true
+    "jsonInput": true,
+    "jsonOutput": false
   },
   {
     "id": "set_table_cell_shading",
@@ -3487,7 +3564,8 @@
       ],
       "type": "object"
     },
-    "jsonInput": true
+    "jsonInput": true,
+    "jsonOutput": false
   },
   {
     "id": "set_table_cells_formatting",
@@ -3668,7 +3746,8 @@
       ],
       "type": "object"
     },
-    "jsonInput": true
+    "jsonInput": true,
+    "jsonOutput": false
   },
   {
     "id": "find_text",
@@ -3679,6 +3758,7 @@
       "additionalProperties": false,
       "properties": {
         "text": {
+          "description": "Exact text to find",
           "type": "string"
         }
       },
@@ -3687,7 +3767,8 @@
       ],
       "type": "object"
     },
-    "jsonInput": true
+    "jsonInput": true,
+    "jsonOutput": false
   },
   {
     "id": "inspect_context",
@@ -3721,11 +3802,20 @@
               "type": "integer"
             },
             "kind": {
+              "enum": [
+                "overview",
+                "headings",
+                "paragraphs",
+                "tables",
+                "body_blocks",
+                "table_rows",
+                "context"
+              ],
               "type": "string"
             },
             "limit": {
-              "maximum": 4294967295,
-              "minimum": 0,
+              "maximum": 100,
+              "minimum": 1,
               "type": "integer"
             },
             "occurrence": {
@@ -3774,6 +3864,7 @@
       "required": [],
       "type": "object"
     },
-    "jsonInput": true
+    "jsonInput": true,
+    "jsonOutput": false
   }
 ]

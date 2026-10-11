@@ -81,6 +81,27 @@ test("engine filtering removes unsupported tools and their empty groups", async 
   assert.equal(surface.projectTools()["document.set_table_formatting"], undefined);
 });
 
+test("new engine reads load dynamically and use the bound read host", async () => {
+  let calls = 0;
+  const tools = createDocumentTools({
+    capabilities: () => ({ formats: [{ format: "docx", capabilities: ["read_business_summary"], operations: [{
+      id: "read_business_summary", kind: "read", nodeExport: "readBusinessSummary", description: "Read the business summary",
+      jsonInput: true, jsonOutput: false,
+      inputSchema: { type: "object", properties: { label: { type: "string" } }, required: ["label"], additionalProperties: false },
+    }] }] }),
+    inspect: async () => ({}), find: async () => ({}),
+    readOperation: async (capability, input) => { calls++; return { capability, label: input.label }; },
+  });
+  const surface = createToolSurface(tools);
+  assert.equal(surface.initialTools["document.read_business_summary"], undefined);
+  assert.ok(JSON.stringify(surface.session.search("business summary")).includes("document.read_business_summary"));
+  assert.equal(surface.session.load(["document.read_business_summary"]).ok, true);
+  const tool = surface.projectTools()["document.read_business_summary"]!;
+  assert.equal(tool.kind, "read");
+  assert.deepEqual(await tool.execute!({ label: "Sales" }, {} as never), { capability: "read_business_summary", label: "Sales" });
+  assert.equal(calls, 1);
+});
+
 test("loading cannot execute a hidden sibling in the same turn", async () => {
   let calls = 0;
   const surface = createToolSurface({ "document.set_text_formatting": defineTool({ kind: "mutate", description: "format",

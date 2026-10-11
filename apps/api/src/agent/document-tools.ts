@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 
-import { DOCX_MUTATION_CAPABILITIES, docxOperationDefinitions, docxAgentInputSchema } from "@opensuite/engine-client";
+import { DOCX_MUTATION_CAPABILITIES, docxOperationDefinitions, docxAgentInputSchema, docxOperationInputError, type DocxOperationDefinition } from "@opensuite/engine-client";
 import { jsonSchema } from "ai";
 import {
   defineTool,
@@ -16,6 +16,7 @@ export interface BoundDocumentHost {
   documentId?(): string | null;
   inspect(request: { readonly focus: InspectFocus }): Promise<unknown>;
   renderLayout?(): Promise<unknown>;
+  readOperation?(capability: string, request: Record<string, unknown>): Promise<unknown>;
   find(request: { readonly text: string }): Promise<unknown>;
   /** Present when writes are wired. */
   mutate?(
@@ -35,6 +36,7 @@ export type InspectFocus =
   | { readonly kind: "comments"; readonly offset?: number; readonly limit?: number }
   | { readonly kind: "layout"; readonly blockOffset?: number; readonly blockLimit?: number; readonly sectionIndex?: number }
   | { readonly kind: "sections" }
+  | { readonly kind: "table_rows"; readonly tableHandle: string; readonly rowOffset?: number; readonly rowLimit?: number }
   | { readonly kind: "overview" }
   | {
       readonly kind: "headings" | "paragraphs" | "tables" | "body_blocks";
@@ -49,55 +51,16 @@ export type InspectFocus =
       readonly after?: number;
     };
 
-const findInput = jsonSchema<{ text: string }>({
-  type: "object",
-  properties: {
-    text: { type: "string", description: "Exact text to find" },
-  },
-  required: ["text"],
-  additionalProperties: false,
-});
-
 type InspectToolInput = {
   kind: Exclude<InspectFocus["kind"], "sections" | "layout" | "comments" | "revisions" | "fields" | "notes">;
   offset?: number;
   limit?: number;
+  tableHandle?: string;
   text?: string;
   occurrence?: number;
   before?: number;
   after?: number;
 };
-
-const occurrenceField = {
-  type: "number",
-  description:
-    "Zero-based occurrence among matching targets. Same convention as find.matches[].occurrence and inspect paragraphs.targetOccurrence / tables.occurrence. Omit when the match is unique.",
-} as const;
-
-const inspectInput = jsonSchema<InspectToolInput>({
-  type: "object",
-  properties: {
-    kind: {
-      type: "string",
-      enum: [
-        "overview",
-        "headings",
-        "paragraphs",
-        "tables",
-        "body_blocks",
-        "context",
-      ],
-    },
-    offset: { type: "number" },
-    limit: { type: "number" },
-    text: { type: "string" },
-    occurrence: occurrenceField,
-    before: { type: "number" },
-    after: { type: "number" },
-  },
-  required: ["kind"],
-  additionalProperties: false,
-});
 
 function op(
   properties: Record<string, unknown>,
@@ -128,11 +91,6 @@ export const MODEL_MUTATION_CAPABILITIES = Object.freeze(
 const engineDocumentTools = new WeakSet<object>();
 export const isEngineDocumentTool = (tool: object) => engineDocumentTools.has(tool);
 
-const READ_CAPS = {
-  inspect: "inspect",
-  find: "find_text",
-} as const;
-
 function docxCapabilitySet(capabilities: unknown): Set<string> {
   const set = new Set<string>();
   if (!capabilities || typeof capabilities !== "object") return set;
@@ -153,79 +111,64 @@ function docxCapabilitySet(capabilities: unknown): Set<string> {
 export function createDocumentTools(document: BoundDocumentHost): AgentToolSet {
   const capabilities = document.capabilities();
   const caps = docxCapabilitySet(capabilities);
-  const definitions = new Map(docxOperationDefinitions(capabilities)
+  const operations = docxOperationDefinitions(capabilities);
+  const definitions = new Map(operations
     .filter(op => op.kind === "mutate" && op.jsonInput)
     .map(op => [op.id, { description: op.description, inputSchema: jsonSchema<Record<string, unknown>>(docxAgentInputSchema(op)) }]));
   const tools: AgentToolSet = {};
   const effectKeys = (input: unknown, output: unknown) =>
     mutationEffectKeys(input, output, document.documentId?.() ?? undefined);
+  const checkReadInput = (definition: DocxOperationDefinition, input: Record<string, unknown>) => {
+    const error = docxOperationInputError(definition, input);
+    if (error) throw new Error(`${definition.id}: ${error}`);
+  };
 
-  if (caps.has(READ_CAPS.inspect)) {
-    tools["document.inspect"] = defineTool({
-      kind: "read",
-      description:
-        "Return structural or contextual document state for a chosen focus (overview, headings, paragraphs, tables, body_blocks, or context around a text match). Occurrence values are zero-based.",
-      inputSchema: inspectInput,
-      execute: async (input) =>
-        document.inspect({ focus: toInspectFocus(input) }),
+  const inspect = operations.find(op => op.id === "inspect" && op.kind === "read");
+  if (inspect) {
+    // Keep the familiar flat focus input while deriving every field from Rust.
+    const schema = (inspect.inputSchema.properties as Record<string, Record<string, unknown>>).focus;
+    if (!schema) throw new Error("Engine inspect operation is missing its focus input definition");
+    const flatInspect = { ...inspect, inputSchema: schema };
+    tools["document.inspect"] = defineTool<InspectToolInput, unknown>({
+      kind: "read", description: inspect.description,
+      inputSchema: jsonSchema(schema),
+      execute: input => { checkReadInput(flatInspect, input); return document.inspect({ focus: toInspectFocus(input) }); },
     });
   }
-
-  if (caps.has("layout_snapshot")) {
-    tools["document.inspect_layout"] = defineTool({ kind: "read",
-      description: "Inspect structural section geometry, explicit pagination controls, table/image dimensions, floating-image positions/wrap, fresh image handles, and width warnings. No automatic page positions. Default returns summaries; blockLimit (0–100) and blockOffset request details; sectionIndex selects a zero-based section.",
-      inputSchema: op({ blockOffset: { type: "integer", minimum: 0 }, blockLimit: { type: "integer", minimum: 0, maximum: 100 }, sectionIndex: { type: "integer", minimum: 0 } }),
-      execute: async input => document.inspect({ focus: { kind: "layout", ...input } }),
+  const find = operations.find(op => op.id === "find_text" && op.kind === "read");
+  if (find) tools["document.find"] = defineTool<{ text: string }, unknown>({
+    kind: "read", description: find.description,
+    inputSchema: jsonSchema(find.inputSchema), execute: input => { checkReadInput(find, input); return document.find(input); },
+  });
+  const readFocus = {
+    layout_snapshot: { name: "inspect_layout", kind: "layout" },
+    inspect_fields: { name: "inspect_fields", kind: "fields" },
+    inspect_tracked_changes: { name: "inspect_tracked_changes", kind: "revisions" },
+    inspect_notes: { name: "inspect_notes", kind: "notes" },
+    inspect_comments: { name: "inspect_comments", kind: "comments" },
+    inspect_sections: { name: "inspect_sections", kind: "sections" },
+  } as const;
+  for (const definition of operations.filter(op => op.kind === "read" && op.jsonInput)) {
+    // These capabilities share document.inspect rather than adding duplicate tools.
+    if (["inspect", "find_text", "body_blocks", "inspect_context"].includes(definition.id)) continue;
+    const focus = readFocus[definition.id as keyof typeof readFocus];
+    if (!focus && !document.readOperation) continue;
+    const tool = defineTool<Record<string, unknown>, unknown>({
+      kind: "read", description: definition.description,
+      inputSchema: jsonSchema(definition.inputSchema),
+      execute: input => {
+        checkReadInput(definition, input);
+        return focus ? document.inspect({ focus: { kind: focus.kind, ...input } })
+          : document.readOperation!(definition.id, input);
+      },
     });
-    if (document.renderLayout) tools["document.render_layout"] = defineTool({ kind: "read",
+    engineDocumentTools.add(tool);
+    tools[`document.${focus?.name ?? definition.id}`] = tool;
+  }
+  if (caps.has("layout_snapshot") && document.renderLayout) {
+    tools["document.render_layout"] = defineTool({ kind: "read",
       description: "Get LibreOffice-derived PDF page count and page dimensions using the optional external renderer. Depends on installed fonts and tools; failures report unavailable, never estimated. Exact block-to-page mapping is unavailable. Does not save a document version.",
       inputSchema: op({}), execute: () => document.renderLayout!(),
-    });
-  }
-  if (caps.has("inspect_fields")) {
-    tools["document.inspect_fields"] = defineTool({ kind: "read",
-      description: "Inspect Word fields including TOC, PAGE, NUMPAGES, DATE, and unknown instructions. Returns bounded instruction and cached text separately, representation, part/paragraph location, dirty/locked flags when present, common TOC heading levels, and structural diagnostics. Main document and header/footer parts. Default 20, maximum 100 records; text capped at 2000 characters. Dirty means refresh requested; absent flags do not prove results are current. Does not calculate or edit fields.",
-      inputSchema: op({ offset: { type: "integer", minimum: 0 }, limit: { type: "integer", minimum: 1, maximum: 100 } }),
-      execute: async input => document.inspect({ focus: { kind: "fields", ...input } }),
-    });
-  }
-  if (caps.has("inspect_tracked_changes")) {
-    tools["document.inspect_tracked_changes"] = defineTool({ kind: "read",
-      description: "Inspect existing Word tracked insertions/deletions: IDs, author/date, bounded text, source-order paragraph locations, totals, and complex-revision diagnostics. Main document including tables only. Default 20, maximum 100 per page; text/metadata capped at 2000 characters. Current document text includes insertions and excludes deletions. Does not edit or save a version.",
-      inputSchema: op({ offset: { type: "integer", minimum: 0 }, limit: { type: "integer", minimum: 1, maximum: 100 } }),
-      execute: async input => document.inspect({ focus: { kind: "revisions", ...input } }),
-    });
-  }
-  if (caps.has("inspect_notes")) {
-    tools["document.inspect_notes"] = defineTool({ kind: "read",
-      description: "Inspect ordinary footnotes and endnotes, fresh handles, note IDs, text, zero-based body paragraph and source reference indexes, reference counts, structural status, and imported numbering settings. Separators are excluded and protected. IDs differ from visible note numbers. Default 20, maximum 100 records per page; note text capped at 2000 characters. Read-only.",
-      inputSchema: op({ offset: { type: "integer", minimum: 0 }, limit: { type: "integer", minimum: 1, maximum: 100 } }),
-      execute: async input => document.inspect({ focus: { kind: "notes", ...input } }),
-    });
-  }
-  if (caps.has("inspect_comments")) {
-    tools["document.inspect_comments"] = defineTool({ kind: "read",
-      description: "Inspect standard comments, author/date, bounded text, attached text, source-order paragraph locations, fresh handles, and malformed/orphan diagnostics. Default 20; maximum 100 per page. Re-inspect after editing. Resolved state and replies are unavailable.",
-      inputSchema: op({ offset: { type: "integer", minimum: 0 }, limit: { type: "integer", minimum: 1, maximum: 100 } }),
-      execute: async input => document.inspect({ focus: { kind: "comments", ...input } }),
-    });
-  }
-  if (caps.has("inspect_sections")) {
-    tools["document.inspect_sections"] = defineTool({
-      kind: "read",
-      description: "Inspect ordered Word sections with fresh handles, page setup, numbering, and owned/inherited header/footer variants. Re-inspect after every section edit.",
-      inputSchema: op({}),
-      execute: async () => document.inspect({ focus: { kind: "sections" } }),
-    });
-  }
-
-  if (caps.has(READ_CAPS.find)) {
-    tools["document.find"] = defineTool({
-      kind: "read",
-      description:
-        "Return exact-text match locations with zero-based occurrence indexes for targeting subsequent operations.",
-      inputSchema: findInput,
-      execute: async ({ text }) => document.find({ text }),
     });
   }
 
@@ -329,6 +272,9 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function toInspectFocus(input: InspectToolInput): InspectFocus {
   switch (input.kind) {
+    case "table_rows":
+      if (!input.tableHandle) throw new Error("document.inspect table_rows requires tableHandle");
+      return { kind: "table_rows", tableHandle: input.tableHandle, rowOffset: input.offset, rowLimit: input.limit };
     case "overview":
       return { kind: "overview" };
     case "headings":
