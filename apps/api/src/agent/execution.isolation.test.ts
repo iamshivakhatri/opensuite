@@ -817,6 +817,48 @@ test("managed AI plain errors still map to actionable user-facing copy", () => {
   });
 });
 
+test("provider credit and rate-limit errors map to safe copy without leaking key URLs", () => {
+  const openRouterCredits = new Error(
+    "This request requires more credits, or fewer max_tokens. You requested up to 131072 tokens, but can only afford 61655. To increase, visit https://openrouter.ai/workspaces/default/keys/secretkey and adjust the key's total limit",
+  );
+  assert.deepEqual(describeRunFailure(openRouterCredits, []), {
+    code: "MODEL_PROVIDER_CREDITS",
+    message:
+      "The AI provider doesn't have enough credits for this request. Add credits or raise the key limit, then try again.",
+  });
+  assert.doesNotMatch(
+    describeRunFailure(openRouterCredits, [])?.message ?? "",
+    /openrouter\.ai|secretkey|api.?key/i,
+  );
+
+  assert.deepEqual(
+    describeRunFailure(
+      new Error(
+        "This request would exceed your available credits given your current in-flight requests. Retry after in-flight requests settle, or add credits.",
+      ),
+      [],
+    ),
+    {
+      code: "MODEL_PROVIDER_IN_FLIGHT_BUDGET",
+      message:
+        "The AI provider is temporarily holding other in-flight requests against your credits. Please wait a minute and try again.",
+    },
+  );
+
+  assert.deepEqual(
+    describeRunFailure(
+      new Error(
+        "deepseek/deepseek-v4.1-flash is temporarily rate-limited upstream. Please retry shortly, or add your own key to accumulate your rate limits: https://openrouter.ai/settings/integrations",
+      ),
+      [],
+    ),
+    {
+      code: "MODEL_PROVIDER_RATE_LIMITED",
+      message: "The AI provider is temporarily rate-limited. Please try again shortly.",
+    },
+  );
+});
+
 test("a document creation run tells the model to create before editing", async () => {
   const persistence = memoryPersistence("user-1");
   let system = "";

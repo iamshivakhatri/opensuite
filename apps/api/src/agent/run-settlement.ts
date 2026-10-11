@@ -236,6 +236,8 @@ export function describeRunFailure(error: unknown, transcript: readonly Transcri
   }
   const managedUsage = describeManagedUsageFailure(code, error);
   if (managedUsage) return managedUsage;
+  const providerQuota = describeProviderQuotaFailure(error);
+  if (providerQuota) return providerQuota;
   if (transcript.some((entry) => entry.status === "failed" && entry.summary.includes("NO_ACTIVE_DOCUMENT"))) {
     return { code: "NO_ACTIVE_DOCUMENT", message: "No document was active, and the agent tried to edit before creating one. Retry the request or open a document first." };
   }
@@ -270,6 +272,45 @@ function describeManagedUsageFailure(
   if (message === "Managed AI accounting is unavailable.") {
     return { code: "MANAGED_USAGE_ACCOUNTING_FAILED", message: "Managed AI is temporarily unavailable. Use your own API key or try again later." };
   }
+  return null;
+}
+
+/**
+ * Map known provider quota / billing failures to safe UI copy.
+ * Never forward raw provider text (it often embeds key URLs and account ids).
+ */
+function describeProviderQuotaFailure(error: unknown): { code: string; message: string } | null {
+  const message = error instanceof Error ? error.message : typeof error === "string" ? error : "";
+  if (!message) return null;
+
+  // OpenRouter in-flight spending budget (Retry-After); temporary, not empty wallet.
+  if (/in-flight requests|in_flight_budget/i.test(message)) {
+    return {
+      code: "MODEL_PROVIDER_IN_FLIGHT_BUDGET",
+      message:
+        "The AI provider is temporarily holding other in-flight requests against your credits. Please wait a minute and try again.",
+    };
+  }
+
+  if (
+    /requires more credits|fewer max_tokens|can only afford\s+\d+|insufficient credits|credit balance/i.test(
+      message,
+    )
+  ) {
+    return {
+      code: "MODEL_PROVIDER_CREDITS",
+      message:
+        "The AI provider doesn't have enough credits for this request. Add credits or raise the key limit, then try again.",
+    };
+  }
+
+  if (/rate[- ]?limited upstream|temporarily rate[- ]?limited|rate limit exceeded/i.test(message)) {
+    return {
+      code: "MODEL_PROVIDER_RATE_LIMITED",
+      message: "The AI provider is temporarily rate-limited. Please try again shortly.",
+    };
+  }
+
   return null;
 }
 

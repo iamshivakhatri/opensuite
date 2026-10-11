@@ -119,6 +119,13 @@ export function agentOutputTokenLimit(
     : Math.min(configuredLimit, providerLimit ?? configuredLimit);
 }
 
+/** Safe fingerprint for logs — never emit a full API key. */
+export function redactApiKey(apiKey: string): string {
+  const key = apiKey.trim();
+  if (key.length <= 12) return "***";
+  return `${key.slice(0, 8)}…${key.slice(-4)}`;
+}
+
 /**
  * Builds a fully configured Fastify instance without starting to listen.
  */
@@ -343,6 +350,9 @@ export async function buildApp(
         const outputTokenLimit = agentOutputTokenLimit(
           config.agent.maxOutputTokens,
           resolved.maxOutputTokens,
+        );
+        console.info(
+          `[agent] model_credentials user=${userId.slice(0, 8)} source=${resolved.credentialSource} provider=${resolved.provider} model=${resolved.model} key=${redactApiKey(resolved.apiKey)}${outputTokenLimit !== undefined ? ` outputCap=${outputTokenLimit}` : ""}`,
         );
         return {
           model: createOpenRouterModel(resolved),
