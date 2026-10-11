@@ -4,7 +4,7 @@ import { mkdtempSync, readFileSync, readdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { runAgent, type RunAgentResult, type RunModelResult, type V3Model } from "@opensuite/agent-core-v3";
+import { runAgent, type RunAgentResult, type RunModelResult, type AgentModel } from "@opensuite/agent-core";
 import { MockLanguageModelV4, simulateReadableStream } from "ai/test";
 import sharp from "sharp";
 import { bindDocxDocument, buildMinimalDocx, createNapiDocxEngineBinding, inspectDocxStyleSnapshot } from "@opensuite/engine-client";
@@ -153,7 +153,7 @@ for (const tracing of [false, true]) {
         const calls = [
           [{ name: "document_inspect", input: { kind: "body_blocks" } },
             ...[["First", "One"], ["Second", "Two"], ["Third", "Three"]].map(([text, replacement]) => ({ name: "document_replace_text", input: { target: { text }, expectedCurrentText: text, replacement } }))],
-          [{ name: "document_insert_paragraphs", input: { texts: ["Stale"], placement: { kind: "before", handle: "b0" } } },
+          [{ name: "document_insert_paragraphs", input: { texts: ["Inserted"], placement: { kind: "before", handle: "b0" } } },
             { name: "document_find", input: { text: "One" } }],
           [{ name: "document_inspect", input: { kind: "body_blocks" } },
             { name: "document_insert_paragraphs", input: { texts: ["Inserted"], placement: { kind: "before", handle: "b0" } } }],
@@ -552,7 +552,7 @@ function baseDeps(
       },
     },
     resolveModel: async () => ({
-      model: { provider: "test", modelId: "test" } as unknown as V3Model,
+      model: { provider: "test", modelId: "test" } as unknown as AgentModel,
       ...(contextLength !== undefined ? { contextLength } : {}),
     }),
     runAgent: runAgentImpl,
@@ -601,7 +601,7 @@ async function collectUnhandledRejections(
   return seen;
 }
 
-test("successful V3 finish_tool settles completed + agent.completed", async () => {
+test("successful agent-core finish_tool settles completed + agent.completed", async () => {
   const persistence = memoryPersistence("user-1");
   const events: AgentEvent[] = [];
   let sawSystem: string | undefined;
@@ -783,7 +783,7 @@ test("managed AI failure keeps a safe, actionable reason on the run", async () =
   const persistence = memoryPersistence("user-1");
   const execution = createAgentExecutionService({
     ...baseDeps(persistence, async () => { throw new Error("model should not run"); }),
-    resolveModel: async () => ({ model: { provider: "test", modelId: "test" } as unknown as V3Model,
+    resolveModel: async () => ({ model: { provider: "test", modelId: "test" } as unknown as AgentModel,
       usageAttribution: { provider: "openrouter", model: "test", credentialSource: "managed" } }),
     managedUsagePolicy: { beforeManagedCall: async () => { throw Object.assign(new Error("Managed AI is not available."), { code: "MANAGED_USAGE_DISABLED" }); },
       afterUsageRecorded: async () => {}, status: async () => ({ enabled: false, originalGrantMicros: 0, balanceMicros: 0, displayGrantCredits: 0, exhausted: true }) },
@@ -828,7 +828,7 @@ test("a document creation run tells the model to create before editing", async (
   assert.match(system, /No document is selected for editing\. Create one for a new-document request/);
 });
 
-test("successful V3 completed (no tools) settles completed", async () => {
+test("successful agent-core completed (no tools) settles completed", async () => {
   const persistence = memoryPersistence("user-1");
   const execution = createAgentExecutionService(
     baseDeps(persistence, async () => softResult("completed", "Hello")),
@@ -1480,7 +1480,7 @@ test("a delayed older compaction result cannot replace a newer checkpoint", asyn
     persistence,
     ownerUserId: "user-1",
     threadId: "thread-1",
-    model: { provider: "test", modelId: "test" } as unknown as V3Model,
+    model: { provider: "test", modelId: "test" } as unknown as AgentModel,
     runModel: async () => {
       await persistence.createThreadContextCheckpoint({
         threadId: "thread-1",
@@ -1513,7 +1513,7 @@ test("compaction bounds a huge prefix and advances only through that prefix", as
     persistence,
     ownerUserId: "user-1",
     threadId: "thread-1",
-    model: { provider: "test", modelId: "test" } as unknown as V3Model,
+    model: { provider: "test", modelId: "test" } as unknown as AgentModel,
     contextLength: 1_000,
     runModel: async (input) => {
       compactionInput = String(input.messages[0]?.content);
@@ -1637,7 +1637,7 @@ test("configured output limit reaches the runtime and length stop fails the run"
       return softResult("output_limit");
     }),
     resolveModel: async () => ({
-      model: { provider: "test", modelId: "test" } as unknown as V3Model,
+      model: { provider: "test", modelId: "test" } as unknown as AgentModel,
       contextLength: 1_048_576,
       maxOutputTokens: 943_718,
       outputTokenLimit: 12_288,
@@ -2010,7 +2010,7 @@ test("cancellation remains cancelled, not failed", async () => {
   );
 });
 
-test("event relay maps V3 tool_skipped onto product tool.failed", async () => {
+test("event relay maps agent-core tool_skipped onto product tool.failed", async () => {
   const persistence = memoryPersistence("user-1");
   const events: AgentEvent[] = [];
   const execution = createAgentExecutionService(
@@ -2449,4 +2449,387 @@ test("failed mutations with no output do not persist a version", async () => {
   assert.equal(result.run.errorCode, "AGENT_MUTATION_FAILED");
   assert.equal(reports[0]?.outcome, "failure");
   assert.equal(reports[0]?.document?.versionAdvances.length ?? 0, 0);
+});
+
+interface ScriptedTurn {
+  readonly text?: string;
+  readonly calls: readonly { readonly name: string; readonly input: unknown }[];
+  /** Model call throws instead of answering; "abort" cancels the run first. */
+  readonly fail?: "error" | "abort";
+}
+
+/** Real agent-core loop + real native engine; only the model is scripted. */
+async function runScriptedDocx(input: {
+  readonly bytes: Buffer;
+  readonly turns: readonly ScriptedTurn[];
+  readonly instruction: string;
+  /** Bill as managed OpenRouter; the hook runs once per debit. */
+  readonly managedDebit?: (event: { id: string }) => Promise<void>;
+  readonly unreadableSavedVersion?: boolean;
+}) {
+  const binding = await createNapiDocxEngineBinding();
+  const persistence = memoryPersistence("user-1");
+  const controller = new AbortController();
+  const state = {
+    bytes: input.bytes,
+    versions: new Map([["v1", Buffer.from(input.bytes)]]),
+    versionId: "v1",
+    appends: 0,
+    exposedTools: [] as string[][],
+    runtime: undefined as RunAgentResult | undefined,
+    reports: [] as AgentRunReport[],
+    usage: [] as { agentRunId?: string | null; inputTokens?: number }[],
+    debits: [] as string[],
+    events: [] as AgentEvent[],
+    persistence,
+  };
+  let turn = 0;
+  const model = new MockLanguageModelV4({ doStream: async (options) => {
+    state.exposedTools.push(options.tools?.map((tool) => tool.name) ?? []);
+    const current = input.turns[turn++] ?? { calls: [] };
+    if (current.fail === "abort") controller.abort(new Error("cancelled by user"));
+    if (current.fail) throw new Error("provider unavailable");
+    const finishReason = (current.calls.length ? "tool-calls" : "stop") as "tool-calls" | "stop";
+    return { stream: simulateReadableStream({ chunks: [
+      { type: "stream-start" as const, warnings: [] },
+      ...(current.text ? [
+        { type: "text-start" as const, id: "text" },
+        { type: "text-delta" as const, id: "text", delta: current.text },
+        { type: "text-end" as const, id: "text" },
+      ] : []),
+      ...current.calls.map((call, index) => ({ type: "tool-call" as const, toolCallId: `${turn}-${index}`, toolName: call.name, input: JSON.stringify(call.input) })),
+      { type: "finish" as const, finishReason: { unified: finishReason, raw: finishReason },
+        usage: { inputTokens: { total: 1, noCache: 1, cacheRead: 0, cacheWrite: 0 }, outputTokens: { total: 1, text: 1, reasoning: 0 } } },
+    ] }) };
+  } });
+  const deps = baseDeps(persistence, async (agentInput) => {
+    state.runtime = await runAgent({ ...agentInput, model });
+    return state.runtime;
+  });
+  const execution = createAgentExecutionService({
+    ...deps,
+    docxBinding: binding,
+    agentRunReportSink: (report) => { state.reports.push(report); },
+    resolveModel: async (userId) => ({ ...await deps.resolveModel(userId), usageAttribution: input.managedDebit
+      ? { provider: "openrouter", model: "scripted", credentialSource: "managed" }
+      : { provider: "openai", model: "scripted", credentialSource: "byok" } }),
+    modelUsage: { recordFromProviderResponse: async ({ attribution, usage }: { attribution: { agentRunId?: string | null }; usage?: { inputTokens?: number } }) => {
+      state.usage.push({ agentRunId: attribution.agentRunId, inputTokens: usage?.inputTokens });
+      return { id: `usage-${state.usage.length}` } as never;
+    } } as never,
+    ...(input.managedDebit ? { managedUsagePolicy: {
+      beforeManagedCall: async () => {},
+      afterUsageRecorded: async (event: { id: string }) => { state.debits.push(event.id); await input.managedDebit!(event); },
+      status: async () => { throw new Error("unused"); },
+    } } : {}),
+    documents: {
+      ...deps.documents,
+      getOwnedDocument: async () => ({ id: "doc-1", name: "Roster.docx", workspaceId: "ws-1", format: "docx", latestVersion: { id: state.versionId } }) as never,
+      readExactVersionBytes: async ({ versionId }) => {
+        if (input.unreadableSavedVersion && versionId === "v2") throw new Error("object storage unavailable");
+        const bytes = state.versions.get(versionId);
+        if (!bytes) throw new Error("version not found");
+        return bytes;
+      },
+      appendDocumentVersion: async (append) => {
+        assert.equal(append.baseVersionId, "v1");
+        state.bytes = Buffer.from(append.bytes);
+        state.versionId = "v2";
+        state.versions.set("v2", Buffer.from(append.bytes));
+        state.appends++;
+        return { version: { id: "v2", versionNumber: 2 } } as never;
+      },
+    },
+  });
+  const result = await (await execution.start({
+    userId: "user-1", threadId: "thread-1", activeDocumentId: "doc-1", instruction: input.instruction,
+    signal: controller.signal, liveEvents: { emit: (event) => { state.events.push(event); } },
+  })).result;
+  return { binding, result, state };
+}
+
+async function rosterTableDocx(): Promise<Buffer> {
+  const seed = bindDocxDocument({ binding: await createNapiDocxEngineBinding(), bytes: buildMinimalDocx(["Team roster"]) });
+  assert.equal((await seed.mutate("create_table", { rows: rosterRows, placement: { kind: "end" } })).ok, true);
+  return Buffer.from(seed.currentBytes());
+}
+
+const rosterRows = [["Name", "Role"], ["Ada", "CEO"], ["Lin", "CTO"]];
+const rosterTable = { headerCells: ["Name", "Role"] };
+const headerCell = (column: unknown) => ({ row: { kind: "header" }, column });
+
+test("semantic header bold + shading runs through the real loop: dynamic load, one save, reopened output", async () => {
+  const { binding, result, state } = await runScriptedDocx({
+    bytes: Buffer.from(buildMinimalDocx(["Team roster"])),
+    instruction: "Update this document: add a roster table with a bold, shaded header row.",
+    turns: [
+      { calls: [
+        { name: "document_create_table", input: { rows: rosterRows, placement: { kind: "end" } } },
+        { name: "capabilities_load", input: { ids: ["document.tables.styling"] } },
+      ] },
+      { calls: [
+        { name: "document_set_table_cells_formatting", input: { table: rosterTable, updates: [
+          { target: headerCell({ kind: "first" }), textFormatting: { bold: true } },
+          { target: headerCell({ kind: "header", text: "Role" }), textFormatting: { bold: true } },
+        ] } },
+        { name: "document_set_table_cell_shading", input: { table: rosterTable, updates: [
+          { target: headerCell({ kind: "first" }), fill: "D9E2F3" },
+          { target: headerCell({ kind: "header", text: "Role" }), fill: "D9E2F3" },
+        ] } },
+      ] },
+      { text: "Added the roster table with a bold, shaded header.", calls: [{ name: "finish", input: {} }] },
+    ],
+  });
+
+  assert.equal(result.run.status, "completed", result.run.errorMessage ?? "");
+  assert.equal(result.assistantMessage?.content, "Added the roster table with a bold, shaded header.");
+  assert.equal(state.appends, 1);
+  assert.equal(state.exposedTools[0]!.includes("document_set_table_cells_formatting"), false);
+  assert.equal(state.exposedTools[1]!.includes("document_set_table_cells_formatting"), true);
+  assert.equal(state.exposedTools[1]!.includes("document_set_table_cell_shading"), true);
+  assert.deepEqual(state.runtime!.metrics.toolCalls.map((call) => [call.toolName, call.outcome]), [
+    ["capabilities.load", "success"],
+    ["document.create_table", "success"],
+    ["document.set_table_cells_formatting", "success"],
+    ["document.set_table_cell_shading", "success"],
+    ["finish", "success"],
+  ]);
+  assert.equal(state.reports[0]?.outcome, "success");
+
+  const saved = new Uint8Array(state.bytes);
+  const tables = await binding.inspectDocx(saved, { focus: { kind: "tables" } });
+  assert.deepEqual(tables.tables?.items?.[0]?.rows.map((row) => row.cells), rosterRows);
+  const snapshot = await inspectDocxStyleSnapshot(saved, binding);
+  assert.deepEqual(snapshot.tables[0]?.firstRowShadingColors, ["D9E2F3"]);
+  assert.equal(snapshot.tables[0]?.shadingColors.find((color) => color.value === "D9E2F3")?.count, 2);
+  assert.ok((snapshot.tables[0]?.firstRowBoldRunCount ?? 0) >= 2);
+});
+
+test("a failed semantic cell edit after a successful edit saves the edit but settles as partial", async () => {
+  const { binding, result, state } = await runScriptedDocx({
+    bytes: Buffer.from(buildMinimalDocx(["Team roster"])),
+    instruction: "Update this document: add a roster table and shade the Status header.",
+    turns: [
+      { calls: [
+        { name: "document_create_table", input: { rows: rosterRows, placement: { kind: "end" } } },
+        { name: "capabilities_load", input: { ids: ["document.tables.styling"] } },
+      ] },
+      { calls: [{ name: "document_set_table_cell_shading", input: { table: rosterTable, updates: [
+        { target: headerCell({ kind: "header", text: "Status" }), fill: "D9E2F3" },
+      ] } }] },
+      { text: "Added the table and shaded the header.", calls: [{ name: "finish", input: {} }] },
+    ],
+  });
+
+  assert.equal(result.run.status, "failed");
+  assert.equal(result.run.errorCode, "AGENT_PARTIAL_COMPLETION");
+  assert.match(result.assistantMessage?.content ?? "", /set_table_cell_shading/);
+  assert.equal(state.appends, 1);
+  assert.equal(state.reports[0]?.outcome, "partial");
+  assert.deepEqual(state.usage, [{ agentRunId: result.run.id, inputTokens: 3 }], "partial runs record usage exactly once");
+  const shading = state.runtime!.metrics.toolCalls.find((call) => call.toolName === "document.set_table_cell_shading");
+  assert.equal(shading?.outcome, "failure");
+  assert.equal(shading?.failureCode, "TABLE_COLUMN_NOT_FOUND", "semantic targets must reach the engine");
+
+  const saved = new Uint8Array(state.bytes);
+  const tables = await binding.inspectDocx(saved, { focus: { kind: "tables" } });
+  assert.deepEqual(tables.tables?.items?.[0]?.rows.map((row) => row.cells), rosterRows);
+  assert.deepEqual((await inspectDocxStyleSnapshot(saved, binding)).tables[0]?.firstRowShadingColors, []);
+});
+
+test("a failed semantic cell edit with no other edit saves nothing and fails the run", async () => {
+  const { result, state } = await runScriptedDocx({
+    bytes: await rosterTableDocx(),
+    instruction: "Format this document: bold the Status header in the roster table.",
+    turns: [
+      { calls: [{ name: "capabilities_load", input: { ids: ["document.tables.styling"] } }] },
+      { calls: [{ name: "document_set_table_cells_formatting", input: { table: rosterTable, updates: [
+        { target: headerCell({ kind: "header", text: "Status" }), textFormatting: { bold: true } },
+      ] } }] },
+      { text: "Bolded the header.", calls: [{ name: "finish", input: {} }] },
+    ],
+  });
+
+  assert.equal(result.run.status, "failed");
+  assert.equal(result.run.errorCode, "AGENT_MUTATION_FAILED");
+  assert.equal(state.appends, 0);
+  assert.equal(state.reports[0]?.outcome, "failure");
+  assert.equal(
+    state.runtime!.metrics.toolCalls.find((call) => call.toolName === "document.set_table_cells_formatting")?.failureCode,
+    "TABLE_COLUMN_NOT_FOUND",
+  );
+});
+
+test("semantic row deletion through the real loop removes the labelled row and saves once", async () => {
+  const { binding, result, state } = await runScriptedDocx({
+    bytes: await rosterTableDocx(),
+    instruction: "Edit this document: remove Lin from the roster table.",
+    turns: [
+      { calls: [{ name: "document_delete_table_row", input: { table: rosterTable, row: { kind: "label", text: "Lin" } } }] },
+      { text: "Removed Lin from the roster.", calls: [{ name: "finish", input: {} }] },
+    ],
+  });
+
+  assert.equal(result.run.status, "completed", result.run.errorMessage ?? "");
+  assert.equal(state.appends, 1);
+  const tables = await binding.inspectDocx(new Uint8Array(state.bytes), { focus: { kind: "tables" } });
+  assert.deepEqual(tables.tables?.items?.[0]?.rows.map((row) => row.cells), rosterRows.slice(0, 2));
+});
+
+test("an empty no-tool final response does not settle earlier narration as the reply", async () => {
+  const narration = "Let me update the roster heading.";
+  const { result, state } = await runScriptedDocx({
+    bytes: Buffer.from(buildMinimalDocx(["Team roster"])),
+    instruction: "Edit this document: rename the heading to Team list.",
+    turns: [
+      { text: narration, calls: [{ name: "document_replace_text", input: { target: { text: "Team roster" }, expectedCurrentText: "Team roster", replacement: "Team list" } }] },
+      { calls: [] },
+    ],
+  });
+
+  assert.equal(state.appends, 1);
+  assert.equal(result.run.status, "completed");
+  assert.match(result.assistantMessage?.content ?? "", /^Saved the changes to /);
+});
+
+test("a later success on a different cell does not recover an earlier failed cell edit", async () => {
+  const { result, state } = await runScriptedDocx({
+    bytes: await rosterTableDocx(),
+    instruction: "Update this document: in the roster, set Sam's role to CFO and Ada's role to Founder.",
+    turns: [
+      { calls: [{ name: "document_set_table_cells_text", input: { table: rosterTable, updates: [{
+        target: { row: { kind: "label", text: "Sam" }, column: { kind: "header", text: "Role" } }, expectedCurrentText: "CFO", replacement: "CFO",
+      }] } }] },
+      { calls: [{ name: "document_set_table_cells_text", input: { table: rosterTable, updates: [{
+        target: { row: { kind: "label", text: "Ada" }, column: { kind: "header", text: "Role" } }, expectedCurrentText: "CEO", replacement: "Founder",
+      }] } }] },
+      { text: "Updated both roles.", calls: [{ name: "finish", input: {} }] },
+    ],
+  });
+
+  assert.equal(state.appends, 1);
+  assert.equal(result.run.status, "failed");
+  assert.equal(result.run.errorCode, "AGENT_PARTIAL_COMPLETION");
+});
+
+test("the same formatting on another cell cannot hide unfinished work", async () => {
+  const formatting = (row: string) => ({ table: rosterTable, updates: [{
+    target: { row: { kind: "label", text: row }, column: { kind: "header", text: "Role" } },
+    textFormatting: { bold: true },
+  }] });
+  const original = await rosterTableDocx();
+  const { binding, result, state } = await runScriptedDocx({
+    bytes: original,
+    instruction: "Update this document: bold Sam's and Ada's roles.",
+    turns: [
+      { calls: [{ name: "capabilities_load", input: { ids: ["document.tables.styling"] } }] },
+      { calls: [{ name: "document_set_table_cells_formatting", input: formatting("Sam") }] },
+      { calls: [{ name: "document_set_table_cells_formatting", input: formatting("Ada") }] },
+      { text: "Bolded both roles.", calls: [{ name: "finish", input: {} }] },
+    ],
+  });
+  assert.equal(result.run.errorCode, "AGENT_PARTIAL_COMPLETION");
+  assert.match(result.assistantMessage?.content ?? "", /partially[\s\S]*set_table_cells_formatting/);
+  assert.notEqual(result.assistantMessage?.content, "Bolded both roles.");
+  assert.equal(state.appends, 1);
+  assert.equal(state.reports[0]?.outcome, "partial");
+  assert.equal(state.reports[0]?.tools.find(tool => tool.outcome === "failure")?.recovered, false);
+  assert.deepEqual(state.versions.get("v1"), original);
+  const snapshot = await inspectDocxStyleSnapshot(state.bytes, binding);
+  assert.ok(snapshot.typography.boldRunCount > 0);
+  assert.equal((await inspectDocxStyleSnapshot(original, binding)).typography.boldRunCount, 0);
+});
+
+test("only the same requested replacement clears a failed edit through the real loop", async () => {
+  for (const replacement of ["Team list", "Team LIST", "Team  list"]) {
+    const { binding, result, state } = await runScriptedDocx({
+      bytes: buildMinimalDocx(["Team roster"]),
+      instruction: "Update this document: replace Team roster with Team list.",
+      turns: [
+        { calls: [{ name: "document_replace_text", input: { target: { text: "Team roster" }, expectedCurrentText: "Wrong guard", replacement: "Team list" } }] },
+        { calls: [{ name: "document_replace_text", input: { target: { text: "Team roster" }, expectedCurrentText: "Team roster", replacement } }] },
+        { text: "Updated the heading.", calls: [{ name: "finish", input: {} }] },
+      ],
+    });
+    const recovered = replacement === "Team list";
+    assert.equal(result.run.status, recovered ? "completed" : "failed", replacement);
+    assert.equal(result.run.errorCode, recovered ? null : "AGENT_PARTIAL_COMPLETION", replacement);
+    assert.equal(state.reports[0]?.outcome, recovered ? "success" : "partial", replacement);
+    assert.equal(state.reports[0]?.tools.find(tool => tool.outcome === "failure")?.recovered, recovered);
+    assert.equal(state.appends, 1);
+    const before = await binding.findDocxText(state.versions.get("v1")!, { text: "Team roster" });
+    const after = await binding.findDocxText(state.bytes, { text: replacement });
+    assert.equal(before.matchCount, 1);
+    assert.equal(after.matchCount, 1);
+  }
+});
+
+test("every terminal path bills once, debits once, and settles a truthful durable status and history", async () => {
+  const edit: ScriptedTurn = { calls: [{ name: "document_replace_text", input: { target: { text: "Team roster" }, expectedCurrentText: "Team roster", replacement: "Team list" } }] };
+  const finish: ScriptedTurn = { text: "Renamed the heading.", calls: [{ name: "finish", input: {} }] };
+  const modelError: ScriptedTurn = { calls: [], fail: "error" };
+  const debitOk = async () => {};
+  const exhausted = async () => { throw Object.assign(new Error("Managed AI is unavailable."), { code: "MANAGED_USAGE_EXHAUSTED" }); };
+  const cases: readonly {
+    readonly name: string;
+    readonly turns: readonly ScriptedTurn[];
+    readonly managedDebit?: (event: { id: string }) => Promise<void>;
+    readonly unreadableSavedVersion?: boolean;
+    readonly status: AgentRun["status"];
+    readonly code: string | null;
+    /** Summed input tokens of the one usage event, or null for no event. */
+    readonly billedTokens: number | null;
+    readonly saved: boolean;
+    readonly report: AgentRunReport["outcome"];
+    readonly reply?: RegExp;
+  }[] = [
+    { name: "success", turns: [edit, finish], managedDebit: debitOk, status: "completed", code: null, billedTokens: 2, saved: true, report: "success", reply: /^Renamed the heading\.$/ },
+    { name: "model error after a saved edit", turns: [edit, modelError], managedDebit: debitOk, status: "failed", code: "AGENT_EXECUTION_FAILED", billedTokens: 1, saved: true, report: "partial" },
+    { name: "model error before any work", turns: [modelError], managedDebit: debitOk, status: "failed", code: "AGENT_EXECUTION_FAILED", billedTokens: null, saved: false, report: "failure" },
+    { name: "cancellation after an edit", turns: [edit, { calls: [], fail: "abort" }], managedDebit: debitOk, status: "cancelled", code: null, billedTokens: 1, saved: true, report: "cancelled" },
+    { name: "failed verification", turns: [edit, finish], unreadableSavedVersion: true, status: "failed", code: "DOCUMENT_VERIFICATION_FAILED", billedTokens: 2, saved: true, report: "partial", reply: /could not be verified[\s\S]*preserved/ },
+    { name: "managed credit failure after saved work", turns: [edit, finish], managedDebit: exhausted, status: "failed", code: "MANAGED_USAGE_EXHAUSTED", billedTokens: 2, saved: true, report: "partial" },
+    { name: "credit failure does not mask a model error", turns: [edit, modelError], managedDebit: exhausted, status: "failed", code: "AGENT_EXECUTION_FAILED", billedTokens: 1, saved: true, report: "partial" },
+  ];
+
+  for (const item of cases) {
+    const { result, state } = await runScriptedDocx({
+      bytes: Buffer.from(buildMinimalDocx(["Team roster"])),
+      instruction: "Edit this document: rename the heading to Team list.",
+      turns: item.turns,
+      ...(item.managedDebit ? { managedDebit: item.managedDebit } : {}),
+      ...(item.unreadableSavedVersion ? { unreadableSavedVersion: true } : {}),
+    });
+    const durable = state.persistence.runs.get(result.run.id)!;
+    assert.equal(durable.status, item.status, `${item.name}: ${durable.errorMessage ?? ""}`);
+    assert.equal(durable.errorCode, item.code, item.name);
+    assert.equal(result.run.status, durable.status, `${item.name}: returned run matches durable run`);
+
+    assert.deepEqual(state.usage, item.billedTokens === null ? [] : [{ agentRunId: result.run.id, inputTokens: item.billedTokens }], `${item.name}: one usage event`);
+    if (item.managedDebit) assert.deepEqual(state.debits, state.usage.map((_, index) => `usage-${index + 1}`), `${item.name}: one debit per usage event`);
+
+    assert.equal(state.appends, item.saved ? 1 : 0, item.name);
+    assert.equal(state.events.filter((event) => event.type === "document.version.advanced").length, item.saved ? 1 : 0, item.name);
+    const terminal = state.events.filter((event) => event.type === "agent.completed" || event.type === "agent.failed" || event.type === "agent.cancelled");
+    assert.deepEqual(terminal.map((event) => [event.type, event.type === "agent.failed" ? event.code : null]),
+      [[item.status === "completed" ? "agent.completed" : item.status === "cancelled" ? "agent.cancelled" : "agent.failed", item.code]], `${item.name}: one terminal event`);
+    assert.deepEqual(state.reports.map((report) => report.outcome), [item.report], `${item.name}: one report`);
+
+    const assistant = state.persistence.messages.filter((message) => message.role === "assistant");
+    if (item.reply) {
+      assert.equal(assistant.length, 1, item.name);
+      assert.match(assistant[0]!.content, item.reply, item.name);
+      assert.equal(durable.resultMessageId, assistant[0]!.id, item.name);
+    } else assert.equal(assistant.length, 0, item.name);
+    if (item.status === "failed" && item.saved) {
+      assert.match(durable.errorMessage ?? "", /Changes made so far were preserved\./, `${item.name}: a failed run that saved says so`);
+    }
+    if (!item.saved) assert.doesNotMatch(durable.errorMessage ?? "", /preserved/, item.name);
+
+    const history = await loadHistory({ persistence: state.persistence, threadId: "thread-1", ownerUserId: "user-1", excludeMessageId: "next" });
+    const prior = history.priorMessages.map((message) => message.content).join("\n");
+    assert.match(prior, new RegExp(`status: ${item.status}`), item.name);
+    if (item.saved) assert.match(prior, /tools used: [^\n]*document\.replace_text/, `${item.name}: next turn knows the edit happened`);
+    if (item.status === "failed" && item.saved) assert.match(prior, /preserved/, `${item.name}: next turn knows the edit was kept`);
+  }
 });

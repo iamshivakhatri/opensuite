@@ -1,9 +1,9 @@
 import { appendFileSync, mkdirSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
-import type { AgentEvent, DiagnosticHook, ModelMessage, V3Model } from "@opensuite/agent-core-v3";
+import type { AgentEvent, DiagnosticHook, ModelMessage, AgentModel } from "@opensuite/agent-core";
 
 /** Only settings used by our model factory; never serialize the model/config. */
-export function traceModelSettings(model: V3Model): Record<string, unknown> {
+export function traceModelSettings(model: AgentModel): Record<string, unknown> {
   const settings = (model as unknown as { settings?: Record<string, unknown> }).settings;
   if (!settings) return {};
   const selected: Record<string, unknown> = {};

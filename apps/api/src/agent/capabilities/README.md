@@ -12,6 +12,6 @@ To add a standalone tool, put its metadata, implementation, and test under the r
 
 For example, `skills.reporting.analytical-report` plus `styles.reporting.professional` can guide a new report while existing `document.*` tools build it. A narrow update normally keeps the document's existing style.
 
-Keep document rules, database access, and capability discovery in the API. `packages/agent-core-v3` stays a generic model and tool loop.
+Keep document rules, database access, and capability discovery in the API. `packages/agent-core` stays a generic model and tool loop.
 
 Personal saved styles are API product tools in `definitions/style-profiles.ts`. `execution.ts` supplies the authenticated style service and selected saved-version context; the catalog registers metadata only. They learn/retrieve explicitly requested style profiles and never apply them. See `docs/style_profiles.md`.

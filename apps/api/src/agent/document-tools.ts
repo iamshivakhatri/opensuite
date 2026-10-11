@@ -1,8 +1,10 @@
+import { createHash } from "node:crypto";
+
 import { jsonSchema } from "ai";
 import {
   defineTool,
   type AgentToolSet,
-} from "@opensuite/agent-core-v3";
+} from "@opensuite/agent-core";
 
 /**
  * Bound document host for agent runs.
@@ -10,6 +12,7 @@ import {
  */
 export interface BoundDocumentHost {
   capabilities(): unknown;
+  documentId?(): string | null;
   inspect(request: { readonly focus: InspectFocus }): Promise<unknown>;
   renderLayout?(): Promise<unknown>;
   find(request: { readonly text: string }): Promise<unknown>;
@@ -749,10 +752,12 @@ function docxCapabilitySet(capabilities: unknown): Set<string> {
   return set;
 }
 
-/** V3 AgentTools for the live loop. Names match product progress labels. */
+/** agent-core AgentTools for the live loop. Names match product progress labels. */
 export function createDocumentTools(document: BoundDocumentHost): AgentToolSet {
   const caps = docxCapabilitySet(document.capabilities());
   const tools: AgentToolSet = {};
+  const effectKeys = (input: unknown, output: unknown) =>
+    mutationEffectKeys(input, output, document.documentId?.() ?? undefined);
 
   if (caps.has(READ_CAPS.inspect)) {
     tools["document.inspect"] = defineTool({
@@ -832,6 +837,7 @@ export function createDocumentTools(document: BoundDocumentHost): AgentToolSet {
         kind: "mutate",
         description: def.description,
         inputSchema: def.inputSchema,
+        effectKeys,
         execute: async (input) =>
           mutate(capability, (input ?? {}) as Record<string, unknown>),
       });
@@ -864,12 +870,59 @@ export function createDocumentTools(document: BoundDocumentHost): AgentToolSet {
           required: ["operations"],
           additionalProperties: false,
         }),
+        effectKeys,
         execute: async ({ operations }) => mutateBatch(capability, operations),
       });
     }
   }
 
   return tools;
+}
+
+const TARGET_FIELDS = new Set(["table", "target", "targets", "row", "after", "placement", "columnHeader", "styleId"]);
+
+/**
+ * One `target|effect` key per unit of attempted work: each batch operation from
+ * the first failed one, each table update, or the whole call. Preserve exact
+ * selectors and values: changed handles cannot prove the same object was edited.
+ */
+export function mutationEffectKeys(input: unknown, output: unknown, documentId?: string): string[] {
+  const record = isRecord(input) ? input : {};
+  let units: Record<string, unknown>[] = [record];
+  if (Array.isArray(record.operations)) {
+    const failedIndex = isRecord(output) && output.ok === false && typeof output.failedIndex === "number" ? output.failedIndex : 0;
+    units = record.operations.slice(failedIndex).filter(isRecord);
+  } else if (Array.isArray(record.updates)) {
+    const { updates, ...shared } = record;
+    units = updates.filter(isRecord).map((update) => ({ ...shared, ...update }));
+  }
+  return units.map((unit) => {
+    const target: Record<string, unknown> = documentId ? { documentId } : {};
+    const effect: Record<string, unknown> = {};
+    for (const [key, value] of Object.entries(unit)) {
+      if (key === "expectedCurrentText" || key === "baseRevision") continue;
+      (TARGET_FIELDS.has(key) ? target : effect)[key] = value;
+    }
+    return `${identityHash(target)}|${identityHash(effect)}`;
+  });
+}
+
+function identityHash(value: Record<string, unknown>): string {
+  const canonical = canonicalIdentity(value);
+  return canonical === "{}" ? "" : createHash("sha256").update(canonical).digest("hex").slice(0, 16);
+}
+
+function canonicalIdentity(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(canonicalIdentity).join(",")}]`;
+  if (isRecord(value)) {
+    return `{${Object.keys(value).filter((key) => value[key] !== undefined).sort()
+      .map((key) => `${JSON.stringify(key)}:${canonicalIdentity(value[key])}`).join(",")}}`;
+  }
+  return JSON.stringify(value ?? null);
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return !!value && typeof value === "object" && !Array.isArray(value);
 }
 
 function toInspectFocus(input: InspectToolInput): InspectFocus {

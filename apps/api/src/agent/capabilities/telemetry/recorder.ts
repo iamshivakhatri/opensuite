@@ -1,4 +1,4 @@
-import type { AgentEvent } from "@opensuite/agent-core-v3";
+import type { AgentEvent } from "@opensuite/agent-core";
 import type { Db } from "@opensuite/db";
 import { schema } from "@opensuite/db";
 import type { CapabilityEvent } from "../core/session.js";

@@ -2,7 +2,7 @@ import type {
   AgentEvent as CoreAgentEvent,
   AgentRunMetrics,
   StopReason,
-} from "@opensuite/agent-core-v3";
+} from "@opensuite/agent-core";
 
 import {
   productionModelPricingRegistry,
@@ -31,7 +31,7 @@ import type {
 } from "./persistence.js";
 import type {
   AgentEventSink,
-  ResolvedV3ExecutionModel,
+  ResolvedExecutionModel,
 } from "./execution.js";
 import type { RunTrace } from "./run-trace.js";
 
@@ -237,7 +237,7 @@ export async function emitRunReport(input: {
   readonly trace?: RunTrace;
   readonly runId: string;
   readonly instruction: string;
-  readonly model: ResolvedV3ExecutionModel;
+  readonly model: ResolvedExecutionModel;
   readonly metrics: AgentRunMetrics | undefined;
   readonly stopReason?: StopReason;
   readonly cancelled: boolean;

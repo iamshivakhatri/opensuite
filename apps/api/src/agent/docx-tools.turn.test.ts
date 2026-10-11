@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { MockLanguageModelV4, simulateReadableStream } from "ai/test";
-import { createFinishTool, runAgent, type AgentEvent } from "@opensuite/agent-core-v3";
+import { createFinishTool, runAgent, type AgentEvent } from "@opensuite/agent-core";
 import { bindDocxDocument, buildMinimalDocx, createNapiDocxEngineBinding } from "@opensuite/engine-client";
 import { createPrimaryDocxTools } from "./docx-tools.js";
 import { createToolSurface } from "./capabilities/runtime/tool-surface.js";

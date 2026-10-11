@@ -2,7 +2,7 @@
  * Context Lifecycle C7 — deterministic in-run tool observation projection.
  *
  * Model-facing only: shrinks older large read results (document.inspect /
- * document.find) while preserving AI SDK tool-call/result pairing. The V3
+ * document.find) while preserving AI SDK tool-call/result pairing. The agent-core
  * working transcript is never mutated here.
  */
 

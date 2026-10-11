@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { defineTool, runAgent } from "@opensuite/agent-core-v3";
+import { defineTool, runAgent } from "@opensuite/agent-core";
 import { jsonSchema } from "ai";
 import { MockLanguageModelV4, simulateReadableStream } from "ai/test";
 import { createToolSurface } from "../runtime/tool-surface.js";

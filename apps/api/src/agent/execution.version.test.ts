@@ -10,7 +10,7 @@ import {
 import { createDocumentTools } from "./document-tools.js";
 import { createPrimaryDocxTools } from "./docx-tools.js";
 
-test("V3 document mutation tool advances immutable version via host persist", async () => {
+test("agent-core document mutation tool advances immutable version via host persist", async () => {
   const binding = await createNapiDocxEngineBinding();
   const initial = new Uint8Array(buildMinimalDocx(["Before"]));
   let versionId = "v1";
@@ -306,7 +306,7 @@ test("header shading then table formatting and widths reuse one inspect", async 
 
 test("one structural header formatting call advances preview and expires inspected handles", async () => {
   const binding = await createNapiDocxEngineBinding();
-  assert.equal(binding.getDocxCapabilities().engineVersion, "0.1.4");
+  assert.equal(binding.getDocxCapabilities().engineVersion, "0.1.5");
   assert.ok(binding.getDocxCapabilities().formats.find((format) => format.format === "docx")?.capabilities.includes("set_table_cells_formatting"));
   const tools = await createPrimaryDocxTools({
     binding, ownerUserId: "user-1", workspaceId: "ws-1", documentId: "doc-1", versionId: "v1",

@@ -1,10 +1,10 @@
-# Agent Core V3
+# Agent Core
 
-`packages/agent-core-v3` is the active generic model/tool runtime. The API owns model resolution, persisted conversation context, document bindings, lifecycle, and product events.
+`packages/agent-core` is the active generic model/tool runtime. The API owns model resolution, persisted conversation context, document bindings, lifecycle, and product events.
 
 ```text
 API resolves model + context + document tools
-  → agent-core-v3 runAgent
+  → agent-core runAgent
     → generic model/tool loop
     → API persists result and document versions
 ```
@@ -53,7 +53,7 @@ with owner-only permissions. Appends happen during execution, so partial files
 remain after failure, cancellation, or process exit. A failed diagnostic write
 prints a short warning and does not fail the agent run.
 
-The API owns `run-trace.ts`; V3 exposes only an optional `onDiagnostic` callback.
+The API owns `run-trace.ts`; agent-core exposes only an optional `onDiagnostic` callback.
 Requests are captured in `streamTurn` immediately before `streamText`, **after**
 `projectMessages` and per-turn `projectTools` / schema-only provider-safe aliases.
 The request sections contain the actual system, message array, and schema map
@@ -114,8 +114,8 @@ The first model turn receives the existing common tools plus
 instruction lists only available root domains. Listing shows immediate children;
 search returns at most eight compact matches. Loading a leaf group or tool is
 run-local, monotonic, and idempotent. Unknown or unavailable IDs fail together.
-The next model turn receives schemas for the newly loaded tools through V3's
-existing `projectTools` callback. V3 executes against that turn's snapshot, so
+The next model turn receives schemas for the newly loaded tools through agent-core's
+existing `projectTools` callback. agent-core executes against that turn's snapshot, so
 hidden tools cannot run in the same turn as the load request.
 
 Before Turn 1, the API uses bounded indexed lexical matching on the latest
@@ -129,7 +129,7 @@ capability telemetry and can be compared with later loads and tool use.
 
 DOCX specialist groups now live below `document` (paragraphs, text, tables,
 layout, rich content). Common document, workspace, and finish tools keep their
-previous initial exposure. V3 remains unaware of capability structure and DOCX.
+previous initial exposure. agent-core remains unaware of capability structure and DOCX.
 First-turn context budgeting reserves only the projected initial schemas.
 
 `agent_capability_event` stores raw discovered, loaded, executed, succeeded,

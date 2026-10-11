@@ -3,15 +3,14 @@ set -eu
 
 cd /app
 
-# Prefer a real require() over path heuristics — pnpm stores the .node under
-# node_modules/.pnpm/@opensuitehq+engine-linux-*, not next to index.js.
+# Same resolution as the runtime (honours OPENSUITE_ENGINE_PATH and NAPI-RS overrides).
 if node --input-type=module -e '
-import { createRequire } from "node:module";
-const require = createRequire("/app/packages/engine-client/dist/docx-engine-binding.js");
-const eng = require("@opensuitehq/engine");
-const caps = eng.getDocxCapabilities();
+import { createNapiDocxEngineBinding, describeNativeEngine, formatNativeEngineIdentity } from "/app/packages/engine-client/dist/index.js";
+const binding = await createNapiDocxEngineBinding();
+const caps = binding.getDocxCapabilities();
 if (!caps?.ok) throw new Error("capabilities not ok");
-console.log("[opensuite] engine ok version=" + caps.engineVersion);
+const engine = await describeNativeEngine(binding);
+console.log("[opensuite] engine ok " + formatNativeEngineIdentity(engine));
 ' 2>/tmp/opensuite-engine-check.err; then
   :
 else

@@ -1,5 +1,5 @@
 import { jsonSchema } from "ai";
-import { defineTool, type AgentEvent, type AgentToolSet } from "@opensuite/agent-core-v3";
+import { defineTool, type AgentEvent, type AgentToolSet } from "@opensuite/agent-core";
 import { capabilityRegistry } from "../catalog.js";
 import { CapabilitySession, type CapabilityEvent } from "../core/session.js";
 

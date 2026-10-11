@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import type { AgentRunMetrics } from "@opensuite/agent-core-v3";
+import type { AgentRunMetrics } from "@opensuite/agent-core";
 
 import {
   composeAgentRunReport,
@@ -13,7 +13,9 @@ import {
   formatAgentRunSummary,
   logAgentRunReport,
   persistedVersionCount,
+  unrecoveredFailedMutateToolNames,
 } from "./agent-run-report.js";
+import { mutationEffectKeys } from "./document-tools.js";
 import type { ModelPricingEntry } from "../model-usage/pricing.js";
 
 function baseMetrics(
@@ -260,6 +262,7 @@ test("unrecovered mutate failures after a version advance are partial, not full 
           durationMs: 10,
           outcome: "failure",
           failureCode: "STYLE_NOT_FOUND",
+          effectKeys: ["paragraph|style"],
         },
         {
           sequence: 2,
@@ -277,6 +280,7 @@ test("unrecovered mutate failures after a version advance are partial, not full 
           kind: "mutate",
           durationMs: 20,
           outcome: "success",
+          effectKeys: ["paragraph|style"],
         },
       ],
       usage: {
@@ -320,7 +324,7 @@ test("unrecovered mutate failures after a version advance are partial, not full 
   assert.equal(messages.some((m) => m.startsWith("[agent-run-failure]")), false);
 });
 
-test("same-tool recovered mutate errors remain success", () => {
+test("a later success for the exact failed edit remains success", () => {
   const report = composeAgentRunReport({
     runId: "run-all-recovered",
     instruction: "format paragraph",
@@ -334,6 +338,7 @@ test("same-tool recovered mutate errors remain success", () => {
           durationMs: 10,
           outcome: "failure",
           failureCode: "STYLE_NOT_FOUND",
+          effectKeys: ["paragraph|style"],
         },
         {
           sequence: 2,
@@ -342,6 +347,7 @@ test("same-tool recovered mutate errors remain success", () => {
           kind: "mutate",
           durationMs: 20,
           outcome: "success",
+          effectKeys: ["paragraph|style"],
         },
       ],
       stopReason: "finish_tool",
@@ -675,4 +681,55 @@ test("formatAgentRunSummary is compact and deterministic", () => {
   assert.match(summary, /Versions\s+ver-aaaa → ver-bbbb/);
   assert.match(summary, /Fuse events\s+0/);
   assert.equal(summary, formatAgentRunSummary(report));
+});
+
+test("failed mutate work needs a later success for the exact target and change", () => {
+  const cell = (row: string, replacement: string) => ({
+    table: { headerCells: ["Name", "Role"] },
+    updates: [{ target: { row: { kind: "label", text: row }, column: { kind: "header", text: "Role" } }, expectedCurrentText: "x", replacement }],
+  });
+  const call = (sequence: number, outcome: "success" | "failure", input: unknown, toolName = "document.set_table_cells_text") => ({
+    sequence, turn: sequence, toolName, kind: "mutate" as const, durationMs: 1, outcome, effectKeys: mutationEffectKeys(input, undefined),
+  });
+  const unrecovered = (...toolCalls: ReturnType<typeof call>[]) => unrecoveredFailedMutateToolNames(baseMetrics({ toolCalls }));
+
+  assert.deepEqual(unrecovered(call(1, "failure", cell("Sam", "CFO")), call(2, "success", cell("Ada", "Founder"))), ["document.set_table_cells_text"]);
+  assert.deepEqual(unrecovered(call(1, "failure", cell("Sam", "CFO")), call(2, "success", cell("Sam", "CFO"))), []);
+  assert.deepEqual(unrecovered(call(1, "failure", cell("Sam", "CFO")), call(2, "success", cell("Ada", "CFO"))), ["document.set_table_cells_text"]);
+  assert.deepEqual(unrecovered(call(1, "failure", cell("Ada", "Founder")), call(2, "success", cell("Ada", "Owner"))), ["document.set_table_cells_text"]);
+  // A corrected selector alone does not prove the original edit was completed.
+  const replace = (text: string) => ({ target: { text }, expectedCurrentText: text, replacement: "Team list" });
+  assert.deepEqual(unrecovered(call(1, "failure", replace("Team rostr"), "document.replace_text"), call(2, "success", replace("Team roster"), "document.replace_text")), ["document.replace_text"]);
+  // One success cannot recover two different failed cells.
+  const bold = (rows: string[]) => ({ table: { headerCells: ["Name"] }, updates: rows.map((text) => ({ target: { row: { kind: "label", text } }, textFormatting: { bold: true } })) });
+  assert.deepEqual(unrecovered(call(1, "failure", bold(["Sam", "Ada"]), "document.set_table_cells_formatting"), call(2, "success", bold(["Ada"]), "document.set_table_cells_formatting")), ["document.set_table_cells_formatting"]);
+  assert.deepEqual(unrecovered(call(1, "failure", bold(["Sam"]), "document.set_table_cells_formatting"), call(2, "success", bold(["Ada"]), "document.set_table_cells_formatting")), ["document.set_table_cells_formatting"]);
+  // An earlier success cannot prove the state after a later failure.
+  assert.deepEqual(unrecovered(call(1, "success", cell("Ada", "Founder")), call(2, "failure", cell("Ada", "Founder"))), ["document.set_table_cells_text"]);
+  // Handles identify distinct objects; unknown work cannot be matched by name.
+  assert.deepEqual(unrecovered(call(1, "failure", { handle: "h1" }, "document.delete_picture"), call(2, "success", { handle: "h2" }, "document.delete_picture")), ["document.delete_picture"]);
+  assert.deepEqual(unrecovered(call(1, "failure", { handle: "h1" }, "document.delete_picture"), call(2, "success", { handle: "h1" }, "document.delete_picture")), []);
+  assert.deepEqual(unrecoveredFailedMutateToolNames(baseMetrics({ toolCalls: [
+    { sequence: 1, turn: 1, toolName: "image.insert", kind: "mutate", durationMs: 1, outcome: "failure" },
+    { sequence: 2, turn: 2, toolName: "image.insert", kind: "mutate", durationMs: 1, outcome: "success" },
+  ] })), ["image.insert"]);
+});
+
+test("edit identities preserve case, spacing, and nested handles", () => {
+  const replace = (replacement: string) => ({ target: { text: "Company" }, expectedCurrentText: "Company", replacement });
+  for (const replacement of ["COMPANY", "Company ", "Company  name", "company"]) {
+    assert.notDeepEqual(mutationEffectKeys(replace("Company"), undefined), mutationEffectKeys(replace(replacement), undefined));
+  }
+  assert.notDeepEqual(mutationEffectKeys({ target: { handle: "cell-1" }, replacement: "CEO" }, undefined), mutationEffectKeys({ target: { handle: "cell-2" }, replacement: "CEO" }, undefined));
+  assert.deepEqual(mutationEffectKeys(replace("Name"), undefined), mutationEffectKeys({ replacement: "Name", expectedCurrentText: "Updated guard", target: { text: "Company" } }, undefined));
+  assert.notDeepEqual(mutationEffectKeys(replace("Name"), undefined, "doc-1"), mutationEffectKeys(replace("Name"), undefined, "doc-2"));
+});
+
+test("a failed batch requires all remaining edits to succeed without relying on missing identities", () => {
+  const operations = ["A", "B", "C"].map((text) => ({ target: { text }, replacement: `${text} updated` }));
+  const failed = { sequence: 1, turn: 1, toolName: "document.batch_replace_text", kind: "mutate" as const, durationMs: 0, outcome: "failure" as const, effectKeys: mutationEffectKeys({ operations }, { ok: false, failedIndex: 1 }) };
+  const success = { sequence: 2, turn: 2, toolName: failed.toolName, kind: failed.kind, durationMs: 0, outcome: "success" as const, effectKeys: mutationEffectKeys({ operations: operations.slice(1) }, { ok: true }) };
+  assert.deepEqual(unrecoveredFailedMutateToolNames(baseMetrics({ toolCalls: [failed, success] })), []);
+  assert.deepEqual(unrecoveredFailedMutateToolNames(baseMetrics({ toolCalls: [failed, { ...success, effectKeys: mutationEffectKeys({ operations: operations.slice(2) }, { ok: true }) }] })), [failed.toolName]);
+  assert.deepEqual(unrecoveredFailedMutateToolNames(baseMetrics({ toolCalls: [failed, { ...success, effectKeys: undefined }] })), [failed.toolName]);
 });

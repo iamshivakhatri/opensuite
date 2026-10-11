@@ -1,4 +1,4 @@
-import type { StopReason } from "@opensuite/agent-core-v3";
+import type { StopReason } from "@opensuite/agent-core";
 
 import type {
   AgentEventSink,
@@ -21,6 +21,7 @@ import {
 } from "./execution-lease.js";
 
 export const MAX_MODEL_TURNS = 20;
+const PRESERVED = "Changes made so far were preserved.";
 
 export async function persistTranscript(
   persistence: AgentPersistenceService,
@@ -56,7 +57,7 @@ export function boundedStopMessage(
     : stopReason === "output_limit"
       ? "The AI response reached its output limit before completing the task."
     : "Stopped before the task could be completed.";
-  return hasVersionAdvance ? `${stopped} Changes made so far were preserved.` : stopped;
+  return hasVersionAdvance ? `${stopped} ${PRESERVED}` : stopped;
 }
 
 export async function finalizeCompletedRun(input: {
@@ -101,11 +102,16 @@ export async function settleTerminalRunFailure(input: {
   readonly failureCode?: string;
   readonly failureMessage?: string;
   readonly transcript?: readonly TranscriptEntry[];
+  /** A version was saved before the failure; the user and the next turn must know. */
+  readonly changesPreserved?: boolean;
 }): Promise<AgentExecutionResult> {
   const runShort = input.run.id.slice(0, 8);
   const knownFailure = describeRunFailure(input.error, input.transcript ?? []);
   const failureCode = input.failureCode ?? knownFailure?.code ?? "AGENT_EXECUTION_FAILED";
-  const failureMessage = input.failureMessage ?? knownFailure?.message ?? "Agent execution failed. Please try again.";
+  const baseMessage = input.failureMessage ?? knownFailure?.message ?? "Agent execution failed. Please try again.";
+  const failureMessage = input.changesPreserved && failureCode !== "AGENT_PERSISTENCE_FAILED" && !baseMessage.includes(PRESERVED)
+    ? `${baseMessage} ${PRESERVED}`
+    : baseMessage;
   const discloseAsAssistant = Boolean(input.expectedStop || input.discloseAsAssistant) && !input.cancelled;
 
   // Idempotent: if already terminal (e.g. outer safety net after settle),

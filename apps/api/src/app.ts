@@ -3,7 +3,7 @@ import cors from "@fastify/cors";
 import multipart from "@fastify/multipart";
 
 import type { Db } from "@opensuite/db";
-import { createOpenRouterModel } from "@opensuite/agent-core-v3";
+import { createOpenRouterModel } from "@opensuite/agent-core";
 import { createNapiDocxEngineBinding } from "@opensuite/engine-client";
 
 import {
@@ -89,6 +89,7 @@ export interface AgentAppDependencies {
 }
 
 export interface AppDependencies {
+  readonly docxBinding?: import("@opensuite/engine-client").DocxEngineBinding;
   readonly auth: AuthHandler & SessionAuth;
   readonly db: Db;
   readonly storage: ObjectStorage;
@@ -257,9 +258,9 @@ export async function buildApp(
   let createBlankDocxBytes:
     | (() => Uint8Array | Promise<Uint8Array>)
     | undefined = deps.createBlankDocxBytes;
-  let docxBinding: import("@opensuite/engine-client").DocxEngineBinding | undefined;
+  let docxBinding = deps.docxBinding;
 
-  if (!createBlankDocxBytes) {
+  if (!createBlankDocxBytes && !docxBinding) {
     try {
       docxBinding = await createNapiDocxEngineBinding();
     } catch (error) {
@@ -323,7 +324,7 @@ export async function buildApp(
     deps.agent?.persistence ?? createAgentPersistenceService(deps.db);
   const agentExecutionLease = createAgentExecutionLeaseService(deps.db);
   if (!aiModelResolver && !deps.agent?.execution) {
-    throw new Error("OpenRouter configuration is required for Agent Core V3");
+    throw new Error("OpenRouter configuration is required for Agent Core");
   }
   const agentExecution =
     deps.agent?.execution ??
@@ -337,7 +338,7 @@ export async function buildApp(
       resolveModel: async (userId: string) => {
         const resolved = await aiModelResolver!.resolve(userId);
         if (resolved.provider !== "openrouter") {
-          throw new Error("Agent Core V3 currently requires OpenRouter");
+          throw new Error("Agent Core currently requires OpenRouter");
         }
         const outputTokenLimit = agentOutputTokenLimit(
           config.agent.maxOutputTokens,

@@ -1,6 +1,6 @@
 # Personal document style profiles (Phases 2–3)
 
-The engine owns read-only DOCX facts. `packages/engine-client` exposes the typed snapshot. The API's `style-profiles/normalize.ts` turns those facts into a reusable format; `style-profiles/service.ts` authorizes document access and saves profiles. `agent-core-v3` is unchanged.
+The engine owns read-only DOCX facts. `packages/engine-client` exposes the typed snapshot. The API's `style-profiles/normalize.ts` turns those facts into a reusable format; `style-profiles/service.ts` authorizes document access and saves profiles. `agent-core` is unchanged.
 
 ## Format and evidence
 
@@ -38,14 +38,14 @@ Default name: `<document filename without .docx> Style`, bounded to 160 characte
 
 Unit fixtures cover deterministic output, custom/default body selection, headings, repeated patterns, isolated overrides, table isolation, lists, page setup, and unresolved/partial evidence. Capability checks cover discovery, explicit load/use, compact output, and unsaved-edit rejection. The execution isolation suite checks open-document binding and service wiring without paid models.
 
-Run the API build, then the opt-in integration test (uses published `@opensuitehq/engine@0.1.4` unless `OPENSUITE_ENGINE_PATH` is set):
+Run the API build, then the opt-in integration test (uses published `@opensuitehq/engine@0.1.5` unless `OPENSUITE_ENGINE_PATH` is set):
 
 ```sh
 RUN_STYLE_PROFILE_DB_TESTS=true \
 node --test apps/api/dist/style-profiles/service.integration.test.js
 ```
 
-This test requires PostgreSQL schema creation rights. It creates a random isolated schema on `DATABASE_URL`, applies the entire migration chain there (substituting historical `public` schema identifiers), and drops that test schema in cleanup. It does not migrate the application schema. Each of the three repository dogfood DOCX files is learned from an explicit older version, saved, and reloaded through a fresh Node process/database pool with full structural equality. Tests check source hashes/version counts, personal CRUD, cross-user/source-workspace access, wrong version IDs, latest-tip provenance, and trashed-source rejection. Extraction requires `@opensuitehq/engine@0.1.4` (or a valid `OPENSUITE_ENGINE_PATH` override).
+This test requires PostgreSQL schema creation rights. It creates a random isolated schema on `DATABASE_URL`, applies the entire migration chain there (substituting historical `public` schema identifiers), and drops that test schema in cleanup. It does not migrate the application schema. Each of the three repository dogfood DOCX files is learned from an explicit older version, saved, and reloaded through a fresh Node process/database pool with full structural equality. Tests check source hashes/version counts, personal CRUD, cross-user/source-workspace access, wrong version IDs, latest-tip provenance, and trashed-source rejection. Extraction requires `@opensuitehq/engine@0.1.5` (or a valid `OPENSUITE_ENGINE_PATH` override).
 
 Validated real profiles:
 
@@ -62,7 +62,7 @@ The failed dogfood run `4c2548e7-d180-49dc-a34e-634f05723d7d` called learning wi
 
 Completion presentation uses successful tool names/statuses, not assistant text or version-count guesses. Successful learning shows “Saved style profile”; profile list/get shows “Completed”; successful document mutations still show “Updated document”; document creation keeps “Created …”. Failed/unknown tools and capability discovery cannot imply document edits.
 
-The exact prompt/arguments have regression coverage in document targeting, execution isolation, and an opt-in integration replay. The replay uses the real V3 loop, persisted agent runs/steps, document service, local native engine, and PostgreSQL in an isolated schema, with a scripted model. Blue Harbor learning executes once with no failures and exact current-version provenance; list/get expose the saved profile in compact model results; source hashes/version counts remain unchanged. All three original normalization and fresh-process persistence checks still pass. Live-model UI dogfood remains a manual check because paid model calls are prohibited.
+The exact prompt/arguments have regression coverage in document targeting, execution isolation, and an opt-in integration replay. The replay uses the real agent-core loop, persisted agent runs/steps, document service, local native engine, and PostgreSQL in an isolated schema, with a scripted model. Blue Harbor learning executes once with no failures and exact current-version provenance; list/get expose the saved profile in compact model results; source hashes/version counts remain unchanged. All three original normalization and fresh-process persistence checks still pass. Live-model UI dogfood remains a manual check because paid model calls are prohibited.
 
 Manual prompts in the existing local agent panel, with a saved Blue Harbor DOCX open:
 
@@ -74,7 +74,7 @@ The web suite's default Node type-stripping command cannot resolve existing exte
 
 ## Phase 3: deterministic application
 
-The smallest path reuses `service.ts` owner-scoped retrieval and the existing bound DOCX mutation host. Two nearby modules carry product behavior: `application.ts` builds a typed `StyleApplicationPlan` and applies it; `fidelity.ts` compares the engine's resulting snapshot. Semantic role recognition lives alongside normalization. There is no new framework, dependency, schema/migration, engine operation, or agent-core-v3 change.
+The smallest path reuses `service.ts` owner-scoped retrieval and the existing bound DOCX mutation host. Two nearby modules carry product behavior: `application.ts` builds a typed `StyleApplicationPlan` and applies it; `fidelity.ts` compares the engine's resulting snapshot. Semantic role recognition lives alongside normalization. There is no new framework, dependency, schema/migration, engine operation, or agent-core change.
 
 The plan retains known, valid values only: body/Title/Heading1–3 text patches; paragraph alignment, spacing before/after, and body indentation; Letter/A4 size, explicit orientation, and four page margins; compatible rectangular table grid borders, header fill/bold, padding, alignment, and proportional column widths. Missing values stay absent. The grid primitive reproduces only six single/auto/4-eighth-point borders. Column widths preserve the target proportions; no source column layout or content is transferred. A conflicting fixed target table width remains unresolved. The engine cannot set the table width declaration itself.
 
@@ -105,6 +105,6 @@ A deterministic Cincinnati Sports Club October newsletter contains unrelated sam
 
 Result: **27 matched, 0 mismatched, 1 N/A, 9 unsupported**. Unsupported facts are body/Title/Heading1 line spacing, Title/Heading1 keep-with-next, header/footer/gutter page distances, and table width declaration. Additional tests cover Heading2, colors, alignment, explicit landscape, intentional mismatches, absent tables, unknown themes, unsafe targets, authorization/version conflicts, stage rollback, list preservation, and false completion.
 
-Known limits: no custom page sizes, numbering/marker redesign, richer section layout, arbitrary borders, header/footer creation, BrandProfile, or organization precedence. Multisection page setup is left unresolved; richer unsafe content can reject staging. Application/runtime uses published `@opensuitehq/engine@0.1.4`; `OPENSUITE_ENGINE_PATH` is optional for local engine development only. Generated dogfood files are `/private/tmp/opensuite-phase3-newsletter.docx` and `/private/tmp/opensuite-phase3-fidelity.json`.
+Known limits: no custom page sizes, numbering/marker redesign, richer section layout, arbitrary borders, header/footer creation, BrandProfile, or organization precedence. Multisection page setup is left unresolved; richer unsafe content can reject staging. Application/runtime uses published `@opensuitehq/engine@0.1.5`; `OPENSUITE_ENGINE_PATH` is optional for local engine development only. Generated dogfood files are `/private/tmp/opensuite-phase3-newsletter.docx` and `/private/tmp/opensuite-phase3-fidelity.json`.
 
 Validation: API suite and isolation/normalization/capability/placeholder/native application tests; isolated PostgreSQL style integration; engine-client and DB unit suites; API and web typechecks; web tests through the existing tsx loader (the default strip-types runner still cannot resolve extensionless imports); `git diff --check`. Other opt-in infrastructure tests remain skipped in ordinary suites.

@@ -61,29 +61,31 @@ test("acceptRefreshedDocxFields rejects lost TOC and keeps reason compact", asyn
   assert.equal(rejected.reason, "TOC field lost");
 });
 
-test("acceptRefreshedDocxFields rejects lost customXml parts", async () => {
+test("acceptRefreshedDocxFields rejects lost customXml, embedding, and glossary parts", async () => {
   const binding = await createNapiDocxEngineBinding();
   if (!binding.getDocxCapabilities().formats[0]?.capabilities.includes("insert_toc")) return;
   const original = binding.createBlankDocx();
-  // Inject a protected customXml part into a copy of the blank package.
+  // Inject a protected part into a copy of the blank package.
   const { execFileSync } = await import("node:child_process");
   const { mkdtempSync, writeFileSync, readFileSync, mkdirSync, rmSync } = await import("node:fs");
   const { tmpdir } = await import("node:os");
-  const { join } = await import("node:path");
-  const dir = mkdtempSync(join(tmpdir(), "opensuite-part-gate-"));
-  try {
-    writeFileSync(join(dir, "in.docx"), original);
-    execFileSync("unzip", ["-qo", join(dir, "in.docx"), "-d", join(dir, "pkg")]);
-    mkdirSync(join(dir, "pkg", "customXml"), { recursive: true });
-    writeFileSync(join(dir, "pkg", "customXml", "probe.xml"), "<probe/>");
-    execFileSync("bash", ["-lc", `cd "${join(dir, "pkg")}" && zip -qr "${join(dir, "with-part.docx")}" .`]);
-    const withPart = new Uint8Array(readFileSync(join(dir, "with-part.docx")));
-    assert.ok(listDocxPartNames(withPart).some((name) => name.startsWith("customXml/")));
-    const rejected = await acceptRefreshedDocxFields(binding, withPart, original);
-    assert.equal(rejected.ok, false);
-    assert.match(rejected.reason ?? "", /package part lost/);
-  } finally {
-    rmSync(dir, { recursive: true, force: true });
+  const { join, dirname } = await import("node:path");
+  for (const part of ["customXml/probe.xml", "word/embeddings/oleObject1.bin", "word/glossary/document.xml"]) {
+    const dir = mkdtempSync(join(tmpdir(), "opensuite-part-gate-"));
+    try {
+      writeFileSync(join(dir, "in.docx"), original);
+      execFileSync("unzip", ["-qo", join(dir, "in.docx"), "-d", join(dir, "pkg")]);
+      mkdirSync(dirname(join(dir, "pkg", part)), { recursive: true });
+      writeFileSync(join(dir, "pkg", part), "<probe/>");
+      execFileSync("bash", ["-lc", `cd "${join(dir, "pkg")}" && zip -qr "${join(dir, "with-part.docx")}" .`]);
+      const withPart = new Uint8Array(readFileSync(join(dir, "with-part.docx")));
+      assert.ok(listDocxPartNames(withPart).includes(part));
+      const rejected = await acceptRefreshedDocxFields(binding, withPart, original);
+      assert.equal(rejected.ok, false, part);
+      assert.equal(rejected.reason, `package part lost: ${part}`);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   }
 });
 

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import type { AgentToolSet, ModelMessage } from "@opensuite/agent-core-v3";
+import type { AgentToolSet, ModelMessage } from "@opensuite/agent-core";
 
 import { estimateTokens } from "./context-projection.js";
 import { composeProjectMessages, firstTurnContextProjection } from "./agent-context.js";

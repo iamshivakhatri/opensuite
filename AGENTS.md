@@ -10,18 +10,16 @@ OpenSuite is an open-source, AI-native Office workspace. DOCX is the connected e
 | --- | --- |
 | `apps/web` | Next.js workspace, editor, agent panel, and product UI |
 | `apps/api` | Fastify routes, auth, OpenSuite agent context/tools, persistence, validation, and run lifecycle |
-| `packages/agent-core-v3` | Generic model and tool loop; no OpenSuite document rules |
+| `packages/agent-core` | Generic model and tool loop; no OpenSuite document rules |
 | `packages/engine-client` | Thin TypeScript/Node bridge to the Rust engine |
 | `packages/db` | PostgreSQL client, Drizzle schema, and migrations |
 | `packages/contracts` | Shared types and engine contracts |
 | `opensuite-engine` (separate repository) | Deterministic Office parsing, targeting, mutation, validation, and serialization |
 
-`agent-core-v2` is retained off the live path. Do not expand it during unrelated work.
-
 ## Ownership rules
 
 - Rust owns document semantics. `engine-client` is the only product package that talks to it. Send mutations as typed engine operations; never parse or edit Office XML in web/API TypeScript.
-- `agent-core-v3` owns only the generic model/tool runtime. It must not access DB, storage, auth, UI, or Office internals.
+- `agent-core` owns only the generic model/tool runtime. It must not access DB, storage, auth, UI, or Office internals.
 - The `apps/api/src/agent` layer owns OpenSuite context, retrieval, document tools, persistence, validation, and run lifecycle. `apps/web` owns product and UI behavior.
 - Keep Cloud-only business policy out of public core packages. Do not give the document agent arbitrary shell or filesystem tools. Major architecture changes need explicit user approval.
 
@@ -29,7 +27,7 @@ OpenSuite is an open-source, AI-native Office workspace. DOCX is the connected e
 
 `server.ts` starts `runtime.ts`; `app.ts` creates services and registers routes. A run follows:
 
-`routes/agent.ts` (HTTP/SSE) → `run-manager.ts` (live run and event subscriptions) → `execution.ts` (run flow) → `agent-context.ts` + `document-retrieval.ts` (history and evidence) → `docx-tools.ts` + `document-tools.ts` (typed tools) → `agent-core-v3` (model/tool loop) → `run-events.ts` (events and report) → `docx-tools.ts` (save) + `document-verification.ts` (check) → `run-settlement.ts` (terminal status and transcript).
+`routes/agent.ts` (HTTP/SSE) → `run-manager.ts` (live run and event subscriptions) → `execution.ts` (run flow) → `agent-context.ts` + `document-retrieval.ts` (history and evidence) → `docx-tools.ts` + `document-tools.ts` (typed tools) → `agent-core` (model/tool loop) → `run-events.ts` (events and report) → `docx-tools.ts` (save) + `document-verification.ts` (check) → `run-settlement.ts` (terminal status and transcript).
 
 `engine-client` calls the Rust engine for DOCX inspection and mutation. The API saves the edited DOCX as one new immutable version at the run boundary. The run manager repairs abandoned runs after a process restart.
 
@@ -59,7 +57,7 @@ Execute obvious safe actions quickly. Inspect and reason when a target is ambigu
 ## Verification
 
 - API: `pnpm --filter @opensuite/api typecheck`; web: `pnpm --filter @opensuite/web typecheck`.
-- V3: `pnpm --filter @opensuite/agent-core-v3 typecheck` and `pnpm --filter @opensuite/agent-core-v3 test` when touched.
+- Agent core: `pnpm --filter @opensuite/agent-core typecheck` and `pnpm --filter @opensuite/agent-core test` when touched.
 - Focused API test: `pnpm --filter @opensuite/api build && node --test apps/api/dist/agent/execution.isolation.test.js` (change the test path as needed).
 - Engine bridge: `pnpm --filter @opensuite/engine-client test` when touched; run Rust tests in the separate `opensuite-engine` checkout when Rust changes.
 - When upgrading `@opensuitehq/engine` (or after an engine `v*.*.*` publish), follow **`docs/engine_upgrade.md`** end-to-end (pins, lockfile Linux binaries, `minimumReleaseAgeExclude`, docs/Docker comments, client completeness, host + Docker acceptance with `OPENSUITE_ENGINE_PATH` unset). Summary: bump `packages/engine-client/package.json`, refresh `pnpm-lock.yaml` (confirm Linux `x64-gnu` / `arm64-gnu` optionals), update `pnpm-workspace.yaml` excludes, and operational pins in `Dockerfile` / `docker-compose.atlas.yml` / `docs/deploy.md` / `docs/engine_integration.md` / current pin lines in `docs/status.md`. Build the API Docker image and require the engine-load check to pass before deploy. Do not deploy an image that lacks its native binding.

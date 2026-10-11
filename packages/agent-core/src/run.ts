@@ -198,8 +198,8 @@ export async function runAgent(input: RunAgentInput): Promise<RunAgentResult> {
       if (turn.resolvedModelId !== undefined) {
         resolvedModelId = turn.resolvedModelId;
       }
-      // Track latest non-empty assistant text for bounded stops / no-tool complete.
-      // Finish settlement must NOT fall back across turns (see finish_tool below).
+      // Latest non-empty text is only for bounded stops. Completion settles the
+      // terminal turn's own text; earlier narration is never the final reply.
       if (turn.text.trim()) lastText = turn.text;
       lastFinishReason = turn.finishReason;
 
@@ -232,7 +232,7 @@ export async function runAgent(input: RunAgentInput): Promise<RunAgentResult> {
           text: turn.text,
           stopReason: "completed",
         });
-        return finish("completed", lastText);
+        return finish("completed", turn.text);
       }
 
       // The assistant message (with its tool calls) must precede tool results.
@@ -354,6 +354,14 @@ async function runCall(args: {
 
   const sequence = metrics.allocToolSequence();
   const kind = toolKindMetric(tool);
+  const effects = (output: unknown) => {
+    try {
+      const keys = tool?.effectKeys?.(call.input, output) ?? [];
+      return keys.length ? { effectKeys: [...keys] } : {};
+    } catch {
+      return {};
+    }
+  };
   const started = now();
   if (input.onDiagnostic) emitDiagnostic(input.onDiagnostic, "tool_started", {
     turn, toolCallId, toolName, modelFacingName: providerToolName, arguments: call.input, startedAtMs: started,
@@ -396,6 +404,7 @@ async function runCall(args: {
         ...(softFailure.reasonCode !== undefined
           ? { failureCode: softFailure.reasonCode }
           : {}),
+        ...effects(output),
       });
       await input.onEvent?.({
         type: "tool_failed",
@@ -413,6 +422,7 @@ async function runCall(args: {
       kind,
       durationMs: completed - started,
       outcome: "success",
+      ...effects(output),
     });
     await input.onEvent?.({ type: "tool_completed", toolCallId, toolName });
     return "ok";
@@ -444,6 +454,7 @@ async function runCall(args: {
       durationMs,
       outcome: "failure",
       failureCode: compactFailureCode(message),
+      ...effects(undefined),
     });
     results.set(toolCallId, {
       type: "tool-result",
@@ -577,6 +588,7 @@ function schemaOnlyTools(tools: AgentToolSet): ToolSet {
     delete rest.execute;
     delete rest.kind;
     delete rest.terminal;
+    delete rest.effectKeys;
     out[providerSafeToolName(name)] = rest;
   }
   return out as ToolSet;

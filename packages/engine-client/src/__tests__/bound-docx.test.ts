@@ -43,16 +43,11 @@ test("semantic selector compatibility accepts 0.1.3+ by version without capabili
   assert.equal(nativeSupportsSemanticTableRowDeletion(olderWithIds), true);
 });
 
-test("installed 0.1.4 binding dispatches semantic table-cell targets past the app gate", async () => {
+test("installed 0.1.5 binding dispatches semantic table-cell targets past the app gate", async () => {
   const binding = await createNapiDocxEngineBinding();
   const caps = binding.getDocxCapabilities();
-  assert.equal(caps.engineVersion, "0.1.4");
+  assert.equal(caps.engineVersion, "0.1.5");
   assert.equal(nativeSupportsSemanticTableCellTargets(caps), true);
-  // Published 0.1.4 still omits semantic_* capability ids; version floor covers it.
-  assert.equal(
-    caps.formats.find((format) => format.format === "docx")?.capabilities.includes("semantic_table_cell_targets"),
-    false,
-  );
 
   const bytes = new Uint8Array(buildNameRoleTableDocx());
   const doc = bindDocxDocument({ binding, bytes });
@@ -373,6 +368,8 @@ test("every engine mutation capability is either dispatchable or intentionally h
     "style_snapshot",
     "layout_snapshot",
     "create_blank_docx",
+    "semantic_table_cell_targets",
+    "semantic_table_row_deletion",
   ]);
 
   for (const cap of caps) {

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { defineTool } from "@opensuite/agent-core-v3";
+import { defineTool } from "@opensuite/agent-core";
 import { jsonSchema } from "ai";
 import { CapabilityRegistry, type CapabilityDefinition } from "./registry.js";
 import { CapabilitySession } from "./session.js";

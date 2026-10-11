@@ -7,7 +7,11 @@ export interface DocumentCheck {
   readonly evidence?: string;
 }
 
-/** Failures that must not present as a clean successful document update. */
+/**
+ * Failures that must not present as a clean successful document update.
+ * `sources` is deliberately absent: runs never write sources, so a changed
+ * source means a concurrent edit elsewhere. It is reported as a warning.
+ */
 export const BLOCKING_VERIFICATION_IDS = new Set([
   "open",
   "target",
@@ -398,7 +402,7 @@ export async function verifyDocumentUpdate(input: {
   const unrecovered = input.unrecoveredFailedMutations ?? [];
   const checks: DocumentCheck[] = [
     { id: "target", status: input.targetAdvanced ? "pass" : "fail", message: input.targetAdvanced ? "Target updated" : "Target did not advance" },
-    { id: "sources", status: input.sourcesUnchanged === null ? "skipped" : input.sourcesUnchanged ? "pass" : "fail", message: input.sourcesUnchanged === null ? "Source versions unavailable" : input.sourcesUnchanged ? "Source documents unchanged" : "A source document changed" },
+    { id: "sources", status: input.sourcesUnchanged === null ? "skipped" : input.sourcesUnchanged ? "pass" : "warning", message: input.sourcesUnchanged === null ? "Source versions unavailable" : input.sourcesUnchanged ? "Source documents unchanged" : "A source document changed during the run; the update used the version read earlier" },
   ];
   let after;
   try {

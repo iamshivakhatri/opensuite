@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { createFinishTool, defineTool, providerSafeToolName, runAgent } from "@opensuite/agent-core-v3";
+import { createFinishTool, defineTool, providerSafeToolName, runAgent } from "@opensuite/agent-core";
 import { createNapiDocxEngineBinding } from "@opensuite/engine-client";
 import { jsonSchema } from "ai";
 import { MockLanguageModelV4, simulateReadableStream } from "ai/test";

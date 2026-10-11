@@ -6,7 +6,7 @@ import {
 import {
   defineTool,
   type AgentToolSet,
-} from "@opensuite/agent-core-v3";
+} from "@opensuite/agent-core";
 
 import type { DocumentService } from "../documents/service.js";
 import {
@@ -272,6 +272,7 @@ function createActiveDocxSession(input: {
 
   const redirectingHost: BoundDocumentHost = {
     capabilities: () => input.binding.getDocxCapabilities(),
+    documentId: () => documentId,
     inspect: async (request) => {
       const result = await requireHost().inspect(request);
       collectHandles(result, currentHandles);

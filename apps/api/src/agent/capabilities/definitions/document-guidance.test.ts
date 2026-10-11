@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { defineTool, runAgent } from "@opensuite/agent-core-v3";
+import { defineTool, runAgent } from "@opensuite/agent-core";
 import { jsonSchema } from "ai";
 import { MockLanguageModelV4, simulateReadableStream } from "ai/test";
 import { capabilityRegistry } from "../catalog.js";
@@ -103,7 +103,7 @@ test('quarterly KPI report routing puts the document skill ahead of the generic 
   assert.equal(session.load([skills[0]!]).ok, true);
   assert.ok(session.loaded.has(skills[0]!));
   assert.equal(session.loaded.has(styles[0]!), false);
-  assert.deepEqual(documentSkillPolicy(skills[0]!)?.channels, ['typography', 'colors', 'tableAccent']);
+  assert.deepEqual(documentSkillPolicy(skills[0]!)?.channels, ['typography', 'colors', 'tableAccent', 'logo']);
 });
 
 test("dogfood resume prompt recommends exact loadable guidance and available formatting companions", () => {

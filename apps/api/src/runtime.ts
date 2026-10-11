@@ -6,7 +6,11 @@ import {
 } from "@opensuite/db";
 import {
   createNapiDocxEngineBinding,
-  resolveNativeEngineModuleId,
+  describeNativeEngine,
+  formatNativeEngineIdentity,
+  type DocxEngineBinding,
+  nativeSupportsSemanticTableCellTargets,
+  nativeSupportsSemanticTableRowDeletion,
 } from "@opensuite/engine-client";
 
 import { buildApp } from "./app.js";
@@ -39,17 +43,19 @@ export async function createOpenSuiteRuntime(
   config: AppConfig = loadConfig(),
   options: OpenSuiteRuntimeOptions = {},
 ): Promise<OpenSuiteRuntime> {
+  let docxBinding: DocxEngineBinding | undefined;
   try {
-    const { moduleId, fromEnv } = resolveNativeEngineModuleId();
-    const caps = (await createNapiDocxEngineBinding()).getDocxCapabilities();
+    docxBinding = await createNapiDocxEngineBinding();
+    const caps = docxBinding.getDocxCapabilities();
+    const engine = await describeNativeEngine(docxBinding);
     console.info(
-      `[engine] version=${caps.engineVersion} source=${fromEnv ? "OPENSUITE_ENGINE_PATH" : "npm"} module=${moduleId}`,
+      `[engine] ${formatNativeEngineIdentity(engine)}` +
+        ` semanticCells=${nativeSupportsSemanticTableCellTargets(caps)} semanticRows=${nativeSupportsSemanticTableRowDeletion(caps)}`,
     );
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     console.info(`[engine] version=unavailable (${message})`);
   }
-  console.info("[agent] runtime=v3");
   const dbClient = createDbClient(
     { databaseUrl: config.databaseUrl },
     {
@@ -81,6 +87,7 @@ export async function createOpenSuiteRuntime(
   const app = await buildApp(config, {
     auth,
     db: dbClient.db,
+    ...(docxBinding ? { docxBinding } : {}),
     storage: createS3ObjectStorage(config.s3),
     ...(options.agentRunReportSink
       ? { agent: { agentRunReportSink: options.agentRunReportSink } }

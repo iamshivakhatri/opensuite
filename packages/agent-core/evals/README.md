@@ -1,8 +1,8 @@
-# Agent-core-v3 evals
+# Agent-core evals
 
 ## Runtime evals (deterministic)
 
-`pnpm agent:v3:eval` runs fake-model scenarios in `scenarios.ts`.
+`pnpm agent:eval` runs fake-model scenarios in `scenarios.ts`.
 
 These prove loop mechanics: concurrency, fuse, finish, max_turns, deadline.
 They do **not** measure model quality.

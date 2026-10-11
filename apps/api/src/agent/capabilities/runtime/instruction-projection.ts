@@ -1,4 +1,4 @@
-import type { ModelMessage } from "@opensuite/agent-core-v3";
+import type { ModelMessage } from "@opensuite/agent-core";
 import { estimateTokens, truncateToTokenBudget } from "../../context-projection.js";
 import type { CapabilitySession } from "../core/session.js";
 

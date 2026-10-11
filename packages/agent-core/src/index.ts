@@ -36,5 +36,5 @@ export {
   type ToolKind,
   type ToolSkipReason,
   type ToolSet,
-  type V3Model,
+  type AgentModel,
 } from "./types.js";

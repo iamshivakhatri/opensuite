@@ -9,7 +9,8 @@ import type { DocxCommentOptions, DocxCommentInspection, DocxAddCommentOperation
  * implement the same shape without changing agents.
  */
 
-import { existsSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { existsSync, readFileSync } from "node:fs";
 import { isAbsolute, resolve } from "node:path";
 
 import type { DocxSection, DocxSectionInspection, DocxInsertSectionBreakOperation, DocxSetSectionPropertiesOperation, DocxSetSectionHeaderFooterOperation } from "./docx-sections.js";
@@ -32,6 +33,98 @@ export function resolveNativeEngineModuleId(
     ? configured
     : resolve(cwd, configured);
   return { moduleId, fromEnv: true };
+}
+
+/** Env vars that make the generated NAPI-RS loader skip the npm platform package. */
+const NAPI_LOADER_OVERRIDES = [
+  "NAPI_RS_NATIVE_LIBRARY_PATH",
+  "NAPI_RS_FORCE_WASI",
+  "NAPI_RS_WASI_FLAVOR",
+] as const;
+
+export function nativeLoaderOverrides(
+  env: NodeJS.ProcessEnv = process.env,
+): readonly string[] {
+  return NAPI_LOADER_OVERRIDES.filter((name) => env[name]?.trim()).map(
+    (name) => `${name}=${env[name]!.trim()}`,
+  );
+}
+
+export interface NativeEngineIdentity {
+  readonly moduleId: string;
+  readonly fromEnv: boolean;
+  readonly engineVersion: string;
+  readonly protocolVersion: number;
+  /** Resolved loader file (index.js). */
+  readonly modulePath: string;
+  /** The `.node` binary actually loaded, when one is visible in the module cache. */
+  readonly binaryPath?: string;
+  /** SHA-256 of the binary bytes. */
+  readonly binarySha256?: string;
+  readonly loaderOverrides: readonly string[];
+}
+
+const bindingIdentities = new WeakMap<DocxEngineBinding, NativeEngineIdentity>();
+
+/** Reports the selected binding, even if another engine or changed env is present. */
+export async function describeNativeEngine(
+  bindingOrEnv: DocxEngineBinding | NodeJS.ProcessEnv = process.env,
+): Promise<NativeEngineIdentity> {
+  if (typeof bindingOrEnv.getDocxCapabilities === "function") {
+    const identity = bindingIdentities.get(bindingOrEnv as DocxEngineBinding);
+    if (!identity) throw new Error("This binding was not loaded by engine-client");
+    return identity;
+  }
+  const env = bindingOrEnv as NodeJS.ProcessEnv;
+  const { createRequire } = await import("node:module");
+  const require = createRequire(import.meta.url);
+  const { moduleId, fromEnv } = resolveNativeEngineModuleId(env);
+  const native = require(moduleId) as NativeEngineModule;
+  return readNativeEngineIdentity(require, moduleId, fromEnv, native, env);
+}
+
+function readNativeEngineIdentity(
+  require: NodeRequire,
+  moduleId: string,
+  fromEnv: boolean,
+  native: NativeEngineModule,
+  env: NodeJS.ProcessEnv,
+): NativeEngineIdentity {
+  const modulePath = require.resolve(moduleId);
+  const visited = new Set<NodeModule>();
+  function findBinary(module: NodeModule | undefined): string | undefined {
+    if (!module || visited.has(module)) return undefined;
+    visited.add(module);
+    // The selected loader re-exports native functions; ignore other loaded binaries.
+    if (module.filename.endsWith(".node") &&
+        module.exports.getDocxCapabilities === native.getDocxCapabilities) {
+      return module.filename;
+    }
+    for (const child of module.children) {
+      const path = findBinary(child);
+      if (path) return path;
+    }
+    return undefined;
+  }
+  const binaryPath = findBinary(require.cache[modulePath]);
+  const binarySha256 = binaryPath
+    ? createHash("sha256").update(readFileSync(binaryPath)).digest("hex")
+    : undefined;
+  const capabilities = native.getDocxCapabilities();
+  return {
+    moduleId, fromEnv, modulePath,
+    engineVersion: capabilities.engineVersion,
+    protocolVersion: capabilities.protocolVersion,
+    ...(binaryPath ? { binaryPath, binarySha256 } : {}),
+    loaderOverrides: nativeLoaderOverrides(env),
+  };
+}
+/** Shared startup format for public API, Cloud, and container checks. */
+export function formatNativeEngineIdentity(engine: NativeEngineIdentity): string {
+  return `version=${engine.engineVersion} protocol=${engine.protocolVersion}` +
+    ` source=${engine.fromEnv ? "OPENSUITE_ENGINE_PATH" : "npm"} module=${engine.modulePath}` +
+    ` binary=${engine.binaryPath ?? "unknown"} sha256=${engine.binarySha256 ?? "unknown"}` +
+    ` overrides=${engine.loaderOverrides.join(",") || "none"}`;
 }
 
 export interface DocxReplaceTextTarget {
@@ -354,6 +447,12 @@ export interface DocxRuntimeCapabilities {
   readonly formats: readonly {
     readonly format: string;
     readonly capabilities: readonly string[];
+    /** Actual callable Node operations, supplied by newer engine builds. */
+    readonly operations?: readonly {
+      readonly id: string;
+      readonly kind: "read" | "mutate" | "create";
+      readonly nodeExport: string;
+    }[];
   }[];
 }
 
@@ -695,12 +794,7 @@ type NativeEngineModule = {
   inspectDocxLayout?: (input: Buffer, options?: DocxLayoutOptions) => Promise<string>;
   executeDocxCreateStyle?: (input: Buffer, operation: Record<string, unknown>) => Promise<DocxMutationBindingResult>;
   executeDocxUpdateStyle?: (input: Buffer, operation: Record<string, unknown>) => Promise<DocxMutationBindingResult>;
-  getDocxCapabilities: () => {
-    ok: boolean;
-    protocolVersion: number;
-    engineVersion: string;
-    formats: Array<{ format: string; capabilities: string[] }>;
-  };
+  getDocxCapabilities: () => DocxRuntimeCapabilities;
   createBlankDocx: () => Buffer;
   findDocxText: (
     input: Buffer,
@@ -891,7 +985,8 @@ function toNativeInspectFocus(focus: DocxInspectFocus): Record<string, unknown> 
 export async function createNapiDocxEngineBinding(): Promise<DocxEngineBinding> {
   const { createRequire } = await import("node:module");
   const require = createRequire(import.meta.url);
-  const { moduleId, fromEnv } = resolveNativeEngineModuleId();
+  const env = { ...process.env };
+  const { moduleId, fromEnv } = resolveNativeEngineModuleId(env);
 
   // When OPENSUITE_ENGINE_PATH is set, never fall back to the published package.
   if (fromEnv && !existsSync(moduleId)) {
@@ -912,18 +1007,18 @@ export async function createNapiDocxEngineBinding(): Promise<DocxEngineBinding> 
       );
     }
     throw new Error(
-      `Failed to load @opensuitehq/engine Node binding. Ensure @opensuitehq/engine@0.1.4 is installed for this platform (darwin-arm64, darwin-x64, linux-x64-gnu, linux-arm64-gnu, win32-x64-msvc; glibc only — no musl/Alpine). Underlying error: ${message}`,
+      `Failed to load @opensuitehq/engine Node binding. Ensure @opensuitehq/engine@0.1.5 is installed for this platform (darwin-arm64, darwin-x64, linux-x64-gnu, linux-arm64-gnu, win32-x64-msvc; glibc only — no musl/Alpine). Underlying error: ${message}`,
     );
   }
 
   if (typeof native.createBlankDocx !== "function") {
     throw new Error(
-      "@opensuitehq/engine is missing createBlankDocx — pin/install @opensuitehq/engine@0.1.4",
+      "@opensuitehq/engine is missing createBlankDocx — pin/install @opensuitehq/engine@0.1.5",
     );
   }
   if (typeof native.executeDocxInsertParagraph !== "function") {
     throw new Error(
-      "@opensuitehq/engine is missing executeDocxInsertParagraph — pin/install @opensuitehq/engine@0.1.4",
+      "@opensuitehq/engine is missing executeDocxInsertParagraph — pin/install @opensuitehq/engine@0.1.5",
     );
   }
   for (const name of [
@@ -955,12 +1050,20 @@ export async function createNapiDocxEngineBinding(): Promise<DocxEngineBinding> 
   ] as const) {
     if (typeof native[name] !== "function") {
       throw new Error(
-        `@opensuitehq/engine is missing ${name} — pin/install @opensuitehq/engine@0.1.4`,
+        `@opensuitehq/engine is missing ${name} — pin/install @opensuitehq/engine@0.1.5`,
       );
     }
   }
 
   const nativeCapabilities = native.getDocxCapabilities();
+  for (const format of nativeCapabilities.formats) {
+    for (const operation of format.operations ?? []) {
+      if (typeof (native as unknown as Record<string, unknown>)[operation.nodeExport] !== "function") {
+        throw new Error(`Engine advertises ${operation.id} but is missing ${operation.nodeExport}`);
+      }
+    }
+  }
+  const identity = readNativeEngineIdentity(require, moduleId, fromEnv, native, env);
   // Prefer semantic_* capability ids; also accept engineVersion >= 0.1.3 for
   // older published packages that implemented the paths without advertising ids.
   const supportsSemanticCellTargets =
@@ -989,7 +1092,7 @@ export async function createNapiDocxEngineBinding(): Promise<DocxEngineBinding> 
     return mapMutationBindingResponse(response);
   }
 
-  return {
+  const binding: DocxEngineBinding = {
     getDocxCapabilities() {
       return native.getDocxCapabilities();
     },
@@ -1112,7 +1215,7 @@ export async function createNapiDocxEngineBinding(): Promise<DocxEngineBinding> 
     async inspectDocxStyleSnapshot(input) {
       if (typeof native.inspectDocxStyleSnapshot !== "function") {
         throw new Error(
-          "installed native engine is missing inspectDocxStyleSnapshot — pin/install @opensuitehq/engine@0.1.4 (or set OPENSUITE_ENGINE_PATH for a local engine build)",
+          "installed native engine is missing inspectDocxStyleSnapshot — pin/install @opensuitehq/engine@0.1.5 (or set OPENSUITE_ENGINE_PATH for a local engine build)",
         );
       }
       return JSON.parse(
@@ -1464,6 +1567,8 @@ export async function createNapiDocxEngineBinding(): Promise<DocxEngineBinding> 
     async executeDocxUpdateStyle(input, operation) { return executeExtended(input, "executeDocxUpdateStyle", { ...operation }); },
     executeDocxExtended: executeExtended,
   };
+  bindingIdentities.set(binding, identity);
+  return binding;
 }
 
 /**

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { runAgent } from "@opensuite/agent-core-v3";
+import { runAgent } from "@opensuite/agent-core";
 import { MockLanguageModelV4, simulateReadableStream } from "ai/test";
 import { createToolSurface } from "../../runtime/tool-surface.js";
 import { calculate, createCalculatorTool } from "./calculator.js";

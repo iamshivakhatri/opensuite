@@ -1,6 +1,6 @@
 import { jsonSchema } from 'ai';
 import { z } from 'zod';
-import { defineTool, type AgentToolSet } from '@opensuite/agent-core-v3';
+import { defineTool, type AgentToolSet } from '@opensuite/agent-core';
 import type { CapabilityDefinition } from '../core/registry.js';
 import { styleProfileSummary, type StyleProfileService } from '../../../style-profiles/service.js';
 

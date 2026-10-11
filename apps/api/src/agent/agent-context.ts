@@ -1,4 +1,4 @@
-import type { AgentToolSet, ModelMessage } from "@opensuite/agent-core-v3";
+import type { AgentToolSet, ModelMessage } from "@opensuite/agent-core";
 import type { DocxEngineBinding } from "@opensuite/engine-client";
 
 import type { DocumentService } from "../documents/service.js";
@@ -203,7 +203,7 @@ export async function prepareContext(input: {
     workspaceDocuments = await input.documents.listInWorkspace(input.workspaceId, input.ownerUserId);
   } catch (error) {
     input.trace?.write("## Workspace Manifest — Error", error);
-    console.warn(`[agent-v3] workspace_manifest_unavailable reason=${summarizeError(error)}`);
+    console.warn(`[agent] workspace_manifest_unavailable reason=${summarizeError(error)}`);
   }
   const workspaceManifest = workspaceDocuments
     ? formatWorkspaceManifest(workspaceDocuments.map((document) => ({
@@ -402,7 +402,7 @@ async function loadRetrievedContext(input: {
     };
   } catch (error) {
     input.trace?.write("## Retrieval — Error", error);
-    console.warn(`[agent-v3] workspace_retrieval_skipped reason=${summarizeError(error)}`);
+    console.warn(`[agent] workspace_retrieval_skipped reason=${summarizeError(error)}`);
     return undefined;
   }
 }

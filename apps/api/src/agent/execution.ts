@@ -14,8 +14,8 @@ import {
   runModel,
   type AgentRunMetrics,
   type AgentToolSet,
-  type V3Model,
-} from "@opensuite/agent-core-v3";
+  type AgentModel,
+} from "@opensuite/agent-core";
 import { jsonSchema } from "ai";
 
 import type { DocxEngineBinding } from "@opensuite/engine-client";
@@ -70,12 +70,14 @@ import { createStandaloneCapabilityTools } from "./capabilities/catalog.js";
 import { createRunTrace, traceModelSettings, type RunTrace } from "./run-trace.js";
 import { createPrimaryDocxTools } from "./docx-tools.js";
 import {
+  BLOCKING_VERIFICATION_IDS,
   hasBlockingVerificationFailure,
   verifyDocumentUpdate,
   type DocumentCheck,
 } from "./document-verification.js";
 import { SlimDocumentStructureCache } from "./document-retrieval.js";
 import { generateThreadTitle } from "./thread-title.js";
+import { recordModelUsage, type ModelCallUsage } from "./usage-accounting.js";
 import { estimateTokens } from "./context-projection.js";
 import { compactThreadContext, logContextCompaction } from "./context-compaction.js";
 import { buildAgentOperatingInstruction, buildDocumentUpdateInstruction } from "./operating-instruction.js";
@@ -132,8 +134,8 @@ export interface AgentModelUsageAttribution {
   readonly credentialSource: CredentialSource;
 }
 
-export interface ResolvedV3ExecutionModel {
-  readonly model: V3Model;
+export interface ResolvedExecutionModel {
+  readonly model: AgentModel;
   readonly usageAttribution?: AgentModelUsageAttribution;
   readonly contextLength?: number;
   readonly maxOutputTokens?: number;
@@ -196,7 +198,7 @@ export interface AgentExecutionServiceDeps {
     | "createBlankDocxDocument"
     | "createOfficeDocumentFromBytes"
   > & Partial<Pick<DocumentService, "rename">>;
-  readonly resolveModel: (userId: string) => Promise<ResolvedV3ExecutionModel>;
+  readonly resolveModel: (userId: string) => Promise<ResolvedExecutionModel>;
   readonly docxBinding?: DocxEngineBinding;
   readonly styleProfiles?: StyleProfileService;
   readonly workspaceBrand?: Pick<WorkspaceBrandService, 'get'>;
@@ -206,13 +208,13 @@ export interface AgentExecutionServiceDeps {
   readonly agentRunReportSink?: AgentRunReportSink;
   readonly capabilityEventSink?: CapabilityEventSink;
   readonly lease?: AgentExecutionLeaseService;
-  /** Test seam — production uses agent-core-v3 `runAgent`. */
+  /** Test seam — production uses agent-core `runAgent`. */
   readonly runAgent?: typeof runAgent;
-  /** Test seam — production uses agent-core-v3 `runModel` for compaction. */
+  /** Test seam — production uses agent-core `runModel` for compaction. */
   readonly runModel?: typeof runModel;
 }
 
-/** Product shell: resolve and persist here; execute once in agent-core-v3. */
+/** Product shell: resolve and persist here; execute once in agent-core. */
 export function createAgentExecutionService(deps: AgentExecutionServiceDeps) {
   const structureCache = new SlimDocumentStructureCache();
   async function start(input: AgentExecutionInput): Promise<AgentExecutionHandle> {
@@ -350,7 +352,7 @@ export function createAgentExecutionService(deps: AgentExecutionServiceDeps) {
 async function resolveModel(
   deps: AgentExecutionServiceDeps,
   userId: string,
-): Promise<ResolvedV3ExecutionModel> {
+): Promise<ResolvedExecutionModel> {
   try {
     return await deps.resolveModel(userId);
   } catch (error) {
@@ -474,7 +476,7 @@ async function applyAutomaticWorkspaceAppearance(input: {
 async function runExecution(input: {
   readonly trace?: RunTrace;
   readonly deps: AgentExecutionServiceDeps;
-  readonly model: ResolvedV3ExecutionModel;
+  readonly model: ResolvedExecutionModel;
   readonly thread: AgentThread;
   readonly userMessage: AgentMessage;
   readonly run: AgentRun;
@@ -498,6 +500,25 @@ async function runExecution(input: {
   let boundTools: Awaited<ReturnType<typeof createPrimaryDocxTools>>;
   let flushAttempted = false;
   let persistenceFailure = false;
+  const versionAdvances: DocumentVersionAdvance[] = [];
+  const usageAccounting = {
+    modelUsage: input.deps.modelUsage,
+    managedUsagePolicy: input.deps.managedUsagePolicy,
+    attribution: input.model.usageAttribution,
+    userId: input.ownerUserId,
+    agentRunId: input.run.id,
+  };
+  let runUsageAttempted = false;
+  /** At most once per run on every terminal path, so managed credits are never debited twice. */
+  const recordRunUsage = async (usage: ModelCallUsage | undefined, skipEmpty: boolean) => {
+    if (runUsageAttempted || !usage) return;
+    if (skipEmpty && !usage.inputTokens && !usage.outputTokens && usage.providerReportedCostUsd === undefined) return;
+    runUsageAttempted = true;
+    await recordModelUsage({ ...usageAccounting, usage });
+  };
+  const recordFailedRunUsage = (usage: ModelCallUsage | undefined) =>
+    recordRunUsage(usage, true).catch((error) =>
+      console.warn(`[agent] run=${input.run.id.slice(0, 8)} usage_accounting_failed reason=${summarizeError(error)}`));
   const flushWorking = async () => {
     boundTools?.setModelTurn(null);
     if (flushAttempted) return;
@@ -536,7 +557,6 @@ async function runExecution(input: {
       await input.deps.managedUsagePolicy?.beforeManagedCall(input.ownerUserId);
     }
 
-    const versionAdvances: DocumentVersionAdvance[] = [];
     let savedTarget: { documentId: string; fromVersionId: string; versionId: string } | null = null;
     let createdDocumentId: string | null = null;
     const initialDocumentId = input.primaryDocumentId;
@@ -762,7 +782,9 @@ async function runExecution(input: {
         workingSet: retrieval?.workingSet ?? [],
         documentMaps: retrieval?.documentMaps ?? [],
       })
-        .then(async (title) => {
+        .then(async ({ title, usage }) => {
+          await recordModelUsage({ ...usageAccounting, usage }).catch((error) =>
+            console.warn(`[agent-title] usage accounting failed reason=${summarizeError(error)}`));
           const generated = title !== null && await input.deps.persistence.setThreadTitleIfMissing({ threadId: input.thread.id, title });
           console.debug(`[agent-title] thread=${input.thread.id.slice(0, 8)} generated=${generated} durationMs=${Date.now() - titleStartedAt} model=${input.model.usageAttribution?.model ?? "unknown"}`);
         })
@@ -837,7 +859,7 @@ async function runExecution(input: {
       return modelMessages;
     };
 
-    // The one API → agent-core-v3 execution call.
+    // The one API → agent-core execution call.
     const executeAgent = input.deps.runAgent ?? runAgent;
     const verifySavedDocument = async (metrics?: AgentRunMetrics): Promise<DocumentCheck[]> => {
       if (!savedTarget || !boundTools?.getWorkingMutationCount() || !input.deps.docxBinding) {
@@ -948,6 +970,7 @@ async function runExecution(input: {
       let terminalError = error;
       try { await flushWorking(); } catch (flushError) { terminalError = flushError; }
       verificationChecks = await verifySavedDocument(result?.metrics ?? getRunMetricsFromError(error));
+      await recordFailedRunUsage((result?.metrics ?? getRunMetricsFromError(error))?.usage);
       await emitRunReport({
         trace: input.trace,
         runId: input.run.id,
@@ -980,6 +1003,14 @@ async function runExecution(input: {
 
     const unrecoveredMutates = unrecoveredFailedMutateToolNames(result.metrics);
     const unfinishedWork = unrecoveredMutates.length > 0 || hasBlockingVerificationFailure(verificationChecks);
+    const succeeded = isSuccessfulStop(result.stopReason) && !unfinishedWork;
+    // Settle usage before the report so a managed-credit failure is reported as the run's real outcome.
+    let usageFailure: unknown;
+    if (succeeded) {
+      try { await recordRunUsage(result, false); } catch (error) { usageFailure = error; }
+    } else {
+      await recordFailedRunUsage(result.metrics?.usage);
+    }
 
     await emitRunReport({
       trace: input.trace,
@@ -989,7 +1020,7 @@ async function runExecution(input: {
       metrics: result.metrics,
       stopReason: result.stopReason,
       cancelled: false,
-      thrown: unfinishedWork,
+      thrown: unfinishedWork || usageFailure !== undefined,
       initialDocumentId,
       initialVersionId: input.run.baseDocumentVersionId,
       finalDocumentId: boundTools?.getActiveDocumentId() ?? initialDocumentId,
@@ -1027,7 +1058,7 @@ async function runExecution(input: {
 
     if (unfinishedWork) {
       transcript.finish();
-      const blocking = verificationChecks.filter((check) => check.status === "fail" && ["open", "target", "task", "comments", "revisions", "fields"].includes(check.id));
+      const blocking = verificationChecks.filter((check) => check.status === "fail" && BLOCKING_VERIFICATION_IDS.has(check.id));
       const preserved = versionAdvances.length > 0;
       const unresolved = unrecoveredMutates.length
         ? unrecoveredMutates.join(", ")
@@ -1051,40 +1082,21 @@ async function runExecution(input: {
       });
     }
 
-    if (input.deps.modelUsage && input.model.usageAttribution) {
-      const usage = await input.deps.modelUsage.recordFromProviderResponse({
-        attribution: { ...input.model.usageAttribution, userId: input.ownerUserId, agentRunId: input.run.id },
-        usage: {
-          inputTokens: result.inputTokens,
-          cachedInputTokens: result.cachedInputTokens,
-          outputTokens: result.outputTokens,
-          ...(result.reasoningTokens !== undefined
-            ? { reasoningTokens: result.reasoningTokens }
-            : {}),
-        },
-        ...(result.providerReportedCostUsd !== undefined
-          ? { providerReportedCostUsd: result.providerReportedCostUsd }
-          : {}),
-      });
-      if (
-        input.model.usageAttribution.provider === "openrouter" &&
-        input.model.usageAttribution.credentialSource === "managed"
-      ) {
-        await input.deps.managedUsagePolicy?.afterUsageRecorded(usage);
-      }
-    }
+    if (usageFailure !== undefined) throw usageFailure;
 
+    const activeName = documentNames.get(boundTools?.getActiveDocumentId() ?? "") ?? "the document";
+    const finalText = result.text.trim() || (versionAdvances.length ? `Saved the changes to ${activeName}.` : "Done.");
     const finalized = await finalizeCompletedRun({
       persistence: input.deps.persistence,
       ownerUserId: input.ownerUserId,
       threadId: input.thread.id,
       runId: input.run.id,
-      content: result.text,
+      content: finalText,
       inputNeeded: result.stopReason === "finish_tool" &&
         isInputNeededTool(result.metrics.toolCalls.filter((call) => call.outcome === "success" && isFinishTool(call.toolName))
           .at(-1)?.toolName),
     });
-    transcript.finish(result.text);
+    transcript.finish(finalText);
     await persistTranscript(input.deps.persistence, input.ownerUserId, input.run.id, transcript.entries());
     await input.liveEvents?.emit({ type: "agent.completed", runId: input.run.id, at: new Date().toISOString() });
     void compactThreadContext({
@@ -1112,8 +1124,10 @@ async function runExecution(input: {
     if (!flushAttempted) {
       try { await flushWorking(); } catch (flushError) { terminalError = flushError; }
     }
+    await recordFailedRunUsage(getRunMetricsFromError(error)?.usage);
     return settleTerminalRunFailure({
       error: terminalError,
+      changesPreserved: versionAdvances.length > 0,
       cancelled: input.signal?.aborted === true && !persistenceFailure,
       persistence: input.deps.persistence,
       ownerUserId: input.ownerUserId,

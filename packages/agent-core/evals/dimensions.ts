@@ -1,7 +1,7 @@
 /**
  * Future agent-behavior evaluation dimensions.
  *
- * RUNTIME EVALS (`evals/scenarios.ts`, `pnpm agent:v3:eval`) prove deterministic
+ * RUNTIME EVALS (`evals/scenarios.ts`, `pnpm agent:eval`) prove deterministic
  * loop mechanics with a fake model. They are not measures of model judgment.
  *
  * AGENT EVALS (manual now; scripted later) measure model behavior across

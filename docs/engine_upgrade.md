@@ -106,22 +106,10 @@ With override unset:
 ```bash
 unset OPENSUITE_ENGINE_PATH
 pnpm install
-pnpm --filter @opensuite/engine-client exec node -e '
-const { createRequire } = require("module");
-const r = createRequire(require.resolve("@opensuitehq/engine/package.json"));
-const pkg = require("@opensuitehq/engine/package.json");
-const eng = require("@opensuitehq/engine");
-const caps = eng.getDocxCapabilities();
-console.log({
-  packageVersion: pkg.version,
-  engineVersion: caps.engineVersion,
-  resolved: require.resolve("@opensuitehq/engine"),
-  isLocalCheckout: require.resolve("@opensuitehq/engine").includes("opensuite-engine"),
-});
-'
+pnpm --filter @opensuite/engine-client native-acceptance
 ```
 
-Expect: `packageVersion`/`engineVersion` = `NEW`, path under `node_modules/.pnpm/@opensuitehq+engine@NEW/...`, `isLocalCheckout: false`.
+The script fails if `OPENSUITE_ENGINE_PATH` or a `NAPI_RS_*` loader override is set, if the wrapper package version, engine-client pin, and native `engineVersion` disagree, or if semantic cell bold / shading / text and row deletion fail in memory. Expect `PASS`, `overrides: none`, and `binary:` under `node_modules/.pnpm/@opensuitehq+engine-<platform>@NEW/...`. To report a local build's identity instead, set `OPENSUITE_ENGINE_PATH` and pass `--allow-overrides`.
 
 Then:
 
@@ -148,7 +136,7 @@ Capability groups live under `apps/api/src/agent/capabilities/definitions/built-
 Architecture rules:
 
 - Only `engine-client` may depend on `@opensuitehq/engine`.
-- `agent-core-v3` stays product-agnostic (no engine import).
+- `agent-core` stays product-agnostic (no engine import).
 - DOCX semantics stay in Rust.
 
 ---
@@ -234,7 +222,7 @@ console.log({
 
 Expect: `NEW`, Linux path under `/app/node_modules/.pnpm/...`, inspect text `linux smoke`.
 
-Dockerfile build already runs an engine-load check. Image must have LibreOffice Writer for field refresh (`soffice` in runtime stage). Confirm with a TOC/PAGE refresh smoke inside the container when touching fields.
+The Dockerfile build stage runs `packages/engine-client/scripts/native-acceptance.mjs`, so a successful build already proves the Linux binding loads and semantic table edits work. Image must have LibreOffice Writer for field refresh (`soffice` in runtime stage). Confirm with a TOC/PAGE refresh smoke inside the container when touching fields.
 
 Do **not** deploy production in the bump task unless explicitly requested.
 

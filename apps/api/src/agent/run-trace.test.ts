@@ -3,7 +3,7 @@ import { mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import { test } from "node:test";
-import { createOpenRouterModel, defineTool, runAgent, type AgentEvent, type ModelMessage } from "@opensuite/agent-core-v3";
+import { createOpenRouterModel, defineTool, runAgent, type AgentEvent, type ModelMessage } from "@opensuite/agent-core";
 import { jsonSchema } from "ai";
 import { MockLanguageModelV4, simulateReadableStream } from "ai/test";
 import { composeProjectMessages } from "./agent-context.js";

@@ -6,6 +6,27 @@ OpenSuite communicates with it only through `packages/engine-client`.
 
 **After a new engine publish:** follow the application bump runbook in [`docs/engine_upgrade.md`](./engine_upgrade.md) (files to touch, tests, Docker, cloud notes).
 
+## Capability source of truth
+
+The Rust protocol's `DOCX_CAPABILITIES` inventory declares IDs, operation kinds,
+Node export names, and Node availability. New engine builds return callable
+operations in `getDocxCapabilities().formats[].operations`; engine-client passes
+this through and checks the named exports. The npm 0.1.5 pin predates this metadata
+and remains supported. N-API no longer owns a second capability allowlist.
+
+Release tests compare the inventory with compiled Node exports and TypeScript
+function declarations. Product contract tests check dispatcher, agent schema,
+and dynamic discovery coverage; binary assets have an explicit separate path.
+Input schemas and descriptions still live in the API. Moving those contracts to
+engine-owned transport types is the next step toward automatic new tool exposure;
+this change does not claim that an unknown new operation is already agent-callable.
+
+For binary identity, call `describeNativeEngine(binding)` on the actual binding.
+It follows that loader's module tree, matches native exports, and records the full
+binary SHA-256. `formatNativeEngineIdentity()` is shared by public/Cloud startup
+checks. Runtime logs and product services use the same binding. A package pin alone
+cannot establish binary identity, because loader overrides can select another file.
+
 ## Rule
 
 Application code must never manipulate Office internals as a shortcut around the engine.
@@ -42,7 +63,7 @@ Agent run starts at Version N
 ```
 
 * Successful engine output advances working bytes; final persistence failure fails the run and leaves Version N current.
-* agent-core-v2 never imports apps/api; application persistence stays in the API.
+* agent-core never imports apps/api; application persistence stays in the API.
 * No engine source identities cross the tool boundary.
 * VERSION_CONFLICT / persistence failure → run failed; TARGET_NOT_FOUND / PRECONDITION_FAILED / UNSUPPORTED_OPERATION → tool failed; previous working bytes remain valid.
 * Multi-cell / multi-row updates are atomic **inside one engine operation**; separate tool calls share the run's working version.
@@ -78,7 +99,7 @@ exact immutable version N
 * Rust is capability / semantic source of truth.
 * Inspect focuses: overview, headings, paragraphs, tables, body_blocks, context — paged collections use offset/limit (default 20, max 100).
 * `body_blocks`: ordered direct body paragraphs/tables with opaque `handle` (`bN` opaque to TS), optional text / tableHandle; used for insert_paragraph before/after.
-* Occurrence is **zero-based** everywhere at the V2/engine boundary (find matches, inspect `targetOccurrence` / table occurrence, mutation `target.occurrence`). Do not invent 1-based remapping in TypeScript.
+* Occurrence is **zero-based** everywhere at the agent/engine boundary (find matches, inspect `targetOccurrence` / table occurrence, mutation `target.occurrence`). Do not invent 1-based remapping in TypeScript.
 * Model mutation tools require a schema in `MODEL_MUTATION_CAPABILITIES` + a dispatcher in `DISPATCHABLE_MUTATION_CAPABILITIES`. Binary picture insert/replace stay dispatchable but hidden from the model (JSON cannot carry Buffer).
 * Structural arg mistakes return `VALIDATION_FAILED`; Rust semantic failures (`TARGET_NOT_FOUND`, …) pass through. `DISPATCH_FAILED` is only for unexpected adapter/runtime errors.
 * Occurrence/order from inspect is VERSION-LOCAL — never persist as durable identity.
@@ -104,27 +125,30 @@ exact immutable version N
 ### Node binding setup
 
 ```bash
-pnpm install   # pulls @opensuitehq/engine@0.1.4 + platform package from npm
+pnpm install   # pulls @opensuitehq/engine@0.1.5 + platform package from npm
 ```
 
 Normal app, test, Docker, and production paths use the installed npm package. For local
 engine development only, build `opensuite-engine/crates/opensuite-node`, then set
 `OPENSUITE_ENGINE_PATH` in the repo-root `.env` (see `.env.example`) to that checkout's
 `index.js`. Prefer an absolute path. The API `load-env` picks it up on boot; the boot
-line logs `source=OPENSUITE_ENGINE_PATH` vs `source=npm`. When the env var is set, a
-missing or unloadable path errors — there is no silent fallback to the published package.
+line logs `source=OPENSUITE_ENGINE_PATH` vs `source=npm`, plus the loaded `.node` `binary=`,
+a short `sha256=`, any `NAPI_RS_*` loader `overrides=`, and `semanticCells=`/`semanticRows=`
+support. `source=npm` alone does not prove the npm binary ran; check `binary=` and
+`overrides=`. When the env var is set, a missing or unloadable path errors — there is no
+silent fallback to the published package.
 
 ```bash
 (cd ../opensuite-engine/crates/opensuite-node && npm run build:debug)
 # In opensuite/.env (absolute path) — optional local override only:
 # OPENSUITE_ENGINE_PATH=/…/opensuite-engine/crates/opensuite-node/index.js
-# Leave unset to use published @opensuitehq/engine@0.1.4
+# Leave unset to use published @opensuitehq/engine@0.1.5
 OPENSUITE_ENGINE_PATH="$PWD/../opensuite-engine/crates/opensuite-node/index.js" pnpm --filter @opensuite/engine-client test
 pnpm --filter @opensuite/engine-client style-smoke
 ```
 
 
-`packages/engine-client` declares `@opensuitehq/engine` as a **dependency** (exact `0.1.4`) — not optional — so installs fail if the package cannot be resolved. Platform binaries ship as optionalDependencies of that package. Supported: darwin-arm64/x64, linux-x64-gnu, linux-arm64-gnu, win32-x64-msvc (glibc only; no Alpine/musl). No sibling `opensuite-engine` checkout required. Smoke test may write `/private/tmp/opensuite-app-engine-adapter-output.docx` for manual inspection only.
+`packages/engine-client` declares `@opensuitehq/engine` as a **dependency** (exact `0.1.5`) — not optional — so installs fail if the package cannot be resolved. Platform binaries ship as optionalDependencies of that package. Supported: darwin-arm64/x64, linux-x64-gnu, linux-arm64-gnu, win32-x64-msvc (glibc only; no Alpine/musl). No sibling `opensuite-engine` checkout required. Smoke test may write `/private/tmp/opensuite-app-engine-adapter-output.docx` for manual inspection only.
 
 ## Conceptual Interface
 

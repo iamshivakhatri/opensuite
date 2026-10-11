@@ -62,7 +62,7 @@ export function listDocxPartNames(bytes: Uint8Array): string[] {
 }
 
 function protectedPackageParts(names: readonly string[]): string[] {
-  return names.filter((name) => /^(customXml\/|embeddings\/|glossary\/)/i.test(name));
+  return names.filter((name) => !name.endsWith("/") && /^(?:customXml|word\/embeddings|word\/glossary)\//i.test(name));
 }
 
 /** Semantic gate before adopting LibreOffice-refreshed bytes. Reject destructive rewrites. */

@@ -1,4 +1,4 @@
-import { providerSafeToolName } from "@opensuite/agent-core-v3";
+import { providerSafeToolName } from "@opensuite/agent-core";
 
 type CapabilityBase = Readonly<{
   id: string;

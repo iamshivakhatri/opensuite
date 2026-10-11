@@ -1,6 +1,7 @@
-import { runModel, type V3Model } from "@opensuite/agent-core-v3";
+import { runModel, type AgentModel } from "@opensuite/agent-core";
 
 import { formatDocumentMap, type DocumentMap, type WorkspaceArtifact } from "./document-retrieval.js";
+import type { ModelCallUsage } from "./usage-accounting.js";
 
 export const MAX_THREAD_TITLE_LENGTH = 60;
 
@@ -32,16 +33,16 @@ export function buildThreadTitlePrompt(input: {
 }
 
 export async function generateThreadTitle(input: {
-  model: V3Model;
+  model: AgentModel;
   instruction: string;
   workingSet: readonly WorkspaceArtifact[];
   documentMaps: readonly DocumentMap[];
-}): Promise<string | null> {
+}): Promise<{ title: string | null; usage: ModelCallUsage }> {
   const result = await runModel({
     model: input.model,
     system: TITLE_INSTRUCTION,
     messages: [{ role: "user", content: buildThreadTitlePrompt(input) }],
     infraRetry: { maxRetries: 0 },
   });
-  return normalizeThreadTitle(result.text);
+  return { title: normalizeThreadTitle(result.text), usage: result };
 }

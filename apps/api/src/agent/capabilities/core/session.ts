@@ -1,5 +1,5 @@
 import { requestsSavedStyle } from "../definitions/style-profiles.js";
-import type { AgentToolSet } from "@opensuite/agent-core-v3";
+import type { AgentToolSet } from "@opensuite/agent-core";
 import { CapabilityRegistry, type CapabilityDefinition } from "./registry.js";
 
 export type CapabilityEventType = "recommended" | "discovered" | "loaded" | "executed" | "succeeded" | "failed";

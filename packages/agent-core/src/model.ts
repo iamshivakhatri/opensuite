@@ -2,12 +2,12 @@ import { streamText, type ModelMessage, type ToolSet } from "ai";
 import { createOpenRouter } from "@openrouter/ai-sdk-provider";
 
 import { DEFAULT_INFRA_RETRY } from "./retry.js";
-import { emitDiagnostic, type DiagnosticHook, type InfraRetryPolicy, type RunModelInput, type RunModelResult, type V3Model } from "./types.js";
+import { emitDiagnostic, type DiagnosticHook, type InfraRetryPolicy, type RunModelInput, type RunModelResult, type AgentModel } from "./types.js";
 
 export function createOpenRouterModel(input: {
   apiKey: string;
   model: string;
-}): V3Model {
+}): AgentModel {
   // usage.include surfaces OpenRouter cost + token details in providerMetadata.
   return createOpenRouter({ apiKey: input.apiKey })(input.model, {
     usage: { include: true },
@@ -46,7 +46,7 @@ export interface StreamTurnResult {
  * forbids `role: "system"` entries inside `messages`.
  */
 export async function streamTurn(input: {
-  readonly model: V3Model;
+  readonly model: AgentModel;
   readonly system?: string;
   readonly messages: readonly ModelMessage[];
   readonly tools?: ToolSet;

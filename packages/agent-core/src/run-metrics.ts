@@ -45,6 +45,8 @@ export interface ToolCallMetric {
   readonly durationMs: number;
   readonly outcome: ToolCallOutcome;
   readonly failureCode?: string;
+  /** From the tool's optional `effectKeys` trait. */
+  readonly effectKeys?: readonly string[];
 }
 
 export interface FuseEventMetric {

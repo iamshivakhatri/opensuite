@@ -7,7 +7,7 @@ Thanks for helping improve OpenSuite. The product application lives here; the lo
 ```text
 apps/web                Next.js product interface
 apps/api                Fastify API, agent binding, document services
-packages/agent-core-v3  Agent loop
+packages/agent-core  Agent loop
 packages/engine-client  Only product package that calls the document engine
 packages/contracts      Shared engine contracts
 packages/db             PostgreSQL schema and migrations

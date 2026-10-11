@@ -3,7 +3,7 @@ import {
   type FuseEventMetric,
   type MetricsStopReason,
   type StopReason,
-} from "@opensuite/agent-core-v3";
+} from "@opensuite/agent-core";
 
 import type { ProviderCredentialProvider } from "../credentials/types.js";
 import {
@@ -28,7 +28,7 @@ import {
  *   document_version advances (normally 0–1 per run; not working revisions)
  * - failures[] — structured events (tool attempt errors, runtime bounds,
  *   model errors). `outcome` is authoritative for terminal run result.
- *   Same-tool later success recovers a tool error; unrecovered mutate
+ *   Same-tool later success for the exact work recovers a tool error; unrecovered mutate
  *   failures make a finish_tool stop `partial` (with a version) or `failure`.
  * Compact logs use toolErrors= for tool-source count only.
  */
@@ -81,6 +81,8 @@ export interface AgentRunReportTool {
   readonly durationMs: number;
   readonly outcome: string;
   readonly failureCode?: string;
+  /** Failed mutation work was completed by a later matching call. */
+  readonly recovered?: boolean;
 }
 
 export interface AgentRunReportRetrieval {
@@ -227,23 +229,27 @@ export interface ComposeAgentRunReportInput {
   readonly pricingProvider?: ProviderCredentialProvider;
 }
 
-/** Mutate tool names that failed without a later same-tool success. */
+/** Mutate tool names with failed work that no same-tool success redid. */
 export function unrecoveredFailedMutateToolNames(
   metrics: AgentRunMetrics | null | undefined,
 ): string[] {
   if (!metrics) return [];
-  const names: string[] = [];
-  for (const call of metrics.toolCalls) {
-    if (call.kind !== "mutate" || call.outcome !== "failure") continue;
-    const recovered = metrics.toolCalls.some(
-      (later) =>
-        later.sequence > call.sequence &&
-        later.toolName === call.toolName &&
-        later.outcome === "success",
-    );
-    if (!recovered) names.push(call.toolName);
-  }
-  return [...new Set(names)];
+  const mutates = metrics.toolCalls.filter((call) => call.kind === "mutate");
+  const failedNames = new Set(mutates.filter((call) => call.outcome === "failure").map((call) => call.toolName));
+  return [...failedNames].filter((name) => !failedWorkRecovered(mutates.filter((call) => call.toolName === name)));
+}
+
+/**
+ * A later success must match both the exact target and requested change.
+ * Missing identities, changed handles, and earlier successes prove nothing
+ * about a failed edit. Repeated failed attempts may share one successful retry.
+ */
+function failedWorkRecovered(calls: readonly AgentRunMetrics["toolCalls"][number][]): boolean {
+  const failures = calls.filter((call) => call.outcome === "failure");
+  const successes = calls.filter((call) => call.outcome === "success");
+  return failures.every((failed) => failed.effectKeys?.length &&
+    failed.effectKeys.every((key) => key !== "|" && key !== "" && successes.some((success) =>
+      success.sequence > failed.sequence && success.effectKeys?.includes(key))));
 }
 
 /**
@@ -390,6 +396,10 @@ export function composeAgentRunReport(
       ...(call.failureCode !== undefined
         ? { failureCode: call.failureCode }
         : {}),
+      ...(call.kind === "mutate" && call.outcome === "failure" ? {
+        recovered: failedWorkRecovered([call, ...input.metrics.toolCalls.filter(later =>
+          later.toolName === call.toolName && later.sequence > call.sequence)]),
+      } : {}),
     })),
     usage: {
       inputTokens: input.metrics.usage.inputTokens,
@@ -650,7 +660,7 @@ export function logAgentRunReport(report: AgentRunReport): void {
   if (toolErrors > 0) {
     for (const tool of report.tools) {
       if (tool.outcome === "success") continue;
-      const recovered = report.tools.some(
+      const recovered = tool.kind === "mutate" ? tool.recovered === true : report.tools.some(
         (later) =>
           later.sequence > tool.sequence &&
           later.name === tool.name &&

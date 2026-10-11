@@ -12,11 +12,12 @@
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "lint": "echo \"(no lint configured yet)\"",
     "test": "tsc -p tsconfig.json && node --test \"dist/**/*.test.js\"",
-    "style-smoke": "tsc -p tsconfig.json && node ./scripts/style-snapshot-smoke.mjs"
+    "style-smoke": "tsc -p tsconfig.json && node ./scripts/style-snapshot-smoke.mjs",
+    "native-acceptance": "tsc -p tsconfig.json && node ./scripts/native-acceptance.mjs"
   },
   "dependencies": {
     "@opensuite/contracts": "workspace:*",
-    "@opensuitehq/engine": "0.1.4"
+    "@opensuitehq/engine": "0.1.5"
   },
   "devDependencies": {
     "@types/node": "^22.10.2",

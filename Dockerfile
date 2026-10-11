@@ -2,7 +2,7 @@
 #   docker build -t opensuite-api .
 # Atlas/Dokploy: docker-compose.atlas.yml (API only; external DB + MinIO).
 #
-# Native engine: @opensuitehq/engine@0.1.4 from npm (glibc platforms only).
+# Native engine: @opensuitehq/engine@0.1.5 from npm (glibc platforms only).
 # Base image is Debian bookworm (glibc) — Alpine/musl is incompatible.
 
 # syntax=docker/dockerfile:1.7
@@ -20,8 +20,7 @@ COPY package.json pnpm-lock.yaml pnpm-workspace.yaml turbo.json .npmrc tsconfig.
 COPY apps/api/package.json apps/api/
 COPY packages/contracts/package.json packages/contracts/
 COPY packages/db/package.json packages/db/
-COPY packages/agent-core-v2/package.json packages/agent-core-v2/
-COPY packages/agent-core-v3/package.json packages/agent-core-v3/
+COPY packages/agent-core/package.json packages/agent-core/
 COPY packages/engine-client/package.json packages/engine-client/
 
 RUN pnpm install --frozen-lockfile --filter @opensuite/api...
@@ -31,7 +30,7 @@ COPY apps/api ./apps/api
 COPY deploy ./deploy
 
 RUN pnpm --filter @opensuite/api... build
-RUN node --input-type=module -e "import { createNapiDocxEngineBinding } from './packages/engine-client/dist/index.js'; const caps = (await createNapiDocxEngineBinding()).getDocxCapabilities(); if (!caps.ok) throw new Error('DOCX engine capabilities unavailable')"
+RUN node packages/engine-client/scripts/native-acceptance.mjs
 
 FROM node:${NODE_VERSION}-bookworm-slim AS runtime
 # LibreOffice Writer (nogui) refreshes TOC/PAGE fields before agent save. Heavy (~400MB+).

@@ -9,6 +9,21 @@ test("explicit current-document wording binds the open file", () => {
   assert.equal(refersToOpenDocument("Change the current document"), true);
   assert.equal(refersToOpenDocument("Update the board report"), false);
   assert.equal(refersToOpenDocument("Use this document to update the board report"), false);
+  for (const instruction of [
+    "Add a table to this document",
+    "Bold the header row in the current document.",
+    "Remove the second paragraph from this doc",
+    "Fix the typos in the open file",
+    "In this document, replace Q3 with Q4",
+    "Please shade the totals row of this report",
+  ]) assert.equal(refersToOpenDocument(instruction), true, instruction);
+  for (const instruction of [
+    "Update the board report with numbers from this document",
+    "Add the figures from the current document to Board.docx",
+    "Rewrite the summary based on this document",
+    "Summarize this document",
+    "Does this document need a table?",
+  ]) assert.equal(refersToOpenDocument(instruction), false, instruction);
   assert.equal(requestsDocumentChange("Create 10 documents"), true);
   assert.equal(requestsDocumentChange("Make a list of documents here"), false);
 });

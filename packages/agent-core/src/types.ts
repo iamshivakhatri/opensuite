@@ -9,7 +9,7 @@ import {
 import type { AgentRunMetrics, NowFn } from "./run-metrics.js";
 
 export type { ModelMessage, ToolSet } from "ai";
-export type V3Model = LanguageModel;
+export type AgentModel = LanguageModel;
 
 /** Optional local diagnostics. Callbacks must observe, never mutate, payloads. */
 export type DiagnosticHook = (event: "model_request" | "model_stream" | "model_response" | "model_error" | "tool_started" | "tool_result" | "tool_error" | "tool_skipped", data: unknown) => void;
@@ -44,6 +44,12 @@ export type AgentTool = Tool & {
    * text. Honoured only when no mutation failed in the same batch.
    */
   readonly terminal?: boolean;
+  /**
+   * Opaque identity of the work one call attempted, one key per unit of work,
+   * recorded on the call metric so a host can tell whether a later success
+   * repeated failed work. Never affects execution.
+   */
+  readonly effectKeys?: (input: unknown, output: unknown) => readonly string[];
 };
 
 export type AgentToolSet = Record<string, AgentTool>;
@@ -54,6 +60,7 @@ export interface DefineToolSpec<Input, Output> {
   // Use `jsonSchema<T>(...)` from "ai".
   readonly inputSchema: InputSchema<Input>;
   readonly terminal?: boolean;
+  readonly effectKeys?: AgentTool["effectKeys"];
   execute(
     input: Input,
     ctx: {
@@ -71,7 +78,7 @@ export interface DefineToolSpec<Input, Output> {
 export function defineTool<Input, Output>(
   spec: DefineToolSpec<Input, Output>,
 ): AgentTool {
-  const { kind, terminal, description, inputSchema, execute } = spec;
+  const { kind, terminal, effectKeys, description, inputSchema, execute } = spec;
   const base = aiTool({
     description,
     inputSchema,
@@ -80,6 +87,7 @@ export function defineTool<Input, Output>(
   return Object.assign(base, {
     kind,
     ...(terminal !== undefined ? { terminal } : {}),
+    ...(effectKeys ? { effectKeys } : {}),
   }) as AgentTool;
 }
 
@@ -151,7 +159,7 @@ export interface InfraRetryPolicy {
 }
 
 export interface RunModelInput {
-  readonly model: V3Model;
+  readonly model: AgentModel;
   readonly system?: string;
   readonly messages: readonly ModelMessage[];
   /** Optional request cap; unset by default. */

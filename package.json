@@ -17,7 +17,7 @@
     "db:generate": "pnpm --filter @opensuite/db db:generate",
     "db:migrate": "pnpm --filter @opensuite/db db:migrate",
     "db:check": "pnpm --filter @opensuite/db db:check",
-    "agent:v3:eval": "pnpm --filter @opensuite/agent-core-v3 eval"
+    "agent:eval": "pnpm --filter @opensuite/agent-core eval"
   },
   "devDependencies": {
     "turbo": "^2.3.3",

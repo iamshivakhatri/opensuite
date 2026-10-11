@@ -405,8 +405,8 @@ test("failed duplicate leaves original binding active", async () => {
 });
 
 test("finish-as-read before mutations: duplicate then mutate still targets copy", async () => {
-  // Mirrors V3 scheduling: reads (finish) run before mutations in a multi-tool turn.
-  const { createFinishTool } = await import("@opensuite/agent-core-v3");
+  // Mirrors agent-core scheduling: reads (finish) run before mutations in a multi-tool turn.
+  const { createFinishTool } = await import("@opensuite/agent-core");
   const binding = await createNapiDocxEngineBinding();
   const initial = Buffer.from(buildMinimalDocx(["Key HighStone"]));
   const mem = memoryDocs({

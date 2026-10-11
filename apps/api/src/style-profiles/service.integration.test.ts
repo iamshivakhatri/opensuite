@@ -25,8 +25,8 @@ test('real DOCX learn/save/fresh-process reload, CRUD, exact provenance, ownersh
   assert.ok(process.env.DATABASE_URL, 'DATABASE_URL is required');
   assert.equal(
     (await createNapiDocxEngineBinding()).getDocxCapabilities().engineVersion,
-    '0.1.4',
-    'style profile extraction requires installed @opensuitehq/engine@0.1.4',
+    '0.1.5',
+    'style profile extraction requires installed @opensuitehq/engine@0.1.5',
   );
   const admin = createDbClient({ databaseUrl: process.env.DATABASE_URL });
   const testSchema = `style_test_${randomUUID().replaceAll('-', '')}`;
@@ -122,7 +122,7 @@ test('real DOCX learn/save/fresh-process reload, CRUD, exact provenance, ownersh
       const wrongDocumentVersion = await app.inject({ ...request, payload: { documentId: uploaded.document.id, versionId: other.version.id } });
       assert.equal(wrongDocumentVersion.statusCode, 404);
       if (filename.startsWith('Blue')) {
-        // Replay the actual prompt and name-only arguments through the real V3
+        // Replay the actual prompt and name-only arguments through the real agent-core
         // tool loop, real document service, local engine, and PostgreSQL.
         // The scripted model never makes a paid/network model request.
         const binding = await createNapiDocxEngineBinding();

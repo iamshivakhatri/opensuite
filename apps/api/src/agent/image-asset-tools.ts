@@ -1,5 +1,5 @@
 import { jsonSchema } from "ai";
-import { defineTool, type AgentToolSet } from "@opensuite/agent-core-v3";
+import { defineTool, type AgentToolSet } from "@opensuite/agent-core";
 import {
   ENGINE_IMAGE_CONTENT_TYPES,
   WorkspaceAssetError,

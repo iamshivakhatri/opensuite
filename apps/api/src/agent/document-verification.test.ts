@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { DocxEngineBinding } from "@opensuite/engine-client";
-import { oldPeriodFromInstruction, verifyDocumentUpdate } from "./document-verification.js";
+import { hasBlockingVerificationFailure, oldPeriodFromInstruction, verifyDocumentUpdate } from "./document-verification.js";
 
 const bytes = (text: string) => new TextEncoder().encode(text);
 const months = "January|February|March|April|May|June|July|August|September|October|November|December";
@@ -108,10 +108,11 @@ test("suspicious old-period statements and unresolved placeholders carry evidenc
   assert.match(checks.find((item) => item.id === "placeholders")?.evidence ?? "", /UPDATE/);
 });
 
-test("structural differences warn, while a source advance fails", async () => {
+test("structural differences and a concurrent source advance warn without blocking", async () => {
   const checks = await check("September STRUCTURE_CHANGED", undefined, { sourcesUnchanged: false });
   assert.equal(checks.find((item) => item.id === "structure")?.status, "warning");
-  assert.equal(checks.find((item) => item.id === "sources")?.status, "fail");
+  assert.equal(checks.find((item) => item.id === "sources")?.status, "warning");
+  assert.equal(hasBlockingVerificationFailure(checks), false);
 });
 
 test("ambiguous and absent periods skip without guessing", async () => {

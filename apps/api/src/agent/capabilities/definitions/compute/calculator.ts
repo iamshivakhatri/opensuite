@@ -1,5 +1,5 @@
 import { jsonSchema } from "ai";
-import { defineTool } from "@opensuite/agent-core-v3";
+import { defineTool } from "@opensuite/agent-core";
 import type { CapabilityDefinition } from "../../core/registry.js";
 
 export const calculatorCapability: CapabilityDefinition = {

@@ -1,8 +1,8 @@
 {
-  "name": "@opensuite/agent-core-v3",
+  "name": "@opensuite/agent-core",
   "version": "0.0.0",
   "private": true,
-  "description": "Generic streaming model + tool-loop runtime for OpenSuite (v3). No product/document policy.",
+  "description": "Generic streaming model + tool-loop runtime for OpenSuite. No product/document policy.",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",

@@ -1,8 +1,9 @@
-import { runModel, type V3Model } from "@opensuite/agent-core-v3";
+import { runModel, type AgentModel } from "@opensuite/agent-core";
 
 import type { ManagedUsagePolicy } from "../managed-usage-policy.js";
 import type { ModelUsageService } from "../model-usage/service.js";
 import type { AgentModelUsageAttribution } from "./execution.js";
+import { recordModelUsage } from "./usage-accounting.js";
 import {
   estimateTokens,
   MAX_HISTORY_CHARACTERS,
@@ -50,7 +51,7 @@ export async function compactThreadContext(input: {
   readonly persistence: AgentPersistenceService;
   readonly ownerUserId: string;
   readonly threadId: string;
-  readonly model: V3Model;
+  readonly model: AgentModel;
   readonly contextLength?: number;
   readonly maxOutputTokens?: number;
   readonly usageAttribution?: AgentModelUsageAttribution;
@@ -136,31 +137,17 @@ export async function compactThreadContext(input: {
   } finally {
     clearTimeout(timeout);
   }
-  if (input.modelUsage && input.usageAttribution) {
-    try {
-      const event = await input.modelUsage.recordFromProviderResponse({
-        attribution: { ...input.usageAttribution, userId: input.ownerUserId, agentRunId: null },
-        usage: {
-          inputTokens: usage.inputTokens,
-          cachedInputTokens: usage.cachedInputTokens,
-          outputTokens: usage.outputTokens,
-          ...(usage.reasoningTokens !== undefined
-            ? { reasoningTokens: usage.reasoningTokens }
-            : {}),
-        },
-        ...(usage.providerReportedCostUsd !== undefined
-          ? { providerReportedCostUsd: usage.providerReportedCostUsd }
-          : {}),
-      });
-      if (
-        input.usageAttribution.provider === "openrouter" &&
-        input.usageAttribution.credentialSource === "managed"
-      ) {
-        await input.managedUsagePolicy?.afterUsageRecorded(event);
-      }
-    } catch {
-      console.warn("[context-compaction] usage accounting failed");
-    }
+  try {
+    await recordModelUsage({
+      modelUsage: input.modelUsage,
+      managedUsagePolicy: input.managedUsagePolicy,
+      attribution: input.usageAttribution,
+      userId: input.ownerUserId,
+      agentRunId: null,
+      usage,
+    });
+  } catch {
+    console.warn("[context-compaction] usage accounting failed");
   }
   if (!isCheckpointOutput(output)) {
     return finish({ ...base, triggered: true, checkpointCreated: false, failureCode: "MALFORMED_OUTPUT" });
