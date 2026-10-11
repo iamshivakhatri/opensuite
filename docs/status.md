@@ -69,8 +69,8 @@ _Read this before starting any work. Keep it a concise current-state handoff, no
 
 Complete A8 package/platform checks, publication,
 exact npm pin updates, and public/Cloud image verification. D1 manual document
-and browser/Word testing belongs to the user; its fixed set and results remain
-pending. Current mutation checkpoint: API build passes, API 429 pass / 23 DB
+and browser/Word testing belongs to the user. The checklist and results sheet are
+prepared; its fixed ten-business-document set and results remain pending. Current mutation checkpoint: API build passes, API 429 pass / 23 DB
 skips, engine-client 39 pass / 2 optional skips, native 35 pass, changed Rust
 crates lint cleanly with 7 tests passing. All 14 selected local-engine input/read/discovery checks pass. No new publication, deployment, or paid model calls.
 The user's live-status UI changes remain separate.

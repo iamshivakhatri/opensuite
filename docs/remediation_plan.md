@@ -22,8 +22,8 @@ Each step is one reviewable change with its own checks. Real-model runs require 
 | Step | Phase | What it means | Current state |
 | --- | --- | --- | --- |
 | Define operation inputs once and generate agent tools | **A7** | The engine describes the required inputs for each operation. The product uses that description to build the agent's tool definition instead of maintaining another copy. | Completed locally: generated mutation/read inputs, validation, and dynamic discovery. Publication is A8. |
-| Release the engine, update the npm pin, and verify images | **A8**, with Cloud work in **F5–F6** | Publish a new engine package, make OpenSuite install that exact version, then build and check the public and Cloud containers that would run in production. | Not released. Local Cloud ARM64 candidate passed; remote build and real x64 checks remain pending. |
-| Test 10 real reports and proposals repeatedly | **D1** | Keep a fixed set of realistic DOCX files and editing tasks. Compare saved results, preserved content/layout, speed, cost, and unnecessary agent steps before making further changes. | Manual browser/Word testing belongs to the user. Fixed document set and results remain pending. |
+| Release the engine, update the npm pin, and verify images | **A8**, with Cloud work in **F5–F6** | Publish a new engine package, make OpenSuite install that exact version, then build and check the public and Cloud containers that would run in production. | 0.1.6 local release/package checks passed; tagged publishing workflow running. App pin/image checks wait for publication. |
+| Test 10 real reports and proposals repeatedly | **D1** | Keep a fixed set of realistic DOCX files and editing tasks. Compare saved results, preserved content/layout, speed, cost, and unnecessary agent steps before making further changes. | Checklist and results sheet prepared. User runs manual tests; ten-business-document results remain pending. |
 
 Recommended order: **A7 → A8 → D1 → measured D/E improvements**. Gathering the
 D1 documents and defining their expected results can start alongside A7; there
@@ -91,7 +91,7 @@ crates lint cleanly and their 7 tests pass. All 14 selected local-engine input/r
 Repeated native builds now clear the correct target-specific adapter cache before
 generating declarations; Rust compiler caching no longer leaves missing records. Browser/Word testing remains with the user.
 
-**Step A8 — release and production-image verification** _(after A7; not released)_
+**Step A8 — release and production-image verification** _(local checks passed; publishing workflow running)_
 
 Changing local Rust files does not change the engine installed by the product.
 The npm pin is the exact package version OpenSuite installs. A production image
@@ -103,6 +103,8 @@ is the built container containing the API, native engine, and required programs.
 - [ ] Publish the reviewed public commit and update Cloud's single `deploy/opensuite-ref` pin (**F6**). Build Cloud through its real GitHub-fetch path; verify native edits and LibreOffice field refresh (**F5**) in the finished container.
 - [ ] Verify on real Linux x64 and ARM64 builders. The local ARM64 candidate and npm x64 load check do not prove a complete production x64 build.
 - [ ] Record release and image evidence here. Mark deployment separately, only after it actually happens.
+
+Release attempt 0.1.6 passed the canonical script: Rust formatting/check/lint/tests, native build and 35 tests, and a packaged-consumer create/edit/reopen check. Tag `v0.1.6` was pushed. Publishing workflow: https://github.com/iamshivakhatri/opensuite-engine/actions/runs/38170978998. Registry/platform and container verification remain pending. General workspace CI still fails on existing PPTX lint warnings outside the DOCX release checks.
 
 A5 and local Cloud candidate checks pass. Remote release/deployment checks remain pending; pushing alone is not deployment evidence. The new inventory must be released under a new engine version before npm consumers receive it.
 
@@ -143,6 +145,7 @@ Do not change: credit pricing, mutation scheduling, safe partial-save behavior.
 
 Do not strip same-run provider reasoning/tool exchanges or weaken target safety.
 
+- [x] **D1 preparation:** [Manual document checklist](document_test_checklist.md) and [results sheet](document_test_results.csv) list ten repeatable edits and expected results. The user owns browser/Word testing. Available local reports are starting candidates; generated/academic examples do not count as ten representative business documents.
 - [ ] **D1 Add** a fixed starting set of **10 real DOCX reports, proposals, and branded documents**, with specific edits and expected results. Reuse the same files/tasks when comparing changes. Tasks should include updating reporting dates and KPI tables, replacing proposal details, applying a saved style, and keeping branding and untouched content intact. Check saved text/tables/styles, untouched package content, visible layout, and truthful success/partial/failure messages. Record model turns, time to first useful tool, total duration, context/schema size, redundant reads, and cost. Start with scripted/replayed responses; collecting or running paid model responses requires explicit approval. Use the results to choose D/E improvements; this baseline does not itself add new product features.
 - [ ] **D2 Add** observability: full request duration (retrieval, save, validation, settlement), save/DB timing, validation timing, tool count/schema chars in the persisted run report, SDK retry counts.
 - [ ] **D3 Update** skip candidate map/evidence work when DIRECT is complete, if D1 shows it is unused.
