@@ -1006,18 +1006,18 @@ export async function createNapiDocxEngineBinding(): Promise<DocxEngineBinding> 
       );
     }
     throw new Error(
-      `Failed to load @opensuitehq/engine Node binding. Ensure @opensuitehq/engine@0.1.5 is installed for this platform (darwin-arm64, darwin-x64, linux-x64-gnu, linux-arm64-gnu, win32-x64-msvc; glibc only — no musl/Alpine). Underlying error: ${message}`,
+      `Failed to load @opensuitehq/engine Node binding. Ensure @opensuitehq/engine@0.1.7 is installed for this platform (darwin-arm64, darwin-x64, linux-x64-gnu, linux-arm64-gnu, win32-x64-msvc; glibc only — no musl/Alpine). Underlying error: ${message}`,
     );
   }
 
   if (typeof native.createBlankDocx !== "function") {
     throw new Error(
-      "@opensuitehq/engine is missing createBlankDocx — pin/install @opensuitehq/engine@0.1.5",
+      "@opensuitehq/engine is missing createBlankDocx — pin/install @opensuitehq/engine@0.1.7",
     );
   }
   if (typeof native.executeDocxInsertParagraph !== "function") {
     throw new Error(
-      "@opensuitehq/engine is missing executeDocxInsertParagraph — pin/install @opensuitehq/engine@0.1.5",
+      "@opensuitehq/engine is missing executeDocxInsertParagraph — pin/install @opensuitehq/engine@0.1.7",
     );
   }
   for (const name of [
@@ -1049,7 +1049,7 @@ export async function createNapiDocxEngineBinding(): Promise<DocxEngineBinding> 
   ] as const) {
     if (typeof native[name] !== "function") {
       throw new Error(
-        `@opensuitehq/engine is missing ${name} — pin/install @opensuitehq/engine@0.1.5`,
+        `@opensuitehq/engine is missing ${name} — pin/install @opensuitehq/engine@0.1.7`,
       );
     }
   }
@@ -1241,7 +1241,7 @@ export async function createNapiDocxEngineBinding(): Promise<DocxEngineBinding> 
     async inspectDocxStyleSnapshot(input) {
       if (typeof native.inspectDocxStyleSnapshot !== "function") {
         throw new Error(
-          "installed native engine is missing inspectDocxStyleSnapshot — pin/install @opensuitehq/engine@0.1.5 (or set OPENSUITE_ENGINE_PATH for a local engine build)",
+          "installed native engine is missing inspectDocxStyleSnapshot — pin/install @opensuitehq/engine@0.1.7 (or set OPENSUITE_ENGINE_PATH for a local engine build)",
         );
       }
       return JSON.parse(

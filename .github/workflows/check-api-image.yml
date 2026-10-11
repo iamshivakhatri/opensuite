@@ -1,0 +1,28 @@
+name: Check API image
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - Dockerfile
+      - pnpm-lock.yaml
+      - packages/engine-client/**
+      - .github/workflows/check-api-image.yml
+
+permissions:
+  contents: read
+
+jobs:
+  image:
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [ubuntu-24.04, ubuntu-24.04-arm]
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build the production image
+        run: docker build --progress=plain -t opensuite-api:check .
+      - name: Check the finished image
+        run: docker run --rm --entrypoint node opensuite-api:check packages/engine-client/scripts/image-acceptance.mjs

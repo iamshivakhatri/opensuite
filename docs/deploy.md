@@ -21,13 +21,13 @@ Browser check (after API is routed): open `https://api.opensuite.tech/` → plai
 ## Backend — home server behind Cloudflare Tunnel
 
 * Compose: `docker-compose.atlas.yml` (API only; your private Postgres + MinIO)
-* Image: `node:22-bookworm-slim` (glibc). Native `@opensuitehq/engine@0.1.5` — **not** Alpine/musl.
+* Image: `node:22-bookworm-slim` (glibc). Native `@opensuitehq/engine@0.1.7` — **not** Alpine/musl.
 * Runtime also installs `libreoffice-writer-nogui` + `fonts-dejavu-core` so agent saves can refresh TOC/PAGE fields. Expect a large image-size increase (~400MB+). Without LibreOffice, dirty TOC fields remain valid but `refresh_required`.
 * The image build checks that the native binding loads. If a deployed binding later fails, the API still starts for auth/workspaces and DOCX edits return 503.
 
 1. Set `BETTER_AUTH_URL=https://api.opensuite.tech`, `WEB_ORIGIN=https://www.opensuite.tech`, `ALLOW_SIGNUP=false` (unless actively admitting testers), and `AUTH_CROSS_ORIGIN=false`. Set Vercel `NEXT_PUBLIC_API_URL=https://api.opensuite.tech` and `NEXT_PUBLIC_ALLOW_SIGNUP` to the same value. The API bridge uses `BETTER_AUTH_URL` as Better Auth's public HTTPS request URL; do not replace it with the internal tunnel address. Production refuses HTTP for the two public URLs. Private S3/MinIO endpoints may remain HTTP.
 2. Configure Cloudflare Tunnel so `api.opensuite.tech` reaches container port **3000**. Do not publish the API port directly; DNS for `api.opensuite.tech` must not point to Vercel.
-3. Engine comes from npm via `packages/engine-client` → `@opensuitehq/engine@0.1.5` (no sibling repo, no vendor stub)
+3. Engine comes from npm via `packages/engine-client` → `@opensuitehq/engine@0.1.7` (no sibling repo, no vendor stub)
 
 Entrypoint: migrate (programmatic, prints pg errors) then start. Rebuild after committing migration SQL — `0013`/`0014` must be in the image.
 
@@ -50,3 +50,12 @@ OpenSuite requests only `openid`, `email`, and `profile`. No Drive, Gmail, or of
 ## Not Edge
 
 `@opensuitehq/engine` is Node N-API only — used by `apps/api` through `@opensuite/engine-client`. Do not bundle into Vercel Edge, browsers, or the web app.
+
+## Repeatable image checks
+
+`.github/workflows/check-api-image.yml` builds this Dockerfile on native Linux x64
+and ARM64 runners and runs `packages/engine-client/scripts/image-acceptance.mjs`
+inside the finished container. The check requires the pinned native binary,
+semantic edits, installed fonts, and real LibreOffice TOC/PAGE refresh. It does
+not start the API, use a database/model, publish an image, or deploy. Cloud uses
+the same check after fetching its exact `deploy/opensuite-ref` public commit.

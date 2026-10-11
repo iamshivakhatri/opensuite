@@ -22,7 +22,7 @@ Each step is one reviewable change with its own checks. Real-model runs require 
 | Step | Phase | What it means | Current state |
 | --- | --- | --- | --- |
 | Define operation inputs once and generate agent tools | **A7** | The engine describes the required inputs for each operation. The product uses that description to build the agent's tool definition instead of maintaining another copy. | Completed locally: generated mutation/read inputs, validation, and dynamic discovery. Publication is A8. |
-| Release the engine, update the npm pin, and verify images | **A8**, with Cloud work in **F5–F6** | Publish a new engine package, make OpenSuite install that exact version, then build and check the public and Cloud containers that would run in production. | 0.1.6 local release/package checks passed; tagged publishing workflow running. App pin/image checks wait for publication. |
+| Release the engine, update the npm pin, and verify images | **A8**, with Cloud work in **F5–F6** | Publish a new engine package, make OpenSuite install that exact version, then build and check the public and Cloud containers that would run in production. | 0.1.7 published and pinned; all five packages, clean npm consumer, and host acceptance pass. Public/Cloud image checks running. |
 | Test 10 real reports and proposals repeatedly | **D1** | Keep a fixed set of realistic DOCX files and editing tasks. Compare saved results, preserved content/layout, speed, cost, and unnecessary agent steps before making further changes. | Checklist and results sheet prepared. User runs manual tests; ten-business-document results remain pending. |
 
 Recommended order: **A7 → A8 → D1 → measured D/E improvements**. Gathering the
@@ -91,20 +91,22 @@ crates lint cleanly and their 7 tests pass. All 14 selected local-engine input/r
 Repeated native builds now clear the correct target-specific adapter cache before
 generating declarations; Rust compiler caching no longer leaves missing records. Browser/Word testing remains with the user.
 
-**Step A8 — release and production-image verification** _(local checks passed; publishing workflow running)_
+**Step A8 — release and production-image verification** _(0.1.7 published and pinned; image checks running)_
 
 Changing local Rust files does not change the engine installed by the product.
 The npm pin is the exact package version OpenSuite installs. A production image
 is the built container containing the API, native engine, and required programs.
 
-- [ ] Release the reviewed engine changes under a new, unused npm version using the engine's `docs/releasing.md`; verify the published platform packages.
-- [ ] Update OpenSuite's exact npm dependency and lockfile using `docs/engine_upgrade.md`, including platform packages, release-age exclusions, and operational version references.
+- [x] Released engine 0.1.7 through `docs/releasing.md`; all five platform builds and all six npm packages verified. Clean published consumer loads 0.1.7 with native input definitions; host acceptance passes with no overrides. macOS ARM64 native SHA-256: `b5dd955cb5b29d197eaa6ecd69522e28696e89655c3f8f50558ec5647ecc8ce2`.
+- [x] Updated OpenSuite's exact 0.1.7 dependency and lockfile, all five platforms including both Linux packages, release-age exclusions, active documentation/ops strings and version assertions. API 429 pass / 23 DB skips; engine-client 39 pass / 2 optional skips; API/web typechecks pass.
 - [ ] Build and check the public image with engine overrides unset: native version, selected binary/hash, advertised operations, and semantic edits must pass.
 - [ ] Publish the reviewed public commit and update Cloud's single `deploy/opensuite-ref` pin (**F6**). Build Cloud through its real GitHub-fetch path; verify native edits and LibreOffice field refresh (**F5**) in the finished container.
 - [ ] Verify on real Linux x64 and ARM64 builders. The local ARM64 candidate and npm x64 load check do not prove a complete production x64 build.
 - [ ] Record release and image evidence here. Mark deployment separately, only after it actually happens.
 
-Release attempt 0.1.6 passed the canonical script: Rust formatting/check/lint/tests, native build and 35 tests, and a packaged-consumer create/edit/reopen check. Tag `v0.1.6` was pushed. Publishing workflow: https://github.com/iamshivakhatri/opensuite-engine/actions/runs/38170978998. Registry/platform and container verification remain pending. General workspace CI still fails on existing PPTX lint warnings outside the DOCX release checks.
+The 0.1.6 platform workflow stopped before publishing any packages: Windows needed `fileURLToPath` for its generated-input test. Fixed that test and tightened local artifact reuse with an exact release-version marker. The packaged-consumer check now asserts native/package version equality; the release script also checks generated SDK types.
+
+The repaired 0.1.7 passed Rust formatting/check/lint, 203 release-relevant tests, native build/35 tests, SDK typecheck, and packaged-consumer create/edit/reopen checks. Tag `v0.1.7` was pushed. Publishing workflow: https://github.com/iamshivakhatri/opensuite-engine/actions/runs/38171231769. Publishing succeeded: all six npm packages verified. Registry propagation initially omitted macOS ARM64 from pnpm; a fresh engine dependency resolution restored all five platform entries. Container verification is running. General workspace CI still fails on existing PPTX lint warnings outside the DOCX release checks.
 
 A5 and local Cloud candidate checks pass. Remote release/deployment checks remain pending; pushing alone is not deployment evidence. The new inventory must be released under a new engine version before npm consumers receive it.
 

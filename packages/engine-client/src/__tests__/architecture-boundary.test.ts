@@ -33,7 +33,7 @@ test("engine-client is the only package that depends on the native binding", () 
     dependencies?: Record<string, string>;
     optionalDependencies?: Record<string, string>;
   };
-  assert.equal(pkg.dependencies?.["@opensuitehq/engine"], "0.1.5");
+  assert.equal(pkg.dependencies?.["@opensuitehq/engine"], "0.1.7");
   assert.equal(pkg.optionalDependencies?.["@opensuitehq/engine"], undefined);
   assert.equal(pkg.optionalDependencies?.["@opensuite/engine"], undefined);
   assert.equal(pkg.dependencies?.["@opensuite/engine"], undefined);
