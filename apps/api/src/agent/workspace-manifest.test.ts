@@ -68,10 +68,37 @@ test("target resolution separates edit targets from references and ambiguous req
     ["What should I update in Board Report?", [], null],
     ["Replace the table value from 15 minutes to 10 minutes", ["source"], "source"],
     ["Replace the table value from 15 minutes to 10 minutes", [], "board"],
+    ["Update Board Report using the currently open document", ["source"], "board"],
   ] as const) {
     assert.equal(resolveDocumentTarget({ instruction, openDocumentId: "board", documentIds, documents }), expected, instruction);
+    // Open ID must not win when the named edit target is explicit and "currently open" is only a source.
+    if (instruction === "Update Board Report using the currently open document") {
+      assert.equal(refersToOpenDocument(instruction), false, instruction);
+      assert.equal(resolveDocumentTarget({ instruction, openDocumentId: "other", documentIds, documents }), "board", instruction);
+    }
   }
   assert.equal(resolveDocumentTarget({ instruction: "Update Board Report", openDocumentId: null, documentIds: [],
     documents: [...documents, { ...documents[0]!, id: "duplicate" }] }), null);
   assert.equal(resolveDocumentTarget({ instruction: "Replace the table value", openDocumentId: null, documentIds: [], documents }), null);
+});
+
+test("currently open titled edit binds the open document before search or selection", () => {
+  const instruction = "In the currently open Northstar Project Lighthouse proposal, go to Section 5, Business Impact and KPI Targets. In the KPI table, change only the Target After Deployment value for Mean Time to Detect from 10 minutes to 8 minutes.";
+  const documents = [
+    { id: "northstar", name: "Northstar Project Lighthouse Proposal.docx", format: "docx" },
+    { id: "other", name: "Unrelated Notes.docx", format: "docx" },
+  ];
+  assert.equal(refersToOpenDocument(instruction), false);
+  assert.equal(resolveDocumentTarget({
+    instruction,
+    openDocumentId: "northstar",
+    documentIds: [],
+    documents,
+  }), "northstar");
+  assert.equal(resolveDocumentTarget({
+    instruction: "Update Board Report using figures from the currently open Northstar Project Lighthouse Proposal",
+    openDocumentId: "northstar",
+    documentIds: [],
+    documents: [...documents, { id: "board", name: "Board Report.docx", format: "docx" }],
+  }), "board");
 });
