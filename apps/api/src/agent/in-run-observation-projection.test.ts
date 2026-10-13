@@ -447,7 +447,7 @@ test("C7 policies: failed inspect outside window keeps failure signal when compa
 
 // --- Phase 6 composition ---
 
-test("first-turn retrieval appears once; later turns preserve provider exchanges", () => {
+test("initial retrieval remains available; later turns preserve provider exchanges", () => {
   const project = composeProjectMessages({
     retrievalMessage: "Relevant document structure:\n- Table t0",
   });
@@ -476,8 +476,9 @@ test("first-turn retrieval appears once; later turns preserve provider exchanges
     ),
   ];
   const turn2 = project(afterTools);
-  assert.ok(!JSON.stringify(turn2).includes("Relevant document structure"));
-  assert.deepEqual(resultValue(turn2[2]!), largeInspectPayload());
+  assert.equal(turn2.filter(message => JSON.stringify(message).includes("Relevant document structure")).length, 1);
+  assert.deepEqual(resultValue(turn2[3]!), largeInspectPayload());
+  assert.match(JSON.stringify(turn2), /INITIAL DOCUMENT CONTEXT/);
 });
 
 test("OpenRouter tool responses use provider-safe names without changing the raw transcript", () => {
@@ -513,9 +514,9 @@ test("DIRECT content stays available while its version is current", () => {
   assert.match(JSON.stringify(project(messages)), /COMPLETE CURRENT DOCUMENT CONTENT/);
   const afterRead = [...messages, assistantTurn(toolCall("r", "document.find", { text: "x" })), toolTurn(toolResult("r", "document.find", { ok: true }))];
   const second = project(afterRead);
-  assert.equal(second[1]?.role, "assistant");
-  assert.equal(second[2]?.role, "tool");
-  assert.match(JSON.stringify(second.at(-1)), /COMPLETE CURRENT DOCUMENT CONTENT/);
+  assert.equal(second[2]?.role, "assistant");
+  assert.equal(second[3]?.role, "tool");
+  assert.match(JSON.stringify(second[0]), /COMPLETE CURRENT DOCUMENT CONTENT/);
   version = "v2";
   assert.doesNotMatch(JSON.stringify(project(afterRead)), /COMPLETE CURRENT DOCUMENT CONTENT/);
 });
@@ -559,101 +560,81 @@ test("current DIRECT projection replaces its snapshot at a fixed position and om
   assert.equal(project(later)[2]!.content, "CURRENT RECOVERED");
 });
 
-test("a refreshed DIRECT view restores the revision read budget and still allows fresh targets", async () => {
-  let revision = 0;
+function readTranscript(tools: AgentToolSet, messages: ModelMessage[] = []) {
+  return async (name: string, input: unknown) => {
+    const id = `read-${messages.length}`;
+    messages.push(assistantTurn(toolCall(id, name, input)));
+    const value = await tools[name]!.execute!(input, { toolCallId: id, messages: [...messages], context: undefined as never });
+    messages.push(toolTurn(toolResult(id, name, value)));
+    return value as Record<string, unknown>;
+  };
+}
+
+test("exact read reuse references the first full result without losing calls or native execution identity", async () => {
   let reads = 0;
-  const tools = { "document.inspect": { kind: "read", execute: () => { reads++; return { ok: true }; } } } as never;
-  const guard = guardRepeatedReads(tools, () => "v1", true, () => revision);
-  const inspect = (tools as AgentToolSet)["document.inspect"]!.execute!;
-  const call = { toolCallId: "read", messages: [], context: undefined as never };
-  await inspect({ kind: "body_blocks" }, call);
-  revision++;
-  guard.setCompleteDirect(true);
-  await inspect({ kind: "body_blocks" }, call);
-  assert.equal(reads, 2, "fresh handles can still be inspected after refresh");
-  const suppressed = await inspect({ kind: "tables" }, call) as { redundantReadSuppressed: boolean };
-  assert.equal(suppressed.redundantReadSuppressed, true);
-  await inspect({ kind: "context", text: "exact target" }, call);
-  assert.equal(reads, 3);
-});
-
-test("read guard permits exact targets and resets on version advance", async () => {
-  let version = "v1";
-  let calls = 0;
-  const tools = {
-    "document.inspect": { kind: "read", execute: async () => { calls += 1; return { ok: true }; } },
-    "document.find": { kind: "read", execute: async () => { calls += 1; return { ok: true }; } },
-  } as never;
-  const guard = guardRepeatedReads(tools, () => version, true);
-  const inspect = (tools as Record<string, { execute: (args: unknown, context: unknown) => Promise<unknown> }>)["document.inspect"]!.execute;
-  await inspect({ kind: "overview" }, {});
-  assert.deepEqual(await inspect({ kind: "overview" }, {}), {
-    ok: true, redundantReadSuppressed: true, versionId: "v1",
-    message: "Read skipped: the unchanged document content is already in your context. Do not inspect again until the document changes. Make the requested edit or finish.",
-  });
-  await inspect({ kind: "context", text: "exact target" }, {});
-  assert.equal(calls, 2);
-  version = "v2";
-  await inspect({ kind: "overview" }, {});
-  assert.equal(calls, 3);
-  assert.equal(guard.suppressedCount(), 1);
-});
-
-test("read guard stops distinct DIRECT find loops but permits normal targeted reads", async () => {
-  let calls = 0;
-  const tools = { "document.find": { kind: "read", execute: async () => { calls += 1; return { ok: true }; } } } as never;
-  const guard = guardRepeatedReads(tools, () => "v1", true);
-  const find = (tools as Record<string, { execute: (args: unknown, context: unknown) => Promise<unknown> }>)["document.find"]!.execute;
-  for (let i = 0; i < 8; i += 1) await find({ text: `target ${i}` }, {});
-  assert.equal(calls, 3);
-  assert.equal(guard.suppressedCount(), 5);
-});
-
-test("read guard resets after a working mutation without a persisted version advance", async () => {
-  let revision = 0;
-  let reads = 0;
-  const tools = { "document.inspect": { kind: "read", execute: async () => { reads++; return { ok: true }; } } } as never;
-  guardRepeatedReads(tools, () => "v1", true, () => revision);
-  const inspect = (tools as Record<string, { execute: (args: unknown, context: unknown) => Promise<unknown> }>)["document.inspect"]!.execute;
-  await inspect({ kind: "overview" }, {});
-  await inspect({ kind: "overview" }, {});
-  await inspect({ kind: "overview" }, {});
+  let finds = 0;
+  const tools = { "document.inspect": { kind: "read", execute: () => { reads++; return largeInspectPayload(); } },
+    "document.find": { kind: "read", execute: () => { finds++; return largeFindPayload("Details", 1); } },
+  } as unknown as AgentToolSet;
+  const state = { documentId: "doc-1", versionId: "v1", workingRevision: 0 };
+  const guard = guardRepeatedReads(tools, () => state);
+  const messages: ModelMessage[] = [{ role: "user", content: "Keep the complete request" }];
+  const inspect = readTranscript(tools, messages);
+  const first = await inspect("document.inspect", { kind: "tables" });
+  const repeat = await inspect("document.inspect", { kind: "tables" });
   assert.equal(reads, 1);
-  revision++;
-  await inspect({ kind: "overview" }, {});
-  assert.equal(reads, 2);
+  assert.equal(repeat.originalToolCallId, "read-1");
+  assert.equal(repeat.reusedObservation, true);
+  assert.deepEqual(repeat.readState, state);
+  assert.deepEqual(resultValue(messages[2]!), first);
+  assert.equal(messages.length, 5);
+  await inspect("document.inspect", { kind: "paragraphs" });
+  assert.equal(reads, 2, "different arguments always execute");
+  assert.equal(guard.suppressedCount(), 1);
+  await inspect("document.find", { text: "Details" });
+  assert.equal((await inspect("document.find", { text: "Details" })).reusedObservation, true);
+  assert.equal(finds, 1);
 });
 
-test("DIRECT read budget covers distinct targeted inspections and prompts action", async () => {
-  let engineReads = 0;
-  const tools = { "document.inspect": { kind: "read", execute: async () => { engineReads++; return { ok: true }; } } } as never;
-  const guard = guardRepeatedReads(tools, () => "v1", true);
-  const inspect = (tools as Record<string, { execute: (args: unknown, context: unknown) => Promise<unknown> }>)["document.inspect"]!.execute;
-  for (let i = 0; i < 8; i++) await inspect({ kind: "context", text: `target ${i}` }, {});
-  assert.equal(engineReads, 4);
-  assert.equal(guard.suppressedCount(), 4);
-
-  let changed = false;
-  const project = composeProjectMessages({
-    retrievalMessage: "COMPLETE DOCUMENT CONTENT",
-    directVersionId: "v1",
-    currentVersionId: () => changed ? null : "v1",
-    suppressedReadCount: () => guard.suppressedCount(),
-  });
-  const messages: ModelMessage[] = [{ role: "user", content: "Rewrite the document" }];
-  const projected = project(messages);
-  assert.match(JSON.stringify(projected), /Stop inspecting and perform the requested document changes/);
-  changed = true;
-  assert.doesNotMatch(JSON.stringify(project(messages)), /Stop inspecting and perform the requested document changes/);
+test("revision, saved version, document switches and failed mutations require fresh reads", async () => {
+  let reads = 0;
+  const tools = { "document.inspect": { kind: "read", execute: () => { reads++; return largeInspectPayload(); } } } as unknown as AgentToolSet;
+  let state = { documentId: "first", versionId: "v1", workingRevision: 0 };
+  guardRepeatedReads(tools, () => state);
+  const messages: ModelMessage[] = [];
+  const inspect = readTranscript(tools, messages);
+  const read = () => inspect("document.inspect", { kind: "tables" });
+  await read();
+  state = { ...state, workingRevision: 1 }; await read();
+  state = { ...state, versionId: "v2" }; await read();
+  state = { ...state, documentId: "second" }; await read();
+  messages.push(assistantTurn(toolCall("switch", "workspace.select_document", { documentId: "first" })), toolTurn(toolResult("switch", "workspace.select_document", { ok: true })));
+  state = { documentId: "first", versionId: "v1", workingRevision: 0 }; await read();
+  messages.push(assistantTurn(toolCall("failed", "document.replace_text", {})), toolTurn(toolResult("failed", "document.replace_text", { ok: false, reasonCode: "STALE_HANDLE" })));
+  await read();
+  assert.equal(reads, 6);
 });
 
-test("failed reads remain retryable", async () => {
-  let calls = 0;
-  const tools = { "document.find": { kind: "read", execute: async () => { calls += 1; return { ok: false }; } } } as never;
-  guardRepeatedReads(tools, () => "v1", true);
-  const find = (tools as Record<string, { execute: (args: unknown, context: unknown) => Promise<unknown> }>)["document.find"]!.execute;
-  for (let i = 0; i < 3; i += 1) await find({ text: "missing" }, {});
-  assert.equal(calls, 3);
+test("failed, ambiguous, warning and missing-context reads are never assumed reusable", async () => {
+  for (const result of [{ ok: false, reasonCode: "NOT_FOUND" }, { ok: true, matchCount: 2, diagnostics: [] },
+    { ok: true, matchCount: 0, diagnostics: [] }, { ok: true, matchCount: 1, diagnostics: [{ code: "WARNING" }] }]) {
+    let reads = 0;
+    const tools = { "document.find": { kind: "read", execute: () => { reads++; return result; } } } as unknown as AgentToolSet;
+    guardRepeatedReads(tools, () => ({ documentId: "doc", versionId: "v1", workingRevision: 0 }));
+    const find = readTranscript(tools);
+    await find("document.find", { text: "Pricing" }); await find("document.find", { text: "Pricing" });
+    assert.equal(reads, 2);
+  }
+  let reads = 0;
+  const tools = { "document.find": { kind: "read", execute: () => { reads++; return { ok: true, matchCount: 1, diagnostics: [] }; } } } as unknown as AgentToolSet;
+  guardRepeatedReads(tools, () => ({ documentId: "doc", versionId: "v1", workingRevision: 0 }));
+  await readTranscript(tools)("document.find", { text: "Pricing" });
+  await readTranscript(tools)("document.find", { text: "Pricing" });
+  assert.equal(reads, 2, "no earlier observation in context means no reuse");
+  const malformed: ModelMessage[] = [assistantTurn(toolCall("wrong", "document.find", { text: "Pricing" })),
+    toolTurn(toolResult("wrong", "document.inspect", { ok: true }))];
+  await readTranscript(tools, malformed)("document.find", { text: "Pricing" });
+  assert.equal(reads, 3, "broken tool pairing means no reuse");
 });
 
 // --- Token effect / pathological ---

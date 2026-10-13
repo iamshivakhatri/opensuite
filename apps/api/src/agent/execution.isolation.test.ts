@@ -1864,6 +1864,7 @@ test("continuation creates a fresh 20-turn run from the original task", async ()
     ownerUserId: "user-1",
     role: "user",
     content: "Rewrite the Risks section.",
+    documentIds: ["source-1", "source-2"],
   });
   const partial = await persistence.createRun({
     threadId: "thread-1",
@@ -1915,6 +1916,7 @@ test("continuation creates a fresh 20-turn run from the original task", async ()
   assert.match(observedModelText, /STYLE_NOT_FOUND/);
   assert.match(observedModelText, /Current document ID: none; current version: none/);
   assert.equal(observedModelText.includes("STALE_TOOL_OUTPUT"), false);
+  assert.ok(persistence.workingDocumentIds.includes("source-1"), "Continue retains the original attachment reference");
 });
 
 test("continuation rejects a run that did not stop at the turn limit", async () => {
@@ -2508,6 +2510,7 @@ test("failed mutations with no output do not persist a version", async () => {
 
 interface ScriptedTurn {
   readonly text?: string;
+  readonly reasoning?: string;
   readonly calls: readonly { readonly name: string; readonly input: unknown }[];
   /** Model call throws instead of answering; "abort" cancels the run first. */
   readonly fail?: "error" | "abort";
@@ -2533,6 +2536,8 @@ async function runScriptedDocx(input: {
     appends: 0,
     exposedTools: [] as string[][],
     estimatedModelInputTokens: 0,
+    modelInputs: [] as string[],
+    peakModelInputTokens: 0,
     runtime: undefined as RunAgentResult | undefined,
     reports: [] as AgentRunReport[],
     usage: [] as { agentRunId?: string | null; inputTokens?: number }[],
@@ -2543,7 +2548,10 @@ async function runScriptedDocx(input: {
   let turn = 0;
   const model = new MockLanguageModelV4({ doStream: async (options) => {
     state.exposedTools.push(options.tools?.map((tool) => tool.name) ?? []);
-    state.estimatedModelInputTokens += estimateTokens(JSON.stringify({ prompt: options.prompt, tools: options.tools }));
+    const inputTokens = estimateTokens(JSON.stringify({ prompt: options.prompt, tools: options.tools }));
+    state.estimatedModelInputTokens += inputTokens;
+    state.peakModelInputTokens = Math.max(state.peakModelInputTokens, inputTokens);
+    state.modelInputs.push(JSON.stringify(options.prompt));
     const scripted = input.turns[turn++] ?? { calls: [] };
     const current = typeof scripted === "function" ? scripted(options.prompt) : scripted;
     if (current.fail === "abort") controller.abort(new Error("cancelled by user"));
@@ -2551,6 +2559,11 @@ async function runScriptedDocx(input: {
     const finishReason = (current.calls.length ? "tool-calls" : "stop") as "tool-calls" | "stop";
     return { stream: simulateReadableStream({ chunks: [
       { type: "stream-start" as const, warnings: [] },
+      ...(current.reasoning ? [
+        { type: "reasoning-start" as const, id: "reason" },
+        { type: "reasoning-delta" as const, id: "reason", delta: current.reasoning },
+        { type: "reasoning-end" as const, id: "reason" },
+      ] : []),
       ...(current.text ? [
         { type: "text-start" as const, id: "text" },
         { type: "text-delta" as const, id: "text", delta: current.text },
@@ -2591,12 +2604,12 @@ async function runScriptedDocx(input: {
         return bytes;
       },
       appendDocumentVersion: async (append) => {
-        assert.equal(append.baseVersionId, "v1");
+        assert.equal(append.baseVersionId, state.versionId);
         state.bytes = Buffer.from(append.bytes);
-        state.versionId = "v2";
-        state.versions.set("v2", Buffer.from(append.bytes));
+        state.versionId = `v${state.appends + 2}`;
+        state.versions.set(state.versionId, Buffer.from(append.bytes));
         state.appends++;
-        return { version: { id: "v2", versionNumber: 2 } } as never;
+        return { version: { id: state.versionId, versionNumber: state.appends + 1 } } as never;
       },
     },
   });
@@ -3267,4 +3280,145 @@ test("Phase 4 Continue benchmark reuses loaded tools after the 20-turn bound", a
     estimatedInputTokens: state.estimatedModelInputTokens - priorInputTokens })}`);
   assert.equal(state.runtime!.metrics.modelTurns.length, 1);
   assert.equal(discovery.length, 0);
+});
+
+// Real execution, registry, native reads/mutations, and saved bytes; only the model is scripted.
+test("Phase 5 benchmark preserves active evidence across reads, edits, and recovery", async (t) => {
+  const native = await createNapiDocxEngineBinding();
+  const seed = bindDocxDocument({ binding: native, bytes: buildMinimalDocx(["Pricing .... 4", "Pricing", "Details"]) });
+  assert.equal((await seed.mutate("set_paragraph_style", { target: { text: "Pricing", occurrence: 1 }, style: "Heading 1" })).ok, true);
+  const rows = [rosterRows[0]!, ...Array.from({ length: 30 }, (_, i) => [i ? `Person ${i}` : "Ada", i ? "Unchanged role ".repeat(30) : "CEO"])];
+  assert.equal((await seed.mutate("create_table", { rows, placement: { kind: "end" } })).ok, true);
+  const call = (name: string, input: unknown) => ({ name, input });
+  const inspect = { calls: [call("document_inspect", { kind: "tables" })] };
+  const edit = (row = "Ada") => ({ calls: [call("document_set_table_cells_text", { table: rosterTable, updates: [{
+    target: { row: { kind: "label", text: row }, column: { kind: "header", text: "Role" } }, expectedCurrentText: "CEO", replacement: "Founder",
+  }] })] });
+  const finish = { text: "Updated the requested content.", calls: [call("finish", {})] };
+  const snapshot = { calls: [call("document_style_snapshot", {})] };
+  const scenarios = [
+    { name: "A KPI", turns: [inspect, edit(), finish] },
+    { name: "B unchanged inspect", turns: [inspect, inspect, edit(), finish] },
+    { name: "C read after edit", turns: [inspect, edit(), inspect, finish] },
+    { name: "D ambiguous heading", turns: [
+      { calls: [call("document_find", { text: "Pricing" })] }, { calls: [call("document_find", { text: "Pricing" })] },
+      { calls: [call("document_replace_text", { target: { text: "Pricing", occurrence: 1 }, expectedCurrentText: "Pricing", replacement: "Fees" })] }, finish,
+    ] },
+    { name: "E global styling", turns: [
+      { calls: [call("capabilities_load", { ids: ["document.style_snapshot", "document.update_style", "document.set_paragraph_formatting", "document.set_text_formatting"] })] },
+      snapshot, snapshot, inspect, inspect,
+      { calls: [call("document_update_style", { styleId: "Normal", styleType: "paragraph", color: "235744" })] }, snapshot,
+      { calls: [call("document_set_paragraph_formatting", { target: { text: "Details" }, alignment: "center" })] },
+      { calls: [call("document_set_text_formatting", { target: { text: "Pricing", occurrence: 1 }, italic: true })] }, inspect, inspect, finish,
+    ] },
+    { name: "F failed edit and recovery", turns: [inspect, edit(), edit(), finish] },
+  ];
+  for (const scenario of scenarios) {
+    let nativeReads = 0;
+    let nativeMutations = 0;
+    let failedOnce = false;
+    const binding = { ...native,
+      inspectDocx: async (...args: Parameters<typeof native.inspectDocx>) => { nativeReads++; return native.inspectDocx(...args); },
+      findDocxText: async (...args: Parameters<typeof native.findDocxText>) => { nativeReads++; return native.findDocxText(...args); },
+      readDocxOperation: async (...args: Parameters<NonNullable<typeof native.readDocxOperation>>) => { nativeReads++; return native.readDocxOperation!(...args); },
+      executeDocxOperation: async (...args: Parameters<NonNullable<typeof native.executeDocxOperation>>) => {
+        if (scenario.name.startsWith("F") && !failedOnce) { failedOnce = true; return { result: { ok: false as const, reasonCode: "TABLE_ROW_NOT_FOUND", status: "error" as const, capability: "set_table_cells_text", changes: [], diagnostics: [] } }; }
+        nativeMutations++; return native.executeDocxOperation!(...args);
+      },
+    };
+    const { result, state } = await runScriptedDocx({ binding, bytes: Buffer.from(seed.currentBytes()), instruction: `Update this document: ${scenario.name}`, turns: scenario.turns });
+    assert.equal(result.run.status, "completed", result.run.errorMessage ?? "");
+    assert.equal(state.appends, 1);
+    const inputs = state.modelInputs;
+    for (const input of inputs) assert.ok(input.includes(`Update this document: ${scenario.name}`));
+    const parts = JSON.parse(inputs.at(-1)!).flatMap((message: { content: unknown }) => Array.isArray(message.content) ? message.content : []);
+    const callIds = parts.filter((part: { type: string }) => part.type === "tool-call").map((part: { toolCallId: string }) => part.toolCallId);
+    assert.deepEqual(parts.filter((part: { type: string }) => part.type === "tool-result").map((part: { toolCallId: string }) => part.toolCallId), callIds);
+    const duplicateIds = scenario.name.startsWith("B") || scenario.name.startsWith("D") ? ["2-0"]
+      : scenario.name.startsWith("E") ? ["3-0", "5-0", "11-0"] : [];
+    const duplicateBytes = parts.filter((part: { type: string; toolCallId: string }) => part.type === "tool-result" && duplicateIds.includes(part.toolCallId))
+      .reduce((sum: number, part: { output: { value: unknown } }) => sum + Buffer.byteLength(JSON.stringify(part.output.value)), 0);
+    if (scenario.name === "C read after edit") assert.match(inputs.at(-1)!, /Founder/);
+    if (scenario.name.startsWith("F")) {
+      assert.match(inputs.at(-1)!, /Ada/);
+      assert.match(inputs.at(-1)!, /TABLE_ROW_NOT_FOUND/);
+      assert.match(inputs.at(-1)!, /Founder/);
+      assert.equal(state.reports[0]!.outcome, "success");
+      assert.equal(state.reports[0]!.tools.find(tool => tool.outcome === "failure")?.recovered, true);
+
+    }
+    const calls = state.runtime!.metrics.toolCalls;
+    // Include validation reads in the native count; both versions use the same verification.
+    t.diagnostic(`PHASE5_MEASUREMENT ${JSON.stringify({ scenario: scenario.name, modelTurns: state.runtime!.turns,
+      readCalls: calls.filter(call => call.kind === "read" && call.toolName.startsWith("document.")).length,
+      nativeReads, nativeMutations, duplicateBytes, errors: calls.filter(call => call.outcome === "failure").length,
+      estimatedInputTokens: state.estimatedModelInputTokens, peakInputTokens: state.peakModelInputTokens, savedVersions: state.appends })}`);
+    const saved = await native.inspectDocx(state.bytes, { focus: { kind: "paragraphs" } });
+    const paragraphs = saved.paragraphs!.items.map(item => item.text);
+    assert.deepEqual(paragraphs, scenario.name.startsWith("D") ? ["Pricing .... 4", "Fees", "Details"] : ["Pricing .... 4", "Pricing", "Details"]);
+    const table = (await native.inspectDocx(state.bytes, { focus: { kind: "tables" } })).tables!.items[0]!;
+    assert.deepEqual(table.rows.map(row => row.cells), scenario.name.startsWith("D") || scenario.name.startsWith("E") ? rows : rows.map((row, index) => index === 1 ? ["Ada", "Founder"] : row));
+    if (scenario.name.startsWith("E")) {
+      const styles = await inspectDocxStyleSnapshot(state.bytes, native);
+      assert.equal(styles.styles.find(style => style.styleId === "Normal")?.effectiveRunFormatting?.color, "235744");
+      assert.match(JSON.stringify(styles), /"alignment":"center"/);
+      assert.match(JSON.stringify(styles), /"italic":true/);
+    }
+  }
+});
+
+test("Phase 5 bounded task and later independent request retain the right history", async (t) => {
+  const native = await createNapiDocxEngineBinding();
+  let nativeReads = 0;
+  let nativeMutations = 0;
+  const binding = { ...native,
+    readDocxOperation: async (...args: Parameters<NonNullable<typeof native.readDocxOperation>>) => { nativeReads++; return native.readDocxOperation!(...args); },
+    executeDocxOperation: async (...args: Parameters<NonNullable<typeof native.executeDocxOperation>>) => { nativeMutations++; return native.executeDocxOperation!(...args); },
+  };
+  const snapshot = { calls: [{ name: "document_style_snapshot", input: {} }] };
+  const instruction = "Update this document: color Normal green and bold Details. Preserve all wording.";
+  const { result, state, execution } = await runScriptedDocx({ binding, bytes: Buffer.from(buildMinimalDocx(["Details"])), instruction,
+    turns: [
+      { reasoning: "Preserve wording and finish both formatting changes.", calls: [{ name: "capabilities_load", input: { ids: ["document.style_snapshot", "document.update_style", "document.set_text_formatting"] } }] },
+      snapshot,
+      { calls: [{ name: "document_update_style", input: { styleId: "Normal", styleType: "paragraph", color: "235744" } }] },
+      ...Array.from({ length: 17 }, () => snapshot),
+      { text: "Changed Normal color and made Details bold.", calls: [{ name: "document_set_text_formatting", input: { target: { text: "Details" }, bold: true } }, { name: "finish", input: {} }] },
+      { text: "Earlier I changed Normal color and made Details bold.", calls: [{ name: "finish", input: {} }] },
+    ],
+  });
+  assert.equal(result.run.errorCode, "AGENT_MAX_TURNS");
+  assert.equal(state.appends, 1);
+  assert.equal(state.versionId, "v2");
+  for (const prompt of state.modelInputs.slice(1, 20)) {
+    assert.ok(prompt.includes(instruction));
+    assert.match(prompt, /Preserve wording and finish both formatting changes/);
+  }
+  const last = state.modelInputs[19]!;
+  assert.match(last, /"styleId":"Normal"/);
+  assert.match(last, /"color":"235744"/);
+  assert.match(last, /"schemaVersion":1/);
+  const continued = await (await execution.start({ userId: "user-1", threadId: "thread-1", instruction: "Continue", continueFromRunId: result.run.id })).result;
+  assert.equal(continued.run.status, "completed");
+  assert.equal(continued.run.baseDocumentVersionId, "v2");
+  assert.equal(state.appends, 2);
+  const resumed = state.modelInputs[20]!;
+  assert.ok(resumed.includes(instruction));
+  assert.match(resumed, /document.update_style ×1/);
+  assert.match(resumed, /current version: v2/);
+  assert.match(resumed, /document_set_text_formatting/);
+  const styles = await inspectDocxStyleSnapshot(state.bytes, binding);
+  assert.equal(styles.styles.find(style => style.styleId === "Normal")?.effectiveRunFormatting?.color, "235744");
+  assert.match(JSON.stringify(styles), /"bold":true/);
+  t.diagnostic(`PHASE5_CONTINUE ${JSON.stringify({ turns: state.modelInputs.length, estimatedInputTokens: state.estimatedModelInputTokens,
+    peakInputTokens: state.peakModelInputTokens, nativeStyleReads: nativeReads, nativeMutations, savedVersions: state.appends })}`);
+  const oldInputTokens = state.estimatedModelInputTokens;
+  const independent = await (await execution.start({ userId: "user-1", threadId: "thread-1", instruction: "What did you change earlier?" })).result;
+  assert.equal(independent.run.status, "completed");
+  const next = state.modelInputs[21]!;
+  assert.match(next, /Changed Normal color and made Details bold/);
+  assert.doesNotMatch(next, /"type":"tool-call"|"type":"tool-result"|"paragraphPatterns"|Preserve wording and finish both formatting changes/);
+  assert.equal(state.appends, 2);
+  assert.ok(state.persistence.steps.some(step => step.name === "document.update_style"));
+  t.diagnostic(`PHASE5_INDEPENDENT ${JSON.stringify({ turns: 1, estimatedInputTokens: state.estimatedModelInputTokens - oldInputTokens, savedVersions: 0 })}`);
 });

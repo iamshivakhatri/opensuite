@@ -536,6 +536,7 @@ test("an unbound DIRECT source still gives Turn 1 the workspace manifest", () =>
     { role: "user", content: "WORKSPACE MANIFEST\n2 documents" },
     { role: "user", content: "Update the board report" },
   ]);
+  assert.match(JSON.stringify(project([{ role: "user", content: "Update the board report" }])), /INITIAL DOCUMENT CONTEXT.*WORKSPACE MANIFEST/);
 });
 
 test("DIRECT refresh keeps source documents, drops stale target evidence, and uses new table selectors", async () => {

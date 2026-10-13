@@ -115,7 +115,8 @@ test("mocked real loop traces final requests, dynamic schemas, reasoning, raw re
     assert.equal(requests[1]!.value.exposedToolCount, 5);
     assert.equal(entries.find((entry) => entry.heading === "### System")!.value, "EXACT SYSTEM");
     const messages = entries.filter((entry) => entry.heading === "### Messages");
-    assert.deepEqual(messages[0]!.value, [{ role: "user", content: "CURRENT RETRIEVAL EVIDENCE" }, { role: "user", content: "EXACT USER REQUEST" }]);
+    assert.deepEqual(messages[0]!.value, [{ role: "user", content: "INITIAL DOCUMENT CONTEXT (historical after edits)\nCURRENT RETRIEVAL EVIDENCE" }, { role: "user", content: "EXACT USER REQUEST" }]);
+    for (const entry of messages) assert.match(JSON.stringify(entry.value), /CURRENT RETRIEVAL EVIDENCE/);
     const schemas = entries.filter((entry) => entry.heading === "### Tools");
     assert.ok(schemas[0]!.value.document_inspect.inputSchema.jsonSchema);
     assert.equal(schemas[0]!.value.document_set_text_formatting, undefined);

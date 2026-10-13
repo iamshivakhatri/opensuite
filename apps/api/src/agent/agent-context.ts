@@ -174,6 +174,7 @@ export async function prepareContext(input: {
   readonly tools: AgentToolSet;
   readonly instruction: string;
   readonly continuationContext?: string;
+  readonly retrievalInstruction?: string;
   readonly activeDocumentId: string | null | undefined;
   readonly activeVersionId: string | null | undefined;
   readonly model: {
@@ -258,7 +259,7 @@ export async function prepareContext(input: {
     documents: input.documents,
     workspaceDocuments,
     ownerUserId: input.ownerUserId,
-    instruction: input.instruction,
+    instruction: input.retrievalInstruction ?? input.instruction,
     workspaceId: input.workspaceId,
     primaryDocumentId: input.primaryDocumentId,
     openDocumentId: input.openDocumentId,
@@ -422,8 +423,7 @@ export function firstTurnContextProjection(context: string): (messages: readonly
 }
 
 /**
- * Compose first-turn retrieval with the current DIRECT view.
- * Retrieval injects once, or DIRECT supplies the current view every turn.
+ * Keep initial retrieval evidence throughout the request, or supply the current DIRECT view.
  * Keep the same-run assistant/tool exchange intact for provider continuation.
  */
 export function composeProjectMessages(input: {
@@ -432,35 +432,32 @@ export function composeProjectMessages(input: {
   readonly safeToolResultNames?: boolean;
   readonly directVersionId?: string | null | (() => string | null);
   readonly currentVersionId?: () => string | null;
-  readonly suppressedReadCount?: () => number;
 }): (messages: readonly ModelMessage[]) => readonly ModelMessage[] {
-  const firstTurn = input.retrievalMessage
-    ? firstTurnContextProjection(input.retrievalMessage)
-    : (messages: readonly ModelMessage[]) => messages;
   let projectedOnce = false;
-  let directPosition = 0;
+  let contextPosition = 0;
+  let initialDocumentMissing = false;
 
   return (messages) => {
     const first = !projectedOnce;
-    if (first) directPosition = messages.at(-1)?.role === "user" ? messages.length - 1 : messages.length;
+    if (first) contextPosition = messages.at(-1)?.role === "user" ? messages.length - 1 : messages.length;
     projectedOnce = true;
     const currentVersion = input.currentVersionId?.();
     const directVersionId = typeof input.directVersionId === "function" ? input.directVersionId() : input.directVersionId;
     const directCurrent = directVersionId && currentVersion === directVersionId;
-    let afterFirstTurn = !first && directCurrent && input.retrievalMessage
-      ? [...messages, { role: "user" as const, content: input.retrievalMessage }]
-      : firstTurn(messages);
+    const direct = input.currentDirectMessage !== undefined || input.directVersionId !== undefined;
+    if (first) initialDocumentMissing = direct && !directVersionId;
+    let projected: readonly ModelMessage[] = input.retrievalMessage && (!direct || first || initialDocumentMissing || (directCurrent && !input.currentDirectMessage))
+      ? [...messages.slice(0, contextPosition), { role: "user" as const, content: !direct || (initialDocumentMissing && !first)
+        ? `INITIAL DOCUMENT CONTEXT (historical after edits)\n${input.retrievalMessage}` : input.retrievalMessage }, ...messages.slice(contextPosition)]
+      : messages;
     if (input.currentDirectMessage) {
       const current = input.currentDirectMessage();
-      afterFirstTurn = directCurrent && current
-        ? [...messages.slice(0, directPosition), { role: "user" as const, content: current }, ...messages.slice(directPosition)]
-        : afterFirstTurn;
+      projected = directCurrent && current
+        ? [...messages.slice(0, contextPosition), { role: "user" as const, content: current }, ...messages.slice(contextPosition)]
+        : projected;
     }
-    const withReadReminder = directCurrent && input.suppressedReadCount?.()
-      ? [...afterFirstTurn, { role: "user" as const, content: "The complete unchanged document is already above. Repeated reads were skipped. Stop inspecting and perform the requested document changes using the available mutation tools." }]
-      : afterFirstTurn;
-    if (!input.safeToolResultNames) return withReadReminder;
-    return withReadReminder.map((message) => {
+    if (!input.safeToolResultNames) return projected;
+    return projected.map((message) => {
       if (!Array.isArray(message.content)) return message;
       if (message.role !== "tool" && message.role !== "assistant") return message;
       return {

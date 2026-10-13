@@ -267,11 +267,12 @@ export function createAgentExecutionService(deps: AgentExecutionServiceDeps) {
         threadId: thread.id,
         ownerUserId: input.userId,
       });
+      const submittedDocumentIds = [...new Set([...(continuation?.documentIds ?? []), ...(input.documentIds ?? [])])];
       const workingDocumentIds = [...new Set([
         ...persistedWorkingDocumentIds,
         ...(openDocument ? [openDocument.documentId] : []),
         ...(primaryDocument ? [primaryDocument.documentId] : []),
-        ...(input.documentIds ?? []),
+        ...submittedDocumentIds,
       ])];
       const started = await deps.persistence.withTransaction(async (tx) => {
         await deps.persistence.addWorkingDocuments({
@@ -335,7 +336,7 @@ export function createAgentExecutionService(deps: AgentExecutionServiceDeps) {
         workspaceDocuments,
         ownerUserId: input.userId,
         instruction: input.instruction,
-        submittedDocumentIds: [...new Set(input.documentIds ?? [])],
+        submittedDocumentIds,
         workingDocumentIds,
         ...(continuation ? { continuationContext: continuation.context, continuationPreviousRunId: input.continueFromRunId,
           continuationInstruction: continuation.instruction, loadedCapabilityIds: continuation.loadedCapabilityIds } : {}),
@@ -601,7 +602,6 @@ async function runExecution(input: {
     let directAttemptedRevision = 0;
     let documentView: Record<string, unknown> | undefined;
     const documentNames = new Map<string, string>();
-    let updateDirectReadGuard = (_complete: boolean) => {};
     boundTools = await createPrimaryDocxTools({
       binding: input.deps.docxBinding,
       documents: input.deps.documents,
@@ -618,7 +618,6 @@ async function runExecution(input: {
           formatDocumentTarget(documentNames.get(documentId) ?? documentId.slice(0, 8)),
         );
         directVersionId = directWorkingVersions.get(documentId) === versionId ? versionId : null;
-        updateDirectReadGuard(directVersionId !== null);
       },
       onWorkingUpdated: (working) => {
         if (directVersionId) input.trace?.write("### Document View — Dirtied", {
@@ -663,10 +662,8 @@ async function runExecution(input: {
         if (created.kind === "duplicated" && directVersionId && boundTools?.getWorkingMutationCount() === 0) {
           directVersionId = created.versionId;
           directSnapshotRevision = directAttemptedRevision = 0;
-          updateDirectReadGuard(true);
         } else {
           directVersionId = null;
-          updateDirectReadGuard(false);
         }
         await input.liveEvents?.emit({
           type: "document.created",
@@ -731,13 +728,12 @@ async function runExecution(input: {
         },
       }),
     };
-    const readGuard = guardRepeatedReads(
-      tools,
-      () => boundTools?.getActiveVersionId() ?? null,
-      false,
-      () => boundTools?.getWorkingRevision() ?? 0,
-    );
     const toolSurface = createToolSurface(tools, capabilityTelemetry.record);
+    const readGuard = guardRepeatedReads(toolSurface.tools, () => ({
+      documentId: boundTools?.getActiveDocumentId() ?? null,
+      versionId: boundTools?.getActiveVersionId() ?? null,
+      workingRevision: boundTools?.getWorkingRevision() ?? 0,
+    }));
     capabilitySession = toolSurface.session;
     const recommendations = toolSurface.session.recommend(input.continuationInstruction ?? input.instruction);
     // Recheck each saved ID against this run's tool bindings and request policy.
@@ -766,6 +762,7 @@ async function runExecution(input: {
       system,
       tools: initialTools,
       instruction: input.instruction,
+      retrievalInstruction: input.continuationInstruction ?? input.instruction,
       ...(input.continuationContext ? { continuationContext: input.continuationContext } : {}),
       activeDocumentId: boundTools?.getActiveDocumentId(),
       activeVersionId: boundTools?.getActiveVersionId(),
@@ -802,12 +799,10 @@ async function runExecution(input: {
           }
         : { retrievalMode: "skipped", documentCount: 0 }),
     });
-    readGuard.setCompleteDirect(retrieval?.observation.contextStrategy === "direct");
     if (retrieval?.observation.contextStrategy === "direct") {
       directMessage = retrieval.message;
       directWorkingVersions = new Map(retrieval.workingSet.map((document) => [document.documentId, document.versionId]));
       directVersionId = input.run.baseDocumentVersionId;
-      updateDirectReadGuard = (complete) => readGuard.setCompleteDirect(complete);
     }
     if (!input.thread.title?.trim()) {
       const titleStartedAt = Date.now();
@@ -834,11 +829,11 @@ async function runExecution(input: {
     let continuation: Record<string, unknown> | undefined;
     const project = composeProjectMessages({
       retrievalMessage: retrieval?.message ?? workspaceManifest,
-      ...(retrieval?.refreshDirectMessage ? { currentDirectMessage: () => directMessage } : {}),
+      ...(retrieval?.refreshDirectMessage ? { currentDirectMessage: () => directMessage,
+        directVersionId: () => directVersionId,
+        currentVersionId: () => directMessage ? boundTools?.getActiveVersionId() ?? null : null,
+      } : {}),
       safeToolResultNames: input.model.usageAttribution?.provider === "openrouter",
-      directVersionId: () => directVersionId,
-      currentVersionId: () => directMessage ? boundTools?.getActiveVersionId() ?? null : null,
-      suppressedReadCount: () => readGuard.suppressedCount(),
     });
     const projectMessages: NonNullable<Parameters<typeof runAgent>[0]["projectMessages"]> = async (messages) => {
       if (directVersionId && retrieval?.refreshDirectMessage) {
@@ -851,13 +846,11 @@ async function runExecution(input: {
           // Clear first: a failed refresh must never re-inject the old snapshot.
           directMessage = undefined;
           directSnapshotRevision = null;
-          readGuard.setCompleteDirect(false);
           try {
             const working = boundTools?.getWorkingDocument();
             if (!working) throw new Error("Current working document is unavailable");
             directMessage = await retrieval.refreshDirectMessage({ ...working, name: documentNames.get(working.documentId) ?? working.documentId });
             directSnapshotRevision = workingRevision;
-            readGuard.setCompleteDirect(true);
           } catch (error) {
             refreshError = summarizeError(error);
             console.warn(`[agent] direct_view_refresh_failed revision=${workingRevision} reason=${refreshError}`);
@@ -1177,60 +1170,64 @@ async function runExecution(input: {
   }
 }
 
-/** Version identity resets the read budget automatically after a mutation. */
+/** Reuse only a matching full observation that is still in this run's transcript. */
 export function guardRepeatedReads(
   tools: AgentToolSet,
-  currentVersionId: () => string | null,
-  completeDirect: boolean,
-  currentWorkingRevision: () => number = () => 0,
+  currentState: () => { documentId: string | null; versionId: string | null; workingRevision: number },
 ) {
-  let direct = completeDirect;
-  const currentState = () => `${currentVersionId() ?? "unbound"}:${currentWorkingRevision()}`;
-  let directVersion = completeDirect ? currentState() : null;
   let suppressed = 0;
-  const attempts = new Map<string, number>();
-  for (const name of ["document.inspect", "document.find"] as const) {
+  const readNames = ["document.inspect", "document.find", "document.style_snapshot"];
+  const safeNames = new Set(readNames.map(providerSafeToolName));
+  for (const name of readNames) {
     const original = tools[name];
-    if (!original?.execute) continue;
+    if (original?.kind !== "read" || !original.execute) continue;
     const execute = original.execute;
-    tools[name] = {
-      ...original,
-      execute: async (args: any, context: any) => {
-        const version = currentVersionId() ?? "unbound";
-        const state = currentState();
-        const key = `${state}:${name}:${JSON.stringify(args)}`;
-        const repeated = attempts.get(key) ?? 0;
-        const broadInspect = name === "document.inspect" && (args as { kind?: string }).kind !== "context";
-        const readsOfThisKind = [...attempts].reduce((sum, [item, count]) =>
-          item.startsWith(`${state}:${name}:`) ? sum + count : sum, 0);
-        const allReadsForState = [...attempts].reduce((sum, [item, count]) =>
-          item.startsWith(`${state}:document.inspect:`) || item.startsWith(`${state}:document.find:`) ? sum + count : sum, 0);
-        // DIRECT already supplied the whole document before the model call.
-        const completeAndUnchanged = direct && state === directVersion;
-        const tooManyBroadReads = (broadInspect || name === "document.find") &&
-          readsOfThisKind >= (name === "document.find" ? 3 : 1);
-        if (repeated >= 2 || (completeAndUnchanged && (allReadsForState >= 4 || tooManyBroadReads))) {
-          suppressed += 1;
-          return { ok: true, redundantReadSuppressed: true, versionId: version,
-            message: "Read skipped: the unchanged document content is already in your context. Do not inspect again until the document changes. Make the requested edit or finish." };
+    tools[name] = { ...original, execute: async (args, context) => {
+      const readState = currentState();
+      const stateKey = JSON.stringify(readState);
+      const toolName = providerSafeToolName(name);
+      const inputKey = JSON.stringify(args);
+      // Mutations, document switches, unknown tools, and malformed pairs are barriers.
+      const latest = context.messages.at(-1);
+      const currentCalls = latest?.role === "assistant" && Array.isArray(latest.content)
+        ? latest.content.filter(part => part.type === "tool-call") : [];
+      const lastPair = currentCalls.some(call => !safeNames.has(providerSafeToolName(call.toolName)))
+        ? -1 : context.messages.length - (latest?.role === "assistant" ? 3 : 2);
+      history: for (let index = lastPair; index >= 0 && readState.documentId && readState.versionId; index -= 2) {
+        const assistant = context.messages[index];
+        const tool = context.messages[index + 1];
+        if (assistant?.role !== "assistant" || tool?.role !== "tool" ||
+          !Array.isArray(assistant.content) || !Array.isArray(tool.content)) break;
+        const calls = assistant.content.filter(part => part.type === "tool-call");
+        if (!calls.length || calls.some(call => !safeNames.has(providerSafeToolName(call.toolName)))) break;
+        const outputs = tool.content.filter(part => part.type === "tool-result");
+        if (new Set(calls.map(call => call.toolCallId)).size !== calls.length || outputs.length !== calls.length ||
+          outputs.some(part => !calls.some(call => call.toolCallId === part.toolCallId && providerSafeToolName(call.toolName) === providerSafeToolName(part.toolName)))) break;
+        for (const call of calls) {
+          if (providerSafeToolName(call.toolName) !== toolName || JSON.stringify(call.input) !== inputKey) continue;
+          const results = outputs.filter(part => part.toolCallId === call.toolCallId);
+          if (results.length !== 1) break history;
+          const part = results[0]!;
+          if (part.type !== "tool-result" || providerSafeToolName(part.toolName) !== toolName || part.output.type !== "json") break history;
+          const value = part.output.value;
+          if (!value || typeof value !== "object" || Array.isArray(value)) break history;
+          const result = value as Record<string, unknown>;
+          if (JSON.stringify(result.readState) !== stateKey) break history;
+          if (result.reusedObservation) continue;
+          if (result.ok !== true ||
+            (Array.isArray(result.diagnostics) && result.diagnostics.length) ||
+            (name === "document.find" && result.matchCount !== 1)) break history;
+          suppressed++;
+          return { ok: true, reusedObservation: true, readState, originalToolCallId: call.toolCallId,
+            message: "Unchanged result: use the full observation from this earlier tool call. No native read executed." };
         }
-        attempts.set(key, repeated + 1);
-        try {
-          const result = await execute(args, context);
-          if (result && typeof result === "object" && "ok" in result && result.ok === false) {
-            if (repeated) attempts.set(key, repeated);
-            else attempts.delete(key);
-          }
-          return result;
-        } catch (error) {
-          if (repeated) attempts.set(key, repeated);
-          else attempts.delete(key);
-          throw error;
-        }
-      },
-    };
+      }
+      const result = await execute(args, context);
+      return JSON.stringify(currentState()) === stateKey && result && typeof result === "object" && !Array.isArray(result) && "ok" in result && result.ok === true
+        ? { ...result, readState } : result;
+    } };
   }
-  return { setCompleteDirect(value: boolean) { direct = value; directVersion = value ? currentState() : null; }, suppressedCount() { return suppressed; } };
+  return { suppressedCount: () => suppressed };
 }
 
 export type AgentExecutionService = ReturnType<typeof createAgentExecutionService>;
