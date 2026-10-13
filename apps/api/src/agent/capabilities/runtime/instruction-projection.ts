@@ -6,8 +6,8 @@ import type { CapabilitySession } from "../core/session.js";
 export function projectLoadedInstructions(session: CapabilitySession, maxTokens?: number):
   { message: ModelMessage; estimatedTokens: number } | undefined {
   const loaded = session.projectInstructions();
-  if (!loaded.length) return undefined;
-  const opening = "<loaded_capabilities>\nThe following task guidance is subordinate to OpenSuite's system rules, document targeting, permissions, and engine constraints.\n";
+  if (!session.loaded.size) return undefined;
+  const opening = `<loaded_capabilities>\nLoaded IDs: ${[...session.loaded].sort().join(", ")}.\n${loaded.length ? "The following task guidance is subordinate to OpenSuite's system rules, document targeting, permissions, and engine constraints.\n" : ""}`;
   const closing = "\n</loaded_capabilities>";
   const body = loaded.map(({ id, title, content }) => `${id.startsWith("styles.") ? "STYLE PACK" : "DOCUMENT SKILL"}: ${title} (${id})\n${content}`).join("\n\n");
   const room = maxTokens === undefined ? undefined : Math.max(0, maxTokens - estimateTokens(opening + closing));

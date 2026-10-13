@@ -61,9 +61,14 @@ test("loading is monotonic, idempotent, run-local, and rejects unavailable IDs a
   const surface = await createSurface();
   assert.deepEqual(await load(surface, ["document.tables.styling"]), { ok: true, loadedIds: ["document.tables.styling"] });
   assert.ok(surface.projectTools()["document.set_table_cells_formatting"]);
+  assert.equal(surface.session.search("document.tables.styling").capabilities[0]?.loaded, true);
   assert.deepEqual(await load(surface, ["document.tables.styling"]), { ok: true, loadedIds: ["document.tables.styling"] });
-  assert.deepEqual(await load(surface, ["document.text", "unknown"]), { ok: false, reasonCode: "CAPABILITY_UNAVAILABLE" });
-  assert.deepEqual(await load(surface, ["document"]), { ok: false, reasonCode: "CAPABILITY_NOT_LOADABLE" });
+  assert.deepEqual(await load(surface, ["document.text", "unknown"]), { ok: false, reasonCode: "CAPABILITY_UNAVAILABLE", invalidIds: ["unknown"], alternatives: [], message: "Use loadable IDs from capabilities.search or capabilities.list." });
+  const invalid = await load(surface, ["document"]) as { ok: boolean; reasonCode: string; alternatives: string[] };
+  assert.equal(invalid.ok, false);
+  assert.equal(invalid.reasonCode, "CAPABILITY_NOT_LOADABLE");
+  assert.ok(invalid.alternatives.length > 0);
+  for (const id of invalid.alternatives) assert.equal(surface.session.search(id).capabilities[0]?.loadable, true);
   assert.equal(surface.projectTools()["document.set_text_formatting"], undefined);
   assert.equal((await createSurface()).initialTools["document.set_table_cells_formatting"], undefined);
 });
@@ -75,10 +80,61 @@ test("engine filtering removes unsupported tools and their empty groups", async 
   const surface = createToolSurface(tools);
   assert.deepEqual(surface.session.roots().map((item) => item.id), ["agent", "document", "skills", "styles"]);
   assert.deepEqual(surface.session.list("document.tables"), { ok: false, reasonCode: "CAPABILITY_UNAVAILABLE" });
-  assert.deepEqual(surface.session.load(["document.tables.styling"]), { ok: false, reasonCode: "CAPABILITY_UNAVAILABLE" });
+  const unavailable = surface.session.load(["document.tables.styling"]);
+  assert.equal(unavailable.ok, false);
+  if (!unavailable.ok) assert.equal(unavailable.reasonCode, "CAPABILITY_UNAVAILABLE");
   surface.session.load(["document.text"]);
   assert.ok(surface.projectTools()["document.set_text_formatting"]);
   assert.equal(surface.projectTools()["document.set_table_formatting"], undefined);
+});
+
+test("advertised loadable IDs load exactly, report active tools, and never expand on repeats", async () => {
+  const surface = await createSurface();
+  const seen = new Set<string>();
+  const visit = (parentId: string | null) => {
+    const result = surface.session.list(parentId);
+    assert.equal(result.ok, true);
+    if (!result.ok) return;
+    for (const item of result.capabilities) {
+      if (item.loadable) {
+        seen.add(item.id);
+        assert.equal(surface.session.load([item.id]).ok, true, item.id);
+      }
+      if (item.kind === "group") visit(item.id);
+    }
+  };
+  visit(null);
+  assert.ok(seen.size > 30);
+  const tools = Object.keys(surface.projectTools());
+  for (const id of seen) assert.equal(surface.session.load([id]).ok, true);
+  assert.deepEqual(Object.keys(surface.projectTools()), tools);
+  const results = surface.session.search("style");
+  assert.deepEqual(surface.session.search("style"), results);
+  assert.equal(results.capabilities.find(item => item.id === "styles")?.loadable, false);
+  assert.equal(results.capabilities.find(item => item.id === "document.update_style")?.loaded, true);
+  assert.equal(JSON.stringify(results).includes('"title"'), false);
+});
+
+test("narrow tool loads mark group members active without exposing siblings", async () => {
+  const surface = await createSurface();
+  const common = surface.session.search("document.set_table_cells_text").capabilities[0]!;
+  assert.equal(common.loaded, true);
+  const before = surface.session.search("document.set_table_cells_formatting");
+  assert.equal(before.capabilities[0]?.loaded, false);
+  assert.deepEqual(surface.session.search("document.set_table_cells_formatting"), before);
+  assert.equal(surface.session.load(["document.set_table_cells_formatting"]).ok, true);
+  const listed = surface.session.list("document.tables.styling");
+  assert.equal(listed.ok, true);
+  if (!listed.ok) return;
+  assert.equal(listed.capabilities.find(item => item.id === "document.set_table_cells_formatting")?.loaded, true);
+  assert.equal(listed.capabilities.find(item => item.id === "document.set_table_cell_shading")?.loaded, false);
+  assert.equal(surface.projectTools()["document.set_table_cell_shading"], undefined);
+  const guidance = projectLoadedInstructions(surface.session)!;
+  assert.match(JSON.stringify(guidance.message), /Loaded IDs: document.set_table_cells_formatting/);
+  const error = surface.session.load(["document.tables.unknown"]);
+  assert.equal(error.ok, false);
+  if (error.ok || !("alternatives" in error)) return;
+  assert.deepEqual(error.alternatives, ["document.tables.structure", "document.tables.styling"]);
 });
 
 test("new engine reads load dynamically and use the bound read host", async () => {

@@ -337,7 +337,8 @@ export function createAgentExecutionService(deps: AgentExecutionServiceDeps) {
         instruction: input.instruction,
         submittedDocumentIds: [...new Set(input.documentIds ?? [])],
         workingDocumentIds,
-        ...(continuation ? { continuationContext: continuation.context, continuationPreviousRunId: input.continueFromRunId } : {}),
+        ...(continuation ? { continuationContext: continuation.context, continuationPreviousRunId: input.continueFromRunId,
+          continuationInstruction: continuation.instruction, loadedCapabilityIds: continuation.loadedCapabilityIds } : {}),
         signal: input.signal,
         liveEvents: input.liveEvents,
         setWorkingDocumentGetter: (getter) => { getWorkingDocument = getter; },
@@ -381,7 +382,7 @@ async function resolveContinuation(
   persistence: AgentPersistenceService,
   input: AgentExecutionInput,
   thread: AgentThread,
-): Promise<{ readonly triggeringMessageId: string; readonly context: string; readonly instruction: string; readonly documentIds: readonly string[]; readonly documentId: string | null }> {
+): Promise<{ readonly triggeringMessageId: string; readonly context: string; readonly instruction: string; readonly documentIds: readonly string[]; readonly documentId: string | null; readonly loadedCapabilityIds: readonly string[] }> {
   const prior = await persistence.getRun({
     runId: input.continueFromRunId!,
     ownerUserId: input.userId,
@@ -420,6 +421,8 @@ async function resolveContinuation(
     triggeringMessageId: original.id,
     instruction: original.content,
     documentIds: original.documentIds ?? [],
+    loadedCapabilityIds: ([...steps].reverse().map((step) => step.output?.loadedCapabilityIds)
+      .find(Array.isArray) ?? []).filter((id): id is string => typeof id === "string"),
     documentId: [...steps].reverse().map((step) => step.output?.activeDocumentId)
       .find((id): id is string => typeof id === "string") ?? null,
     context: `PREVIOUS RUN PROGRESS (run ${prior.id}; stopped: ${prior.errorCode === "AGENT_DEADLINE" ? "deadline" : "max_turns"})\nOriginal task:\n${original.content}\nCompleted tools: ${formatCounts(completed)}\nFailed tools: ${formatCounts(failures)}${failureReasons ? `\nFailure details: ${failureReasons}` : ""}\nBase document version: ${prior.baseDocumentVersionId ?? "none"}. Resume from the CURRENT bound document state. Do not repeat completed work. Read only where current context lacks an exact target or required structure.`,
@@ -512,6 +515,8 @@ async function runExecution(input: {
   readonly editableDocumentId?: string;
   readonly continuationContext?: string;
   readonly continuationPreviousRunId?: string;
+  readonly continuationInstruction?: string;
+  readonly loadedCapabilityIds?: readonly string[];
   readonly signal?: AbortSignal;
   readonly liveEvents?: AgentEventSink;
   readonly setWorkingDocumentGetter: (getter: AgentExecutionHandle["getWorkingDocument"]) => void;
@@ -519,6 +524,7 @@ async function runExecution(input: {
   const transcript = createTranscriptCollector();
   const capabilityTelemetry = createCapabilityTelemetry(input.run.id, input.model.usageAttribution?.model ?? "unknown", input.deps.capabilityEventSink);
   let boundTools: Awaited<ReturnType<typeof createPrimaryDocxTools>>;
+  let capabilitySession: ReturnType<typeof createToolSurface>["session"] | undefined;
   let flushAttempted = false;
   let persistenceFailure = false;
   const versionAdvances: DocumentVersionAdvance[] = [];
@@ -732,9 +738,13 @@ async function runExecution(input: {
       () => boundTools?.getWorkingRevision() ?? 0,
     );
     const toolSurface = createToolSurface(tools, capabilityTelemetry.record);
-    const recommendations = toolSurface.session.recommend(input.instruction);
+    capabilitySession = toolSurface.session;
+    const recommendations = toolSurface.session.recommend(input.continuationInstruction ?? input.instruction);
+    // Recheck each saved ID against this run's tool bindings and request policy.
+    for (const id of input.loadedCapabilityIds ?? []) toolSurface.session.load([id], 0);
+    const initialTools = toolSurface.session.projectTools();
     const system = buildAgentOperatingInstruction(
-      Object.keys(toolSurface.initialTools).map(providerSafeToolName),
+      Object.keys(initialTools).map(providerSafeToolName),
       toolSurface.capabilityIndex,
       recommendations,
     ) +
@@ -754,7 +764,7 @@ async function runExecution(input: {
       checkpoint,
       priorMessages,
       system,
-      tools: toolSurface.initialTools,
+      tools: initialTools,
       instruction: input.instruction,
       ...(input.continuationContext ? { continuationContext: input.continuationContext } : {}),
       activeDocumentId: boundTools?.getActiveDocumentId(),
@@ -1077,7 +1087,7 @@ async function runExecution(input: {
         liveEvents: input.liveEvents,
         failureCode: failureCodeForStopReason(result.stopReason),
         failureMessage: boundedStopMessage(result.stopReason, versionAdvances.length > 0),
-        transcript: transcript.entries(boundTools?.getActiveDocumentId()),
+        transcript: transcript.entries(boundTools?.getActiveDocumentId(), [...capabilitySession?.loaded ?? []].sort()),
       });
     }
 
@@ -1103,7 +1113,7 @@ async function runExecution(input: {
         failureMessage: preserved
           ? `Updated the document partially. Unresolved: ${unresolved}. Changes made so far were preserved.`
           : `Could not complete the requested update. ${unresolved}`,
-        transcript: transcript.entries(boundTools?.getActiveDocumentId()),
+        transcript: transcript.entries(boundTools?.getActiveDocumentId(), [...capabilitySession?.loaded ?? []].sort()),
       });
     }
 
@@ -1122,7 +1132,7 @@ async function runExecution(input: {
           .at(-1)?.toolName),
     });
     transcript.finish(finalText);
-    await persistTranscript(input.deps.persistence, input.ownerUserId, input.run.id, transcript.entries(boundTools?.getActiveDocumentId()));
+    await persistTranscript(input.deps.persistence, input.ownerUserId, input.run.id, transcript.entries(boundTools?.getActiveDocumentId(), [...capabilitySession?.loaded ?? []].sort()));
     await input.liveEvents?.emit({ type: "agent.completed", runId: input.run.id, at: new Date().toISOString() });
     void compactThreadContext({
       persistence: input.deps.persistence,
@@ -1160,7 +1170,7 @@ async function runExecution(input: {
       userMessage: input.userMessage,
       run: input.run,
       liveEvents: input.liveEvents,
-      transcript: transcript.entries(boundTools?.getActiveDocumentId()),
+      transcript: transcript.entries(boundTools?.getActiveDocumentId(), [...capabilitySession?.loaded ?? []].sort()),
     });
   } finally {
     await capabilityTelemetry.flush();

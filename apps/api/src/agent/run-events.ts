@@ -150,10 +150,11 @@ export function createTranscriptCollector() {
     validation(checks: readonly DocumentCheck[]) {
       entries.push({ kind: "validation", status: "completed", name: "Document validation", summary: "Document validation", output: { checks } });
     },
-    // Save the final target in an existing step so Continue does not depend on the open tab.
-    entries(activeDocumentId?: string | null) {
-      return activeDocumentId ? entries.map((entry, index) => index === entries.length - 1
-        ? { ...entry, output: { ...entry.output, activeDocumentId } } : entry) : entries;
+    // Save run state in an existing step for Continue; no separate storage or query.
+    entries(activeDocumentId?: string | null, loadedCapabilityIds: readonly string[] = []) {
+      return activeDocumentId || loadedCapabilityIds.length ? entries.map((entry, index) => index === entries.length - 1
+        ? { ...entry, output: { ...entry.output, ...(activeDocumentId ? { activeDocumentId } : {}),
+          ...(loadedCapabilityIds.length ? { loadedCapabilityIds } : {}) } } : entry) : entries;
     },
   };
 }

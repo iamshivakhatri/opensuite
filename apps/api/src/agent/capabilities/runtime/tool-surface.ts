@@ -11,17 +11,17 @@ export function createToolSurface(tools: AgentToolSet, emit?: (event: Capability
   let turn = 0;
   const discovery: AgentToolSet = {
     "capabilities.list": defineTool<{ parentId?: string | null }, unknown>({
-      kind: "read", description: "List immediate available children of a capability. Omit parentId for root domains. Returns compact names, not tool schemas.",
+      kind: "read", description: "List available children; omit parentId for domains. Entries show loadable and loaded state.",
       inputSchema: jsonSchema({ type: "object", properties: { parentId: { type: ["string", "null"] } }, additionalProperties: false }),
       execute: ({ parentId }) => session.list(parentId ?? null, turn),
     }),
     "capabilities.search": defineTool<{ query: string }, unknown>({
-      kind: "read", description: "Find a small set of available capabilities by name or description. Returns IDs and short descriptions, not schemas.",
+      kind: "read", description: "Find available capability IDs by name or description, with loadable and loaded state.",
       inputSchema: jsonSchema({ type: "object", properties: { query: { type: "string", minLength: 2 } }, required: ["query"], additionalProperties: false }),
       execute: ({ query }) => session.search(query, turn),
     }),
     "capabilities.load": defineTool<{ ids: string[] }, unknown>({
-      kind: "read", description: "Load available capability IDs. Their tools become available on the next model turn and stay loaded for this run.",
+      kind: "read", description: "Load exact loadable IDs. Tools stay available from the next turn. Repeated loads are harmless.",
       inputSchema: jsonSchema({ type: "object", properties: { ids: { type: "array", minItems: 1, maxItems: 20, items: { type: "string" } } }, required: ["ids"], additionalProperties: false }),
       execute: ({ ids }) => session.load(ids, turn),
     }),

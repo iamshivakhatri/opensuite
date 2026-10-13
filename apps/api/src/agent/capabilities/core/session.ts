@@ -41,9 +41,29 @@ export class CapabilitySession {
 
   private isLoadable(id: string) {
     if (!this.isAvailable(id)) return false;
+    if (this.savedStyleRequested && (id === "styles" || id.startsWith("styles."))) return false;
     const definition = this.registry.get(id);
     return !!definition && !(definition.kind === "group" &&
       (definition.parentId === null || this.registry.children(id).some((child) => child.kind === "group" && this.isAvailable(child.id))));
+  }
+
+  private isLoaded(item: CapabilityDefinition): boolean {
+    if (item.kind === "tool") return this.activeToolNames.has(item.toolName);
+    if (item.kind === "instruction") return this.loaded.has(item.id);
+    return this.registry.children(item.id).filter((child) => this.isAvailable(child.id)).every((child) => this.isLoaded(child));
+  }
+
+  private discoveryItem = (item: CapabilityDefinition) => ({
+    id: item.id, kind: item.kind, loadable: this.isLoadable(item.id), loaded: this.isLoaded(item),
+    ...(item.kind === "tool" && item.description === item.id.replaceAll("_", " ")
+      ? {} : { description: item.description.slice(0, 160) }),
+  });
+
+  private loadError(reasonCode: string, invalidIds: readonly string[]) {
+    const alternatives = [...new Set(invalidIds.flatMap((id) => this.registry.children(
+      this.registry.get(id)?.kind === "group" ? id : id.slice(0, id.lastIndexOf(".")),
+    )).filter((item) => this.isLoadable(item.id)).map((item) => item.id))].slice(0, 8);
+    return { ok: false as const, reasonCode, invalidIds, alternatives, message: "Use loadable IDs from capabilities.search or capabilities.list." };
   }
 
   roots() { return this.registry.roots().filter((item) => this.isAvailable(item.id)).map(compact); }
@@ -52,13 +72,13 @@ export class CapabilitySession {
     if (parentId !== null && !this.isAvailable(parentId)) return { ok: false as const, reasonCode: "CAPABILITY_UNAVAILABLE" };
     const children = this.registry.children(parentId).filter((item) => this.isAvailable(item.id));
     for (const item of children) this.emit?.({ capabilityId: item.id, kind: item.kind, type: "discovered", turn });
-    return { ok: true as const, capabilities: children.map(compact) };
+    return { ok: true as const, capabilities: children.map(this.discoveryItem) };
   }
 
   search(query: string, turn?: number) {
     const matches = this.registry.search(query, 8, (id) => this.isAvailable(id));
     for (const item of matches) this.emit?.({ capabilityId: item.id, kind: item.kind, type: "discovered", turn });
-    return { ok: true as const, capabilities: matches.map(compact) };
+    return { ok: true as const, capabilities: matches.map(this.discoveryItem) };
   }
 
   recommend(query: string, turn = 1) {
@@ -89,13 +109,16 @@ export class CapabilitySession {
   }
 
   load(ids: readonly string[], turn?: number) {
-    if (!Array.isArray(ids) || !ids.length || ids.some((id) => typeof id !== "string" || !this.isAvailable(id))) {
-      return { ok: false as const, reasonCode: "CAPABILITY_UNAVAILABLE" };
+    if (!Array.isArray(ids) || !ids.length || ids.some((id) => typeof id !== "string")) {
+      return this.loadError("CAPABILITY_UNAVAILABLE", []);
     }
+    const unavailable = ids.filter((id) => !this.isAvailable(id));
+    if (unavailable.length) return this.loadError("CAPABILITY_UNAVAILABLE", unavailable);
     if (this.savedStyleRequested && ids.some(id => id === 'styles' || id.startsWith('styles.'))) {
       return { ok: false as const, reasonCode: 'SAVED_STYLE_REQUIRED', message: 'This request names a saved style. Load style.list_profiles, style.get_profile, and style.apply_profile. A document skill can still help with content.' };
     }
-    if (ids.some((id) => !this.isLoadable(id))) return { ok: false as const, reasonCode: "CAPABILITY_NOT_LOADABLE" };
+    const notLoadable = ids.filter((id) => !this.isLoadable(id));
+    if (notLoadable.length) return this.loadError("CAPABILITY_NOT_LOADABLE", notLoadable);
     const requested = new Set(ids);
     for (const id of ids) {
       if (this.registry.get(id)?.kind !== "group") continue;

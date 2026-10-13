@@ -284,13 +284,13 @@ function memoryPersistence(ownerUserId: string): AgentPersistenceService & {
   compactionSourceRowsLoaded: number[];
   workingDocumentIds: string[];
   runs: Map<string, AgentRun>;
-  steps: { runId: string; sequence: number; kind: string; status: string; name: string; summary?: string | null }[];
+  steps: { runId: string; sequence: number; kind: string; status: string; name: string; summary?: string | null; output?: Record<string, unknown> }[];
   failOnStatus?: AgentRun["status"];
 } {
   const thread = stubThread(ownerUserId);
   const messages: AgentMessage[] = [];
   const runs = new Map<string, AgentRun>();
-  const steps: { runId: string; sequence: number; kind: string; status: string; name: string; summary?: string | null }[] = [];
+  const steps: { runId: string; sequence: number; kind: string; status: string; name: string; summary?: string | null; output?: Record<string, unknown> }[] = [];
   let messageSeq = 0;
   let runSeq = 0;
 
@@ -490,7 +490,7 @@ function memoryPersistence(ownerUserId: string): AgentPersistenceService & {
     async getRun(input: { runId: string; ownerUserId: string }) {
       return runs.get(input.runId) ?? null;
     },
-    async appendSteps(input: { runId: string; steps: { runId?: string; sequence: number; kind: string; status: string; name: string; summary?: string | null }[] }) {
+    async appendSteps(input: { runId: string; steps: { runId?: string; sequence: number; kind: string; status: string; name: string; summary?: string | null; output?: Record<string, unknown> }[] }) {
       steps.push(...input.steps.map((step) => ({ ...step, runId: input.runId })));
       return [];
     },
@@ -507,7 +507,7 @@ function memoryPersistence(ownerUserId: string): AgentPersistenceService & {
     compactionSourceRowsLoaded: number[];
     workingDocumentIds: string[];
     runs: Map<string, AgentRun>;
-    steps: { runId: string; sequence: number; kind: string; status: string; name: string; summary?: string | null }[];
+    steps: { runId: string; sequence: number; kind: string; status: string; name: string; summary?: string | null; output?: Record<string, unknown> }[];
     failOnStatus?: AgentRun["status"];
   };
 }
@@ -2532,6 +2532,7 @@ async function runScriptedDocx(input: {
     versionId: "v1",
     appends: 0,
     exposedTools: [] as string[][],
+    estimatedModelInputTokens: 0,
     runtime: undefined as RunAgentResult | undefined,
     reports: [] as AgentRunReport[],
     usage: [] as { agentRunId?: string | null; inputTokens?: number }[],
@@ -2542,6 +2543,7 @@ async function runScriptedDocx(input: {
   let turn = 0;
   const model = new MockLanguageModelV4({ doStream: async (options) => {
     state.exposedTools.push(options.tools?.map((tool) => tool.name) ?? []);
+    state.estimatedModelInputTokens += estimateTokens(JSON.stringify({ prompt: options.prompt, tools: options.tools }));
     const scripted = input.turns[turn++] ?? { calls: [] };
     const current = typeof scripted === "function" ? scripted(options.prompt) : scripted;
     if (current.fail === "abort") controller.abort(new Error("cancelled by user"));
@@ -2602,7 +2604,7 @@ async function runScriptedDocx(input: {
     userId: "user-1", threadId: "thread-1", activeDocumentId: "doc-1", instruction: input.instruction,
     signal: controller.signal, liveEvents: { emit: (event) => { state.events.push(event); } },
   })).result;
-  return { binding, result, state };
+  return { binding, result, state, execution };
 }
 
 async function rosterTableDocx(): Promise<Buffer> {
@@ -2986,11 +2988,16 @@ test("Continue restores a switched target from saved steps and validates it agai
     modelCalls++;
     const call = { toolCallId: "switch", messages: [], context: undefined as never };
     if (!continuing) {
+      await input.tools!["capabilities.load"]!.execute!({ ids: ["document.set_text_formatting"] }, call);
       assert.equal((await input.tools!["workspace.select_document"]!.execute!({ documentId: "second" }, call) as { ok: boolean }).ok, true);
       await input.onEvent?.({ type: "tool_completed", toolCallId: "switch", toolName: "workspace.select_document" });
       return softResult("max_turns");
     }
     assert.match(input.system ?? "", /Active document ID: second/);
+    const tools = input.projectTools!({ tools: input.tools!, turn: 1, messages: input.messages });
+    assert.ok(tools["document.set_text_formatting"]);
+    assert.equal(tools["document.batch_text_formatting"], undefined);
+    assert.match(JSON.stringify(await input.projectMessages!(input.messages)), /Loaded IDs: document.set_text_formatting/);
     assert.match(JSON.stringify(input.messages), /Current document ID: second; current version: second-v1/);
     assert.equal((await input.tools!["document.insert_paragraphs"]!.execute!({ texts: ["Resumed"], placement: { kind: "end" } }, call) as { ok: boolean }).ok, true);
     return softResult("completed", "Done");
@@ -3008,6 +3015,11 @@ test("Continue restores a switched target from saved steps and validates it agai
   } });
   const first = await (await execution.start({ userId: "user-1", threadId: "thread-1", activeDocumentId: "first", instruction: "Update this document" })).result;
   assert.equal(first.run.errorCode, "AGENT_MAX_TURNS");
+  const lastStep = persistence.steps.at(-1)!;
+  assert.deepEqual(lastStep.output?.loadedCapabilityIds, ["document.set_text_formatting"]);
+  // Old/removed tools and browse-only domains must not prevent valid restoration.
+  persistence.steps[persistence.steps.length - 1] = { ...lastStep, output: { ...lastStep.output,
+    loadedCapabilityIds: ["document.set_text_formatting", "document.removed_tool", "style.get_profile", "document"] } };
   continuing = true;
   const resume = () => execution.start({ userId: "user-1", threadId: "thread-1", activeDocumentId: "first", instruction: "Continue", continueFromRunId: first.run.id });
   const continued = await (await resume()).result;
@@ -3171,4 +3183,88 @@ test("Phase 3 scripted Northstar run removes a heading lookup and first-header r
     { label: "after", find: 0, inspect: 1, errors: 0, turns: 3 },
   ]);
   t.diagnostic(`PHASE3_MEASUREMENT ${JSON.stringify(measurements)}`);
+});
+
+// Same scripted calls before/after Phase 4: input size is estimated, never provider usage.
+test("Phase 4 discovery benchmark saves KPI, header, style, comment and revision edits", async (t) => {
+  const binding = await createNapiDocxEngineBinding();
+  const seed = bindDocxDocument({ binding, bytes: buildMinimalDocx(["Review this sentence", "Replace this sentence"]) });
+  assert.equal((await seed.mutate("create_table", { rows: rosterRows, placement: { kind: "end" } })).ok, true);
+  const call = (name: string, input: unknown) => ({ name, input });
+  const finish = { calls: [call("finish", {})] };
+  const scenarios = [
+    { name: "KPI", turns: [{ calls: [call("document_set_table_cells_text", { table: rosterTable, updates: [{ target: { row: { kind: "label", text: "Ada" }, column: { kind: "header", text: "Role" } }, expectedCurrentText: "CEO", replacement: "Founder" }] })] }, finish],
+      verify: async (bytes: Buffer) => assert.equal((await binding.inspectDocx(bytes, { focus: { kind: "tables" } })).tables!.items[0]!.rows[1]!.cells[1], "Founder") },
+    { name: "header", turns: [
+      { calls: [call("capabilities_search", { query: "document.set_table_cells_formatting" })] },
+      { calls: [call("capabilities_load", { ids: ["document.set_table_cells_formatting"] })] },
+      { calls: [call("document_set_table_cells_formatting", { table: rosterTable, updates: [{ target: headerCell({ kind: "header", text: "Role" }), fill: "D9E2F3", textFormatting: { bold: true } }] })] }, finish],
+      verify: async (bytes: Buffer) => { const table = (await inspectDocxStyleSnapshot(bytes, binding)).tables[0]!; assert.equal(table.firstRowBoldRunCount, 1); assert.deepEqual(table.firstRowShadingColors, ["D9E2F3"]); } },
+    { name: "global styles", turns: [
+      { calls: [call("capabilities_search", { query: "style" }), call("capabilities_list", { parentId: "document" })] },
+      // Deliberately repeated discovery verifies its context cost and unchanged surface.
+      { calls: [call("capabilities_search", { query: "style" }), call("capabilities_list", { parentId: "document" })] },
+      { calls: [call("capabilities_load", { ids: ["document.style_snapshot", "document.update_style"] })] },
+      { calls: [call("document_style_snapshot", {})] },
+      { calls: [call("document_update_style", { styleId: "Normal", styleType: "paragraph", color: "235744", fontFamily: "Arial" })] }, finish],
+      verify: async (bytes: Buffer) => { const style = (await inspectDocxStyleSnapshot(bytes, binding)).styles.find(item => item.styleId === "Normal")!; assert.equal(style.effectiveRunFormatting?.color, "235744"); assert.equal(style.effectiveRunFormatting?.fontFamily, "Arial"); } },
+    { name: "comments and revisions", turns: [
+      { calls: [call("capabilities_search", { query: "comment" }), call("capabilities_search", { query: "tracked" })] },
+      { calls: [call("capabilities_load", { ids: ["document.add_comment", "document.inspect_comments", "document.replace_text_with_tracked_change", "document.inspect_tracked_changes"] })] },
+      { calls: [call("document_add_comment", { target: { text: "Review this sentence" }, text: "Check wording", author: "Reviewer", date: "2026-10-12T12:00:00Z" }), call("document_replace_text_with_tracked_change", { target: { text: "Replace this sentence" }, replacement: "Revised sentence", author: "Reviewer", date: "2026-10-12T12:00:00Z" })] },
+      { calls: [call("document_inspect_comments", {}), call("document_inspect_tracked_changes", {})] }, finish],
+      verify: async (bytes: Buffer) => { assert.match(JSON.stringify(await binding.inspectDocx(bytes, { focus: { kind: "comments" } })), /Check wording/); const changes = JSON.stringify(await binding.inspectDocx(bytes, { focus: { kind: "revisions" } })); assert.match(changes, /Revised sentence/); assert.match(changes, /Replace this sentence/); } },
+  ];
+  for (const scenario of scenarios) {
+    const { result, state } = await runScriptedDocx({ binding, bytes: Buffer.from(seed.currentBytes()), instruction: `Update this document: ${scenario.name}`, turns: scenario.turns });
+    assert.equal(result.run.status, "completed", result.run.errorMessage ?? "");
+    assert.equal(state.appends, 1);
+    assert.equal(state.runtime!.metrics.toolCalls.filter(call => call.outcome === "failure").length, 0);
+    await scenario.verify(state.bytes);
+    const turns = state.runtime!.metrics.modelTurns;
+    const repeated = scenario.turns.flatMap(turn => turn.calls).filter(call => call.name.startsWith("capabilities_")).map(call => JSON.stringify(call));
+    t.diagnostic(`PHASE4_MEASUREMENT ${JSON.stringify({ scenario: scenario.name, turns: turns.length,
+      discoveryTurns: turns.filter(turn => { const calls = state.runtime!.metrics.toolCalls.filter(call => call.turn === turn.turn); return calls.length && calls.every(call => call.toolName.startsWith("capabilities.")); }).length,
+      repeatedDiscovery: repeated.length - new Set(repeated).size,
+      initialTools: turns[0]!.exposedToolCount, peakTools: Math.max(...turns.map(turn => turn.exposedToolCount ?? 0)),
+      initialSchemaChars: turns[0]!.exposedToolSchemaChars, peakSchemaChars: Math.max(...turns.map(turn => turn.exposedToolSchemaChars ?? 0)),
+      estimatedInputTokens: state.estimatedModelInputTokens })}`);
+  }
+});
+
+// The same script uses the current tool list after Continue, loading only if absent.
+test("Phase 4 Continue benchmark reuses loaded tools after the 20-turn bound", async (t) => {
+  const resume = (prompt: unknown): ScriptedTurn => {
+    const hasTool = JSON.stringify(prompt).includes("- document_set_text_formatting");
+    return hasTool ? { calls: [
+      { name: "document_set_text_formatting", input: { target: { text: "Continue paragraph" }, bold: true } },
+      { name: "finish", input: {} },
+    ] } : { calls: [
+      { name: "capabilities_search", input: { query: "document.set_text_formatting" } },
+      { name: "capabilities_load", input: { ids: ["document.set_text_formatting"] } },
+    ] };
+  };
+  const { result, state, execution, binding } = await runScriptedDocx({
+    bytes: Buffer.from(buildMinimalDocx(["Continue paragraph"])), instruction: "Update this document: bold the existing paragraph.",
+    turns: [
+      { calls: [{ name: "capabilities_load", input: { ids: ["document.set_text_formatting"] } }] },
+      ...Array.from({ length: 19 }, () => ({ calls: [{ name: "document_inspect", input: { kind: "overview" } }] })),
+      resume,
+      // A successful load is authoritative in the same script's next model turn.
+      { calls: [{ name: "document_set_text_formatting", input: { target: { text: "Continue paragraph" }, bold: true } }, { name: "finish", input: {} }] },
+    ],
+  });
+  assert.equal(result.run.errorCode, "AGENT_MAX_TURNS");
+  assert.equal(state.runtime!.metrics.modelTurns.length, 20);
+  const priorInputTokens = state.estimatedModelInputTokens;
+  const continued = await (await execution.start({ userId: "user-1", threadId: "thread-1", activeDocumentId: "doc-1", instruction: "Continue", continueFromRunId: result.run.id })).result;
+  assert.equal(continued.run.status, "completed", continued.run.errorMessage ?? "");
+  assert.equal(state.appends, 1);
+  const snapshot = await inspectDocxStyleSnapshot(state.bytes, binding);
+  assert.match(JSON.stringify(snapshot), /"bold":true/);
+  const discovery = state.runtime!.metrics.toolCalls.filter(call => call.toolName.startsWith("capabilities."));
+  t.diagnostic(`PHASE4_CONTINUE ${JSON.stringify({ turns: state.runtime!.metrics.modelTurns.length, discoveryCalls: discovery.length,
+    estimatedInputTokens: state.estimatedModelInputTokens - priorInputTokens })}`);
+  assert.equal(state.runtime!.metrics.modelTurns.length, 1);
+  assert.equal(discovery.length, 0);
 });

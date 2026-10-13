@@ -52,6 +52,7 @@ test('named saved-style prompts recommend exact loadable tools and prevent gener
     const ids = surface.session.recommend(prompt).map(item => item.id);
     assert.deepEqual(ids, ['style.list_profiles', 'style.get_profile', 'style.apply_profile']);
     assert.equal(surface.session.load(ids).ok, true, 'No CAPABILITY_NOT_LOADABLE on the normal path');
+    assert.equal(surface.session.search('styles.career.clean-resume').capabilities[0]?.loadable, false);
     assert.equal(surface.session.load(['styles.career.clean-resume']).reasonCode, 'SAVED_STYLE_REQUIRED');
     assert.equal(surface.session.load(['skills.career.resume']).ok, true);
     assert.ok(surface.projectTools()['style.apply_profile']);

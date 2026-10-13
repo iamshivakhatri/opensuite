@@ -48,7 +48,9 @@ test("instruction bodies are resolved on load and share a session with executabl
   const session = new CapabilitySession(registry, tools);
   assert.equal(reads, 0);
   assert.deepEqual(Object.keys(session.projectTools()), []);
-  assert.deepEqual(session.load(["root.skill", "root.edit"]).loadedIds, ["root.edit", "root.skill"]);
+  const result = session.load(["root.skill", "root.edit"]);
+  assert.equal(result.ok, true);
+  if (result.ok) assert.deepEqual(result.loadedIds, ["root.edit", "root.skill"]);
   assert.equal(reads, 1);
   assert.deepEqual(Object.keys(session.projectTools()), ["root.edit"]);
   assert.match(String(projectLoadedInstructions(session)?.message.content), /Unique guidance/);
