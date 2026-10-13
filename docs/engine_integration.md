@@ -42,6 +42,24 @@ binary SHA-256. `formatNativeEngineIdentity()` is shared by public/Cloud startup
 checks. Runtime logs and product services use the same binding. A package pin alone
 cannot establish binary identity, because loader overrides can select another file.
 
+## Local Phase 7 semantics
+
+The local native build preserves the existing tool inventory and adds optional
+`revisionType` to revision inspection. Counts include move/custom-XML range ends,
+table property exceptions, and Word 2010 conflict records. Unsupported structures
+have diagnostics and refuse decisions; total counts are XML records, not groups.
+Text replacement, paragraph deletion/insertion, and revision decisions now check
+hidden/enclosing boundaries. Property-history loss/duplication fails safely.
+
+The API's optional external field refresh declines documents with standard
+comments, pending main-document revisions, unknown/malformed fields, or
+unavailable/failed inspection, retaining verified native bytes and logging the
+reason. Field inspection also warns about revisions in header/footer parts. Existing one-save,
+target/handle, recovery, and Continue semantics remain unchanged. No native field
+calculation or cross-editor layout fidelity is claimed. See
+[the validation report](phase7_word_semantics.md). Published pins remain 0.1.7;
+use the existing local override for these unpublished engine changes.
+
 ## Rule
 
 Application code must never manipulate Office internals as a shortcut around the engine.

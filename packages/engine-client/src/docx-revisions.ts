@@ -3,6 +3,8 @@ import type { DocxTextTarget } from "./docx-engine-binding.js";
 export interface DocxRevisionOptions { offset?: number; limit?: number }
 export interface DocxRevision {
   handle: string; index: number; id: string | null; kind: "insertion" | "deletion" | "unsupported";
+  /** Word element name, e.g. moveFrom or rPrChange. Older engines omit this. */
+  revisionType?: string;
   author: string | null; date: string | null; text: string | null; paragraphIndex: number | null;
   structure: "supported" | "malformed" | "unsupported"; truncated: boolean; diagnostics: string[];
 }

@@ -65,6 +65,19 @@ function protectedPackageParts(names: readonly string[]): string[] {
   return names.filter((name) => !name.endsWith("/") && /^(?:customXml|word\/embeddings|word\/glossary)\//i.test(name));
 }
 
+// A whole-document rewrite cannot prove preservation of comment anchors or revision XML from counts.
+async function fieldRefreshSafetyReason(binding: DocxEngineBinding, bytes: Uint8Array): Promise<string | undefined> {
+  if (!binding.inspectDocxComments || !binding.inspectDocxTrackedChanges) return "comment/revision inspection unavailable";
+  const [comments, revisions] = await Promise.all([
+    binding.inspectDocxComments(bytes).catch(() => null),
+    binding.inspectDocxTrackedChanges(bytes).catch(() => null),
+  ]);
+  if (!comments?.ok || !revisions?.ok) return "comment/revision inspection failed";
+  if (comments.total > 0 || comments.diagnostics.length > 0) return "comments require source preservation";
+  if (revisions.total > 0 || revisions.diagnostics.length > 0) return "pending revisions require source preservation";
+  return undefined;
+}
+
 /** Semantic gate before adopting LibreOffice-refreshed bytes. Reject destructive rewrites. */
 export async function acceptRefreshedDocxFields(
   binding: DocxEngineBinding,
@@ -96,6 +109,10 @@ export async function acceptRefreshedDocxFields(
   if (!beforeFields.ok || !afterFields.ok) {
     return { ok: false, reason: "field inspection failed" };
   }
+  if (beforeFields.diagnostics.length || afterFields.diagnostics.length
+    || beforeFields.fields.some(field => field.structure !== "complete" || field.kind === "unknown")) {
+    return { ok: false, reason: "fields require source preservation" };
+  }
 
   const beforeToc = beforeFields.fields.filter((field) => field.kind === "toc");
   const afterToc = afterFields.fields.filter((field) => field.kind === "toc");
@@ -115,28 +132,9 @@ export async function acceptRefreshedDocxFields(
     return { ok: false, reason: "unknown fields lost" };
   }
 
-  if (binding.inspectDocxComments) {
-    const [beforeComments, afterComments] = await Promise.all([
-      binding.inspectDocxComments(original).catch(() => null),
-      binding.inspectDocxComments(refreshed).catch(() => null),
-    ]);
-    if (beforeComments?.ok && afterComments?.ok && afterComments.total < beforeComments.total) {
-      return { ok: false, reason: "comments changed" };
-    }
-  }
-
-  if (binding.inspectDocxTrackedChanges) {
-    const [beforeRevisions, afterRevisions] = await Promise.all([
-      binding.inspectDocxTrackedChanges(original).catch(() => null),
-      binding.inspectDocxTrackedChanges(refreshed).catch(() => null),
-    ]);
-    if (beforeRevisions?.ok && afterRevisions?.ok) {
-      const beforeCount = beforeRevisions.insertionCount + beforeRevisions.deletionCount;
-      const afterCount = afterRevisions.insertionCount + afterRevisions.deletionCount;
-      if (afterCount < beforeCount) {
-        return { ok: false, reason: "revisions changed" };
-      }
-    }
+  for (const bytes of [original, refreshed]) {
+    const reason = await fieldRefreshSafetyReason(binding, bytes);
+    if (reason) return { ok: false, reason };
   }
 
   // Preserve headings that existed before refresh.
@@ -236,6 +234,17 @@ export async function refreshWorkingDocxFields(
         detail: "no refreshable fields",
       },
     };
+  }
+
+  const reason = inspection.diagnostics.length
+    || inspection.fields.some(field => field.structure !== "complete" || field.kind === "unknown")
+    ? "fields require source preservation"
+    : await fieldRefreshSafetyReason(binding, bytes);
+  if (reason) {
+    return { bytes, accepted: false, result: {
+      status: "failed", provider: "libreoffice-macro", durationMs: 0,
+      warnings: [reason], detail: reason,
+    } };
   }
 
   const result = await refreshDocxFields(bytes);

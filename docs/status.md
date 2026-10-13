@@ -1,5 +1,6 @@
 # OpenSuite — Status
 
+* Stabilization Phase 7: local native guards refuse hidden text boundaries, enclosing range/field edits, unsafe revision decisions, and loss/duplication of property history. Revision inspection names move/property/range/conflict categories; malformed instructions have diagnostics. API external refresh now declines comments or pending main revisions and retains native bytes. Nine new Rust regressions; engine DOCX/OPC/protocol/Node Rust 187/19/4/3, native Node 35, API 449 passed/23 skips, client 39 passed/2 skips, Core 41 passed; relevant builds/typechecks, strict Clippy and formatting pass. Ten temporary fixtures plus real Northstar/Word-authored files; 17 preservation outputs and three Word opens without repair. Word save and Google Docs checks remain unverified. No publish, push, pins, Cloud, or UI changes. See `docs/phase7_word_semantics.md`.
 _Read this before starting any work. Keep it a concise current-state handoff, not a diary — overwrite stale sections rather than appending to them._
 
 ## What Exists

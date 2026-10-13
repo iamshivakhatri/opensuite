@@ -6,6 +6,7 @@ import {
   fieldsNeedExternalRefresh,
   formatFieldRefreshLog,
   listDocxPartNames,
+  refreshWorkingDocxFields,
   tocNeedsExternalRefresh,
 } from "./field-refresh.js";
 import { createNapiDocxEngineBinding } from "@opensuite/engine-client";
@@ -113,4 +114,33 @@ test("formatFieldRefreshLog stays compact", () => {
     ),
     /preservation check: revisions changed/,
   );
+});
+
+test("Phase 7: external refresh refuses comments and every pending revision category", async () => {
+  for (const records of [
+    { comments: 1, insertions: 0, unsupported: 0 },
+    { comments: 0, insertions: 1, unsupported: 0 },
+    { comments: 0, insertions: 0, unsupported: 1 },
+  ]) {
+    // A provider can retain counts while changing anchors or unsupported revision XML.
+    let dirty = false;
+    const binding = {
+      async inspectDocxFields() { return { ok: true, total: 1, offset: 0, hasMore: false, fields: [toc({ dirty, cachedResult: dirty ? "Update this table of contents in Word." : "Introduction1" })], diagnostics: [] }; },
+      async inspectDocxComments() { return { ok: true, total: records.comments, offset: 0, hasMore: false, comments: [], diagnostics: [] }; },
+      async inspectDocxTrackedChanges() { return { ok: true, total: records.insertions + records.unsupported, insertionCount: records.insertions, deletionCount: 0, unsupportedCount: records.unsupported, offset: 0, hasMore: false, revisions: [], diagnostics: [] }; },
+      async inspectDocx() { return { ok: true }; },
+      async findDocxText() { return { ok: true, matchCount: 1 }; },
+    } as unknown as DocxEngineBinding;
+    const result = await acceptRefreshedDocxFields(binding, new Uint8Array([1]), new Uint8Array([2]));
+    assert.equal(result.ok, false, JSON.stringify(records));
+    assert.equal(result.reason, records.comments ? "comments require source preservation" : "pending revisions require source preservation");
+    dirty = true;
+    const bytes = new Uint8Array([1]);
+    const skipped = await refreshWorkingDocxFields(binding, bytes);
+    assert.equal(skipped.accepted, false);
+    assert.equal(skipped.bytes, bytes);
+    assert.equal(skipped.result.durationMs, 0);
+    assert.equal(skipped.result.detail, result.reason);
+
+  }
 });
