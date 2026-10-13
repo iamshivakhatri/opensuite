@@ -398,8 +398,10 @@ test("working reads, failed writes, and stale handles keep the last valid state"
   const unknownHandle = await insert.execute!({ text: "Bad", placement: { kind: "before", handle: "b999" } }, call) as { reasonCode: string; staleCause?: string };
   assert.equal(unknownHandle.reasonCode, "STALE_HANDLE");
   assert.equal(unknownHandle.staleCause, "unregistered_handle");
-  assert.equal((await insert.execute!({ text: "No target", placement: { kind: "before", handle: "b0" } }, call) as { ok: boolean }).ok, true);
-  assert.equal((await insert.execute!({ text: "Stale", placement: { kind: "before", handle: "b0" } }, call) as { reasonCode: string }).reasonCode, "STALE_HANDLE");
+  const fresh = await inspect.execute!({ kind: "body_blocks" }, call) as { bodyBlocks: { items: { handle: string }[] } };
+  const handle = fresh.bodyBlocks.items[0]!.handle;
+  assert.equal((await insert.execute!({ text: "No target", placement: { kind: "before", handle } }, call) as { ok: boolean }).ok, true);
+  assert.equal((await insert.execute!({ text: "Stale", placement: { kind: "before", handle } }, call) as { reasonCode: string }).reasonCode, "STALE_HANDLE");
   assert.equal(appends, 0);
   const previewBytes = Buffer.from(tools.getWorkingDocument()!.bytes);
   assert.equal(tools.getWorkingDocument()!.revision, 7);
@@ -486,4 +488,81 @@ test("failed final append leaves the previous persisted version untouched", asyn
   await assert.rejects(tools.flush(), /storage unavailable/);
   assert.equal(tools.getActiveVersionId(), "v1");
   assert.doesNotMatch(JSON.stringify(await binding.inspectDocx(original, { focus: { kind: "body_blocks" } })), /Unsaved/);
+});
+
+
+test("Northstar targets preserve contents, neighbors, and handle document/version boundaries", async (t) => {
+  const binding = await createNapiDocxEngineBinding();
+  const seed = bindDocxDocument({ binding, bytes: buildMinimalDocx([
+    "Pricing .... 4", "Executive summary: Northstar", "Pricing", "Commercial terms: Northstar", "Unique deadline",
+  ]) });
+  assert.equal((await seed.mutate("set_paragraph_style", { target: { text: "Pricing", occurrence: 1 }, style: "Heading 1" })).ok, true);
+  const kpi = [["Metric", "Baseline", "Target", "Owner"], ["Detection", "15", "10", "Sam"], ["Response", "20", "12", "Ada"]];
+  const pricing = [["Line item", "Amount"], ["Setup", "Northstar"], ["Support", "200"]];
+  for (const rows of [kpi, pricing, [["Value", "Value"], ["One", "Two"]]]) {
+    assert.equal((await seed.mutate("create_table", { rows, placement: { kind: "end" } })).ok, true);
+  }
+  const saved = Buffer.from(seed.currentBytes());
+  if (!(await binding.inspectDocx(saved, { focus: { kind: "headings" } })).headings?.items[0]?.textTarget) return t.skip("Requires the Phase 3 local native engine");
+  const session = await createPrimaryDocxTools({
+    binding, ownerUserId: "user", workspaceId: "workspace", documentId: "first", versionId: "v1",
+    documents: {
+      getOwnedDocument: async (id) => ({ id, format: "docx", workspaceId: "workspace", latestVersion: { id: "v1" } }) as never,
+      readExactVersionBytes: async () => saved,
+      appendDocumentVersion: async () => { throw new Error("unused"); },
+      createBlankDocxDocument: async () => { throw new Error("unused"); },
+      createOfficeDocumentFromBytes: async () => { throw new Error("unused"); },
+    },
+  });
+  assert.ok(session);
+  const call = { toolCallId: "target", messages: [], context: undefined as never };
+  const execute = (name: string, input: unknown) => session.tools[name]!.execute!(input, call) as Promise<{ ok: boolean; reasonCode?: string }>;
+  const tables = async () => await session.tools["document.inspect"]!.execute!({ kind: "tables" }, call) as Awaited<ReturnType<typeof binding.inspectDocx>>;
+  const old = (await tables()).tables!.items[0]!;
+  assert.equal((await execute("workspace.select_document", { documentId: "second" })).ok, true);
+  const current = (await tables()).tables!.items[0]!;
+  assert.notEqual(old.handle, current.handle);
+  assert.equal((await execute("document.set_table_formatting", { table: { handle: old.handle }, borders: "grid" })).reasonCode, "STALE_HANDLE");
+  assert.equal(session.getWorkingMutationCount(), 0);
+  session.setModelTurn(1);
+  assert.equal((await execute("document.set_table_formatting", { table: { handle: current.handle, headerCells: ["Wrong"] }, borders: "grid" })).reasonCode, "EXPECTED_TEXT_MISMATCH");
+  assert.equal((await execute("document.set_table_cells_formatting", {
+    table: { handle: current.handle }, updates: [{ target: { row: { kind: "header" }, column: { kind: "header", text: "Metric" } }, fill: "D9E2F3" }],
+  })).ok, true);
+  assert.equal((await execute("document.set_table_cells_formatting", {
+    table: { handle: current.handle }, updates: [{ target: { handle: current.rows[0]!.cellHandles[1] }, textFormatting: { bold: true } }],
+  })).ok, true);
+  const beforeAmbiguous = Buffer.from(session.getWorkingDocument()!.bytes);
+  assert.equal((await execute("document.set_table_cells_formatting", {
+    table: { headerCells: ["Value", "Value"] }, updates: [{ target: { row: { kind: "header" }, column: { kind: "header", text: "Value" } }, fill: "ABCDEF" }],
+  })).reasonCode, "TARGET_AMBIGUOUS");
+  assert.equal((await execute("document.replace_text", { target: { text: "Northstar" }, expectedCurrentText: "Northstar", replacement: "Blue Harbor" })).reasonCode, "TARGET_AMBIGUOUS");
+  assert.deepEqual(Buffer.from(session.getWorkingDocument()!.bytes), beforeAmbiguous);
+  const found = await session.tools["document.find"]!.execute!({ text: "Unique deadline" }, call) as Awaited<ReturnType<typeof binding.findDocxText>>;
+  assert.equal((await execute("document.replace_text", { target: found.matches[0]!.target ?? { text: found.matches[0]!.text, occurrence: found.matches[0]!.occurrence }, expectedCurrentText: "Unique deadline", replacement: "New deadline" })).ok, true);
+  assert.equal((await execute("document.set_table_formatting", { table: { handle: current.handle }, borders: "grid" })).reasonCode, "STALE_HANDLE");
+  const headings = await session.tools["document.inspect"]!.execute!({ kind: "headings" }, call) as Awaited<ReturnType<typeof binding.inspectDocx>>;
+  const target = headings.headings!.items[0]!.textTarget;
+  if (!target) throw new Error("Phase 3 requires the updated native engine's textTarget output");
+  assert.deepEqual(target, { text: "Pricing", occurrence: 1 });
+  assert.equal((await execute("document.replace_text", { target, expectedCurrentText: "Pricing", replacement: "Fees" })).ok, true);
+  session.setModelTurn(2);
+  const fresh = (await tables()).tables!.items[0]!;
+  assert.equal((await execute("document.set_table_cells_text", { table: { handle: fresh.handle }, updates: [
+    { target: { handle: fresh.rows[1]!.cellHandles[2] }, expectedCurrentText: "10", replacement: "8" },
+    { target: { row: { kind: "index", index: 2, expectedFirstCellText: "Response" }, column: { kind: "index", index: 2, expectedHeaderText: "Target" } }, expectedCurrentText: "12", replacement: "9" },
+  ] })).ok, true);
+  assert.equal((await execute("document.set_table_formatting", { table: { handle: fresh.handle }, borders: "grid" })).reasonCode, "STALE_HANDLE");
+  const refreshed = (await tables()).tables!.items[0]!;
+  assert.notEqual(refreshed.handle, fresh.handle);
+  assert.equal((await execute("document.set_table_formatting", { table: { handle: fresh.handle }, borders: "grid" })).reasonCode, "STALE_HANDLE");
+  assert.equal((await execute("document.set_table_formatting", { table: { handle: refreshed.handle }, borders: "grid" })).ok, true);
+  const beforeBatch = Buffer.from(session.getWorkingDocument()!.bytes);
+  assert.equal((await execute("document.batch_replace_text", { operations: [{ target: { text: "Fees", handle: old.handle }, expectedCurrentText: "Fees", replacement: "Wrong" }] })).reasonCode, "STALE_HANDLE");
+  assert.deepEqual(Buffer.from(session.getWorkingDocument()!.bytes), beforeBatch);
+  const final = await binding.inspectDocx(session.getWorkingDocument()!.bytes, { focus: { kind: "tables" } });
+  assert.deepEqual(final.tables!.items[0]!.rows.map(row => row.cells), [kpi[0], ["Detection", "15", "8", "Sam"], ["Response", "20", "9", "Ada"]]);
+  assert.deepEqual(final.tables!.items[1]!.rows.map(row => row.cells), pricing);
+  const paragraphs = await binding.inspectDocx(session.getWorkingDocument()!.bytes, { focus: { kind: "paragraphs" } });
+  assert.deepEqual(paragraphs.paragraphs!.items.map(item => item.text), ["Pricing .... 4", "Executive summary: Northstar", "Fees", "Commercial terms: Northstar", "New deadline"]);
 });

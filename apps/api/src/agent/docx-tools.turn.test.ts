@@ -39,17 +39,20 @@ async function createSession() {
     onWorkingUpdated: ({ revision }) => { revisions.push(revision); },
   });
   assert.ok(session);
-  const tables = (await binding.inspectDocx(stored, { focus: { kind: "tables" } })).tables!.items;
-  return { session, tables, initial, revisions, stored: () => stored, appends: () => appends };
+  const call = { toolCallId: "fixture", messages: [], context: undefined as never };
+  const tables = (await session.tools["document.inspect"]!.execute!({ kind: "tables" }, call) as Awaited<ReturnType<typeof binding.inspectDocx>>).tables!.items;
+  const body = await session.tools["document.inspect"]!.execute!({ kind: "body_blocks" }, call) as Awaited<ReturnType<typeof binding.inspectDocx>>;
+  return { session, tables, bodyHandle: body.bodyBlocks!.items[0]!.handle, initial, revisions, stored: () => stored, appends: () => appends };
 }
 
 // Exercise the real generic scheduler and N-API engine; only the model is fake.
-async function runTurns(session: NonNullable<Awaited<ReturnType<typeof createPrimaryDocxTools>>>, turns: Call[][], surface?: ReturnType<typeof createToolSurface>) {
+async function runTurns(session: NonNullable<Awaited<ReturnType<typeof createPrimaryDocxTools>>>, turns: (Call[] | ((prompt: unknown) => Call[]))[], surface?: ReturnType<typeof createToolSurface>) {
   let turn = 0;
   const events: AgentEvent[] = [];
   const model = new MockLanguageModelV4({
-    doStream: async () => {
-      const calls = turns[turn++] ?? [];
+    doStream: async (options) => {
+      const scripted = turns[turn++] ?? [];
+      const calls = typeof scripted === "function" ? scripted(options.prompt) : scripted;
       return { stream: simulateReadableStream({ chunks: [
         { type: "stream-start" as const, warnings: [] },
         ...calls.map((call, index) => ({
@@ -137,7 +140,7 @@ test("same-turn formatting across three tables includes widths, shading, and cel
   for (const call of calls) {
     const table = run.tables.find((table) => table.handle === (call.input.table as { handle: string }).handle)!;
     assert.equal((await expected.mutate(call.name.slice("document.".length), {
-      ...call.input, table: { headerCells: table.rows[0]!.cells },
+      ...JSON.parse(JSON.stringify(call.input).replaceAll(table.handle.slice(0, table.handle.lastIndexOf(":") + 1), "")), table: { headerCells: table.rows[0]!.cells },
     })).ok, true);
   }
   await run.session.flush();
@@ -154,7 +157,7 @@ test("paragraph style/formatting, split text formatting, and format batches pres
     { name: "document.batch_paragraph_formatting", input: { operations: [{ target: { text: "Status" }, alignment: "left" }] } },
     { name: "document.set_text_formatting", input: { target: { text: "Item 0" }, italic: true } },
     widths(table.handle),
-    { name: "document.insert_paragraph", input: { text: "Opening", placement: { kind: "before", handle: "b0" } } },
+    { name: "document.insert_paragraph", input: { text: "Opening", placement: { kind: "before", handle: run.bodyHandle } } },
   ]]);
   assert.ok(result.metrics.toolCalls.every((call) => call.outcome === "success"));
   assert.equal(run.session.getWorkingMutationCount(), 7);
@@ -205,7 +208,7 @@ test("body, table, row, and column changes invalidate handles before siblings ca
   ];
   for (const change of changes) {
     const run = await createSession();
-    const { result, events } = await runTurns(run.session, [[inspect], [change, widths(run.tables[1]!.handle)]]);
+    const { result, events } = await runTurns(run.session, [[inspect], [{ ...change, input: JSON.parse(JSON.stringify(change.input).replaceAll('"t0"', JSON.stringify(run.tables[0]!.handle)).replaceAll('"t0:r0"', JSON.stringify(run.tables[0]!.rows[0]!.handle)).replaceAll('"t0:c0"', JSON.stringify(run.tables[0]!.columns[0]!.handle))) }, widths(run.tables[1]!.handle)]]);
     assert.deepEqual(result.metrics.toolCalls.map((call) => [call.outcome, call.failureCode]), [
       ["success", undefined], ["success", undefined], ["failure", "STALE_HANDLE"],
     ], change.name);
@@ -221,8 +224,12 @@ test("content edits expire sibling handles; a fresh inspect permits a later turn
   ]) {
     const run = await createSession();
     const handle = run.tables[0]!.handle;
-    const { result } = await runTurns(run.session, [[inspect], [contentEdit, widths(handle)], [inspect], [widths(handle)]]);
-    assert.deepEqual(result.metrics.toolCalls.map((call) => call.failureCode), [undefined, undefined, "STALE_HANDLE", undefined, undefined]);
+    const { result } = await runTurns(run.session, [[inspect], [{ ...contentEdit, input: JSON.parse(JSON.stringify(contentEdit.input).replaceAll('"t0"', JSON.stringify(handle)).replaceAll('"t0:r1:c0"', JSON.stringify(run.tables[0]!.rows[1]!.cellHandles[0]))) }, widths(handle)]]);
+    assert.deepEqual(result.metrics.toolCalls.map((call) => call.failureCode), [undefined, undefined, "STALE_HANDLE"]);
+    const call = { toolCallId: "refresh", messages: [], context: undefined as never };
+    const fresh = await run.session.tools["document.inspect"]!.execute!({ kind: "tables" }, call) as { tables: { items: { handle: string }[] } };
+    run.session.setModelTurn(4);
+    assert.equal((await run.session.tools["document.set_table_column_widths"]!.execute!({ table: { handle: fresh.tables.items[0]!.handle }, widthsTwips: [3000, 3000] }, call) as { ok: boolean }).ok, true);
     assert.equal(run.session.getWorkingMutationCount(), 2);
   }
 });
@@ -244,7 +251,11 @@ test("recurring report edits complete on the common surface with zero discovery 
   const { result } = await runTurns(run.session, [
     [{ name: "document.batch_replace_text", input: { operations: [{ target: { text: "Status" }, expectedCurrentText: "Status", replacement: "October" }] } }],
     [inspect],
-    [{ name: "document.delete_table_row", input: { table, row: { handle: run.tables[0]!.rows[2]!.handle } } }],
+    (prompt) => {
+      const result = JSON.stringify(prompt).match(/"handle":"([^"\s]+:t0:r2)"/);
+      assert.ok(result);
+      return [{ name: "document.delete_table_row", input: { table, row: { handle: result[1] } } }];
+    },
     [{ name: "document.set_table_cells_text", input: { table, updates: [{ target: { rowLabel: "Plan", columnHeader: "Owner" }, expectedCurrentText: "Alice", replacement: "Alicia" }] } }],
     [{ name: "document.replace_text", input: { target: { text: "October" }, expectedCurrentText: "October", replacement: "October Report" } }],
     [{ name: "finish", input: {} }],

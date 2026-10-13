@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { jsonSchema } from "ai";
 import {
   bindDocxDocument,
@@ -70,21 +71,16 @@ type SessionDocuments = Pick<
   | "createOfficeDocumentFromBytes"
 > & Partial<Pick<DocumentService, "rename">>;
 
-function collectHandles(value: unknown, handles: Set<string>): void {
-  if (!value || typeof value !== "object") return;
-  if (Array.isArray(value)) {
-    for (const item of value) collectHandles(item, handles);
-    return;
-  }
+function mapHandles<T>(value: T, map: (handle: string) => string): T {
+  if (!value || typeof value !== "object" || value instanceof Uint8Array) return value;
+  if (Array.isArray(value)) return value.map(item => mapHandles(item, map)) as T;
   const record = value as Record<string, unknown>;
-  for (const [key, item] of Object.entries(record)) {
-    if (key === "handle" && item === "" && (record.kind === "start" || record.kind === "end")) continue;
-    if (/(^handle$|Handle$)/.test(key) && typeof item === "string") handles.add(item);
-    else if (key.endsWith("Handles") && Array.isArray(item)) {
-      for (const handle of item) if (typeof handle === "string") handles.add(handle);
-    }
-    else collectHandles(item, handles);
-  }
+  return Object.fromEntries(Object.entries(record).map(([key, item]) => {
+    if (key === "handle" && item === "" && (record.kind === "start" || record.kind === "end")) return [key, item];
+    if (/(^handle$|Handle$)/.test(key) && typeof item === "string") return [key, map(item)];
+    if (key.endsWith("Handles") && Array.isArray(item)) return [key, item.map(handle => typeof handle === "string" ? map(handle) : handle)];
+    return [key, mapHandles(item, map)];
+  })) as T;
 }
 
 // Rust patches properties (or splits ordinary text runs) without changing
@@ -136,6 +132,9 @@ function createActiveDocxSession(input: {
   let workingRevision = 0;
   let workingMutationCount = 0;
   const currentHandles = new Set<string>();
+  const handleSession = randomUUID();
+  let handleGeneration = 0;
+  const handlePrefix = () => `${handleSession}:${handleGeneration}:`;
   let expiredHandles = new Map<string, string>();
   let lastHandleEvent = "none";
   let modelTurn: number | null = null;
@@ -151,6 +150,7 @@ function createActiveDocxSession(input: {
       expiredHandles = new Map([...currentHandles].map((handle) => [handle, cause]));
     }
     currentHandles.clear();
+    handleGeneration++;
   }
 
   function setModelTurn(turn: number | null): void {
@@ -166,7 +166,7 @@ function createActiveDocxSession(input: {
     sameTurnMutations = compatibleMutations = handleReuses = 0;
   }
 
-  function noteMutationFailure(capability: string, result: unknown): unknown {
+  function noteMutationFailure<T>(capability: string, result: T): T {
     if (!result || typeof result !== "object" || (result as { ok?: unknown }).ok !== false) return result;
     const failures = (mutationFailures.get(capability) ?? 0) + 1;
     mutationFailures.set(capability, failures);
@@ -270,68 +270,83 @@ function createActiveDocxSession(input: {
     }
   }
 
+  function registerHandles<T>(result: T): T {
+    const registered = mapHandles(result, handle => {
+      const scoped = handlePrefix() + handle;
+      currentHandles.add(scoped);
+      return scoped;
+    });
+    for (const handle of currentHandles) expiredHandles.delete(handle);
+    lastHandleEvent = "inspect";
+    return registered;
+  }
+
+  function resolveHandles<T>(request: T): T {
+    return mapHandles(request, handle => {
+      if (!currentHandles.has(handle)) throw new Error("STALE_HANDLE");
+      return handle.slice(handlePrefix().length);
+    });
+  }
+
+  async function mutate(capability: string, operation: Record<string, unknown>) {
+    if (!host?.mutate) {
+      return {
+        ok: false,
+        reasonCode: "NO_ACTIVE_DOCUMENT",
+        status: "error",
+        capability,
+        diagnostics: [],
+      };
+    }
+    const handles = new Set<string>();
+    mapHandles(operation, handle => { handles.add(handle); return handle; });
+    const rejectedHandle = [...handles].find((handle) => !currentHandles.has(handle));
+    if (rejectedHandle !== undefined) {
+      const staleCause = expiredHandles.get(rejectedHandle) ?? "unregistered_handle";
+      const recoveryKind = SEMANTIC_HANDLE_ALTERNATIVES.has(capability) ? "use_semantic_selector" : "reinspect";
+      const selector = operation.placement ?? operation.target;
+      const selectorKind = selector && typeof selector === "object" && "kind" in selector && typeof selector.kind === "string"
+        ? selector.kind.slice(0, 32) : null;
+      console.info(`[agent] stale_handle ${JSON.stringify({
+        tool: `document.${capability}`,
+        documentId,
+        versionId,
+        workingRevision,
+        selectorKind,
+        providedHandle: rejectedHandle.slice(0, 80),
+        registeredHandleCount: currentHandles.size,
+        providedHandleRegistered: currentHandles.has(rejectedHandle),
+        lastHandleEvent,
+        modelTurn,
+      })}`);
+      return noteMutationFailure(capability, { ok: false, reasonCode: "STALE_HANDLE", status: "error", capability,
+        staleCause, recoveryKind,
+        diagnostics: [{ code: "STALE_HANDLE", severity: "error", message: "Handle is no longer valid.", operation: capability,
+          staleCause, recoveryKind, retryable: false }] });
+    }
+    const result = await host.mutate(capability, resolveHandles(operation));
+    if (result.ok) {
+      if (modelTurn !== null && lastHandleEvent === "compatible_mutation" && handles.size) handleReuses++;
+      mutationFailures.delete(capability);
+    }
+    return noteMutationFailure(capability, result);
+  }
+
   const redirectingHost: BoundDocumentHost = {
     capabilities: () => input.binding.getDocxCapabilities(),
     documentId: () => documentId,
     inspect: async (request) => {
-      const result = await requireHost().inspect(request);
-      collectHandles(result, currentHandles);
-      for (const handle of currentHandles) expiredHandles.delete(handle);
-      lastHandleEvent = "inspect";
-      return result;
+      return registerHandles(await requireHost().inspect(resolveHandles(request)));
     },
     find: (request) => requireHost().find(request),
     readOperation: input.binding.readDocxOperation ? async (capability, request) => {
-      const result = await requireHost().readOperation!(capability, request);
-      collectHandles(result, currentHandles);
-      for (const handle of currentHandles) expiredHandles.delete(handle);
-      lastHandleEvent = "inspect";
-      return result;
+      return registerHandles(await requireHost().readOperation!(capability, resolveHandles(request)));
     } : undefined,
     renderLayout: () => requireHost().renderLayout!(),
     mutate: async (capability, operation) => {
-      if (!host?.mutate) {
-        return {
-          ok: false,
-          reasonCode: "NO_ACTIVE_DOCUMENT",
-          status: "error",
-          capability,
-          diagnostics: [],
-        };
-      }
-      const handles = new Set<string>();
-      collectHandles(operation, handles);
-      const rejectedHandle = [...handles].find((handle) => !currentHandles.has(handle));
-      if (rejectedHandle !== undefined) {
-        const staleCause = expiredHandles.get(rejectedHandle) ?? "unregistered_handle";
-        const recoveryKind = SEMANTIC_HANDLE_ALTERNATIVES.has(capability) ? "use_semantic_selector" : "reinspect";
-        const selector = operation.placement ?? operation.target;
-        const selectorKind = selector && typeof selector === "object" && "kind" in selector && typeof selector.kind === "string"
-          ? selector.kind.slice(0, 32) : null;
-        console.info(`[agent] stale_handle ${JSON.stringify({
-          tool: `document.${capability}`,
-          documentId,
-          versionId,
-          workingRevision,
-          selectorKind,
-          providedHandle: rejectedHandle.slice(0, 80),
-          registeredHandleCount: currentHandles.size,
-          providedHandleRegistered: currentHandles.has(rejectedHandle),
-          lastHandleEvent,
-          modelTurn,
-        })}`);
-        return noteMutationFailure(capability, { ok: false, reasonCode: "STALE_HANDLE", status: "error", capability,
-          staleCause, recoveryKind,
-          diagnostics: [{ code: "STALE_HANDLE", severity: "error", message: "Handle is no longer valid.", operation: capability,
-            staleCause, recoveryKind, retryable: false }] });
-      }
-      const result = await host.mutate(capability, operation);
-      if (result.ok) {
-        if (modelTurn !== null && lastHandleEvent === "compatible_mutation" && handles.size) handleReuses++;
-        advanceWorkingState(1, capability);
-        mutationFailures.delete(capability);
-      }
-      return noteMutationFailure(capability, result);
+      const result = await mutate(capability, operation);
+      if (result.ok) advanceWorkingState(1, capability);
+      return result;
     },
     mutateBatch: async (capability, operations) => {
       if (!host) return { ok: false, capability, reasonCode: "NO_ACTIVE_DOCUMENT", applied: 0 };
@@ -339,16 +354,12 @@ function createActiveDocxSession(input: {
         return { ok: false, capability, reasonCode: "VALIDATION_FAILED", applied: 0 };
       }
       for (let index = 0; index < operations.length; index++) {
-        const result = await host.mutate(capability, operations[index]!);
+        const result = await mutate(capability, operations[index]!);
         if (!result.ok) {
           advanceWorkingState(index, capability);
-          if (index) mutationFailures.delete(capability);
-          return noteMutationFailure(capability, {
-            ok: false, capability, applied: index, failedIndex: index,
-            reasonCode: result.reasonCode, diagnostics: result.diagnostics,
-            workingRevision,
-          });
+          return { ...result, applied: index, failedIndex: index, workingRevision };
         }
+        if (modelTurn === null || !HANDLE_PRESERVING_MUTATIONS.has(capability)) expireHandles("mutation_since_inspect");
       }
       advanceWorkingState(operations.length, capability);
       mutationFailures.delete(capability);

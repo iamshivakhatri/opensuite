@@ -265,7 +265,7 @@ export function mutationEffectKeys(input: unknown, output: unknown, documentId?:
   return keys;
 }
 
-/** The engine's header selector excludes column zero; its explicit first selector means the same cell. */
+/** A unique first header and the explicit first selector identify the same column. */
 function normalizeFirstColumn(unit: Record<string, unknown>): Record<string, unknown> {
   const table = isRecord(unit.table) ? unit.table : {};
   const target = isRecord(unit.target) ? unit.target : {};

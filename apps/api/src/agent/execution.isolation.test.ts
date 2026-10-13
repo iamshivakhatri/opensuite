@@ -126,6 +126,7 @@ for (const tracing of [false, true]) {
       let appends = 0;
       let reads = 0;
       let initialReads = 0;
+      let bodyHandle = "invalid";
       let turn = 0;
       const snapshots: string[] = [];
       const persistence = memoryPersistence("user-1");
@@ -150,13 +151,21 @@ for (const tracing of [false, true]) {
         }
         if (current === 2) assert.equal(snapshot, snapshots[1], "failed mutation and reads reuse the snapshot");
         if (current === 3) assert.match(snapshot, /Inserted/);
+        if (current === 1) {
+          const results = options.prompt.filter(message => message.role === "tool").flatMap(message => message.content).filter(part => part.type === "tool-result");
+          const inspected = results.find(part => part.toolName === "document_inspect");
+          assert.ok(inspected);
+          const result = JSON.stringify(inspected).match(/"handle":"([^"\s]+:b0)"/);
+          assert.ok(result);
+          bodyHandle = result[1]!;
+        }
         const calls = [
           [{ name: "document_inspect", input: { kind: "body_blocks" } },
             ...[["First", "One"], ["Second", "Two"], ["Third", "Three"]].map(([text, replacement]) => ({ name: "document_replace_text", input: { target: { text }, expectedCurrentText: text, replacement } }))],
-          [{ name: "document_insert_paragraphs", input: { texts: ["Inserted"], placement: { kind: "before", handle: "b0" } } },
+          [{ name: "document_insert_paragraphs", input: { texts: ["Inserted"], placement: { kind: "before", handle: bodyHandle } } },
             { name: "document_find", input: { text: "One" } }],
           [{ name: "document_inspect", input: { kind: "body_blocks" } },
-            { name: "document_insert_paragraphs", input: { texts: ["Inserted"], placement: { kind: "before", handle: "b0" } } }],
+            { name: "document_insert_paragraphs", input: { texts: ["Inserted"], placement: { kind: "start" } } }],
           [{ name: "finish", input: {} }],
         ][current]!;
         return { stream: simulateReadableStream({ chunks: [
@@ -181,7 +190,8 @@ for (const tracing of [false, true]) {
         },
       });
       const result = await (await execution.start({ userId: "user-1", threadId: "thread-1", activeDocumentId: "doc-1", instruction: "Update this document: replace First, Second and Third, then insert a paragraph" })).result;
-      assert.equal(result.run.status, "completed");
+      assert.equal(result.run.status, "failed");
+      assert.equal(result.run.errorCode, "AGENT_PARTIAL_COMPLETION", "a changed insertion target cannot prove recovery");
       assert.equal(appends, 1);
       assert.equal(runtime?.metrics.toolCalls.filter((call) => call.failureCode === "STALE_HANDLE").length, 1);
       assert.equal(runtime?.metrics.toolCalls.filter((call) => call.kind === "mutate" && call.outcome === "success").length, 4);
@@ -2506,13 +2516,14 @@ interface ScriptedTurn {
 /** Real agent-core loop + real native engine; only the model is scripted. */
 async function runScriptedDocx(input: {
   readonly bytes: Buffer;
-  readonly turns: readonly ScriptedTurn[];
+  readonly turns: readonly (ScriptedTurn | ((prompt: unknown) => ScriptedTurn))[];
   readonly instruction: string;
+  readonly binding?: Awaited<ReturnType<typeof createNapiDocxEngineBinding>>;
   /** Bill as managed OpenRouter; the hook runs once per debit. */
   readonly managedDebit?: (event: { id: string }) => Promise<void>;
   readonly unreadableSavedVersion?: boolean;
 }) {
-  const binding = await createNapiDocxEngineBinding();
+  const binding = input.binding ?? await createNapiDocxEngineBinding();
   const persistence = memoryPersistence("user-1");
   const controller = new AbortController();
   const state = {
@@ -2531,7 +2542,8 @@ async function runScriptedDocx(input: {
   let turn = 0;
   const model = new MockLanguageModelV4({ doStream: async (options) => {
     state.exposedTools.push(options.tools?.map((tool) => tool.name) ?? []);
-    const current = input.turns[turn++] ?? { calls: [] };
+    const scripted = input.turns[turn++] ?? { calls: [] };
+    const current = typeof scripted === "function" ? scripted(options.prompt) : scripted;
     if (current.fail === "abort") controller.abort(new Error("cancelled by user"));
     if (current.fail) throw new Error("provider unavailable");
     const finishReason = (current.calls.length ? "tool-calls" : "stop") as "tool-calls" | "stop";
@@ -2817,7 +2829,7 @@ test("every terminal path bills once, debits once, and settles a truthful durabl
   const exhausted = async () => { throw Object.assign(new Error("Managed AI is unavailable."), { code: "MANAGED_USAGE_EXHAUSTED" }); };
   const cases: readonly {
     readonly name: string;
-    readonly turns: readonly ScriptedTurn[];
+    readonly turns: readonly (ScriptedTurn | ((prompt: unknown) => ScriptedTurn))[];
     readonly managedDebit?: (event: { id: string }) => Promise<void>;
     readonly unreadableSavedVersion?: boolean;
     readonly status: AgentRun["status"];
@@ -3013,6 +3025,12 @@ test("Northstar header formatting recovers the first-column selector and saves v
   const table = { headerCells: rows[0] };
   const update = (column: unknown) => ({ target: { row: { kind: "header" }, column }, fill: "D9E2F3", textFormatting: { bold: true } });
   const { result, state, binding: runtimeBinding } = await runScriptedDocx({
+    binding: { ...binding, executeDocxOperation: async (bytes, capability, operation) => {
+      if (capability === "set_table_cells_formatting" && ((operation.updates as { target: { column: { kind: string } } }[])[0]?.target.column.kind === "header")) {
+        return { result: { ok: false, status: "error", diagnostics: [{ code: "TARGET_NOT_FOUND", reasonCode: "TABLE_COLUMN_NOT_FOUND", severity: "error", message: "Injected selector failure" }], changes: [] } };
+      }
+      return binding.executeDocxOperation!(bytes, capability, operation);
+    } },
     bytes: Buffer.from(seed.currentBytes()), instruction: "Format this document: bold and shade all three KPI table headers.",
     turns: [
       { calls: [{ name: "capabilities_load", input: { ids: ["document.tables.styling"] } }] },
@@ -3094,4 +3112,63 @@ test("recovering the first mutation does not hide a skipped sibling", async () =
     assert.equal(state.appends, 1);
     assert.equal((await binding.findDocxText(state.bytes, { text: "KPI B updated" })).matchCount, retrySibling ? 1 : 0);
   }
+});
+
+
+test("Phase 3 scripted Northstar run removes a heading lookup and first-header retry", async (t) => {
+  const binding = await createNapiDocxEngineBinding();
+  const seed = bindDocxDocument({ binding, bytes: buildMinimalDocx(["Pricing .... 4", "Pricing", "Commercial terms stay unchanged"]) });
+  assert.equal((await seed.mutate("set_paragraph_style", { target: { text: "Pricing", occurrence: 1 }, style: "Heading 1" })).ok, true);
+  const rows = [["Metric", "Baseline", "Target", "Owner"], ["Detection", "15", "10", "Sam"]];
+  assert.equal((await seed.mutate("create_table", { rows, placement: { kind: "end" } })).ok, true);
+  const bytes = Buffer.from(seed.currentBytes());
+  const inspected = await binding.inspectDocx(bytes, { focus: { kind: "headings" } });
+  if (!inspected.headings?.items[0]?.textTarget) return t.skip("Requires the Phase 3 local native engine");
+  const previous = process.env.OPENSUITE_ENGINE_PATH;
+  delete process.env.OPENSUITE_ENGINE_PATH;
+  let baseline;
+  try { baseline = await createNapiDocxEngineBinding(); }
+  finally { if (previous !== undefined) process.env.OPENSUITE_ENGINE_PATH = previous; }
+  const measurements = [];
+  for (const [label, engine] of [["before", baseline], ["after", binding]] as const) {
+    const table = { headerCells: rows[0] };
+    const format = (column: unknown) => ({ name: "document_set_table_cells_formatting", input: { table, updates: [{ target: { row: { kind: "header" }, column }, textFormatting: { bold: true } }] } });
+    const replace = (target: unknown) => ({ name: "document_replace_text", input: { target, expectedCurrentText: "Pricing", replacement: "Fees" } });
+    const findResult = (prompt: unknown, property: string) => {
+      const results = (prompt as { role: string; content: { type: string; output?: { value?: unknown } }[] }[])
+        .filter(message => message.role === "tool").flatMap(message => message.content)
+        .filter(part => part.type === "tool-result").map(part => part.output?.value)
+        .filter((value): value is Record<string, unknown> => !!value && typeof value === "object");
+      return results.find(result => property in result)!;
+    };
+    const { result, state } = await runScriptedDocx({ binding: engine, bytes,
+      instruction: "In this document, rename the Pricing body heading to Fees and bold the first KPI header cell.",
+      turns: [
+        { calls: [{ name: "capabilities_load", input: { ids: ["document.tables.styling"] } }, { name: "document_inspect", input: { kind: "headings" } }] },
+        prompt => {
+          const heading = (findResult(prompt, "headings").headings as { items: { textTarget?: unknown }[] }).items[0]!;
+          return { calls: heading.textTarget
+            ? [format({ kind: "header", text: "Metric" }), replace(heading.textTarget)]
+            : [{ name: "document_find", input: { text: "Pricing" } }, format({ kind: "header", text: "Metric" })] };
+        },
+        prompt => label === "after" ? { calls: [{ name: "finish", input: {} }] }
+          : { calls: [format({ kind: "first" }), replace({ text: "Pricing", occurrence: (findResult(prompt, "matches").matches as { occurrence: number }[])[1]!.occurrence })] },
+        { calls: [{ name: "finish", input: {} }] },
+      ],
+    });
+    assert.equal(result.run.status, "completed");
+    const metrics = state.runtime!.metrics;
+    measurements.push({ label, find: metrics.toolCalls.filter(call => call.toolName === "document.find").length,
+      inspect: metrics.toolCalls.filter(call => call.toolName === "document.inspect").length,
+      errors: metrics.toolCalls.filter(call => call.outcome === "failure").length, turns: metrics.modelTurns.length });
+    const paragraphs = await binding.inspectDocx(state.bytes, { focus: { kind: "paragraphs" } });
+    assert.deepEqual(paragraphs.paragraphs!.items.map(item => item.text), ["Pricing .... 4", "Fees", "Commercial terms stay unchanged"]);
+    assert.deepEqual((await binding.inspectDocx(state.bytes, { focus: { kind: "tables" } })).tables!.items[0]!.rows.map(row => row.cells), rows);
+    assert.equal((await inspectDocxStyleSnapshot(state.bytes, binding)).tables[0]!.firstRowBoldRunCount, 1);
+  }
+  assert.deepEqual(measurements, [
+    { label: "before", find: 1, inspect: 1, errors: 1, turns: 4 },
+    { label: "after", find: 0, inspect: 1, errors: 0, turns: 3 },
+  ]);
+  t.diagnostic(`PHASE3_MEASUREMENT ${JSON.stringify(measurements)}`);
 });

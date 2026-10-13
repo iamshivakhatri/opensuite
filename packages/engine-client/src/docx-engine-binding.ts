@@ -457,6 +457,7 @@ export interface DocxFindTextRequest {
 }
 
 export interface DocxFindTextMatch {
+  readonly target?: DocxTextTarget;
   readonly occurrence: number;
   readonly text: string;
   readonly before: string;
@@ -529,6 +530,8 @@ export interface DocxInspectOverview {
 }
 
 export interface DocxInspectHeadingItem {
+  readonly paragraphTarget?: DocxTextTarget;
+  readonly textTarget?: DocxTextTarget;
   readonly occurrence: number;
   readonly text: string;
   readonly styleName: string;
@@ -536,11 +539,12 @@ export interface DocxInspectHeadingItem {
 }
 
 export interface DocxInspectParagraphItem {
+  readonly textTarget?: DocxTextTarget;
   /** Existing native list facts; absence means the paragraph is not a list item. */
   readonly list?: { readonly kind: string; readonly level: number; readonly supported: boolean };
   /** Position among direct body paragraphs; not a mutation selector. */
   readonly index?: number;
-  /** Zero-based selector occurrence among matching mutable body paragraphs. */
+  /** Zero-based selector occurrence among safe body text matches. */
   readonly targetOccurrence?: number;
   readonly handle?: string;
   /** @deprecated Older native bindings used a global paragraph index here. */
