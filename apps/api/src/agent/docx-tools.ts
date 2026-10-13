@@ -46,6 +46,7 @@ export interface DocumentTransition {
 }
 
 export interface PrimaryDocxToolsResult {
+  readonly restoreStyleState: (state: SavedDocxStyleState) => void;
   readonly tools: AgentToolSet;
   readonly applyStyleProfile: (profileId: string, profiles: Pick<StyleProfileService, 'get'>) => Promise<ReturnType<typeof styleApplicationSummary>>;
   readonly applyResolvedAppearance: (appearance: ResolvedAppearance) => Promise<StyleFidelityReport>;
@@ -60,6 +61,11 @@ export interface PrimaryDocxToolsResult {
   readonly setModelTurn: (turn: number | null) => void;
   readonly flush: () => Promise<void>;
   readonly getTransitions: () => readonly DocumentTransition[];
+}
+
+export interface SavedDocxStyleState {
+  readonly appliedStyle: StyleProfileData | null;
+  readonly styleFidelity: StyleFidelityReport | null;
 }
 
 type SessionDocuments = Pick<
@@ -406,6 +412,10 @@ function createActiveDocxSession(input: {
     getActiveDocumentId: () => documentId,
     getActiveVersionId: () => versionId,
     getStyleFidelity: () => styleFidelity,
+    restoreStyleState(state: SavedDocxStyleState) {
+      appliedStyle = state.appliedStyle;
+      styleFidelity = state.styleFidelity;
+    },
     async applyStyleProfile(profileId: string, profiles: Pick<StyleProfileService, 'get'>) {
       if (!host || !documentId || !versionId) throw new Error('Select a target document before applying a style profile');
       if (input.editableDocumentId && documentId !== input.editableDocumentId) throw new Error('Document is reference-only');
@@ -732,6 +742,7 @@ export async function createPrimaryDocxTools(input: {
     applyResolvedAppearance: session.applyResolvedAppearance,
     getAppliedStyle: session.getAppliedStyle,
     getStyleFidelity: session.getStyleFidelity,
+    restoreStyleState: session.restoreStyleState,
     getWorkingRevision: session.getWorkingRevision,
     getWorkingDocument: session.getWorkingDocument,
     getWorkingMutationCount: session.getWorkingMutationCount,

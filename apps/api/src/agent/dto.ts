@@ -87,6 +87,7 @@ export function toAgentRunDto(run: AgentRun): AgentRunDto {
 }
 
 export function toAgentStepDto(step: AgentStep): AgentStepDto {
+  const { continuation, ...output } = step.output ?? {};
   return {
     id: step.id,
     sequence: step.sequence,
@@ -94,7 +95,7 @@ export function toAgentStepDto(step: AgentStep): AgentStepDto {
     status: step.status,
     name: step.name,
     summary: step.summary,
-    ...(step.kind === "validation" && step.output ? { output: step.output } : {}),
+    ...(step.kind === "validation" && step.output ? { output } : {}),
     createdAt: step.createdAt,
     startedAt: step.startedAt,
     completedAt: step.completedAt,

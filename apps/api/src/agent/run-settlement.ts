@@ -38,6 +38,7 @@ export async function persistTranscript(
     });
   } catch (error) {
     console.error(`[agent] run=${runId.slice(0, 8)} transcript_persist_failed reason=${summarizeError(error)}`);
+    if (entries.some(entry => entry.output?.continuation)) throw error;
   }
 }
 
@@ -137,6 +138,9 @@ export async function settleTerminalRunFailure(input: {
   }
 
   if (!alreadyTerminal) {
+    // A resumable stop is advertised only after its complete replay state is durable.
+    const hasContinuation = input.transcript?.some(entry => entry.output?.continuation);
+    if (hasContinuation) await persistTranscript(input.persistence, input.ownerUserId, input.run.id, input.transcript!);
     try {
       if (discloseAsAssistant) {
         assistantMessage = await input.persistence.withTransaction(async (tx) => {
@@ -172,7 +176,7 @@ export async function settleTerminalRunFailure(input: {
       );
     }
 
-    await persistTranscript(
+    if (!hasContinuation) await persistTranscript(
       input.persistence,
       input.ownerUserId,
       input.run.id,

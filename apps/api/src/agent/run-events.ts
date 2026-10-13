@@ -34,6 +34,7 @@ import type {
   ResolvedExecutionModel,
 } from "./execution.js";
 import type { RunTrace } from "./run-trace.js";
+import type { SavedContinuation } from './run-continuation.js';
 
 export const isInputNeededTool = (name: string | undefined) => name === "finish_with_input_needed" || name === "request_clarification";
 export const isFinishTool = (name: string | undefined) => name === "finish" || isInputNeededTool(name);
@@ -113,6 +114,7 @@ function sanitizeErrorMessage(message: string): string {
 
 export function createTranscriptCollector() {
   const entries: TranscriptEntry[] = [];
+  let continuation: Record<string, unknown> | undefined;
   let narration = "";
   const flushNarration = () => {
     const summary = narration.trim();
@@ -120,6 +122,15 @@ export function createTranscriptCollector() {
     if (summary) entries.push({ kind: "narration", status: "completed", name: "Assistant narration", summary });
   };
   return {
+    clearContinuation() { continuation = undefined; },
+    continuation(saved: SavedContinuation) {
+      const { system, initialMessageCount, retrievalMessage, direct, context, ...segment } = saved;
+      const value = saved.parentRunId ? segment : saved;
+      const encoded = JSON.stringify(value);
+      if (Buffer.byteLength(encoded) > 8_000_000) throw new Error('Saved execution context exceeds the continuation size limit');
+      continuation = JSON.parse(encoded) as Record<string, unknown>;
+      if (!entries.length) entries.push({ kind: 'plan', name: 'Execution paused', status: 'completed', summary: 'Execution paused' });
+    },
     text(delta: string) {
       narration += delta;
     },
@@ -152,8 +163,9 @@ export function createTranscriptCollector() {
     },
     // Save run state in an existing step for Continue; no separate storage or query.
     entries(activeDocumentId?: string | null, loadedCapabilityIds: readonly string[] = []) {
-      return activeDocumentId || loadedCapabilityIds.length ? entries.map((entry, index) => index === entries.length - 1
+      return activeDocumentId || loadedCapabilityIds.length || continuation ? entries.map((entry, index) => index === entries.length - 1
         ? { ...entry, output: { ...entry.output, ...(activeDocumentId ? { activeDocumentId } : {}),
+          ...(continuation ? { continuation } : {}),
           ...(loadedCapabilityIds.length ? { loadedCapabilityIds } : {}) } } : entry) : entries;
     },
   };

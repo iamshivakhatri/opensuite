@@ -6,18 +6,20 @@
  * Generic: it keys on the tool name and a stable hash of the input, nothing else.
  */
 export interface FailureFuse {
+  snapshot(): readonly (readonly [string, number])[];
   /** True when this exact call has already failed `maxAttempts` times. */
   tripped(toolName: string, input: unknown): boolean;
   /** Record one failed attempt for this exact call. */
   record(toolName: string, input: unknown): void;
 }
 
-export function createFailureFuse(maxAttempts: number): FailureFuse {
-  const failures = new Map<string, number>();
+export function createFailureFuse(maxAttempts: number, saved: readonly (readonly [string, number])[] = []): FailureFuse {
+  const failures = new Map<string, number>(saved);
   const key = (toolName: string, input: unknown): string =>
     `${toolName}\u0000${stableStringify(input)}`;
 
   return {
+    snapshot: () => [...failures],
     tripped(toolName, input) {
       return (failures.get(key(toolName, input)) ?? 0) >= maxAttempts;
     },

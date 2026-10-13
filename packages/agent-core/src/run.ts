@@ -52,6 +52,7 @@ export async function runAgent(input: RunAgentInput): Promise<RunAgentResult> {
   const retry = input.infraRetry ?? DEFAULT_INFRA_RETRY;
   const fuse = createFailureFuse(
     input.maxAttemptsPerCall ?? DEFAULT_MAX_ATTEMPTS_PER_CALL,
+    input.continuation?.failures,
   );
   const now: NowFn = input.now ?? Date.now;
   const deadlineAt =
@@ -94,6 +95,9 @@ export async function runAgent(input: RunAgentInput): Promise<RunAgentResult> {
       toolCalls: toolCallCount,
       stopReason,
       metrics: finalized,
+      ...(stopReason === "max_turns" || stopReason === "deadline" ? {
+        continuation: { messages: transcript, turns: (input.continuation?.turns ?? 0) + turns, failures: fuse.snapshot() },
+      } : {}),
     };
   };
 
@@ -112,7 +116,7 @@ export async function runAgent(input: RunAgentInput): Promise<RunAgentResult> {
 
       // Snapshot the selection: loading more tools cannot widen this turn.
       const turnTools = input.projectTools
-        ? { ...input.projectTools({ tools: input.tools ?? {}, turn: turns, messages: transcript }) }
+        ? { ...input.projectTools({ tools: input.tools ?? {}, turn: (input.continuation?.turns ?? 0) + turns, messages: transcript }) }
         : input.tools;
       const turnInput = { ...input, tools: turnTools };
       const schemaTools = input.projectTools ? schemaOnlyTools(turnTools!) : fixedSchemaTools;

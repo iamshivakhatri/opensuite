@@ -83,6 +83,7 @@ import { compactThreadContext, logContextCompaction } from "./context-compaction
 import { buildAgentOperatingInstruction, buildDocumentUpdateInstruction } from "./operating-instruction.js";
 import { createWorkspaceSearchTool } from "./workspace-search.js";
 import { requestsDocumentChange, requestsNewDocument, resolveDocumentTarget } from "./document-target.js";
+import { loadRunContinuation, type SavedContinuation } from './run-continuation.js';
 import {
   type AgentMessage,
   type AgentPersistenceService,
@@ -236,10 +237,15 @@ export function createAgentExecutionService(deps: AgentExecutionServiceDeps) {
     }
 
     try {
+      if (continuation) {
+        const latest = (await deps.persistence.listRunsForTriggerMessages({ threadId: thread.id, ownerUserId: input.userId,
+          messageIds: [continuation.triggeringMessageId] }))[0];
+        if (latest?.id !== input.continueFromRunId) throw new AgentExecutionError('INVALID_CONTINUATION', 'This task already has a newer execution. Continue its latest unfinished run.');
+      }
       const model = await resolveModel(deps, input.userId);
       const targetInstruction = continuation?.instruction ?? input.instruction;
       const creatingNewDocument = requestsNewDocument(targetInstruction);
-      const openDocument = creatingNewDocument || continuation?.documentId ? null : await resolvePrimaryDocument(
+      const openDocument = creatingNewDocument || continuation ? null : await resolvePrimaryDocument(
         deps.documents,
         thread,
         input.userId,
@@ -255,10 +261,10 @@ export function createAgentExecutionService(deps: AgentExecutionServiceDeps) {
       )) {
         throw new AgentExecutionError("DOCX_ENGINE_UNAVAILABLE", "DOCX editing is unavailable because the document engine did not load. Please try again after the API is restarted with the engine available.");
       }
-      const targetDocumentId = continuation?.documentId ?? resolveDocumentTarget({
+      const targetDocumentId = continuation ? continuation.documentId : resolveDocumentTarget({
         instruction: targetInstruction,
         openDocumentId: openDocument?.documentId ?? null,
-        documentIds: continuation?.documentIds ?? input.documentIds ?? [],
+        documentIds: input.documentIds ?? [],
         documents: workspaceDocuments ?? [],
       });
       const primaryDocument = targetDocumentId === openDocument?.documentId ? openDocument
@@ -335,11 +341,12 @@ export function createAgentExecutionService(deps: AgentExecutionServiceDeps) {
         structureCache,
         workspaceDocuments,
         ownerUserId: input.userId,
-        instruction: input.instruction,
+        instruction: continuation?.instruction ?? input.instruction,
         submittedDocumentIds,
         workingDocumentIds,
-        ...(continuation ? { continuationContext: continuation.context, continuationPreviousRunId: input.continueFromRunId,
-          continuationInstruction: continuation.instruction, loadedCapabilityIds: continuation.loadedCapabilityIds } : {}),
+        ...(continuation ? { continuationPreviousRunId: input.continueFromRunId,
+          loadedCapabilityIds: continuation.loadedCapabilityIds,
+          savedContinuation: continuation.saved } : {}),
         signal: input.signal,
         liveEvents: input.liveEvents,
         setWorkingDocumentGetter: (getter) => { getWorkingDocument = getter; },
@@ -383,7 +390,7 @@ async function resolveContinuation(
   persistence: AgentPersistenceService,
   input: AgentExecutionInput,
   thread: AgentThread,
-): Promise<{ readonly triggeringMessageId: string; readonly context: string; readonly instruction: string; readonly documentIds: readonly string[]; readonly documentId: string | null; readonly loadedCapabilityIds: readonly string[] }> {
+): Promise<{ readonly triggeringMessageId: string; readonly saved: SavedContinuation; readonly instruction: string; readonly documentIds: readonly string[]; readonly documentId: string | null; readonly loadedCapabilityIds: readonly string[] }> {
   const prior = await persistence.getRun({
     runId: input.continueFromRunId!,
     ownerUserId: input.userId,
@@ -406,27 +413,18 @@ async function resolveContinuation(
     throw new AgentExecutionError("INVALID_CONTINUATION", "This run cannot be continued.");
   }
   const steps = await persistence.listStepsForRun({ runId: prior.id, ownerUserId: input.userId });
-  const completed = new Map<string, number>();
-  const failures = new Map<string, number>();
-  for (const step of steps) {
-    if (step.kind !== "tool" && step.kind !== "inspect") continue;
-    const counts = step.status === "completed" ? completed : step.status === "failed" ? failures : null;
-    if (counts) counts.set(step.name, (counts.get(step.name) ?? 0) + 1);
-  }
-  const formatCounts = (counts: Map<string, number>) => [...counts]
-    .map(([name, count]) => `${name} ×${count}`).join(", ") || "none";
-  const failureReasons = [...new Set(steps.filter((step) => step.status === "failed")
-    .map((step) => step.summary).filter((summary): summary is string => !!summary && summary !== "Failed"))]
-    .slice(0, 4).join("; ");
+  let saved: SavedContinuation | undefined;
+  try { saved = await loadRunContinuation(persistence, prior, input.userId, steps); }
+  catch { throw new AgentExecutionError('INVALID_CONTINUATION', 'The saved execution context is unavailable. Start a new request.'); }
+  if (!saved) throw new AgentExecutionError('INVALID_CONTINUATION', 'This older run has no saved execution context. Start a new request.');
   return {
+    saved,
     triggeringMessageId: original.id,
     instruction: original.content,
     documentIds: original.documentIds ?? [],
     loadedCapabilityIds: ([...steps].reverse().map((step) => step.output?.loadedCapabilityIds)
       .find(Array.isArray) ?? []).filter((id): id is string => typeof id === "string"),
-    documentId: [...steps].reverse().map((step) => step.output?.activeDocumentId)
-      .find((id): id is string => typeof id === "string") ?? null,
-    context: `PREVIOUS RUN PROGRESS (run ${prior.id}; stopped: ${prior.errorCode === "AGENT_DEADLINE" ? "deadline" : "max_turns"})\nOriginal task:\n${original.content}\nCompleted tools: ${formatCounts(completed)}\nFailed tools: ${formatCounts(failures)}${failureReasons ? `\nFailure details: ${failureReasons}` : ""}\nBase document version: ${prior.baseDocumentVersionId ?? "none"}. Resume from the CURRENT bound document state. Do not repeat completed work. Read only where current context lacks an exact target or required structure.`,
+    documentId: saved.activeDocumentId,
   };
 }
 
@@ -453,6 +451,7 @@ async function resolvePrimaryDocument(
 }
 
 async function applyAutomaticWorkspaceAppearance(input: {
+  readonly createdDocumentId?: string | null;
   readonly deps: AgentExecutionServiceDeps;
   readonly toolSurface: ReturnType<typeof createToolSurface>;
   readonly boundTools: NonNullable<Awaited<ReturnType<typeof createPrimaryDocxTools>>>;
@@ -462,7 +461,7 @@ async function applyAutomaticWorkspaceAppearance(input: {
 }) {
   if (!input.deps.workspaceBrand) return;
   const documentId = input.boundTools.getActiveDocumentId();
-  const isNewDocument = !!documentId && input.boundTools.getTransitions().some((item) => item.kind === 'created' && item.toDocumentId === documentId);
+  const isNewDocument = !!documentId && (input.createdDocumentId === documentId || input.boundTools.getTransitions().some((item) => item.kind === 'created' && item.toDocumentId === documentId));
   const policy = [...input.toolSurface.session.loaded]
     .sort()
     .map(documentSkillPolicy)
@@ -514,10 +513,9 @@ async function runExecution(input: {
   readonly submittedDocumentIds: readonly string[];
   readonly workingDocumentIds: readonly string[];
   readonly editableDocumentId?: string;
-  readonly continuationContext?: string;
   readonly continuationPreviousRunId?: string;
-  readonly continuationInstruction?: string;
   readonly loadedCapabilityIds?: readonly string[];
+  readonly savedContinuation?: SavedContinuation;
   readonly signal?: AbortSignal;
   readonly liveEvents?: AgentEventSink;
   readonly setWorkingDocumentGetter: (getter: AgentExecutionHandle["getWorkingDocument"]) => void;
@@ -558,8 +556,14 @@ async function runExecution(input: {
       throw new AgentExecutionError("AGENT_PERSISTENCE_FAILED", "Could not save agent document changes. The previous version is unchanged.");
     }
   };
+  // Recovery uses logical-task evidence; billing and telemetry keep physical-run usage.
+  const taskMetrics = (metrics: AgentRunMetrics | undefined): AgentRunMetrics | undefined => metrics && input.savedContinuation
+    ? { ...metrics, toolCalls: [...input.savedContinuation.toolCalls, ...metrics.toolCalls]
+      .map((call, index) => ({ ...call, sequence: index + 1 })) } : metrics;
   try {
-    const { checkpoint, priorMessages, historyLoad } = await loadHistory({
+    const { checkpoint, priorMessages, historyLoad } = input.savedContinuation
+      ? { checkpoint: null, priorMessages: [], historyLoad: {} }
+      : await loadHistory({
       persistence: input.deps.persistence,
       threadId: input.thread.id,
       ownerUserId: input.ownerUserId,
@@ -586,7 +590,7 @@ async function runExecution(input: {
     }
 
     let savedTarget: { documentId: string; fromVersionId: string; versionId: string } | null = null;
-    let createdDocumentId: string | null = null;
+    let createdDocumentId: string | null = input.savedContinuation?.createdDocumentId ?? null;
     const initialDocumentId = input.primaryDocumentId;
     const engineCaps = input.deps.docxBinding?.getDocxCapabilities();
     const engineIdentity: AgentRunReportEngine | undefined = engineCaps
@@ -610,7 +614,8 @@ async function runExecution(input: {
       documentId: input.primaryDocumentId,
       versionId: input.run.baseDocumentVersionId,
       workingDocumentIds: input.workingDocumentIds,
-      ...(input.editableDocumentId ? { editableDocumentId: input.editableDocumentId } : {}),
+      ...((input.savedContinuation?.editedDocumentId ?? input.editableDocumentId)
+        ? { editableDocumentId: input.savedContinuation?.editedDocumentId ?? input.editableDocumentId } : {}),
       ...(input.deps.workspaceAssets ? { workspaceAssets: input.deps.workspaceAssets } : {}),
       onDocumentSelected: ({ documentId, versionId }) => {
         input.trace?.write("## Document Target", { documentId, versionId });
@@ -682,6 +687,10 @@ async function runExecution(input: {
       },
     });
     input.setWorkingDocumentGetter(() => boundTools?.getWorkingDocument() ?? null);
+    if (input.savedContinuation?.styleState && input.savedContinuation.activeDocumentId === boundTools?.getActiveDocumentId() &&
+      input.savedContinuation.savedVersionId === boundTools?.getActiveVersionId()) {
+      boundTools.restoreStyleState(input.savedContinuation.styleState);
+    }
 
     const finish = createFinishTool({
       description: "After your concise final response to the user, call this to end the run.",
@@ -733,13 +742,14 @@ async function runExecution(input: {
       documentId: boundTools?.getActiveDocumentId() ?? null,
       versionId: boundTools?.getActiveVersionId() ?? null,
       workingRevision: boundTools?.getWorkingRevision() ?? 0,
+      sessionId: input.run.id,
     }));
     capabilitySession = toolSurface.session;
-    const recommendations = toolSurface.session.recommend(input.continuationInstruction ?? input.instruction);
+    const recommendations = toolSurface.session.recommend(input.instruction);
     // Recheck each saved ID against this run's tool bindings and request policy.
     for (const id of input.loadedCapabilityIds ?? []) toolSurface.session.load([id], 0);
     const initialTools = toolSurface.session.projectTools();
-    const system = buildAgentOperatingInstruction(
+    const system = input.savedContinuation?.system ?? buildAgentOperatingInstruction(
       Object.keys(initialTools).map(providerSafeToolName),
       toolSurface.capabilityIndex,
       recommendations,
@@ -755,15 +765,13 @@ async function runExecution(input: {
         : "") +
       "\n\nSearch and inspection do not select a target. Keep edits narrow and preserve unrelated structure and formatting.";
 
-    const { messages, workspaceManifest, context, retrieval, reportRetrieval } = await prepareContext({
+    const prepared = await prepareContext({
       trace: input.trace,
       checkpoint,
       priorMessages,
       system,
       tools: initialTools,
       instruction: input.instruction,
-      retrievalInstruction: input.continuationInstruction ?? input.instruction,
-      ...(input.continuationContext ? { continuationContext: input.continuationContext } : {}),
       activeDocumentId: boundTools?.getActiveDocumentId(),
       activeVersionId: boundTools?.getActiveVersionId(),
       model: input.model,
@@ -780,6 +788,9 @@ async function runExecution(input: {
       submittedDocumentIds: input.submittedDocumentIds,
       workingDocumentIds: input.workingDocumentIds,
     });
+    const { workspaceManifest, retrieval, reportRetrieval } = prepared;
+    const messages = input.savedContinuation?.messages ?? prepared.messages;
+    const context = { ...prepared.context, ...input.savedContinuation?.context };
     input.trace?.write("## Retrieval — Mode / Constructed Context", { retrievalMode: retrieval?.observation.contextStrategy ?? "skipped", retrieval, context, messages });
     for (const document of retrieval?.workingSet ?? []) documentNames.set(document.documentId, document.name);
     const targetId = boundTools?.getActiveDocumentId();
@@ -824,12 +835,13 @@ async function runExecution(input: {
         });
     }
 
-    const initialMessageCount = messages.length;
-    let modelTurn = 0;
+    const initialMessageCount = input.savedContinuation?.initialMessageCount ?? messages.length;
+    let modelTurn = input.savedContinuation?.turns ?? 0;
     let continuation: Record<string, unknown> | undefined;
     const project = composeProjectMessages({
-      retrievalMessage: retrieval?.message ?? workspaceManifest,
-      ...(retrieval?.refreshDirectMessage ? { currentDirectMessage: () => directMessage,
+      initialMessageCount,
+      retrievalMessage: input.savedContinuation?.retrievalMessage ?? retrieval?.message ?? workspaceManifest,
+      ...((input.savedContinuation ? input.savedContinuation.direct : retrieval?.refreshDirectMessage) ? { currentDirectMessage: () => directMessage,
         directVersionId: () => directVersionId,
         currentVersionId: () => directMessage ? boundTools?.getActiveVersionId() ?? null : null,
       } : {}),
@@ -870,7 +882,9 @@ async function runExecution(input: {
         context.safeInputBudgetTokens - estimateTokens(system) - estimateTokens(toolContext(currentTools)) - estimateTokens(JSON.stringify(projected)),
       );
       const guidance = projectLoadedInstructions(toolSurface.session, instructionBudget);
-      const modelMessages = guidance ? [...projected, guidance.message] : projected;
+      const runtimeState = input.savedContinuation ? [{ role: 'user' as const, content:
+        `CONTINUED ENGINE SESSION\nCurrent document ID: ${boundTools?.getActiveDocumentId() ?? 'none'}; current version: ${boundTools?.getActiveVersionId() ?? 'none'}. Earlier opaque handles are stale; inspect again before using handles. Saved version at the boundary: ${input.savedContinuation.savedVersionId ?? 'none'}. Historical tool calls have already executed.` }] : [];
+      const modelMessages = [...projected, ...runtimeState, ...(guidance ? [guidance.message] : [])];
       const inRunMessages = projected.slice(initialMessageCount);
       continuation = { turn: ++modelTurn, mode: "provider",
         priorAssistantReasoningReplayed: inRunMessages.some((message) => message.role === "assistant" &&
@@ -958,6 +972,7 @@ async function runExecution(input: {
         model: input.model.model,
         system,
         messages,
+        ...(input.savedContinuation ? { continuation: input.savedContinuation } : {}),
         projectMessages,
         projectTools: toolSurface.projectTools,
         tools: toolSurface.tools,
@@ -985,6 +1000,7 @@ async function runExecution(input: {
           workspaceId: input.thread.workspaceId,
           ownerUserId: input.ownerUserId,
           instruction: input.instruction,
+          createdDocumentId,
         });
       }
       const inputNeeded = isInputNeededTool(result.metrics?.toolCalls.filter(tool => tool.outcome === 'success' && isFinishTool(tool.toolName)).at(-1)?.toolName);
@@ -993,11 +1009,11 @@ async function runExecution(input: {
         throw new AgentExecutionError('SAVED_STYLE_NOT_APPLIED', 'The requested saved style was not applied and verified.');
       }
       await flushWorking();
-      verificationChecks = await verifySavedDocument(result.metrics);
+      verificationChecks = await verifySavedDocument(taskMetrics(result.metrics));
     } catch (error) {
       let terminalError = error;
       try { await flushWorking(); } catch (flushError) { terminalError = flushError; }
-      verificationChecks = await verifySavedDocument(result?.metrics ?? getRunMetricsFromError(error));
+      verificationChecks = await verifySavedDocument(taskMetrics(result?.metrics ?? getRunMetricsFromError(error)));
       await recordFailedRunUsage((result?.metrics ?? getRunMetricsFromError(error))?.usage);
       await emitRunReport({
         trace: input.trace,
@@ -1029,7 +1045,7 @@ async function runExecution(input: {
       console.info(`[agent] tool_surface_summary run=${runShort} ${JSON.stringify(toolSurface.summary())}`);
     }
 
-    const unrecoveredMutates = unrecoveredFailedMutateToolNames(result.metrics);
+    const unrecoveredMutates = unrecoveredFailedMutateToolNames(taskMetrics(result.metrics));
     const unfinishedWork = unrecoveredMutates.length > 0 || hasBlockingVerificationFailure(verificationChecks);
     const succeeded = isSuccessfulStop(result.stopReason) && !unfinishedWork;
     // Settle usage before the report so a managed-credit failure is reported as the run's real outcome.
@@ -1068,6 +1084,22 @@ async function runExecution(input: {
 
     if (!isSuccessfulStop(result.stopReason)) {
       transcript.finish();
+      if (result.continuation && !persistenceFailure) {
+        transcript.continuation({ version: 1,
+          ...(input.savedContinuation ? { parentRunId: input.continuationPreviousRunId } : {}),
+          messages: result.continuation.messages.slice(input.savedContinuation?.messages.length ?? 0),
+          turns: result.continuation.turns, failures: result.continuation.failures,
+          toolCalls: result.metrics.toolCalls,
+          system, initialMessageCount,
+          retrievalMessage: input.savedContinuation?.retrievalMessage ?? retrieval?.message ?? workspaceManifest,
+          direct: input.savedContinuation?.direct ?? !!retrieval?.refreshDirectMessage,
+          context, activeDocumentId: boundTools?.getActiveDocumentId() ?? null,
+          savedVersionId: boundTools?.getActiveVersionId() ?? null,
+          createdDocumentId,
+          ...(boundTools ? { styleState: { appliedStyle: boundTools.getAppliedStyle(), styleFidelity: boundTools.getStyleFidelity() } } : {}),
+          editedDocumentId: boundTools?.getWorkingMutationCount() ? boundTools.getActiveDocumentId() : input.savedContinuation?.editedDocumentId ?? null,
+        } satisfies SavedContinuation);
+      }
       const boundedStop = result.stopReason === "max_turns" || result.stopReason === "deadline" || result.stopReason === "output_limit";
       return settleTerminalRunFailure({
         ...(boundedStop ? { expectedStop: result.stopReason } : {}),
@@ -1079,7 +1111,7 @@ async function runExecution(input: {
         run: input.run,
         liveEvents: input.liveEvents,
         failureCode: failureCodeForStopReason(result.stopReason),
-        failureMessage: boundedStopMessage(result.stopReason, versionAdvances.length > 0),
+        failureMessage: boundedStopMessage(result.stopReason, versionAdvances.length > 0 || !!input.savedContinuation?.editedDocumentId),
         transcript: transcript.entries(boundTools?.getActiveDocumentId(), [...capabilitySession?.loaded ?? []].sort()),
       });
     }
@@ -1087,7 +1119,7 @@ async function runExecution(input: {
     if (unfinishedWork) {
       transcript.finish();
       const blocking = verificationChecks.filter((check) => check.status === "fail" && BLOCKING_VERIFICATION_IDS.has(check.id));
-      const preserved = versionAdvances.length > 0;
+      const preserved = versionAdvances.length > 0 || !!input.savedContinuation?.editedDocumentId;
       const unresolved = unrecoveredMutates.length
         ? unrecoveredMutates.join(", ")
         : blocking.map((check) => check.message).join("; ");
@@ -1148,6 +1180,7 @@ async function runExecution(input: {
     // Includes pre-model setup (checkpoint/history load). Re-throwing here used
     // to reject the background promise and leave the run non-terminal forever.
     transcript.finish();
+    transcript.clearContinuation();
     let terminalError = error;
     if (!flushAttempted) {
       try { await flushWorking(); } catch (flushError) { terminalError = flushError; }
@@ -1173,7 +1206,7 @@ async function runExecution(input: {
 /** Reuse only a matching full observation that is still in this run's transcript. */
 export function guardRepeatedReads(
   tools: AgentToolSet,
-  currentState: () => { documentId: string | null; versionId: string | null; workingRevision: number },
+  currentState: () => { documentId: string | null; versionId: string | null; workingRevision: number; sessionId?: string },
 ) {
   let suppressed = 0;
   const readNames = ["document.inspect", "document.find", "document.style_snapshot"];

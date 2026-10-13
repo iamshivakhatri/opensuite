@@ -186,6 +186,8 @@ export interface RunModelResult {
 }
 
 export interface RunAgentInput extends RunModelInput {
+  /** Runtime state from an unfinished run; messages remain the single transcript. */
+  readonly continuation?: Omit<AgentContinuation, "messages">;
   readonly onDiagnostic?: DiagnosticHook;
   readonly tools?: AgentToolSet;
   /**
@@ -220,7 +222,15 @@ export interface RunAgentInput extends RunModelInput {
 }
 
 export interface RunAgentResult extends RunModelResult {
+  /** Replayable state only at a safe boundary after all tool results were recorded. */
+  readonly continuation?: AgentContinuation;
   readonly stopReason: StopReason;
   /** Finalized generic runtime measurements for this run. */
   readonly metrics: AgentRunMetrics;
+}
+
+export interface AgentContinuation {
+  readonly messages: readonly ModelMessage[];
+  readonly turns: number;
+  readonly failures: readonly (readonly [string, number])[];
 }

@@ -173,8 +173,6 @@ export async function prepareContext(input: {
   readonly system: string;
   readonly tools: AgentToolSet;
   readonly instruction: string;
-  readonly continuationContext?: string;
-  readonly retrievalInstruction?: string;
   readonly activeDocumentId: string | null | undefined;
   readonly activeVersionId: string | null | undefined;
   readonly model: {
@@ -217,7 +215,6 @@ export async function prepareContext(input: {
     estimateTokens(input.system) +
     estimateTokens(toolContext(input.tools)) +
     estimateTokens(input.instruction) +
-    estimateTokens(input.continuationContext ?? "") +
     estimateTokens(workspaceManifest);
   const budget =
     input.model.contextLength !== undefined
@@ -259,7 +256,7 @@ export async function prepareContext(input: {
     documents: input.documents,
     workspaceDocuments,
     ownerUserId: input.ownerUserId,
-    instruction: input.retrievalInstruction ?? input.instruction,
+    instruction: input.instruction,
     workspaceId: input.workspaceId,
     primaryDocumentId: input.primaryDocumentId,
     openDocumentId: input.openDocumentId,
@@ -318,9 +315,6 @@ export async function prepareContext(input: {
   const messages: ModelMessage[] = [
     ...(finalProjectedCheckpoint ? [{ role: "user" as const, content: finalProjectedCheckpoint }] : []),
     ...finalProjectedHistoricalMessages,
-    ...(input.continuationContext
-      ? [{ role: "user" as const, content: `${input.continuationContext}\nCurrent document ID: ${input.activeDocumentId ?? "none"}; current version: ${input.activeVersionId ?? "none"}.` }]
-      : []),
     { role: "user", content: input.instruction },
   ];
   return { messages, workspaceManifest, context, retrieval, reportRetrieval };
@@ -427,6 +421,7 @@ export function firstTurnContextProjection(context: string): (messages: readonly
  * Keep the same-run assistant/tool exchange intact for provider continuation.
  */
 export function composeProjectMessages(input: {
+  readonly initialMessageCount?: number;
   readonly retrievalMessage?: string;
   readonly currentDirectMessage?: () => string | undefined;
   readonly safeToolResultNames?: boolean;
@@ -439,7 +434,8 @@ export function composeProjectMessages(input: {
 
   return (messages) => {
     const first = !projectedOnce;
-    if (first) contextPosition = messages.at(-1)?.role === "user" ? messages.length - 1 : messages.length;
+    if (first) contextPosition = input.initialMessageCount !== undefined ? input.initialMessageCount - 1
+      : messages.at(-1)?.role === "user" ? messages.length - 1 : messages.length;
     projectedOnce = true;
     const currentVersion = input.currentVersionId?.();
     const directVersionId = typeof input.directVersionId === "function" ? input.directVersionId() : input.directVersionId;

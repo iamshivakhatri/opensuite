@@ -22,6 +22,7 @@ export {
   defineTool,
   isSuccessfulStop,
   type AgentEvent,
+  type AgentContinuation,
   type AgentTool,
   type AgentToolSet,
   type DefineToolSpec,
