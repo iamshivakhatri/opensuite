@@ -107,6 +107,19 @@ function docxCapabilitySet(capabilities: unknown): Set<string> {
   return set;
 }
 
+/** Drop N-API transport boilerplate before exposing descriptions to the model. */
+function agentFacingDescription(id: string, description: string): string {
+  const cleaned = description
+    .replace(/^Runs DOCX [^\n.]* away from Node's event loop and returns a Promise\.\s*/i, "")
+    .replace(/^Inspects the bounded DOCX formatting system away from Node's event loop\.\s*/i, "")
+    .trim();
+  if (cleaned) return cleaned;
+  if (id === "style_snapshot") {
+    return "Inspect named Word styles and direct/effective formatting for the current document. Read-only; does not save a version.";
+  }
+  return description;
+}
+
 /** agent-core AgentTools for the live loop. Names match product progress labels. */
 export function createDocumentTools(document: BoundDocumentHost): AgentToolSet {
   const capabilities = document.capabilities();
@@ -114,7 +127,7 @@ export function createDocumentTools(document: BoundDocumentHost): AgentToolSet {
   const operations = docxOperationDefinitions(capabilities);
   const definitions = new Map(operations
     .filter(op => op.kind === "mutate" && op.jsonInput)
-    .map(op => [op.id, { description: op.description, inputSchema: jsonSchema<Record<string, unknown>>(docxAgentInputSchema(op)) }]));
+    .map(op => [op.id, { description: agentFacingDescription(op.id, op.description), inputSchema: jsonSchema<Record<string, unknown>>(docxAgentInputSchema(op)) }]));
   const tools: AgentToolSet = {};
   const effectKeys = (input: unknown, output: unknown) =>
     mutationEffectKeys(input, output, document.documentId?.() ?? undefined);
@@ -130,14 +143,14 @@ export function createDocumentTools(document: BoundDocumentHost): AgentToolSet {
     if (!schema) throw new Error("Engine inspect operation is missing its focus input definition");
     const flatInspect = { ...inspect, inputSchema: schema };
     tools["document.inspect"] = defineTool<InspectToolInput, unknown>({
-      kind: "read", description: inspect.description,
+      kind: "read", description: agentFacingDescription(inspect.id, inspect.description),
       inputSchema: jsonSchema(schema),
       execute: input => { checkReadInput(flatInspect, input); return document.inspect({ focus: toInspectFocus(input) }); },
     });
   }
   const find = operations.find(op => op.id === "find_text" && op.kind === "read");
   if (find) tools["document.find"] = defineTool<{ text: string }, unknown>({
-    kind: "read", description: find.description,
+    kind: "read", description: agentFacingDescription(find.id, find.description),
     inputSchema: jsonSchema(find.inputSchema), execute: input => { checkReadInput(find, input); return document.find(input); },
   });
   const readFocus = {
@@ -154,7 +167,7 @@ export function createDocumentTools(document: BoundDocumentHost): AgentToolSet {
     const focus = readFocus[definition.id as keyof typeof readFocus];
     if (!focus && !document.readOperation) continue;
     const tool = defineTool<Record<string, unknown>, unknown>({
-      kind: "read", description: definition.description,
+      kind: "read", description: agentFacingDescription(definition.id, definition.description),
       inputSchema: jsonSchema(definition.inputSchema),
       execute: input => {
         checkReadInput(definition, input);

@@ -81,6 +81,10 @@ test("real bound DOCX exposes only executable mutation tools with agent-core kin
     "semantic_table_row_deletion",
   ]);
   const surface = createToolSurface(tools);
+  assert.equal(/event loop|returns a Promise/i.test(String(tools["document.replace_text"]?.description ?? "")), false);
+  assert.match(String(tools["document.style_snapshot"]?.description ?? ""), /named Word styles/i);
+  assert.equal(surface.session.load(["document.styles"]).ok, true);
+  assert.ok(surface.projectTools()["document.style_snapshot"]);
   const engineCaps =
     bound
       .capabilities()

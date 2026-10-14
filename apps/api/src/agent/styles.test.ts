@@ -29,6 +29,10 @@ test("Word styles load dynamically, edit existing styles, and save once", async 
   for (const name of ["create_style", "update_style"]) assert.equal(surface.initialTools[`document.${name}`], undefined);
   assert.equal(surface.session.load(["document.styles"]).ok, true);
   const tools = surface.projectTools();
+  assert.ok(tools["document.style_snapshot"]);
+  assert.match(String(tools["document.style_snapshot"]!.description ?? ""), /named Word styles/i);
+  const snapshotBefore = await tools["document.style_snapshot"]!.execute!({}, call) as { styles?: unknown[] };
+  assert.ok(Array.isArray(snapshotBefore.styles));
   const created = await tools["document.create_style"]!.execute!({ styleId: "AppHeading", styleType: "paragraph", name: "App Heading", basedOn: "Heading1", color: "124733" }, call) as { ok: boolean };
   assert.equal(created.ok, true);
   assert.equal((await session.tools["document.insert_paragraphs"]!.execute!({ texts: ["Style test heading"], placement: { kind: "end" } }, call) as { ok: boolean }).ok, true);

@@ -62,8 +62,7 @@ unavailable/failed inspection, retaining verified native bytes and logging the
 reason. Field inspection also warns about revisions in header/footer parts. Existing one-save,
 target/handle, recovery, and Continue semantics remain unchanged. No native field
 calculation or cross-editor layout fidelity is claimed. See
-[the validation report](phase7_word_semantics.md). Published pins remain 0.1.7;
-use the existing local override for these unpublished engine changes.
+[the validation report](phase7_word_semantics.md). Published pin is `@opensuitehq/engine@0.1.8`.
 
 ## Rule
 
@@ -151,7 +150,7 @@ exact immutable version N
 * Engine diagnostics may include optional `reasonCode` / `operation` / `targetHandle` (transport-only).
   Same reason id can appear on affordance `reason` and mutation `reasonCode`. Never parse `message` for control flow.
 * Proven blank-row path: inspect(tables) → cell handles → one atomic `set_table_cells_text` → persist N+1.
-* Phase 3 local engine: header columns include column zero, matching index selectors; duplicate headers require an explicit occurrence or index + expectedHeaderText. Table handles with supplied headerCells must match those expected headers. These engine changes are not yet in npm 0.1.7.
+* Phase 3: header columns include column zero, matching index selectors; duplicate headers require an explicit occurrence or index + expectedHeaderText. Table handles with supplied headerCells must match those expected headers. Published `@opensuitehq/engine@0.1.8` includes this surface.
 * Table workflow: inspect(tables) → set cells / insert rows / insert one column → re-inspect.
 * Column insert still needs `headerCells` even with handles —
   app rejects handle-only column insert as `VALIDATION_FAILED` before N-API (avoids process abort).
