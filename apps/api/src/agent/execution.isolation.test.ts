@@ -3160,7 +3160,7 @@ test("recovering the first mutation does not hide a skipped sibling", async () =
 });
 
 
-test("Phase 3 scripted Northstar run removes a heading lookup and first-header retry", async (t) => {
+test("Phase 3 scripted Northstar run removes a heading lookup and first-header retry", async () => {
   const binding = await createNapiDocxEngineBinding();
   const seed = bindDocxDocument({ binding, bytes: buildMinimalDocx(["Pricing .... 4", "Pricing", "Commercial terms stay unchanged"]) });
   assert.equal((await seed.mutate("set_paragraph_style", { target: { text: "Pricing", occurrence: 1 }, style: "Heading 1" })).ok, true);
@@ -3168,54 +3168,40 @@ test("Phase 3 scripted Northstar run removes a heading lookup and first-header r
   assert.equal((await seed.mutate("create_table", { rows, placement: { kind: "end" } })).ok, true);
   const bytes = Buffer.from(seed.currentBytes());
   const inspected = await binding.inspectDocx(bytes, { focus: { kind: "headings" } });
-  if (!inspected.headings?.items[0]?.textTarget) return t.skip("Requires the Phase 3 local native engine");
-  const previous = process.env.OPENSUITE_ENGINE_PATH;
-  delete process.env.OPENSUITE_ENGINE_PATH;
-  let baseline;
-  try { baseline = await createNapiDocxEngineBinding(); }
-  finally { if (previous !== undefined) process.env.OPENSUITE_ENGINE_PATH = previous; }
-  const measurements = [];
-  for (const [label, engine] of [["before", baseline], ["after", binding]] as const) {
-    const table = { headerCells: rows[0] };
-    const format = (column: unknown) => ({ name: "document_set_table_cells_formatting", input: { table, updates: [{ target: { row: { kind: "header" }, column }, textFormatting: { bold: true } }] } });
-    const replace = (target: unknown) => ({ name: "document_replace_text", input: { target, expectedCurrentText: "Pricing", replacement: "Fees" } });
-    const findResult = (prompt: unknown, property: string) => {
-      const results = (prompt as { role: string; content: { type: string; output?: { value?: unknown } }[] }[])
-        .filter(message => message.role === "tool").flatMap(message => message.content)
-        .filter(part => part.type === "tool-result").map(part => part.output?.value)
-        .filter((value): value is Record<string, unknown> => !!value && typeof value === "object");
-      return results.find(result => property in result)!;
-    };
-    const { result, state } = await runScriptedDocx({ binding: engine, bytes,
-      instruction: "In this document, rename the Pricing body heading to Fees and bold the first KPI header cell.",
-      turns: [
-        { calls: [{ name: "capabilities_load", input: { ids: ["document.tables.styling"] } }, { name: "document_inspect", input: { kind: "headings" } }] },
-        prompt => {
-          const heading = (findResult(prompt, "headings").headings as { items: { textTarget?: unknown }[] }).items[0]!;
-          return { calls: heading.textTarget
-            ? [format({ kind: "header", text: "Metric" }), replace(heading.textTarget)]
-            : [{ name: "document_find", input: { text: "Pricing" } }, format({ kind: "header", text: "Metric" })] };
-        },
-        prompt => label === "after" ? { calls: [{ name: "finish", input: {} }] }
-          : { calls: [format({ kind: "first" }), replace({ text: "Pricing", occurrence: (findResult(prompt, "matches").matches as { occurrence: number }[])[1]!.occurrence })] },
-        { calls: [{ name: "finish", input: {} }] },
-      ],
-    });
-    assert.equal(result.run.status, "completed");
-    const metrics = state.runtime!.metrics;
-    measurements.push({ label, find: metrics.toolCalls.filter(call => call.toolName === "document.find").length,
-      inspect: metrics.toolCalls.filter(call => call.toolName === "document.inspect").length,
-      errors: metrics.toolCalls.filter(call => call.outcome === "failure").length, turns: metrics.modelTurns.length });
-    const paragraphs = await binding.inspectDocx(state.bytes, { focus: { kind: "paragraphs" } });
-    assert.deepEqual(paragraphs.paragraphs!.items.map(item => item.text), ["Pricing .... 4", "Fees", "Commercial terms stay unchanged"]);
-    assert.deepEqual((await binding.inspectDocx(state.bytes, { focus: { kind: "tables" } })).tables!.items[0]!.rows.map(row => row.cells), rows);
-    assert.equal((await inspectDocxStyleSnapshot(state.bytes, binding)).tables[0]!.firstRowBoldRunCount, 1);
-  }
-  assert.deepEqual(measurements, [
-    { label: "before", find: 1, inspect: 1, errors: 1, turns: 4 },
-    { label: "after", find: 0, inspect: 1, errors: 0, turns: 3 },
-  ]);
-  t.diagnostic(`PHASE3_MEASUREMENT ${JSON.stringify(measurements)}`);
+  assert.ok(inspected.headings?.items[0]?.textTarget, "published engine must expose heading textTarget");
+  const table = { headerCells: rows[0] };
+  const format = (column: unknown) => ({ name: "document_set_table_cells_formatting", input: { table, updates: [{ target: { row: { kind: "header" }, column }, textFormatting: { bold: true } }] } });
+  const replace = (target: unknown) => ({ name: "document_replace_text", input: { target, expectedCurrentText: "Pricing", replacement: "Fees" } });
+  const findResult = (prompt: unknown, property: string) => {
+    const results = (prompt as { role: string; content: { type: string; output?: { value?: unknown } }[] }[])
+      .filter(message => message.role === "tool").flatMap(message => message.content)
+      .filter(part => part.type === "tool-result").map(part => part.output?.value)
+      .filter((value): value is Record<string, unknown> => !!value && typeof value === "object");
+    return results.find(result => property in result)!;
+  };
+  const { result, state } = await runScriptedDocx({ binding, bytes,
+    instruction: "In this document, rename the Pricing body heading to Fees and bold the first KPI header cell.",
+    turns: [
+      { calls: [{ name: "capabilities_load", input: { ids: ["document.tables.styling"] } }, { name: "document_inspect", input: { kind: "headings" } }] },
+      prompt => {
+        const heading = (findResult(prompt, "headings").headings as { items: { textTarget?: unknown }[] }).items[0]!;
+        return { calls: [format({ kind: "header", text: "Metric" }), replace(heading.textTarget)] };
+      },
+      { calls: [{ name: "finish", input: {} }] },
+    ],
+  });
+  assert.equal(result.run.status, "completed");
+  const metrics = state.runtime!.metrics;
+  assert.deepEqual({
+    find: metrics.toolCalls.filter(call => call.toolName === "document.find").length,
+    inspect: metrics.toolCalls.filter(call => call.toolName === "document.inspect").length,
+    errors: metrics.toolCalls.filter(call => call.outcome === "failure").length,
+    turns: metrics.modelTurns.length,
+  }, { find: 0, inspect: 1, errors: 0, turns: 3 });
+  const paragraphs = await binding.inspectDocx(state.bytes, { focus: { kind: "paragraphs" } });
+  assert.deepEqual(paragraphs.paragraphs!.items.map(item => item.text), ["Pricing .... 4", "Fees", "Commercial terms stay unchanged"]);
+  assert.deepEqual((await binding.inspectDocx(state.bytes, { focus: { kind: "tables" } })).tables!.items[0]!.rows.map(row => row.cells), rows);
+  assert.equal((await inspectDocxStyleSnapshot(state.bytes, binding)).tables[0]!.firstRowBoldRunCount, 1);
 });
 
 // Same scripted calls before/after Phase 4: input size is estimated, never provider usage.

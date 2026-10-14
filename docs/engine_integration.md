@@ -164,7 +164,7 @@ exact immutable version N
 ### Node binding setup
 
 ```bash
-pnpm install   # pulls @opensuitehq/engine@0.1.7 + platform package from npm
+pnpm install   # pulls @opensuitehq/engine@0.1.8 + platform package from npm
 ```
 
 Normal app, test, Docker, and production paths use the installed npm package. For local
@@ -181,13 +181,13 @@ silent fallback to the published package.
 (cd ../opensuite-engine/crates/opensuite-node && npm run build:debug)
 # In opensuite/.env (absolute path) — optional local override only:
 # OPENSUITE_ENGINE_PATH=/…/opensuite-engine/crates/opensuite-node/index.js
-# Leave unset to use published @opensuitehq/engine@0.1.7
+# Leave unset to use published @opensuitehq/engine@0.1.8
 OPENSUITE_ENGINE_PATH="$PWD/../opensuite-engine/crates/opensuite-node/index.js" pnpm --filter @opensuite/engine-client test
 pnpm --filter @opensuite/engine-client style-smoke
 ```
 
 
-`packages/engine-client` declares `@opensuitehq/engine` as a **dependency** (exact `0.1.7`) — not optional — so installs fail if the package cannot be resolved. Platform binaries ship as optionalDependencies of that package. Supported: darwin-arm64/x64, linux-x64-gnu, linux-arm64-gnu, win32-x64-msvc (glibc only; no Alpine/musl). No sibling `opensuite-engine` checkout required. Smoke test may write `/private/tmp/opensuite-app-engine-adapter-output.docx` for manual inspection only.
+`packages/engine-client` declares `@opensuitehq/engine` as a **dependency** (exact `0.1.8`) — not optional — so installs fail if the package cannot be resolved. Platform binaries ship as optionalDependencies of that package. Supported: darwin-arm64/x64, linux-x64-gnu, linux-arm64-gnu, win32-x64-msvc (glibc only; no Alpine/musl). No sibling `opensuite-engine` checkout required. Smoke test may write `/private/tmp/opensuite-app-engine-adapter-output.docx` for manual inspection only.
 
 ## Conceptual Interface
 

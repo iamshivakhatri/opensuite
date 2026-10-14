@@ -43,10 +43,10 @@ test("semantic selector compatibility accepts 0.1.3+ by version without capabili
   assert.equal(nativeSupportsSemanticTableRowDeletion(olderWithIds), true);
 });
 
-test("installed 0.1.7 binding dispatches semantic table-cell targets past the app gate", async () => {
+test("installed 0.1.8 binding dispatches semantic table-cell targets past the app gate", async () => {
   const binding = await createNapiDocxEngineBinding();
   const caps = binding.getDocxCapabilities();
-  assert.equal(caps.engineVersion, "0.1.7");
+  assert.equal(caps.engineVersion, "0.1.8");
   assert.equal(nativeSupportsSemanticTableCellTargets(caps), true);
 
   const bytes = new Uint8Array(buildNameRoleTableDocx());
