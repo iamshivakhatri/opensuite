@@ -4,6 +4,11 @@
 
 OpenSuite communicates with it only through `packages/engine-client`.
 
+Phase 8 local acceptance and release limits are recorded in
+[`phase8_release_readiness.md`](./phase8_release_readiness.md). The hardened local
+build and packed macOS ARM64 consumer pass; this does not certify the currently
+published 0.1.7 package or other platforms with these unpublished changes.
+
 **After a new engine publish:** follow the application bump runbook in [`docs/engine_upgrade.md`](./engine_upgrade.md) (files to touch, tests, Docker, cloud notes).
 
 ## Capability source of truth

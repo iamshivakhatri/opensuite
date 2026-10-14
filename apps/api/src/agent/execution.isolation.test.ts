@@ -2598,6 +2598,54 @@ async function rosterTableDocx(): Promise<Buffer> {
   return Buffer.from(seed.currentBytes());
 }
 
+test('Phase 8: proposal pricing, KPI, milestones and narrative save exact values once', async (t) => {
+  const binding = await createNapiDocxEngineBinding();
+  const narrative = 'Commercial forecast: $278,500. Downtime target: 24%. Start November 16, 2026; finish March 8, 2027.';
+  const seed = bindDocxDocument({ binding, bytes: buildMinimalDocx(['Northstar proposal', narrative]) });
+  const rows = [
+    [['Item', 'Price'], ['Discovery', '$90,000'], ['Equipment', '$75,000'], ['Training', '$50,000'], ['Support', '$38,500'], ['Travel', '$25,000'], ['Total', '$278,500']],
+    [['KPI', 'Baseline', 'Target'], ['Downtime', '100 hours', '76 hours'], ['Maintenance Cost', '$185,000/quarter', '$155,000/quarter']],
+    [['Milestone', 'Date'], ['Start', 'November 16, 2026'], ['Finish', 'March 8, 2027']],
+  ];
+  for (const table of rows) assert.equal((await seed.mutate('create_table', { rows: table, placement: { kind: 'end' } })).ok, true);
+  const cell = (row: string, column: string, before: string, after: string) => ({ target: { row: { kind: 'label', text: row }, column: { kind: 'header', text: column } }, expectedCurrentText: before, replacement: after });
+  let nativeMutations = 0;
+  const counted = { ...binding, executeDocxOperation: async (...args: Parameters<NonNullable<typeof binding.executeDocxOperation>>) => {
+    nativeMutations++; return binding.executeDocxOperation!(...args);
+  } };
+  const reference = Buffer.from(buildMinimalDocx(['Read-only reference: approved scope is 12 lines and 48 machines.']));
+  const originalReference = Buffer.from(reference);
+  const started = performance.now();
+  const run = await runScriptedDocx({ binding: counted, bytes: Buffer.from(seed.currentBytes()),
+    instruction: 'In the currently open Roster.docx, update Discovery to $100,000, total to $288,500; downtime target to 70 hours (30% reduction), start to November 23, 2026 and finish to March 15, 2027. Update the narrative too. Keep KPI baselines, other prices and the attached reference unchanged.',
+    documentIds: ['doc-1', 'source'], references: [{ id: 'source', name: 'Approved scope.docx', bytes: reference }],
+    turns: [
+      { calls: [{ name: 'document_set_table_cells_text', input: { table: { headerCells: rows[0]![0] }, updates: [cell('Discovery', 'Price', '$90,000', '$100,000'), cell('Total', 'Price', '$278,500', '$288,500')] } }] },
+      { calls: [{ name: 'document_set_table_cells_text', input: { table: { headerCells: rows[1]![0] }, updates: [cell('Downtime', 'Target', '76 hours', '70 hours')] } }] },
+      { calls: [{ name: 'document_set_table_cells_text', input: { table: { headerCells: rows[2]![0] }, updates: [cell('Start', 'Date', 'November 16, 2026', 'November 23, 2026'), cell('Finish', 'Date', 'March 8, 2027', 'March 15, 2027')] } }] },
+      { calls: [{ name: 'document_replace_text', input: { target: { text: narrative }, expectedCurrentText: narrative, replacement: 'Commercial forecast: $288,500. Downtime target: 30%. Start November 23, 2026; finish March 15, 2027.' } }] },
+      { text: 'Updated the requested prices, target, dates and narrative.', calls: [{ name: 'finish', input: {} }] },
+    ],
+  });
+  assert.equal(run.result.run.status, 'completed', run.result.run.errorMessage ?? '');
+  assert.equal(run.state.appends, 1);
+  assert.equal(run.state.reports[0]?.document?.finalDocumentId, 'doc-1');
+  assert.deepEqual(reference, originalReference);
+  const expected = structuredClone(rows);
+  expected[0]![1]![1] = '$100,000'; expected[0]![6]![1] = '$288,500';
+  expected[1]![1]![2] = '70 hours';
+  expected[2]![1]![1] = 'November 23, 2026'; expected[2]![2]![1] = 'March 15, 2027';
+  const tables = await binding.inspectDocx(run.state.bytes, { focus: { kind: 'tables' } });
+  assert.deepEqual(tables.tables!.items.map(table => table.rows.map(row => row.cells)), expected);
+  assert.equal(expected[0]!.slice(1, -1).reduce((sum, row) => sum + Number(row[1]!.replace(/[$,]/g, '')), 0), 288500);
+  const paragraphs = await binding.inspectDocx(run.state.bytes, { focus: { kind: 'paragraphs' } });
+  assert.ok(paragraphs.paragraphs!.items.some(p => p.text === 'Commercial forecast: $288,500. Downtime target: 30%. Start November 23, 2026; finish March 15, 2027.'));
+  assert.equal(nativeMutations, 4);
+  t.diagnostic(`PHASE8_PROPOSAL ${JSON.stringify({ scripted: true, modelTurns: run.state.runtime!.metrics.modelTurns.length,
+    toolCalls: run.state.runtime!.metrics.toolCalls.length, nativeMutations, savedVersions: run.state.appends,
+    wallClockMs: Math.round(performance.now() - started), providerCalls: 0, correct: true })}`);
+});
+
 const rosterRows = [["Name", "Role"], ["Ada", "CEO"], ["Lin", "CTO"]];
 const rosterTable = { headerCells: ["Name", "Role"] };
 const headerCell = (column: unknown) => ({ row: { kind: "header" }, column });
