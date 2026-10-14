@@ -2,6 +2,7 @@
 
 import * as React from "react";
 
+import "@/styles/agent-live.css";
 import { AgentRunProgress } from "@/components/documents/agent-run-progress";
 import { Button } from "@/components/ui/button";
 import { AgentMarkdown } from "@/lib/agent-markdown";
@@ -55,10 +56,13 @@ function RunTranscript({
     if (activities.length === 0) return;
     const lines = activities;
     activities = [];
+    const presentation = presentAgentRun(lines, { live: streaming });
+    // Failed attempts are hidden from rows; a group with nothing to show is not a "Working" row.
+    if (presentation.activities.length === 0) return;
     parts.push(
       <AgentRunProgress
         key={`activities:${lines.map((line) => line.id).join(":")}`}
-        presentation={presentAgentRun(lines, { live: streaming })}
+        presentation={presentation}
         status={lines.some((line) => line.status === "active") ? "active" : "done"}
         expanded={false}
         onToggle={() => undefined}
@@ -87,15 +91,53 @@ function RunTranscript({
   return <div className="flex flex-col gap-2">{parts}</div>;
 }
 
-function WorkingDots({ connectionStale, stopping }: { connectionStale: boolean; stopping: boolean }) {
+/** Dry one-liners, each backed by something the product really does. */
+const LIVE_QUIPS = [
+  "Everything you didn't ask to change stays put. We keep our hands in our pockets.",
+  "Every run is saved as a version, so \u201Cundo\u201D is never a dramatic word.",
+  "Checking the saved file before calling it done. Trust, but verify.",
+  "Still a real .docx. Opens anywhere, even on that one coworker's laptop.",
+  "Your fonts and layout are safe. Nobody is getting Comic Sans.",
+  "Reading the whole document so you don't have to scroll.",
+  "Teaching the paragraphs to behave.",
+  "Making sure the formatting survives the meeting.",
+] as const;
+
+/** The one live indicator for a run: spinner, shimmering status, rotating quip. */
+function LiveStatus({
+  thinking,
+  connectionStale,
+  stopping,
+}: {
+  thinking: boolean;
+  connectionStale: boolean;
+  stopping: boolean;
+}) {
+  const [startedAt] = React.useState(() => Date.now());
+  const [firstQuip] = React.useState(() => Math.floor(Math.random() * LIVE_QUIPS.length));
+  const [now, setNow] = React.useState(startedAt);
+  React.useEffect(() => {
+    const id = window.setInterval(() => setNow(Date.now()), 1000);
+    return () => window.clearInterval(id);
+  }, []);
+  const seconds = Math.floor((now - startedAt) / 1000);
+  const quip = LIVE_QUIPS[(firstQuip + Math.floor(seconds / 4)) % LIVE_QUIPS.length]!;
+
   if (connectionStale || stopping) {
-    return <p role="status" className="pl-1 text-[length:var(--text-2xs)] text-ink-faint">{stopping ? "Stopping…" : "Checking connection…"}</p>;
+    return <p role="status" className="pl-1 text-[length:var(--text-2xs)] text-ink-faint">{stopping ? "Stopping\u2026" : "Checking connection\u2026"}</p>;
   }
   return (
-    <div role="status" aria-label="Agent working" className="flex items-center gap-1.5 py-1 pl-1">
-      <span aria-hidden className="h-1.5 w-1.5 rounded-full bg-primary motion-safe:animate-pulse [animation-delay:-800ms]" />
-      <span aria-hidden className="h-1.5 w-1.5 rounded-full bg-primary motion-safe:animate-pulse [animation-delay:-400ms]" />
-      <span aria-hidden className="h-1.5 w-1.5 rounded-full bg-primary motion-safe:animate-pulse" />
+    <div role="status" aria-label="Agent working" className="flex items-start gap-2.5 py-1 pl-1">
+      <span aria-hidden className="os-live-arc mt-[2px] h-3.5 w-3.5 shrink-0 rounded-full" />
+      <div className="min-w-0 leading-[1.45]">
+        {thinking ? (
+          <p className="text-[length:var(--text-xs)] font-medium">
+            <span className="os-live-shimmer">Thinking</span>
+            {seconds >= 1 ? <span className="font-normal tabular-nums text-ink-faint">{" · "}{seconds}s</span> : null}
+          </p>
+        ) : null}
+        <p key={quip} className="os-fade-in text-[length:var(--text-2xs)] text-ink-faint">{quip}</p>
+      </div>
     </div>
   );
 }
@@ -239,17 +281,27 @@ export function AgentTranscript({
           if (message.role === "user") {
             const messageTags = messageTaggedDocuments(message, documentsForTags);
             const isContinue = message.content.trim() === "Continue";
+            const priorUser = messages
+              .slice(0, index)
+              .reverse()
+              .find((entry) => entry.role === "user");
+            const isRetryDuplicate =
+              !isContinue &&
+              priorUser !== undefined &&
+              priorUser.content === message.content;
+            const compact = isContinue || isRetryDuplicate;
             return (
               <div
                 key={message.id}
+                title={isRetryDuplicate ? message.content : undefined}
                 className={cn(
                   "text-ink",
-                  isContinue
+                  compact
                     ? "self-start rounded-[var(--radius-sm)] border border-stroke px-2 py-0.5 text-[length:var(--text-xs)] font-medium"
                     : "rounded-[var(--radius-md)] bg-secondary-soft px-2.5 py-2 text-[length:var(--text-panel)] leading-[1.55]",
                 )}
               >
-                {!isContinue && messageTags.length > 0 ? (
+                {!compact && messageTags.length > 0 ? (
                   <div className="mb-1.5 flex flex-wrap gap-1">
                     {messageTags.map((file) => (
                       <span
@@ -261,7 +313,7 @@ export function AgentTranscript({
                     ))}
                   </div>
                 ) : null}
-                {message.content}
+                {isRetryDuplicate ? "Retry" : message.content}
               </div>
             );
           }
@@ -311,16 +363,8 @@ export function AgentTranscript({
           );
         })}
 
-        {/* Live narration and tool rows keep their observed order. */}
-        {live.active ? (
-          <div className="flex flex-col gap-2">
-            {live.entries.length > 0 ? <RunTranscript entries={live.entries} streaming /> : null}
-            <WorkingDots connectionStale={live.connectionStale} stopping={live.stopping} />
-          </div>
-        ) : null}
-
-        {/* Finished turn with no assistant text yet (cancel / fail). */}
-        {!live.active && turn.terminalSteps ? (
+        {/* Prior failed/cancelled run steps stay visible while Retry streams. */}
+        {turn.terminalSteps ? (
           <CompletedRunTranscript
             steps={turn.terminalSteps}
             summary={
@@ -332,6 +376,18 @@ export function AgentTranscript({
                 : null
             }
           />
+        ) : null}
+
+        {/* Live narration and tool rows keep their observed order. */}
+        {live.active ? (
+          <div className="flex flex-col gap-2">
+            {live.entries.length > 0 ? <RunTranscript entries={live.entries} streaming /> : null}
+            <LiveStatus
+              thinking={!live.entries.some((entry) => entry.kind === "activity" && entry.line.status === "active") && live.entries.at(-1)?.kind !== "narration"}
+              connectionStale={live.connectionStale}
+              stopping={live.stopping}
+            />
+          </div>
         ) : null}
         {!live.active &&
         turn.last &&

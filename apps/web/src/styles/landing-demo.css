@@ -8,17 +8,16 @@
 
 .pd-frame {
   container-type: inline-size;
-  /* 1000 x 580 workspace window plus its padding. */
-  aspect-ratio: 1080 / 640;
+  aspect-ratio: 1000 / 580;
 }
 
 .pd-scale {
   position: relative;
-  width: 1080px;
-  height: 640px;
+  width: 1000px;
+  height: 580px;
   transform-origin: 0 0;
   /* unitless ratio of container width to design width */
-  scale: tan(atan2(100cqw, 1080px));
+  scale: tan(atan2(100cqw, 1000px));
 }
 
 .pd-cam {

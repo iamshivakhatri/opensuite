@@ -1,4 +1,5 @@
-@import "tailwindcss";
+/* Turbopack+pnpm: package-name @import "tailwindcss" fails to resolve. */
+@import "../../node_modules/tailwindcss/index.css";
 /* Raw brand palette (the only place brand hex values live). */
 @import "../styles/brand-palette.css";
 /* Landing demos (scaled design stage, camera, cursor). */

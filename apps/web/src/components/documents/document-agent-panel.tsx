@@ -347,6 +347,8 @@ export function DocumentAgentPanel({
     const messageId = snapshot.run.resultMessageId;
     if (messageId) {
       setRunStepsByMessageId((previous) => ({ ...previous, [messageId]: snapshot.steps }));
+      // Durable assistant steps replace any prior failed-run terminal transcript.
+      setTerminalRunTranscript(null);
     } else {
       setTerminalRunTranscript({ runId: snapshot.run.id, steps: snapshot.steps });
     }
@@ -421,9 +423,17 @@ export function DocumentAgentPanel({
     if (run.status === "failed") {
       const canContinue = run.errorCode === "AGENT_MAX_TURNS" || run.errorCode === "AGENT_DEADLINE";
       const needsAiSettings = run.errorCode?.startsWith("MANAGED_USAGE_") || run.errorCode?.startsWith("MANAGED_TRIAL_");
-      setRunError(canContinue ? null : run.errorMessage || "The agent run failed. You can try again.");
+      // Partial completion already saved work and discloses via the assistant
+      // message / timeline. A red Retry would re-run the whole instruction and
+      // risk overwriting those preserved changes.
+      const preservedPartial = run.errorCode === "AGENT_PARTIAL_COMPLETION";
+      setRunError(
+        canContinue || preservedPartial
+          ? null
+          : run.errorMessage || "The agent run failed. You can try again.",
+      );
       setRunNotice(null);
-      setCanRetryRun(!canContinue && !needsAiSettings);
+      setCanRetryRun(!canContinue && !needsAiSettings && !preservedPartial);
       setContinueRunId(canContinue ? run.id : null);
     } else if (run.status === "cancelled") {
       setRunError(null);
@@ -548,12 +558,12 @@ export function DocumentAgentPanel({
         setCanRetryRun(false);
         setContinueRunId(null);
         setLiveTranscript([]);
-        setTerminalRunTranscript(null);
+        // Keep terminalRunTranscript + lastTurn so Retry/Continue do not blank
+        // the prior run's steps while the new turn streams.
         reconnectAttemptsRef.current = 0;
         const startedAt = Date.now();
         runStartedAtRef.current = startedAt;
         setRunTotalMs(null);
-        setLastTurn(null);
         // Collapsed by default (Perplexity-style); click › to expand steps.
         setTimelineOpen(false);
         setProgress([
@@ -1048,12 +1058,26 @@ export function DocumentAgentPanel({
       .reverse()
       .find((message) => message.role === "user");
     if (!lastUserMessage) return;
-    await submitInstruction(lastUserMessage.content, taggedDocumentIdsForRun());
+    // Prefer the original message's tagged docs so Retry keeps retrieval context.
+    const documentIds = [
+      ...new Set([
+        ...(lastUserMessage.documentIds ?? []),
+        ...taggedDocumentIdsForRun(),
+        ...(documentId ? [documentId] : []),
+      ]),
+    ];
+    await submitInstruction(lastUserMessage.content, documentIds);
   }
 
   async function handleContinue() {
     if (!continueRunId || busy) return;
-    await submitInstruction("Continue", taggedDocumentIdsForRun(), {
+    const documentIds = [
+      ...new Set([
+        ...taggedDocumentIdsForRun(),
+        ...(documentId ? [documentId] : []),
+      ]),
+    ];
+    await submitInstruction("Continue", documentIds, {
       continueFromRunId: continueRunId,
     });
   }

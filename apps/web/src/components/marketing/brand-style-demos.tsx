@@ -11,9 +11,9 @@ import { cn } from "@/lib/utils";
 /**
  * Three looping illustrations for the landing "Brand & styles" section.
  * Each is a scene of `step` (and `typed`) driven by useDemoLoop and drawn on
- * a padded 480 x 340 design stage that CSS scales to its container. They are
- * designed to look good first; "Meridian Studio" is a made-up company. One calm brand
- * color on warm paper; no gradients, glows, or sparkle icons.
+ * a 480 x 340 design stage that CSS scales to its container. Cards float on
+ * the page paper — no outer mat or border. "Meridian Studio" is a made-up
+ * company. One calm brand color; no gradients, glows, or sparkle icons.
  */
 
 const BRAND = "#1F3D36";
@@ -25,7 +25,6 @@ const FILE_NAME = "Meridian-Q3-Report.docx";
 
 const SERIF = "var(--font-serif), Georgia, serif";
 const SANS = "var(--font-sans), system-ui, sans-serif";
-const BACKDROP = "linear-gradient(160deg, #fdfcfa 0%, #f5f3ec 100%)";
 
 type Step = { step: number };
 type Typing = Step & { typed: number };
@@ -47,8 +46,7 @@ function MiniStage({
     <div
       ref={stageRef}
       aria-hidden="true"
-      className="mini-frame relative overflow-hidden rounded-[8px] border border-[var(--rule)] bg-surface shadow-[0_1px_1px_rgba(25,25,23,0.03),0_24px_60px_-34px_rgba(25,25,23,0.28)]"
-      style={{ backgroundImage: BACKDROP }}
+      className="mini-frame relative overflow-hidden"
     >
       <div className="mini-scale">
         <div
@@ -76,7 +74,7 @@ function Card({
   return (
     <div
       className={cn(
-        "absolute top-6 h-[270px] overflow-hidden rounded-[10px] border border-line bg-surface shadow-[0_1px_2px_rgba(25,25,23,0.05),0_20px_40px_-24px_rgba(25,25,23,0.4)]",
+        "absolute top-6 h-[270px] overflow-hidden rounded-[10px] border border-line bg-surface shadow-[0_1px_2px_rgba(25,25,23,0.04),0_18px_36px_-18px_rgba(25,25,23,0.32)]",
         className,
       )}
       style={style}

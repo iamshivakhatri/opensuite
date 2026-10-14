@@ -7,6 +7,7 @@ import {
   buildNameRoleTableDocx,
   createNapiDocxEngineBinding,
   DISPATCHABLE_MUTATION_CAPABILITIES,
+  docxOperationDefinitions,
   nativeSupportsSemanticTableCellTargets,
   nativeSupportsSemanticTableRowDeletion,
 } from "../index.js";
@@ -353,6 +354,8 @@ test("every engine mutation capability is either dispatchable or intentionally h
       .formats.find((f) => f.format === "docx")
       ?.capabilities ?? [];
 
+  // Reads, create, and semantic flags are not mutation dispatch entries.
+  // Mutating ops (including insert_fields / insert_toc) must remain dispatchable.
   const nonMutation = new Set([
     "inspect",
     "inspect_context",
@@ -360,8 +363,6 @@ test("every engine mutation capability is either dispatchable or intentionally h
     "inspect_comments",
     "inspect_fields",
     "inspect_notes",
-    "insert_fields",
-    "insert_toc",
     "inspect_tracked_changes",
     "find_text",
     "body_blocks",
@@ -375,7 +376,10 @@ test("every engine mutation capability is either dispatchable or intentionally h
   for (const cap of caps) {
     if (nonMutation.has(cap)) continue;
     assert.ok(
-      DISPATCHABLE_MUTATION_CAPABILITIES.includes(cap),
+      DISPATCHABLE_MUTATION_CAPABILITIES.includes(cap) ||
+        docxOperationDefinitions(binding.getDocxCapabilities()).some(
+          (op) => op.id === cap && op.kind === "mutate",
+        ),
       `engine advertises ${cap} but bound dispatch has no executor`,
     );
   }
