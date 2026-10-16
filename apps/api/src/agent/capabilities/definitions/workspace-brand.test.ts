@@ -43,6 +43,14 @@ test('missing or inaccessible brands cannot be applied', async () => {
   assert.equal(denied['document.apply_workspace_brand'], undefined);
 });
 
+test('brand application includes the logo by default and allows an explicit opt-out', async () => {
+  const options: boolean[] = [];
+  const tools = createWorkspaceBrandTools({ getBrand: async () => brand, applyBrand: async (_brand, includeLogo) => { options.push(includeLogo); } });
+  await tools['document.apply_workspace_brand']!.execute!({}, {} as never);
+  await tools['document.apply_workspace_brand']!.execute!({ includeLogo: false }, {} as never);
+  assert.deepEqual(options, [true, false]);
+});
+
 test('branding an existing DOCX preserves its text and saves one verified version', async () => {
   const binding = await createNapiDocxEngineBinding();
   const original = buildMinimalDocx(['Dear Member,', 'The club meeting is on Tuesday.']);

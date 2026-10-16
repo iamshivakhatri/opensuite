@@ -14,6 +14,21 @@ import {
   resolveOwnedEngineImage,
 } from "./image-asset-tools.js";
 import { WorkspaceAssetError } from "../workspace-brand/assets.js";
+import sharp from 'sharp';
+
+test('the generic image tool caps a saved square logo even when the model requests a large width', async () => {
+  const bytes = await sharp({ create: { width: 800, height: 800, channels: 4, background: '#123456' } }).png().toBuffer();
+  let operation: Record<string, unknown> | undefined;
+  const tools = createImageAssetTools({ assets: { listImages: async () => ({ items: [], offset: 0, limit: 20 }),
+    readBytes: async () => ({ bytes, contentType: 'image/png' }) },
+    ownerUserId: 'user', workspaceId: 'workspace', getBrandLogoAssetId: async () => 'brand-logo',
+    mutate: async (_capability, value) => { operation = value; return { ok: true }; },
+  });
+  const result = await tools['document.insert_image_asset']!.execute!({ assetId: 'brand-logo', placement: { kind: 'start' }, widthEmu: 1_005_840 }, call);
+  assert.equal(operation?.widthEmu, 457_200);
+  assert.equal(operation?.heightEmu, 457_200);
+  assert.deepEqual(result, { ok: true, pictureSize: { widthEmu: 457_200, heightEmu: 457_200 } });
+});
 
 const pngA = Buffer.from(
   "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVQIHWP4z8DwHwAFgAI/ScL7WQAAAABJRU5ErkJggg==",

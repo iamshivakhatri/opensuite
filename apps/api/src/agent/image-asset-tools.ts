@@ -7,6 +7,7 @@ import {
   type WorkspaceAssetService,
 } from "../workspace-brand/assets.js";
 import { assetMaxBytes } from "../workspace-brand/validation.js";
+import { workspaceLogoSize, workspaceLogoAltText } from "../workspace-brand/images.js";
 import { WorkspaceAccessError } from "../workspaces/service.js";
 
 type AssetReader = Pick<WorkspaceAssetService, "readBytes" | "listImages">;
@@ -97,6 +98,7 @@ export async function resolveOwnedEngineImage(
 /** Model-facing asset-ID tools; bytes stay application-side. */
 export function createImageAssetTools(input: {
   readonly assets: AssetReader;
+  readonly getBrandLogoAssetId?: () => Promise<string | null>;
   readonly ownerUserId: string;
   readonly workspaceId: string;
   readonly mutate?: Mutate;
@@ -127,7 +129,7 @@ export function createImageAssetTools(input: {
     tools["document.insert_image_asset"] = defineTool({
       kind: "mutate",
       description:
-        "Insert an owned workspace image asset into the active DOCX by asset ID. Resolves authorized stored bytes server-side; pass assetId from document.list_image_assets, never bytes. Placement uses start/end or before/after with a fresh body_blocks handle. Optional widthEmu/heightEmu (one dimension preserves aspect ratio). Optional floating layout uses supported wrap/position; omit layout for inline. EMU: 914,400 per inch. Re-inspect after editing.",
+        "Insert an owned workspace image asset into the active DOCX by asset ID. Resolves authorized stored bytes server-side; pass assetId from document.list_image_assets, never bytes. Placement uses start/end or before/after with a fresh body_blocks handle. Optional widthEmu/heightEmu (one dimension preserves aspect ratio). Optional floating layout uses supported wrap/position; omit layout for inline. Saved workspace logos are capped at 1.5 inches wide and 0.5 inches tall; use document.apply_workspace_brand to add branding. EMU: 914,400 per inch. Re-inspect after editing.",
       inputSchema: jsonSchema<{
         assetId: string;
         placement: { kind: string; handle?: string };
@@ -155,14 +157,21 @@ export function createImageAssetTools(input: {
           input.ownerUserId,
           args.assetId,
         );
-        return input.mutate!("insert_picture", {
-          imageBytes: image.bytes,
-          placement: args.placement,
+        const isBrandLogo = input.getBrandLogoAssetId && await input.getBrandLogoAssetId() === args.assetId;
+        const size = isBrandLogo ? await workspaceLogoSize(image.bytes, args) : {
           ...(args.widthEmu !== undefined ? { widthEmu: args.widthEmu } : {}),
           ...(args.heightEmu !== undefined ? { heightEmu: args.heightEmu } : {}),
-          ...(args.altText !== undefined ? { altText: args.altText } : {}),
+        };
+        const result = await input.mutate!("insert_picture", {
+          imageBytes: image.bytes,
+          placement: args.placement,
+          ...size,
+          ...(isBrandLogo ? { altText: workspaceLogoAltText } : args.altText !== undefined ? { altText: args.altText } : {}),
           ...(args.layout !== undefined ? { layout: args.layout } : {}),
         });
+        return isBrandLogo && result && typeof result === 'object' && 'ok' in result && result.ok === true
+          ? { ...result, pictureSize: size }
+          : result;
       },
     });
   }

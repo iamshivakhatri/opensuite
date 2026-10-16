@@ -143,6 +143,8 @@ function createActiveDocxSession(input: {
   let workingRevision = 0;
   let workingMutationCount = 0;
   const currentHandles = new Set<string>();
+  const handleRecoveryKeys = new Map<string, string>();
+  let recoveryGeneration = 0;
   const handleSession = randomUUID();
   let handleGeneration = 0;
   const handlePrefix = () => `${handleSession}:${handleGeneration}:`;
@@ -249,6 +251,7 @@ function createActiveDocxSession(input: {
     baseDraftId = next.draftId ?? null;
     baseDocument = { documentId: next.documentId, versionId: next.versionId, bytes: next.bytes.slice() };
     host = bindHost(next);
+    recoveryGeneration++;
     dirty = false;
     workingRevision = 0;
     expireHandles("document_rebind");
@@ -273,6 +276,7 @@ function createActiveDocxSession(input: {
     documentChangedThisTurn = true;
     styleFidelity = null;
     const preserveHandles = modelTurn !== null && HANDLE_PRESERVING_MUTATIONS.has(capability);
+    if (!preserveHandles) recoveryGeneration++;
     if (!preserveHandles) expireHandles("mutation_since_inspect");
     lastHandleEvent = preserveHandles ? "compatible_mutation" : "mutation";
     sameTurnMutations += applied;
@@ -290,6 +294,7 @@ function createActiveDocxSession(input: {
     const registered = mapHandles(result, handle => {
       const scoped = handlePrefix() + handle;
       currentHandles.add(scoped);
+      handleRecoveryKeys.set(scoped, JSON.stringify([handleSession, documentId, recoveryGeneration, handle]));
       return scoped;
     });
     for (const handle of currentHandles) expiredHandles.delete(handle);
@@ -351,6 +356,7 @@ function createActiveDocxSession(input: {
   const redirectingHost: BoundDocumentHost = {
     capabilities: () => input.binding.getDocxCapabilities(),
     documentId: () => documentId,
+    mutationEffectInput: request => mapHandles(request, handle => handleRecoveryKeys.get(handle) ?? handle),
     inspect: async (request) => {
       return registerHandles(await requireHost().inspect(resolveHandles(request)));
     },
@@ -682,6 +688,7 @@ export async function createPrimaryDocxTools(input: {
   readonly workingDocumentIds?: readonly string[];
   readonly editableDocumentId?: string;
   readonly workspaceAssets?: Pick<WorkspaceAssetService, "readBytes" | "listImages">;
+  readonly getBrandLogoAssetId?: () => Promise<string | null>;
   readonly onVersionAdvanced?: (event: {
     readonly documentId: string;
     readonly fromVersionId: string;
@@ -729,6 +736,7 @@ export async function createPrimaryDocxTools(input: {
   const imageAssetTools = input.workspaceAssets
     ? createImageAssetTools({
         assets: input.workspaceAssets,
+        getBrandLogoAssetId: input.getBrandLogoAssetId,
         ownerUserId: input.ownerUserId,
         workspaceId: input.workspaceId,
         mutate: (capability, operation) => session.redirectingHost.mutate!(capability, operation),

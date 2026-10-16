@@ -14,6 +14,8 @@ import {
 export interface BoundDocumentHost {
   capabilities(): unknown;
   documentId?(): string | null;
+  /** Stable recovery identity only; never relaxes mutation handle validation. */
+  mutationEffectInput?(input: unknown): unknown;
   inspect(request: { readonly focus: InspectFocus }): Promise<unknown>;
   renderLayout?(): Promise<unknown>;
   readOperation?(capability: string, request: Record<string, unknown>): Promise<unknown>;
@@ -130,7 +132,7 @@ export function createDocumentTools(document: BoundDocumentHost): AgentToolSet {
     .map(op => [op.id, { description: agentFacingDescription(op.id, op.description), inputSchema: jsonSchema<Record<string, unknown>>(docxAgentInputSchema(op)) }]));
   const tools: AgentToolSet = {};
   const effectKeys = (input: unknown, output: unknown) =>
-    mutationEffectKeys(input, output, document.documentId?.() ?? undefined);
+    mutationEffectKeys(document.mutationEffectInput?.(input) ?? input, output, document.documentId?.() ?? undefined);
   const checkReadInput = (definition: DocxOperationDefinition, input: Record<string, unknown>) => {
     const error = docxOperationInputError(definition, input);
     if (error) throw new Error(`${definition.id}: ${error}`);

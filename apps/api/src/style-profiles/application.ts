@@ -10,6 +10,7 @@ import { StyleProfileError, type StyleProfileService } from './service.js';
 import { paragraphRole } from './normalize.js';
 import { appendStyleFidelityField, compareStyleFidelity, type StyleFidelityReport } from './fidelity.js';
 import type { AppearanceSource } from '../document-appearance/resolve.js';
+import { workspaceLogoSize, workspaceLogoMaxWidthEmu as logoMaxWidthEmu, workspaceLogoMaxHeightEmu as logoMaxHeightEmu } from '../workspace-brand/images.js';
 
 export type RoleFormatting = {
   text: Omit<DocxSetTextFormattingOperation, 'target' | 'baseRevision'>;
@@ -25,7 +26,7 @@ export interface StyleApplicationPlan {
     headerBold?: boolean;
     widthTwips?: number;
   };
-  logo?: { imageBytes: Uint8Array };
+  logo?: { imageBytes: Uint8Array; contentType?: 'image/png' | 'image/jpeg'; altText?: string };
   unsupported: string[];
 }
 
@@ -145,25 +146,10 @@ async function inspectContent(binding: DocxEngineBinding, bytes: Uint8Array) {
   return { paragraphs, tables };
 }
 
-const logoMaxWidthEmu = 1_371_600; // 1.5 inches
-const logoMaxHeightEmu = 457_200; // 0.5 inches
-
 async function firstBodyPicture(binding: DocxEngineBinding, bytes: Uint8Array) {
   const result = await binding.inspectDocx(bytes, { focus: { kind: 'body_blocks', offset: 0, limit: 1 } });
   const block = result.bodyBlocks?.items[0];
   return result.ok && block?.kind === 'picture' ? block.picture : undefined;
-}
-
-function modestLogoSize(widthEmu: number, heightEmu: number) {
-  if (!Number.isFinite(widthEmu) || !Number.isFinite(heightEmu) || widthEmu <= 0 || heightEmu <= 0) return;
-  const widthScale = logoMaxWidthEmu / widthEmu;
-  const heightScale = logoMaxHeightEmu / heightEmu;
-  const scale = Math.min(1, widthScale, heightScale);
-  if (scale === 1) return;
-  // The engine accepts one dimension and derives the other to preserve aspect ratio.
-  return widthScale <= heightScale
-    ? { widthEmu: Math.floor(widthEmu * scale) }
-    : { heightEmu: Math.floor(heightEmu * scale) };
 }
 
 /** Stage through the same bound engine host. The caller adopts bytes only after verification. */
@@ -188,13 +174,18 @@ export async function applyStylePlan(binding: DocxEngineBinding, bytes: Uint8Arr
   }
   if (plan.logo) {
     try {
-      await mutate('insert_picture', { imageBytes: Buffer.from(plan.logo.imageBytes), placement: { kind: 'start' } });
-      logoInserted = true;
-      const picture = await firstBodyPicture(binding, host.currentBytes());
-      const size = picture && modestLogoSize(picture.widthEmu, picture.heightEmu);
-      if (!picture) throw new Error('Could not verify inserted workspace logo');
-      if (size) {
+      const size = await workspaceLogoSize(plan.logo.imageBytes);
+      const existing = await firstBodyPicture(binding, host.currentBytes());
+      if (plan.logo.altText && plan.logo.contentType && existing?.altText === plan.logo.altText) {
+        await mutate('replace_picture', { handle: existing.handle, replacementBytes: Buffer.from(plan.logo.imageBytes), contentType: plan.logo.contentType });
+        logoInserted = true;
+        const picture = await firstBodyPicture(binding, host.currentBytes());
+        if (!picture) throw new Error('Could not inspect workspace logo');
         await mutate('set_picture_size', { handle: picture.handle, ...size });
+      } else {
+        await mutate('insert_picture', { imageBytes: Buffer.from(plan.logo.imageBytes), placement: { kind: 'start' }, ...size,
+          ...(plan.logo.altText ? { altText: plan.logo.altText } : {}) });
+        logoInserted = true;
       }
       logoWasApplied = true;
     } catch (error) {

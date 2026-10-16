@@ -5,9 +5,37 @@ import { createFinishTool, runAgent, type AgentEvent } from "@opensuite/agent-co
 import { bindDocxDocument, buildMinimalDocx, createNapiDocxEngineBinding } from "@opensuite/engine-client";
 import { createPrimaryDocxTools } from "./docx-tools.js";
 import { createToolSurface } from "./capabilities/runtime/tool-surface.js";
+import { unrecoveredFailedMutateToolNames } from './agent-run-report.js';
 
 type Call = { name: string; input: Record<string, unknown> };
 const inspect: Call = { name: "document.inspect", input: { kind: "tables" } };
+
+test('fresh handles recover the same table insertion only when structure and requested content match', async () => {
+  for (const mode of ['same', 'different-content', 'structure-changed'] as const) {
+    const run = await createSession();
+    let freshHandle = '';
+    const original = run.session.tools['document.inspect']!;
+    run.session.tools['document.inspect'] = { ...original, execute: async (input, context) => {
+      const result = await original.execute!(input, context) as { bodyBlocks?: { items: { handle: string }[] } };
+      if (result.bodyBlocks) freshHandle = result.bodyBlocks.items[0]!.handle;
+      return result;
+    } };
+    const create = (handle: string, rows = [['Milestone', 'Owner'], ['Kickoff', 'Alice']]): Call => ({
+      name: 'document.create_table', input: { placement: { kind: 'after', handle }, rows },
+    });
+    const turns: (Call[] | (() => Call[]))[] = [
+      [{ name: 'document.set_paragraph_style', input: { target: { text: 'Status' }, style: 'Heading 1' } }],
+      [create(run.bodyHandle)],
+    ];
+    if (mode === 'structure-changed') turns.push([{ name: 'document.insert_paragraph', input: { text: 'Opening', placement: { kind: 'start' } } }]);
+    turns.push([{ name: 'document.inspect', input: { kind: 'body_blocks' } }], () => [create(freshHandle,
+      mode === 'different-content' ? [['Milestone', 'Owner'], ['Different', 'Bob']] : undefined)]);
+    const { result } = await runTurns(run.session, turns);
+    assert.equal(result.metrics.toolCalls.find(call => call.toolName === 'document.create_table')?.failureCode, 'STALE_HANDLE');
+    assert.equal(result.metrics.toolCalls.at(-1)?.outcome, 'success');
+    assert.deepEqual(unrecoveredFailedMutateToolNames(result.metrics), mode === 'same' ? [] : ['document.create_table'], mode);
+  }
+});
 
 async function createSession() {
   const binding = await createNapiDocxEngineBinding();

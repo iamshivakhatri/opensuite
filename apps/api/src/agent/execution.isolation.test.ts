@@ -1167,76 +1167,91 @@ test("creating a new report does not bind or retrieve a stale active document", 
   assert.equal(result.run.baseDocumentVersionId, null);
 });
 
-test('scripted report creation applies the loaded skill workspace brand before saving', async () => {
-  const persistence = memoryPersistence('user-1');
-  const binding = await createNapiDocxEngineBinding();
-  const versions = new Map<string, Buffer>();
-  let document = { id: 'report-1', name: 'Q3 report.docx', workspaceId: 'ws-1', format: 'docx', latestVersion: { id: 'v1' } };
-  let brandReads = 0;
-  let logoReads = 0;
-  const logoPng = await sharp({ create: { width: 1600, height: 800, channels: 4, background: '#124733' } }).png().toBuffer();
-  const execution = createAgentExecutionService({
-    ...baseDeps(persistence, async (input) => {
-      const firstTurn = await input.projectTools!({ turn: 1 } as never);
-      await firstTurn['capabilities.load']!.execute!({ ids: ['skills.reporting.analytical-report', 'workspace.get_brand'] }, {} as never);
-      const tools = await input.projectTools!({ turn: 2 } as never);
-      const savedBrand = await tools['workspace.get_brand']!.execute!({}, {} as never);
-      assert.match(JSON.stringify(savedBrand), /Cincinnati Sports Club/);
-      assert.match(input.system ?? '', /empty style.list_profiles never proves the workspace brand is missing/);
-      await tools['workspace.create_blank_document']!.execute!({ title: document.name }, {} as never);
-      await tools['document.insert_paragraphs']!.execute!({ texts: ['Q3 operating report', 'Executive Summary', 'Revenue: $3.8M'], placement: { kind: 'end' } }, {} as never);
-      await tools['document.set_paragraph_style']!.execute!({ target: { text: 'Q3 operating report' }, style: 'Title' }, {} as never);
-      await tools['document.set_paragraph_style']!.execute!({ target: { text: 'Executive Summary' }, style: 'Heading 1' }, {} as never);
-      await tools['document.create_table']!.execute!({ placement: { kind: 'end' }, rows: [['Metric', 'Value'], ['Revenue', '$3.8M']] }, {} as never);
-      return softResult('completed', 'Created.');
-    }),
-    docxBinding: binding,
-    documents: {
-      listInWorkspace: async () => [],
-      getOwnedDocument: async () => document as never,
-      readExactVersionBytes: async ({ versionId }) => versions.get(versionId)!,
-      appendDocumentVersion: async ({ bytes }) => {
-        versions.set('v2', Buffer.from(bytes));
-        document = { ...document, latestVersion: { id: 'v2' } };
-        return { version: { id: 'v2', versionNumber: 2 } } as never;
+test('brand tools and skills apply a small logo once and respect opt-out', async t => {
+  for (const mode of ['skill', 'logo-only', 'omit-logo'] as const) await t.test(mode, async () => {
+    const persistence = memoryPersistence('user-1');
+    const binding = await createNapiDocxEngineBinding();
+    const versions = new Map<string, Buffer>();
+    let document = { id: 'report-1', name: 'Q3 report.docx', workspaceId: 'ws-1', format: 'docx', latestVersion: { id: 'v1' } };
+    let brandReads = 0;
+    let logoReads = 0;
+    const logoPng = await sharp({ create: { width: mode === 'skill' ? 1600 : 800, height: 800, channels: 4, background: '#124733' } }).png().toBuffer();
+    const execution = createAgentExecutionService({
+      ...baseDeps(persistence, async (input) => {
+        const firstTurn = await input.projectTools!({ turn: 1 } as never);
+        await firstTurn['capabilities.load']!.execute!({ ids: ['workspace.get_brand', ...(mode !== 'logo-only' ? ['skills.reporting.analytical-report'] : []), ...(mode !== 'skill' ? ['document.apply_workspace_brand'] : [])] }, {} as never);
+        const tools = await input.projectTools!({ turn: 2 } as never);
+        const savedBrand = await tools['workspace.get_brand']!.execute!({}, {} as never);
+        assert.match(JSON.stringify(savedBrand), /Cincinnati Sports Club/);
+        assert.match(input.system ?? '', /empty style.list_profiles never proves the workspace brand is missing/);
+        await tools['workspace.create_blank_document']!.execute!({ title: document.name }, {} as never);
+        await tools['document.insert_paragraphs']!.execute!({ texts: ['Q3 operating report', 'Executive Summary', 'Revenue: $3.8M'], placement: { kind: 'end' } }, {} as never);
+        await tools['document.set_paragraph_style']!.execute!({ target: { text: 'Q3 operating report' }, style: 'Title' }, {} as never);
+        await tools['document.set_paragraph_style']!.execute!({ target: { text: 'Executive Summary' }, style: 'Heading 1' }, {} as never);
+        await tools['document.create_table']!.execute!({ placement: { kind: 'end' }, rows: [['Metric', 'Value'], ['Revenue', '$3.8M']] }, {} as never);
+        if (mode !== 'skill') {
+          await tools['document.apply_workspace_brand']!.execute!({ includeLogo: mode !== 'omit-logo' }, {} as never);
+          await tools['document.apply_workspace_brand']!.execute!({ includeLogo: mode !== 'omit-logo' }, {} as never);
+        }
+        return softResult('completed', 'Created.');
+      }),
+      docxBinding: binding,
+      documents: {
+        listInWorkspace: async () => [],
+        getOwnedDocument: async () => document as never,
+        readExactVersionBytes: async ({ versionId }) => versions.get(versionId)!,
+        appendDocumentVersion: async ({ bytes }) => {
+          versions.set('v2', Buffer.from(bytes));
+          document = { ...document, latestVersion: { id: 'v2' } };
+          return { version: { id: 'v2', versionNumber: 2 } } as never;
+        },
+        createBlankDocxDocument: async () => {
+          versions.set('v1', Buffer.from(binding.createBlankDocx()));
+          return { document, version: { id: 'v1', versionNumber: 1 } } as never;
+        },
+        createOfficeDocumentFromBytes: async () => { throw new Error('unused'); },
       },
-      createBlankDocxDocument: async () => {
-        versions.set('v1', Buffer.from(binding.createBlankDocx()));
-        return { document, version: { id: 'v1', versionNumber: 1 } } as never;
+      workspaceBrand: { get: async (workspaceId, userId) => {
+        assert.equal(workspaceId, 'ws-1');
+        assert.equal(userId, 'user-1');
+        brandReads++;
+        return { schemaVersion: 1, workspaceId: 'ws-1', createdAt: '', updatedAt: '', logoAssetId: 'logo-1',
+          organization: { name: 'Cincinnati Sports Club', website: '', email: '', phone: '', address: '' },
+          colors: mode === 'skill' ? { primary: '#124733', secondary: '#124733', accent: '#124733' } : { primary: null, secondary: null, accent: null }, typography: mode === 'skill' ? { headingFont: 'Arial', bodyFont: 'Arial' } : { headingFont: '', bodyFont: '' } };
+      } },
+      workspaceAssets: {
+        listImages: async () => ({ items: [], offset: 0, limit: 20 }),
+        readBytes: async () => {
+          logoReads++;
+          return { bytes: logoPng, contentType: 'image/png' };
+        },
       },
-      createOfficeDocumentFromBytes: async () => { throw new Error('unused'); },
-    },
-    workspaceBrand: { get: async (workspaceId, userId) => {
-      assert.equal(workspaceId, 'ws-1');
-      assert.equal(userId, 'user-1');
-      brandReads++;
-      return { schemaVersion: 1, workspaceId: 'ws-1', createdAt: '', updatedAt: '', logoAssetId: 'logo-1',
-        organization: { name: 'Cincinnati Sports Club', website: '', email: '', phone: '', address: '' },
-        colors: { primary: '#124733', secondary: '#124733', accent: '#124733' }, typography: { headingFont: 'Arial', bodyFont: 'Arial' } };
-    } },
-    workspaceAssets: {
-      listImages: async () => ({ items: [], offset: 0, limit: 20 }),
-      readBytes: async () => {
-        logoReads++;
-        return { bytes: logoPng, contentType: 'image/png' };
-      },
-    },
+    });
+    const result = await (await execution.start({ userId: 'user-1', threadId: 'thread-1', instruction: 'Create a professional quarterly operating report with metrics using our saved brand.' })).result;
+    assert.equal(result.run.status, 'completed');
+    assert.equal(brandReads, 1);
+    assert.equal(logoReads, mode === 'skill' ? 1 : mode === 'logo-only' ? 2 : 0);
+    const snapshot = await inspectDocxStyleSnapshot(new Uint8Array(versions.get('v2')!), binding);
+    if (mode === 'skill') {
+      assert.equal(snapshot.tables[0]?.firstRowShadingColors[0], '124733');
+      assert.ok(snapshot.typography.textColors.some((color) => color.value === 'FFFFFF'));
+      for (const styleId of ['Title', 'Heading1']) {
+        assert.ok(snapshot.typography.runPatterns.some((pattern) => pattern.paragraphStyleId === styleId && (pattern.effectiveFormatting ?? pattern.directFormatting).color === '124733'), styleId);
+      }
+      assert.ok(snapshot.typography.runPatterns.some((pattern) => (pattern.effectiveFormatting ?? pattern.directFormatting).fontFamily === 'Arial'));
+    }
+    const blocks = await binding.inspectDocx(new Uint8Array(versions.get('v2')!), { focus: { kind: 'body_blocks', offset: 0, limit: 100 } });
+    if (mode === 'omit-logo') {
+      assert.equal(blocks.bodyBlocks?.items.some(block => block.kind === 'picture'), false);
+    } else {
+      assert.equal(blocks.bodyBlocks?.items[0]?.kind, 'picture');
+      assert.equal(blocks.bodyBlocks?.items.filter(block => block.kind === 'picture').length, 1, 'reapplying the brand must not duplicate the logo');
+      assert.ok((blocks.bodyBlocks?.items[0]?.picture?.widthEmu ?? Infinity) <= 1_371_600);
+      assert.ok((blocks.bodyBlocks?.items[0]?.picture?.heightEmu ?? Infinity) <= 457_200);
+      const picture = blocks.bodyBlocks!.items[0]!.picture!;
+      assert.equal(picture.widthEmu / picture.heightEmu, mode === 'skill' ? 2 : 1);
+    }
   });
-  const result = await (await execution.start({ userId: 'user-1', threadId: 'thread-1', instruction: 'Create a professional quarterly operating report with metrics using our saved brand.' })).result;
-  assert.equal(result.run.status, 'completed');
-  assert.equal(brandReads, 1);
-  assert.equal(logoReads, 1);
-  const snapshot = await inspectDocxStyleSnapshot(new Uint8Array(versions.get('v2')!), binding);
-  assert.equal(snapshot.tables[0]?.firstRowShadingColors[0], '124733');
-  assert.ok(snapshot.typography.textColors.some((color) => color.value === 'FFFFFF'));
-  for (const styleId of ['Title', 'Heading1']) {
-    assert.ok(snapshot.typography.runPatterns.some((pattern) => pattern.paragraphStyleId === styleId && (pattern.effectiveFormatting ?? pattern.directFormatting).color === '124733'), styleId);
-  }
-  assert.ok(snapshot.typography.runPatterns.some((pattern) => (pattern.effectiveFormatting ?? pattern.directFormatting).fontFamily === 'Arial'));
-  const blocks = await binding.inspectDocx(new Uint8Array(versions.get('v2')!), { focus: { kind: 'body_blocks', offset: 0, limit: 1 } });
-  assert.equal(blocks.bodyBlocks?.items[0]?.kind, 'picture');
-  assert.ok((blocks.bodyBlocks?.items[0]?.picture?.widthEmu ?? Infinity) <= 1_371_600);
-  assert.ok((blocks.bodyBlocks?.items[0]?.picture?.heightEmu ?? Infinity) <= 457_200);
 });
 
 test("completed runs persist narration at tool boundaries without duplicating the final answer", async () => {

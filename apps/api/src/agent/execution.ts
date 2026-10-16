@@ -467,6 +467,7 @@ async function applyAutomaticWorkspaceAppearance(input: {
   readonly ownerUserId: string;
   readonly instruction: string;
   readonly getBrand: () => ReturnType<WorkspaceBrandService['get']>;
+  readonly includeLogo?: boolean;
 }) {
   if (!input.deps.workspaceBrand) return;
   const documentId = input.boundTools.getActiveDocumentId();
@@ -478,7 +479,7 @@ async function applyAutomaticWorkspaceAppearance(input: {
   if (!shouldApplyAutomaticBrand({ isNewDocument, policy, instruction: input.instruction })) return;
   const brand = await input.getBrand();
   if (!brand) return;
-  const wantsLogo = policy!.channels.includes('logo') && !!brand.logoAssetId;
+  const wantsLogo = input.includeLogo !== false && policy!.channels.includes('logo') && !!brand.logoAssetId;
   const workspaceLogo = wantsLogo && input.deps.workspaceAssets
     ? await input.deps.workspaceAssets.readBytes(input.workspaceId, input.ownerUserId, brand.logoAssetId!).catch((error) => {
       console.warn('[agent] workspace logo unavailable', error);
@@ -490,6 +491,7 @@ async function applyAutomaticWorkspaceAppearance(input: {
     policy: policy!,
     workspaceBrand: brand,
     isNewDocument,
+    includeLogo: input.includeLogo,
     ...(wantsLogo ? { workspaceLogo } : {}),
     ...(savedStyle ? { savedStyle } : {}),
   });
@@ -615,6 +617,11 @@ async function runExecution(input: {
     let directAttemptedRevision = 0;
     let documentView: Record<string, unknown> | undefined;
     const documentNames = new Map<string, string>();
+    let brandRead: ReturnType<WorkspaceBrandService['get']> | undefined;
+    let includeBrandLogo: boolean | undefined;
+    const getBrand = () => brandRead ??= input.deps.workspaceBrand
+      ? input.deps.workspaceBrand.get(input.thread.workspaceId, input.ownerUserId)
+      : Promise.resolve(null);
     boundTools = await createPrimaryDocxTools({
       binding: input.deps.docxBinding,
       documents: input.deps.documents,
@@ -626,6 +633,7 @@ async function runExecution(input: {
       ...((input.savedContinuation?.editedDocumentId ?? input.editableDocumentId)
         ? { editableDocumentId: input.savedContinuation?.editedDocumentId ?? input.editableDocumentId } : {}),
       ...(input.deps.workspaceAssets ? { workspaceAssets: input.deps.workspaceAssets } : {}),
+      ...(input.deps.workspaceBrand ? { getBrandLogoAssetId: async () => (await getBrand())?.logoAssetId ?? null } : {}),
       onDocumentSelected: ({ documentId, versionId }) => {
         input.trace?.write("## Document Target", { documentId, versionId });
         logAgentLine(
@@ -705,20 +713,22 @@ async function runExecution(input: {
       description: "After your concise final response to the user, call this to end the run.",
     });
     const requiresSavedStyle = requestsSavedStyle(input.instruction);
-    let brandRead: ReturnType<WorkspaceBrandService['get']> | undefined;
-    const getBrand = () => brandRead ??= input.deps.workspaceBrand
-      ? input.deps.workspaceBrand.get(input.thread.workspaceId, input.ownerUserId)
-      : Promise.resolve(null);
     const tools: AgentToolSet = {
       ...(boundTools?.tools ?? {}),
       ...createStandaloneCapabilityTools(),
       ...(input.deps.workspaceBrand ? createWorkspaceBrandTools({
         getBrand,
-        ...(boundTools ? { applyBrand: (brand) => boundTools!.applyResolvedAppearance(resolveDocumentAppearance({
-          workspaceBrand: brand,
-          policy: { channels: ['typography', 'colors', 'tableAccent'] },
-          ...(boundTools!.getAppliedStyle() ? { savedStyle: boundTools!.getAppliedStyle()! } : {}),
-        })) } : {}),
+        ...(boundTools ? { applyBrand: async (brand, includeLogo) => {
+          includeBrandLogo = includeLogo;
+          const workspaceLogo = includeLogo && brand.logoAssetId && input.deps.workspaceAssets
+            ? await input.deps.workspaceAssets.readBytes(input.thread.workspaceId, input.ownerUserId, brand.logoAssetId)
+            : undefined;
+          return boundTools!.applyResolvedAppearance(resolveDocumentAppearance({
+            workspaceBrand: brand, includeLogo, workspaceLogo,
+            policy: { channels: ['typography', 'colors', 'tableAccent', 'logo'] },
+            ...(boundTools!.getAppliedStyle() ? { savedStyle: boundTools!.getAppliedStyle()! } : {}),
+          }));
+        } } : {}),
       }) : {}),
       ...(input.deps.styleProfiles ? createStyleProfileTools({
         profiles: input.deps.styleProfiles, ownerUserId: input.ownerUserId, workspaceId: input.thread.workspaceId,
@@ -1025,6 +1035,7 @@ async function runExecution(input: {
           instruction: input.instruction,
           createdDocumentId,
           getBrand,
+          includeLogo: includeBrandLogo,
         });
       }
       const inputNeeded = isInputNeededTool(result.metrics?.toolCalls.filter(tool => tool.outcome === 'success' && isFinishTool(tool.toolName)).at(-1)?.toolName);

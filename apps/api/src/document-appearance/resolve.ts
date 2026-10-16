@@ -6,6 +6,7 @@ import {
   type StyleApplicationPlan,
 } from '../style-profiles/application.js';
 import { readableTextColor } from './contrast.js';
+import { workspaceLogoAltText } from '../workspace-brand/images.js';
 
 export type BrandChannel = 'typography' | 'colors' | 'tableAccent' | 'logo';
 export type DocumentBrandPolicy = { readonly channels: readonly BrandChannel[] };
@@ -30,6 +31,7 @@ export function resolveDocumentAppearance(input: {
   readonly policy: DocumentBrandPolicy;
   readonly brand?: 'auto' | 'off';
   readonly isNewDocument?: boolean;
+  readonly includeLogo?: boolean;
 }): ResolvedAppearance {
   const plan = input.savedStyle ? buildStyleApplicationPlan(input.savedStyle) : emptyPlan();
   // A saved body color is the only reusable table-text color profile v1 records.
@@ -69,9 +71,9 @@ export function resolveDocumentAppearance(input: {
     set('table.headerFill', 'headerFill', headerFill, plan.table as Record<string, unknown>);
     set('table.headerTextColor', 'headerTextColor', readableTextColor(headerFill), plan.table as Record<string, unknown>);
   }
-  if (input.isNewDocument && allowed.has('logo') && input.workspaceBrand.logoAssetId) {
+  if (input.includeLogo !== false && (input.isNewDocument || input.includeLogo) && allowed.has('logo') && input.workspaceBrand.logoAssetId) {
     if (input.workspaceLogo?.contentType === 'image/png' || input.workspaceLogo?.contentType === 'image/jpeg') {
-      plan.logo = { imageBytes: input.workspaceLogo.bytes };
+      plan.logo = { imageBytes: input.workspaceLogo.bytes, contentType: input.workspaceLogo.contentType, altText: workspaceLogoAltText };
       provenance.logo = 'workspace_brand';
     } else {
       plan.unsupported.push('logo');
