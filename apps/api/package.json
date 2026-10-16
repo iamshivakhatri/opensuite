@@ -4,6 +4,7 @@
   "private": true,
   "description": "OpenSuite backend API — Fastify HTTP service. Long-running Node process, not a Vercel/edge function.",
   "type": "module",
+  "engines": { "node": ">=20.19.0 <21 || >=22.13.0" },
   "main": "./dist/server.js",
   "exports": {
     ".": {
@@ -32,6 +33,7 @@
     "better-auth": "^1.7.2",
     "drizzle-orm": "^0.45.2",
     "fastify": "^5.12.1",
+    "pdfjs-dist": "5.6.205",
     "resend": "^6.25.0",
     "sharp": "0.35.4",
     "zod": "^4.5.4"

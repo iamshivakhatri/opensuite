@@ -71,7 +71,7 @@ pnpm dev
 
 Open the web app at `http://localhost:3001`. The API runs at `http://localhost:3000`.
 
-Requirements: Node.js 20+, pnpm 11, PostgreSQL, S3-compatible storage, and the environment values above. See [deployment notes](docs/deploy.md) for the current hosted setup.
+Requirements: Node.js 22.13+ (or Node 20.19+), pnpm 11, PostgreSQL, S3-compatible storage, and the environment values above. See [deployment notes](docs/deploy.md) for the current hosted setup.
 
 ## AI providers and BYOK
 

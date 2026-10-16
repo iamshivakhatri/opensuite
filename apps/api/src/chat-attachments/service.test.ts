@@ -13,8 +13,10 @@ import { createStorageAccountingService } from "../storage-accounting/service.js
 import { createChatAttachmentService } from "./service.js";
 import { registerChatAttachmentRoutes } from "../routes/chat-attachments.js";
 import { createAgentPersistenceService } from "../agent/persistence.js";
+import { createAttachmentExtractionService } from "./extraction.js";
+import { buildTestPdf } from "./pdf-test-fixture.js";
 
-const pdf = Buffer.from("%PDF-1.4\n%\xe2\xe3\xcf\xd3\n1 0 obj<<>>endobj\ntrailer<<>>\n%%EOF\n");
+const pdf = buildTestPdf([["Private report: revenue $42,750."], ["Owner Mira; physical page two."]]);
 const png = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 0]);
 const txt = Buffer.from("hello attachment");
 const docx = Buffer.from([0x50, 0x4b, 0x03, 0x04, 0x14, 0x00, 0x00, 0x00]);
@@ -173,8 +175,16 @@ test(
       assert.deepEqual((await attachments.list({ ...cacheScope, status: "bound", mentionedIn: `Use attachment ${pdfAtt.id}.` })).map(row => row.id), [pdfAtt.id]);
       assert.deepEqual(await attachments.list({ ...cacheScope, status: "bound", mentionedIn: "No named source" }), []);
       await assert.rejects(attachments.list({ ...cacheScope, userId: bob, status: "bound", mentionedIn: pdfMeta.filename }), /not found/i);
-      await attachments.saveExtraction({ ...cacheScope, bytes: Buffer.from('{"cached":"source evidence"}') });
-      assert.equal((await attachments.readExtraction(cacheScope))?.toString(), '{"cached":"source evidence"}');
+      let originalReads = 0;
+      const extractionSource = { ...attachments, read: async (input: Parameters<typeof attachments.read>[0]) => { originalReads++; return attachments.read(input); } };
+      const extracted = await createAttachmentExtractionService(extractionSource).get(cacheScope, pdfAtt.id);
+      assert.equal(extracted.extraction.pdf?.pageCount, 2);
+      assert.equal(extracted.extraction.units[1]?.location, 'page:2');
+      assert.match(extracted.extraction.units[0]!.text, /revenue \$42,750/);
+      const reused = await createAttachmentExtractionService(extractionSource).get(cacheScope, pdfAtt.id);
+      assert.deepEqual(reused.extraction, extracted.extraction);
+      assert.equal(originalReads, 1);
+      await assert.rejects(createAttachmentExtractionService(extractionSource).get({ ...cacheScope, userId: bob }, pdfAtt.id), /not found/i);
       await assert.rejects(attachments.readExtraction({ ...cacheScope, userId: bob }), /not found/i);
 
       // Same-thread re-reference must not fail or duplicate bind side effects.
@@ -193,6 +203,7 @@ test(
         createdByUserId: alice,
       });
       await assert.rejects(attachments.readExtraction({ ...cacheScope, threadId: otherThread.id }), /not found/i);
+      await assert.rejects(createAttachmentExtractionService(extractionSource).get({ ...cacheScope, threadId: otherThread.id }, pdfAtt.id), /not found/i);
       assert.deepEqual(await attachments.list({ ...cacheScope, threadId: otherThread.id, status: "bound", mentionedIn: pdfMeta.filename }), []);
       const otherMessage = await persistence.appendMessage({
         threadId: otherThread.id,
@@ -235,6 +246,12 @@ test(
           }),
         /not found/i,
       );
+
+      const pdfCacheKey = `workspaces/${workspaceId}/chat-attachments/${pdfAtt.id}/extraction.json`;
+      assert.ok(storage.objects.has(pdfCacheKey));
+      await attachments.remove({ workspaceId, userId: alice, attachmentId: pdfAtt.id });
+      assert.equal(storage.objects.has(pdfCacheKey), false);
+      await assert.rejects(createAttachmentExtractionService(extractionSource).get(cacheScope, pdfAtt.id), /not found/i);
 
       const tinyQuota = createChatAttachmentService(
         client.db,

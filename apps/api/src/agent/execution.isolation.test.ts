@@ -1,3 +1,4 @@
+import { buildTestPdf } from "../chat-attachments/pdf-test-fixture.js";
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { Readable } from "node:stream";
@@ -3907,8 +3908,8 @@ test('attachment read pagination reconstructs long lines without dropping text',
   assert.equal(fixture.originalReads(), 1);
 });
 
-test('attachment evidence survives a stopped run and Continue with loaded retrieval tools and the original instruction', async () => {
-  const fixture = attachmentFixture([{ filename: 'source.txt', bytes: Buffer.from('Project code: IRIS-918.'), mediaType: 'text/plain' }]);
+for (const format of ['txt', 'pdf'] as const) test(`attachment ${format} evidence survives a stopped run and Continue with loaded retrieval tools and the original instruction`, async () => {
+  const fixture = attachmentFixture([{ filename: `source.${format}`, bytes: format === 'pdf' ? buildTestPdf([['Project code: IRIS-918.']]) : Buffer.from('Project code: IRIS-918.'), mediaType: format === 'pdf' ? 'application/pdf' : 'text/plain' }]);
   const service = createAttachmentExtractionService(fixture.source);
   const persistence = memoryPersistence('user-1');
   const thread = await persistence.getOwnedThread({ threadId: 'thread-1', ownerUserId: 'user-1' });
@@ -3923,7 +3924,7 @@ test('attachment evidence survives a stopped run and Continue with loaded retrie
       const evidenceMessage = options.prompt.find(message => message.role === 'user' && JSON.stringify(message).includes('CHAT ATTACHMENT EVIDENCE'))!;
       const evidenceText = typeof evidenceMessage.content === 'string' ? evidenceMessage.content : evidenceMessage.content.map(part => part.type === 'text' ? part.text : '').join('');
       const evidence = JSON.parse(evidenceText.slice(evidenceText.indexOf('\n') + 1)).attachments[0];
-      reference = { attachmentId: evidence.attachmentId, extractionId: evidence.extractionId, location: 'line:1' };
+      reference = { attachmentId: evidence.attachmentId, extractionId: evidence.extractionId, location: format === 'pdf' ? 'page:1' : 'line:1' };
       return [{ name: 'capabilities_load', input: { ids: ['attachment.read'] } }];
     }
     assert.ok(options.tools?.some(tool => 'name' in tool && tool.name === 'attachment_read'));
@@ -3981,7 +3982,7 @@ test('scripted provider creates and saves a new native document from DOCX and no
   assert.ok(persistence.workingDocumentIds.every(id => !id.startsWith('attachment-')));
 });
 
-test('malformed DOCX, invalid text and unsupported PDF produce bounded errors without cached success', async () => {
+test('malformed DOCX, invalid text and malformed PDF produce bounded errors without cached success', async () => {
   const binding = await createNapiDocxEngineBinding();
   const corrupt = Buffer.from(buildMinimalDocx(['Unreadable']));
   const payload = 30 + corrupt.readUInt16LE(26) + corrupt.readUInt16LE(28);
@@ -3994,7 +3995,7 @@ test('malformed DOCX, invalid text and unsupported PDF produce bounded errors wi
   ]);
   const service = createAttachmentExtractionService(fixture.source, binding);
   const tool = createAttachmentTools(service, attachmentScope)['attachment.search']!;
-  for (const [index, code] of ['INVALID_DOCX', 'INVALID_ENCODING', 'EXTRACTION_UNSUPPORTED', 'INVALID_DOCX'].entries()) {
+  for (const [index, code] of ['INVALID_DOCX', 'INVALID_ENCODING', 'INVALID_PDF', 'INVALID_DOCX'].entries()) {
     const result = await tool.execute!({ attachmentIds: [fixture.rows[index]!.id], query: 'fact' }, {} as never) as any;
     assert.equal(result.error.code, code);
   }
@@ -4142,4 +4143,212 @@ test('scripted large-source task loads search/read directly from the manifest wi
   assert.deepEqual(calls, ['capabilities.load', 'attachment.read', 'attachment.search']);
   assert.equal(fixture.originalReads(), 1);
   t.diagnostic(`ATTACHMENT_TARGETED_AWARENESS ${JSON.stringify({ providerRequests: turn, toolCalls: calls.length, attachmentListCalls: 0, capabilityListOrSearchCalls: 0, originalReads: fixture.originalReads() })}`);
+});
+
+test('PDF small digital pages arrive complete in the first provider request alongside DOCX and TXT, with no tools and cached follow-ups', async (t) => {
+  const binding = await createNapiDocxEngineBinding();
+  const bytes = buildTestPdf([['Quarterly results', 'Revenue $42,750; margin 18.5%.'], ['Next quarter plan', 'Owner Mira; launch June 12.']], { title: 'Quarterly results', structure: true });
+  const original = Buffer.from(bytes);
+  const fixture = attachmentFixture([
+    { filename: 'quarter.pdf', bytes, mediaType: 'application/pdf' },
+    { filename: 'note.txt', bytes: Buffer.from('Approved by Priya.'), mediaType: 'text/plain' },
+    { filename: 'facts.docx', bytes: Buffer.from(buildMinimalDocx(['Budget is $9,200.'])), mediaType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' },
+  ]);
+  const persistence = memoryPersistence('user-1');
+  const thread = await persistence.getOwnedThread({ threadId: 'thread-1', ownerUserId: 'user-1' });
+  persistence.getOwnedThread = async () => ({ ...thread!, title: 'PDF source checks' });
+  let requests = 0;
+  const model = attachmentModel(options => {
+    const { text, manifest } = attachmentRequest(options);
+    assert.ok(Buffer.byteLength(text) <= 12_000);
+    assert.deepEqual(manifest.attachments.map(item => item.attachmentId), fixture.rows.map(row => row.id));
+    const pdf = manifest.attachments[0]!;
+    assert.equal(pdf.title, 'Quarterly results');
+    assert.equal(pdf.titleSource, 'pdf_metadata');
+    assert.equal(pdf.format, 'pdf');
+    assert.equal(pdf.pageCount, 2);
+    assert.equal(pdf.extractionStatus, 'ready');
+    assert.match(pdf.extractor, /pdfjs-5\.6\.205/);
+    assert.equal(pdf.sha256, fixture.rows[0]!.sha256);
+    assert.equal(pdf.contentMode, 'complete');
+    assert.equal(pdf.contentComplete, true);
+    assert.equal(pdf.outline.headingCount, 0);
+    assert.equal(pdf.outline.tableCount, 0);
+    assert.equal(pdf.outline.bookmarks.length, 2);
+    assert.equal(pdf.outline.bookmarks[1].location, 'page:2');
+    assert.deepEqual(pdf.content.map((unit: any) => [unit.location, unit.page.number, unit.page.label, unit.page.textStatus]), [['page:1', 1, 'i', 'digital_text'], ['page:2', 2, '1', 'digital_text']]);
+    assert.match(pdf.content[0].text, /Revenue \$42,750; margin 18.5%/);
+    assert.match(pdf.content[1].text, /Owner Mira; launch June 12/);
+    assert.equal(pdf.content[0].page.width, 612);
+    for (const source of manifest.attachments) assert.equal(source.contentComplete, true);
+    if (!requests++) t.diagnostic(`PDF_SMALL ${JSON.stringify({ originalBytes: bytes.length, evidenceBytes: Buffer.byteLength(text), toolCalls: 0 })}`);
+    return [];
+  });
+  const deps = { ...baseDeps(persistence, input => runAgent({ ...input, model }), undefined, 128_000), docxBinding: binding, chatAttachments: fixture };
+  const start = performance.now();
+  const run = await (await createAgentExecutionService({ ...deps, attachmentExtraction: createAttachmentExtractionService(fixture.source, binding) }).start({ userId: 'user-1', threadId: 'thread-1', instruction: 'Summarize these sources.', attachmentIds: fixture.rows.map(row => row.id) })).result;
+  assert.equal(run.run.status, 'completed');
+  const elapsed = performance.now() - start;
+  const cachedStart = performance.now();
+  const followUp = await (await createAgentExecutionService({ ...deps, attachmentExtraction: createAttachmentExtractionService(fixture.source, binding) }).start({ userId: 'user-1', threadId: 'thread-1', instruction: 'Use the previous attachments again.' })).result;
+  assert.equal(followUp.run.status, 'completed');
+  assert.equal(requests, 2);
+  assert.equal(fixture.originalReads(), 3);
+  assert.equal(persistence.steps.filter(step => step.kind === 'tool').length, 0);
+  assert.deepEqual(bytes, original);
+  t.diagnostic(`PDF_SMALL_TIME ${JSON.stringify({ firstRunMs: Math.round(elapsed), cachedRunMs: Math.round(performance.now() - cachedStart) })}`);
+});
+
+test('PDF large source is bounded in the actual provider request; paged lexical search and page/range reads preserve numeric evidence', async (t) => {
+  const pages = Array.from({ length: 80 }, (_, index) => [
+    `Annual report physical page ${index + 1}`,
+    ...Array.from({ length: 30 }, (_, line) => `Region ${line + 1} revenue $12,345.60; cost $9,876.50; units 123.`),
+    ...(index === 66 ? ['Verification code: CEDAR-672.'] : []),
+  ]);
+  const bytes = buildTestPdf(pages, { title: 'Annual report', structure: true });
+  const fixture = attachmentFixture([
+    { filename: 'annual.pdf', bytes, mediaType: 'application/pdf' },
+    { filename: 'tiny.txt', bytes: Buffer.from('Tiny source is fully included.'), mediaType: 'text/plain' },
+  ]);
+  const service = createAttachmentExtractionService(fixture.source);
+  const started = performance.now();
+  const { extraction } = await service.get(attachmentScope, fixture.rows[0]!.id);
+  const extractionMs = performance.now() - started;
+  const tools = createAttachmentTools(service, attachmentScope);
+  const call = async (name: string, args: unknown) => await tools[name]!.execute!(args, {} as never) as Record<string, any>;
+  const search = await call('attachment.search', { attachmentIds: fixture.rows.map(row => row.id), query: 'CEDAR-672' });
+  assert.equal(search.matches.length, 1);
+  assert.equal(search.matches[0].location, 'page:67');
+  assert.equal(search.matches[0].page.number, 67);
+  assert.equal(search.matches[0].page.label, '66');
+  assert.equal(search.matches[0].sha256, fixture.rows[0]!.sha256);
+  assert.ok(search.matches[0].textOffset > 0);
+  const reference = { attachmentId: fixture.rows[0]!.id, extractionId: extraction.extractionId, location: 'page:67' };
+  const read = await call('attachment.read', reference);
+  assert.equal(read.content.length, 1);
+  assert.match(read.content[0].text, /\$12,345\.60; cost \$9,876\.50; units 123/);
+  assert.equal(read.content[0].headingLevel, undefined);
+  assert.match(read.limitations.join(' '), /Tabular structure.*incomplete/);
+  const range = await call('attachment.read', { ...reference, location: 'page:66', pageEnd: 68 });
+  assert.deepEqual(range.content.map((unit: any) => unit.location), ['page:66', 'page:67']);
+  assert.ok(range.next);
+  const rangeEnd = await call('attachment.read', { ...reference, location: 'page:66', pageEnd: 68, ...range.next });
+  assert.deepEqual(rangeEnd.content.map((unit: any) => unit.location), ['page:68']);
+  assert.equal(rangeEnd.next, null);
+  let nextOffset: number | null = 0;
+  const locations: string[] = [];
+  while (nextOffset !== null) {
+    const page = await call('attachment.search', { attachmentIds: [fixture.rows[0]!.id], query: 'revenue', limit: 3, offset: nextOffset });
+    assert.equal(page.ok, true);
+    assert.ok(JSON.stringify(page).length <= 8_000);
+    locations.push(...page.matches.map((match: any) => match.location));
+    assert.ok(page.nextOffset === null || page.nextOffset > nextOffset);
+    nextOffset = page.nextOffset;
+  }
+  assert.equal(locations.length, 80);
+  assert.equal(new Set(locations).size, 80);
+  assert.equal((await call('attachment.read', { ...reference, pageEnd: 1 })).error.code, 'INVALID_REFERENCE');
+  assert.equal((await call('attachment.read', { ...reference, extractionId: 'old' })).error.code, 'STALE_EXTRACTION');
+  const persistence = memoryPersistence('user-1');
+  const thread = await persistence.getOwnedThread({ threadId: 'thread-1', ownerUserId: 'user-1' });
+  persistence.getOwnedThread = async () => ({ ...thread!, title: 'Large PDF checks' });
+  const model = attachmentModel(options => {
+    const { text, manifest } = attachmentRequest(options);
+    const pdf = manifest.attachments[0]!;
+    assert.ok(Buffer.byteLength(text) <= 12_000);
+    assert.equal(pdf.pageCount, 80);
+    assert.equal(pdf.contentComplete, false);
+    assert.equal(pdf.title, 'Annual report');
+    assert.equal(pdf.content, undefined);
+    assert.ok(pdf.outline.bookmarks.length > 0);
+    assert.match(text, /CEDAR-672/);
+    assert.doesNotMatch(text, /Annual report physical page 79/);
+    assert.equal(manifest.attachments[1]!.contentComplete, true);
+    t.diagnostic(`PDF_LARGE ${JSON.stringify({ originalBytes: bytes.length, extractedCharacters: extraction.units.reduce((sum, unit) => sum + unit.text.length, 0), extractionMs: Math.round(extractionMs), cacheBytes: fixture.cache.get(fixture.rows[0]!.id)!.length, evidenceBytes: Buffer.byteLength(text), pages: 80 })}`);
+    return [];
+  });
+  const deps = baseDeps(persistence, input => runAgent({ ...input, model }), undefined, 128_000);
+  const run = await (await createAgentExecutionService({ ...deps, chatAttachments: fixture, attachmentExtraction: service }).start({ userId: 'user-1', threadId: 'thread-1', instruction: 'Give the verification code.', attachmentIds: fixture.rows.map(row => row.id) })).result;
+  assert.equal(run.run.status, 'completed');
+  assert.equal(fixture.originalReads(), 2);
+});
+
+test('PDF mixed image/text pages, failures, limits and authorization never invent missing content', async () => {
+  const damaged = buildTestPdf([['Healthy digital page with values 12345.'], ['Damaged text stream']]);
+  const marker = Buffer.from('/Filter /FlateDecode >>\nstream\n');
+  const damagedStart = damaged.indexOf(marker, damaged.indexOf(marker) + 1) + marker.length;
+  damaged.fill(0, damagedStart, damagedStart + 8);
+  const fixture = attachmentFixture([
+    { filename: 'mixed.pdf', bytes: buildTestPdf([['Digital report and extracted values 12345.'], null, ['7']]), mediaType: 'application/pdf' },
+    { filename: 'encrypted.pdf', bytes: buildTestPdf([['Private values']], { encrypted: true }), mediaType: 'application/pdf' },
+    { filename: 'corrupt.pdf', bytes: Buffer.from('%PDF-1.7\ncorrupt body'), mediaType: 'application/pdf' },
+    { filename: 'pretend.pdf', bytes: Buffer.from('not a PDF'), mediaType: 'application/pdf' },
+    { filename: 'huge.pdf', bytes: buildTestPdf(Array.from({ length: 501 }, () => ['Bounded pages'])), mediaType: 'application/pdf' },
+    { filename: 'partial.pdf', bytes: buildTestPdf(Array.from({ length: 300 }, () => Array.from({ length: 40 }, () => 'i'.repeat(100)))), mediaType: 'application/pdf' },
+    { filename: 'damaged-page.pdf', bytes: damaged, mediaType: 'application/pdf' },
+  ]);
+  const service = createAttachmentExtractionService(fixture.source);
+  const { extraction } = await service.get(attachmentScope, fixture.rows[0]!.id);
+  assert.deepEqual(extraction.units.map(unit => unit.page?.textStatus), ['digital_text', 'no_text', 'limited_text']);
+  assert.equal(extraction.pdf?.title, undefined);
+  assert.deepEqual(extraction.pdf?.outline, []);
+  assert.match(extraction.units[1]!.page!.warnings.join(' '), /not call it blank/);
+  const tools = createAttachmentTools(service, attachmentScope);
+  const ref = { attachmentId: fixture.rows[0]!.id, extractionId: extraction.extractionId, location: 'page:2' };
+  const imageRead = await tools['attachment.read']!.execute!(ref, {} as never) as any;
+  assert.equal(imageRead.ok, true);
+  assert.equal(imageRead.content[0].text, '');
+  assert.equal(imageRead.content[0].page.textStatus, 'no_text');
+  for (const [index, code] of [[1, 'PDF_PASSWORD_REQUIRED'], [2, 'INVALID_PDF'], [3, 'INVALID_PDF'], [4, 'EXTRACTION_LIMIT']] as const) {
+    await assert.rejects(service.get(attachmentScope, fixture.rows[index]!.id), { code });
+    assert.equal(fixture.cache.has(fixture.rows[index]!.id), false);
+  }
+  const damagedResult = await service.get(attachmentScope, fixture.rows[6]!.id);
+  assert.equal(damagedResult.extraction.pdf!.complete, false);
+  assert.deepEqual(damagedResult.extraction.units.map(unit => unit.page!.textStatus), ['digital_text', 'failed']);
+  const { extraction: partial } = await service.get(attachmentScope, fixture.rows[5]!.id);
+  assert.equal(partial.pdf!.complete, false);
+  assert.equal(partial.pdf!.pageCount, 300);
+  assert.ok(partial.pdf!.processedPages > 0 && partial.pdf!.processedPages < 300);
+  assert.match(partial.limitations.join(' '), /Omitted pages\/text are unavailable, not empty/);
+  const omitted = await tools['attachment.read']!.execute!({ attachmentId: fixture.rows[5]!.id, extractionId: partial.extractionId, location: 'page:300' }, {} as never) as any;
+  assert.equal(omitted.error.code, 'PDF_PAGE_UNAVAILABLE');
+  let next: { offset: number; textOffset: number } | null = { offset: 0, textOffset: 0 };
+  let text = '';
+  while (next) {
+    const result = await tools['attachment.read']!.execute!({ attachmentId: partial.attachmentId, extractionId: partial.extractionId, location: 'page:1', ...next }, {} as never) as any;
+    assert.ok(JSON.stringify(result).length <= 8_000);
+    text += result.content[0].text;
+    next = result.next;
+  }
+  assert.equal(text, partial.units[0]!.text);
+  for (const scope of [{ ...attachmentScope, userId: 'other' }, { ...attachmentScope, threadId: 'other' }]) {
+    const result = await createAttachmentTools(service, scope)['attachment.read']!.execute!(ref, {} as never) as any;
+    assert.equal(result.error.code, 'ATTACHMENT_NOT_FOUND');
+  }
+  fixture.rows[0] = { ...fixture.rows[0]!, status: 'staged' };
+  await assert.rejects(service.get(attachmentScope, ref.attachmentId), { code: 'ATTACHMENT_NOT_FOUND' });
+  fixture.rows[0] = { ...fixture.rows[0]!, status: 'deleted' };
+  const deleted = await tools['attachment.read']!.execute!(ref, {} as never) as any;
+  assert.equal(deleted.error.code, 'ATTACHMENT_NOT_FOUND');
+});
+
+test('PDF ten-source evidence keeps every current identity and page count while a small TXT remains complete', async (t) => {
+  const bytes = buildTestPdf(Array.from({ length: 8 }, (_, index) => [`Source page ${index + 1}`, 'Revenue and costs: 12345. '.repeat(15)]), { structure: true });
+  const fixture = attachmentFixture(Array.from({ length: 10 }, (_, index) => index === 9
+    ? { filename: 'tiny.txt', bytes: Buffer.from('Keep this small note complete.'), mediaType: 'text/plain' }
+    : { filename: `source-${index}.pdf`, bytes, mediaType: 'application/pdf' }));
+  const service = createAttachmentExtractionService(fixture.source);
+  const text = (await createAttachmentEvidence(service, attachmentScope, fixture.rows.map(row => row.id), 'Summarize the attached sources.')(12_000))!;
+  const manifest = JSON.parse(text.slice(text.indexOf('\n') + 1));
+  assert.ok(Buffer.byteLength(text) <= 12_000);
+  assert.deepEqual(manifest.attachments.map((source: any) => source.attachmentId), fixture.rows.map(row => row.id));
+  for (const source of manifest.attachments.slice(0, 9)) {
+    assert.equal(source.pageCount, 8);
+    assert.equal(source.titleSource, 'filename');
+    assert.equal(source.extractionStatus, 'ready');
+    assert.ok(source.extractionId && source.sha256);
+  }
+  assert.equal(manifest.attachments[9].contentComplete, true);
+  t.diagnostic(`PDF_TEN_SOURCES ${JSON.stringify({ evidenceBytes: Buffer.byteLength(text), currentIds: manifest.attachments.length })}`);
 });

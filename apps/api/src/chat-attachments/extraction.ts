@@ -13,7 +13,32 @@ export type AttachmentUnit = {
   section: string[];
   headingLevel?: number;
   list?: { kind: string; level: number; supported: boolean };
+  page?: {
+    number: number;
+    label?: string;
+    width: number;
+    height: number;
+    rotation: number;
+    coordinateSpace: "pdf_user_space";
+    textStatus: "digital_text" | "limited_text" | "no_text" | "failed";
+    warnings: string[];
+    lines: { textOffset: number; length: number; x: number; y: number; width: number; height: number; direction: string }[];
+    remainingLines: number;
+  };
 };
+export type PdfStructure = {
+  title?: string;
+  pageCount: number;
+  processedPages: number;
+  complete: boolean;
+  metadata: Record<string, string>;
+  outline: { title: string; level: number; location?: string }[];
+  outlineComplete: boolean;
+  options: typeof PDF_EXTRACTION_OPTIONS;
+};
+// Fixed policy and parser version are part of PDF cache identity.
+export const PDF_EXTRACTOR_VERSION = "pdfjs-5.6.205-policy-v1";
+export const PDF_EXTRACTION_OPTIONS = { maxPages: 500, maxPageItems: 20_000, maxItems: 100_000, maxCharacters: 1_000_000, maxPageLines: 64, maxBookmarks: 100, maxOutputBytes: 3_500_000 } as const;
 export type AttachmentExtraction = {
   attachmentId: string;
   sha256: string;
@@ -21,7 +46,9 @@ export type AttachmentExtraction = {
   extractor: string;
   units: AttachmentUnit[];
   limitations: string[];
+  pdf?: PdfStructure;
 };
+export type ExtractionContent = Pick<AttachmentExtraction, "units" | "limitations" | "pdf">;
 export type AttachmentScope = { workspaceId: string; userId: string; threadId: string };
 export type AttachmentSource = Pick<ChatAttachmentService, "getBound" | "list" | "read" | "readExtraction" | "saveExtraction">;
 
@@ -109,7 +136,7 @@ export function createAttachmentExtractionService(source: AttachmentSource, bind
   async function identity(meta: ChatAttachmentDto) {
     const native = meta.mediaType.endsWith("wordprocessingml.document") && binding
       ? await (nativeIdentity ??= describeNativeEngine(binding)) : undefined;
-    const extractor = `${EXTRACTOR_VERSION}${native ? `:docx:${native.engineVersion}:${native.binarySha256 ?? native.modulePath}` : ""}`;
+    const extractor = `${EXTRACTOR_VERSION}${meta.mediaType === "application/pdf" ? `:${PDF_EXTRACTOR_VERSION}` : ""}${native ? `:docx:${native.engineVersion}:${native.binarySha256 ?? native.modulePath}` : ""}`;
     const extractionId = createHash("sha256").update(`${meta.id}:${meta.sha256}:${meta.mediaType}:${extractor}`).digest("hex");
     return { extractor, extractionId, native };
   }
@@ -127,7 +154,8 @@ export function createAttachmentExtractionService(source: AttachmentSource, bind
     const existing = await cached(scope, meta);
     if (existing) return existing;
     const isDocx = meta.mediaType.endsWith("wordprocessingml.document");
-    if (!["text/plain", "text/markdown"].includes(meta.mediaType) && !isDocx) extractionError("EXTRACTION_UNSUPPORTED", "Text extraction supports TXT, Markdown, and DOCX; PDF and images are not inspected yet");
+    const isPdf = meta.mediaType === "application/pdf";
+    if (!["text/plain", "text/markdown"].includes(meta.mediaType) && !isDocx && !isPdf) extractionError("EXTRACTION_UNSUPPORTED", "Text extraction supports TXT, Markdown, DOCX, and PDF; images require visual interpretation");
     const { extractor, extractionId, native } = await identity(meta);
     if (isDocx && !native) extractionError("EXTRACTION_UNAVAILABLE", "Native DOCX reader is unavailable");
     const object = await source.read({ ...scope, attachmentId: meta.id });
@@ -147,20 +175,22 @@ export function createAttachmentExtractionService(source: AttachmentSource, bind
     }
     const bytes = Buffer.concat(chunks);
     if (bytes.length !== meta.sizeBytes || createHash("sha256").update(bytes).digest("hex") !== meta.sha256) extractionError("ATTACHMENT_CHANGED", "Original attachment bytes do not match their recorded hash");
-    let content: Pick<AttachmentExtraction, "units" | "limitations">;
-    if (!isDocx) content = extractText(bytes, meta.mediaType === "text/markdown");
+    let content: ExtractionContent;
+    if (!isDocx && !isPdf) content = extractText(bytes, meta.mediaType === "text/markdown");
     else {
-      checkDocxArchive(bytes);
-      if (activeReaders >= 2) extractionError("EXTRACTION_BUSY", "DOCX readers are busy; retry shortly");
+      if (isDocx) checkDocxArchive(bytes);
+      if (isPdf && !/^%PDF-\d\.\d/.test(bytes.subarray(0, 8).toString("ascii"))) extractionError("INVALID_PDF", "PDF header is missing or invalid");
+      const format = isPdf ? "PDF" : "DOCX";
+      if (activeReaders >= 2) extractionError("EXTRACTION_BUSY", "Attachment readers are busy; retry shortly");
       activeReaders++;
       try {
         content = await new Promise((resolve, reject) => {
-          const child = fork(new URL(import.meta.url.endsWith(".ts") ? "./docx-extraction-worker.ts" : "./docx-extraction-worker.js", import.meta.url), [], {
+          const child = fork(new URL(`./${isPdf ? "pdf" : "docx"}-extraction-worker.${import.meta.url.endsWith(".ts") ? "ts" : "js"}`, import.meta.url), [], {
             stdio: ["ignore", "ignore", "ignore", "ipc"], serialization: "advanced",
             execArgv: [...process.execArgv, "--max-old-space-size=128"],
-            env: { ...process.env, OPENSUITE_ENGINE_PATH: native!.binaryPath ?? native!.modulePath },
+            env: { ...process.env, ...(native ? { OPENSUITE_ENGINE_PATH: native.binaryPath ?? native.modulePath } : {}) },
           });
-          const deadline = setTimeout(() => finish(new ChatAttachmentError(400, "EXTRACTION_TIMEOUT", "DOCX extraction exceeded 10 seconds")), 10_000);
+          const deadline = setTimeout(() => finish(new ChatAttachmentError(400, "EXTRACTION_TIMEOUT", `${format} extraction exceeded 10 seconds`)), 10_000);
           let settled = false;
           function finish(error?: Error, result?: typeof content) {
             if (settled) return;
@@ -169,12 +199,12 @@ export function createAttachmentExtractionService(source: AttachmentSource, bind
             child.kill("SIGKILL");
             if (error) reject(error); else resolve(result!);
           }
-          child.once("error", () => finish(new ChatAttachmentError(400, "EXTRACTION_FAILED", "DOCX reader could not start")));
-          child.once("exit", () => finish(new ChatAttachmentError(400, "EXTRACTION_FAILED", "DOCX reader stopped before extraction completed")));
+          child.once("error", () => finish(new ChatAttachmentError(400, "EXTRACTION_FAILED", `${format} reader could not start`)));
+          child.once("exit", () => finish(new ChatAttachmentError(400, "EXTRACTION_FAILED", `${format} reader stopped before extraction completed`)));
           child.once("message", (message) => {
             const result = message as { content?: typeof content; code?: string };
             if (result.content) finish(undefined, result.content);
-            else finish(new ChatAttachmentError(400, result.code ?? "INVALID_DOCX", "DOCX could not be extracted safely"));
+            else finish(new ChatAttachmentError(400, result.code ?? `INVALID_${format}`, `${format} could not be extracted safely${result.code === "PDF_PASSWORD_REQUIRED" ? "; encrypted/password-protected PDFs are not supported" : ""}`));
           });
           child.send(bytes);
         });
