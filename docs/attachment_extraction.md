@@ -50,8 +50,8 @@ warnings, without logging their text; a damaged stream cannot silently become a
 confident blank page. Image-only pages say that no extractable text does **not**
 mean blank. Mixed pages can contain both digital text and unrepresented images.
 Attachment ID + original hash + extraction ID + physical page number preserve the
-source references needed for later rendering/vision. No OCR, image rendering,
-provider-native PDF processing, secondary model request or external service is used.
+source references needed for later rendering/vision. Text extraction itself performs no OCR or visual interpretation. The separate
+bounded visual path below renders selected pages through the same private source.
 
 Every representation retains the attachment ID, original SHA-256, extractor
 version, and extraction ID. DOCX identity also includes the selected native engine
@@ -167,7 +167,7 @@ argument.
 DOCX text extraction covers the main body only. Headers, footers, notes, comments,
 deleted revisions, text boxes, embedded objects, images, page layout, and merged or
 nested table relationships are not represented. These limitations accompany the
-source evidence. Unsupported body blocks are identified. Image/vision handling remains Part 6; no OCR, vectors, or LLM extraction is used.
+source evidence. Unsupported body blocks are identified. Visual evidence uses the bounded Part 6 path below; no OCR service or vectors are used.
 
 Verification uses temporary native DOCX fixtures and captures the actual scripted
 provider's prompt. Permanent checks cover direct tiny files, headings/lists/tables,
@@ -207,10 +207,112 @@ uses 4,706 evidence bytes, zero tools and 8 ms on its cached follow-up.
 Nine PDFs plus a small TXT retain all ten identities in 11,864 bytes. These are local,
 scripted measurements, not provider latency or load-test claims.
 
-Part 6 should render/interpret only the needed flagged physical pages, retain
-these exact immutable source references, and distinguish visual evidence from
-this text extraction. Complex columns, tables, charts, scans, handwriting, forms
-and images remain limitations of this part.
+C2 Part 6 adds actual image delivery and targeted PDF page vision. PNG/JPEG
+validation and preparation use installed Sharp in a disposable child process.
+Actual format must match recorded MIME, dimensions must be positive, and animated
+images are refused. Decoding is capped at 16 million pixels; output is an oriented,
+metadata-free, white-backed JPEG of at most 1600 pixels per side and 350,000 bytes.
+Originals are unchanged. Cache identity includes original SHA-256 and the visual
+processor version. Metadata and visual understanding are explicitly distinct.
+
+PDF page rendering uses the installed PDF.js Node canvas implementation (its
+existing optional native canvas dependency must be installed). It opens one
+selected 1-based physical page, never every page automatically. Rendering is
+bounded to 1600 pixels per side, two-times source scale, and 16 million pixels per
+embedded image. Parser/render warnings refuse visual success. Standard fonts and
+CMaps remain local; network, eval, WASM, document actions and attachment execution
+stay disabled. A successful rendering still warns that unsupported PDF features
+or unreadable details may be missing. Extracted text, printed labels, physical
+page numbers and source warnings remain separate from visual interpretation.
+One latest page is retained in the existing private extraction JSON. Up to four
+prepared page images are retained per extraction service to avoid alternating-page
+rerenders; every access still checks the bound owner/thread. This bounded cache
+can evict older pages, which then need rendering again after restart. All visual
+processing shares the two-reader limit, 10-second parent kill deadline and 128 MiB
+JS heap limit. Sharp also has a five-second operation timeout and disabled native
+cache; the child samples a 384 MiB RSS ceiling. Native memory still requires an
+OS/container limit for a hard ceiling.
+
+Small newly submitted images (original at most 2 MB, neither side over 1600)
+are included in the first compatible request without discovery calls. At most two
+unique images/pages are supplied per request. Larger images and PDFs use lazy
+`attachment.view({attachmentId, extractionId, page?})`; page is required for PDFs.
+Images above the automatic threshold remain described in the initial manifest.
+The view result stores a stable reference, not image bytes or a claim of already
+having seen the image. Request projection loads authorized derivatives and adds
+one separate user message after complete tool exchanges: a provenance text part
+and a binary `file` part with `mediaType=image/jpeg`. The current AI SDK converts
+this to the adapter's image input; OpenRouter serializes it as an `image_url` with
+a private `data:image/jpeg;base64,...` URL. Base64 is never ordinary text or a public
+storage URL. Existing reasoning, tool-call IDs/order and responses stay intact.
+The same projection revalidates resources and capabilities on Continue, with no
+image blobs in saved continuations. It deduplicates within each stateless request;
+images may need resending across provider turns. Current attachment identities
+reserve their text budget first; each image then reserves 8192 input tokens plus
+1200 for provenance/status. Insufficient room produces an explicit unsupplied
+visual status, rather than an image or an observation claim. This is conservative
+bounded projection, not full context compaction.
+
+`openrouter-models/vision.ts` checks the selected model's live authenticated
+`/models/{author}/{slug}/endpoints` input modalities and active endpoint/tool
+support. Unknown/unavailable metadata fails closed, with a three-second timeout. The result
+is retained only for the physical run and checked again on Continue.
+OpenRouter receives real image parts and `provider.require_parameters=true` so
+unsupported request parameters cannot be silently ignored. OpenRouter retains
+its image-aware provider selection and the selected key's provider/privacy rules.
+No alternative main model is chosen. A text-only main model can use an explicitly
+configured reader: `OPENROUTER_VISUAL_READER_MODEL` for managed credentials, or
+`OPENROUTER_BYOK_VISUAL_READER_MODEL` for BYOK. Both default to absent. The reader
+uses the already selected key and credential source; neither setting authorizes
+using a key from the other source. The reader is checked independently and gets
+only one selected image/page plus identity/warnings and a fixed reading prompt,
+never conversation history, other sources or mutation tools. Requests use a
+20-second deadline, zero infrastructure retries and 1000 output tokens; returned
+observations are capped at 3000 characters and four calls per physical run.
+Concurrent duplicate reads share work. Observations identify their generating
+model and are explicitly untrusted model interpretation, distinct from extracted
+text. Usage and managed-policy checks use existing accounting with the reader's
+model attribution. Accounting/policy failure prevents subsequent model requests.
+No route yields `VISION_UNSUPPORTED`, never successful visual understanding.
+
+Continue stores at most four bounded, attributed text observations alongside
+stable references, including automatic reader results. It reuses them only after
+checking the source and current reader permission; no second reader call is needed
+for the same unchanged input. Valid reader observations already in tool results
+are not duplicated in request projection. Revoked sources or unavailable vision replace historical view
+results with structured errors in provider projection. Raw image bytes are also
+omitted from opt-in full run traces. No new DB table, general OCR platform,
+background service, document insertion, or agent loop was added.
+
+The official [endpoint schema](https://openrouter.ai/docs/api/api-reference/endpoints/list-all-endpoints-for-a-model)
+and [multimodal guide](https://github.com/OpenRouterTeam/docs/blob/main/guides/overview/multimodal/overview.mdx)
+describe the modality check and multipart request format. Deterministic tests
+capture SDK-bound image parts and the actual OpenRouter wire JSON, with mocked
+responses; this proves delivery and message continuity, not actual vision accuracy.
+Generated dashboard screenshots and a mixed PDF containing the dashboard scan
+cover image validation, text preservation, targeted rendering, cache reuse,
+Continue, unsupported routes, credential-source separation, ownership/deletion,
+reader limits/failure/accounting and log redaction. No paid model calls are used.
+Part 7 should check real-model visual accuracy, browser attachment/Continue flows,
+and native PDF rendering inside the production Linux image with permitted routes.
 
 Final checks: API 483 passed / 25 configuration skips; API/web typechecks, isolated
 PostgreSQL attachment test, and `git diff --check` pass. No push or paid model calls.
+
+
+C2 Part 6 verification: API 497 passed / 25 configuration skips; Agent Core 42
+passed; API, web and Core typechecks plus `git diff --check` pass. The isolated
+PostgreSQL attachment test passed with persisted PDF render reuse after service
+restart, wrong-owner/thread rejection and cache deletion; its temporary schema
+was removed. Local scripted measurements: 800×480 dashboard PNG 19,772 bytes →
+16,196-byte JPEG; combined preparation/validation/cache checks about 0.3–0.5 seconds.
+Mixed-PDF extraction, selected scanned-page rendering and Continue about 0.8
+seconds, with one rendered page, two original reads and a 42,001-byte cache.
+The 80-page PDF still performs no automatic rendering or reader calls. Small
+PNG/JPEG tasks use one main request and zero tools; text-only automatic reading
+uses one isolated reader request, including across Continue. These measurements
+use deterministic mocked provider responses, not live latency or accuracy tests.
+Reader usage is a separately attributed event in the existing usage ledger;
+main-loop run-report turn counts still describe the main model only. Linux
+container rendering and browser/manual accuracy checks remain unverified. No
+paid model calls, push, deployment or automatic document image insertion.

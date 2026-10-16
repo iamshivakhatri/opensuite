@@ -184,6 +184,12 @@ test(
       const reused = await createAttachmentExtractionService(extractionSource).get(cacheScope, pdfAtt.id);
       assert.deepEqual(reused.extraction, extracted.extraction);
       assert.equal(originalReads, 1);
+      const rendered = await createAttachmentExtractionService(extractionSource).view(cacheScope, pdfAtt.id, extracted.extraction.extractionId, 2);
+      assert.ok(rendered.visual.representation.width <= 1600);
+      const renderedAgain = await createAttachmentExtractionService(extractionSource).view(cacheScope, pdfAtt.id, extracted.extraction.extractionId, 2);
+      assert.deepEqual(renderedAgain.visual, rendered.visual);
+      assert.equal(originalReads, 2, "persisted page derivative must be reused after restart");
+      await assert.rejects(createAttachmentExtractionService(extractionSource).view({ ...cacheScope, userId: bob }, pdfAtt.id, extracted.extraction.extractionId, 2), /not found/i);
       await assert.rejects(createAttachmentExtractionService(extractionSource).get({ ...cacheScope, userId: bob }, pdfAtt.id), /not found/i);
       await assert.rejects(attachments.readExtraction({ ...cacheScope, userId: bob }), /not found/i);
 

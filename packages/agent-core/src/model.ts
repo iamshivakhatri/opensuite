@@ -11,7 +11,7 @@ export function createOpenRouterModel(input: {
   // usage.include surfaces OpenRouter cost + token details in providerMetadata.
   return createOpenRouter({ apiKey: input.apiKey })(input.model, {
     usage: { include: true },
-    provider: { sort: "throughput" },
+    provider: { sort: "throughput", require_parameters: true },
     ...(input.model === "deepseek/deepseek-v4.1-flash"
       ? { reasoning: { effort: "low" as const } }
       : {}),

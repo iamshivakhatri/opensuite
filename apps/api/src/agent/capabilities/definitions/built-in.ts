@@ -72,7 +72,7 @@ const tool = (name: string, parentId: string, projection: "always" | "dynamic"):
 });
 
 export const builtInTools: CapabilityDefinition[] = [
-  ...Object.entries({ list: "Discover older attachments omitted from the supplied manifest", search: "Find unknown facts or locations using supplied attachment IDs", read: "Read more detail at known source sections or locations" })
+  ...Object.entries({ view: "View a selected image or physical PDF page when visual evidence is needed; skip visuals already supplied", list: "Discover older attachments omitted from the supplied manifest", search: "Find unknown facts or locations using supplied attachment IDs", read: "Read more detail at known source sections or locations" })
     .map(([name, description]) => ({ ...tool(`attachment.${name}`, "attachment", "dynamic"), description })),
   ...common.map((name) => tool(name, name.startsWith("document.") ? "document" : name.startsWith("workspace.") ? "workspace" : "agent", "always")),
   ...Object.entries(dynamic).flatMap(([parent, names]) => names.map((name) => tool(`document.${name}`, parent, "dynamic"))),

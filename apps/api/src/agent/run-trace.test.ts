@@ -196,7 +196,7 @@ test("model configuration and provider errors do not emit obvious secrets", () =
   try {
     const model = createOpenRouterModel({ apiKey: "do-not-emit-key", model: "deepseek/deepseek-v4.1-flash" });
     const settings = traceModelSettings(model);
-    assert.deepEqual(settings, { reasoning: { effort: "low" }, provider: { sort: "throughput" }, usage: { include: true } });
+    assert.deepEqual(settings, { reasoning: { effort: "low" }, provider: { sort: "throughput", require_parameters: true }, usage: { include: true } });
     const trace = createRunTrace({ runId: "secret-test", threadId: "thread", metadata: { modelSettings: settings } }, { AGENT_RUN_TRACE: "full", AGENT_RUN_TRACE_DIR: dir })!;
     const error = Object.assign(new Error("postgresql://user:db-secret@localhost/db Authorization=auth-secret password=pass-secret Bearer token-secret"), {
       requestHeaders: { authorization: "header-secret", cookie: "cookie-secret" }, requestBody: "body-secret", cause: new Error("cause-secret"),
@@ -244,4 +244,15 @@ test("an unwritable trace destination does not change the run outcome", async ()
     const trace = createRunTrace({ runId: "run", threadId: "thread" }, { AGENT_RUN_TRACE: "full", AGENT_RUN_TRACE_DIR: file });
     assert.deepEqual(await mockRun(trace), await mockRun());
   } finally { rmSync(dir, { recursive: true }); }
+});
+
+test('trace omits private image bytes from request-local file parts', () => {
+  const directory = mkdtempSync(join(tmpdir(), 'opensuite-visual-trace-'));
+  try {
+    const trace = createRunTrace({ runId: 'visual-trace', threadId: 'thread-1' }, { AGENT_RUN_TRACE: 'full', AGENT_RUN_TRACE_DIR: directory })!;
+    trace.diagnostic('model_request', { messages: [{ role: 'user', content: [{ type: 'file', mediaType: 'image/jpeg', data: Buffer.from('PRIVATE_IMAGE_BYTES') }] }] });
+    const content = readFileSync(join(directory, readdirSync(directory)[0]!), 'utf8');
+    assert.match(content, /omitted: private image bytes/);
+    assert.doesNotMatch(content, /PRIVATE_IMAGE_BYTES|80,|\"type\": \"Buffer\"/);
+  } finally { rmSync(directory, { recursive: true, force: true }); }
 });

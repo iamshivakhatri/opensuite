@@ -1,3 +1,4 @@
+import { createAttachmentVision, type VisionRoute } from "./attachment-vision.js";
 import type { StyleProfileService } from "../style-profiles/service.js";
 import type { WorkspaceBrandService } from '../workspace-brand/service.js';
 import type { WorkspaceAssetService } from '../workspace-brand/assets.js';
@@ -144,6 +145,7 @@ export interface AgentModelUsageAttribution {
 }
 
 export interface ResolvedExecutionModel {
+  readonly resolveVision?: () => Promise<VisionRoute>;
   readonly model: AgentModel;
   readonly usageAttribution?: AgentModelUsageAttribution;
   readonly contextLength?: number;
@@ -789,13 +791,21 @@ async function runExecution(input: {
     });
     const requiresSavedStyle = requestsSavedStyle(input.instruction);
     const attachmentScope = { workspaceId: input.thread.workspaceId, userId: input.ownerUserId, threadId: input.thread.id };
+    const attachmentVision = input.deps.attachmentExtraction ? createAttachmentVision({
+      service: input.deps.attachmentExtraction, scope: attachmentScope, submittedIds: input.submittedAttachmentIds,
+      resolveRoute: input.model.resolveVision, signal: input.signal, savedObservations: input.savedContinuation?.visualObservations,
+      beforeReader: async (reader) => {
+        if (reader.usageAttribution?.credentialSource === "managed") await input.deps.managedUsagePolicy?.beforeManagedCall(input.ownerUserId);
+      },
+      recordReader: async (reader, usage) => recordModelUsage({ ...usageAccounting, attribution: reader.usageAttribution, usage }),
+    }) : undefined;
     const attachmentEvidence = input.deps.attachmentExtraction
       ? createAttachmentEvidence(input.deps.attachmentExtraction, attachmentScope, input.submittedAttachmentIds, input.instruction)
       : undefined;
     const tools: AgentToolSet = {
       ...(boundTools?.tools ?? {}),
       ...createStandaloneCapabilityTools(),
-      ...(input.deps.attachmentExtraction ? createAttachmentTools(input.deps.attachmentExtraction, attachmentScope) : {}),
+      ...(input.deps.attachmentExtraction ? createAttachmentTools(input.deps.attachmentExtraction, attachmentScope, attachmentVision?.view) : {}),
       ...(input.deps.workspaceBrand ? createWorkspaceBrandTools({
         getBrand,
         ...(boundTools ? { applyBrand: async (brand, includeLogo) => {
@@ -1003,9 +1013,11 @@ async function runExecution(input: {
         context.safeInputBudgetTokens - estimateTokens(system) - estimateTokens(toolContext(currentTools)) - estimateTokens(JSON.stringify(baseMessages)),
       );
       const evidence = await attachmentEvidence?.(remaining);
+      const visual = await attachmentVision?.project(baseMessages, remaining === undefined ? undefined : Math.max(0, remaining - Buffer.byteLength(evidence ?? "")));
+      const checkedMessages = visual?.checked ?? baseMessages;
       const modelMessages = evidence
-        ? [{ role: "user" as const, content: evidence }, ...baseMessages]
-        : baseMessages;
+        ? [{ role: "user" as const, content: evidence }, ...checkedMessages]
+        : checkedMessages;
       const inRunMessages = projected.slice(initialMessageCount);
       continuation = { turn: ++modelTurn, mode: "provider",
         priorAssistantReasoningReplayed: inRunMessages.some((message) => message.role === "assistant" &&
@@ -1019,7 +1031,7 @@ async function runExecution(input: {
         workingRevision, snapshotRevision: directSnapshotRevision,
         };
       input.trace?.write(`## Turn ${modelTurn} — Continuation`, continuation);
-      return modelMessages;
+      return [...modelMessages, ...(visual?.messages ?? [])];
     };
 
     // The one API → agent-core execution call.
@@ -1211,6 +1223,7 @@ async function runExecution(input: {
       transcript.finish();
       if (result.continuation && !persistenceFailure) {
         transcript.continuation({ version: 1,
+          ...(attachmentVision ? { visualObservations: attachmentVision.snapshot() } : {}),
           ...(input.savedContinuation ? { parentRunId: input.continuationPreviousRunId } : {}),
           messages: result.continuation.messages.slice(input.savedContinuation?.messages.length ?? 0),
           turns: result.continuation.turns, failures: result.continuation.failures,

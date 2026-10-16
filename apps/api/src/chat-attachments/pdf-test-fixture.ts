@@ -1,16 +1,17 @@
 import { deflateSync } from "node:zlib";
 
 /** Temporary, valid PDFs with real text streams, an image page, labels and bookmarks. */
-export function buildTestPdf(pages: (string[] | null)[], options: { title?: string; structure?: boolean; encrypted?: boolean } = {}) {
+export function buildTestPdf(pages: (string[] | null)[], options: { title?: string; structure?: boolean; encrypted?: boolean; image?: { jpeg: Buffer; width: number; height: number } } = {}) {
   const objects: Buffer[] = [];
   const add = (body: string | Buffer) => { objects.push(Buffer.from(body)); return objects.length; };
   const literal = (value: string) => `(${value.replace(/[\\()]/g, "\\$&")})`;
   const stream = (body: Buffer, extra = "") => Buffer.concat([Buffer.from(`<< /Length ${body.length} ${extra} >>\nstream\n`), body, Buffer.from("\nendstream")]);
   add(""); add("");
   const font = add("<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>");
-  const image = add(stream(Buffer.from([40, 120, 220]), "/Type /XObject /Subtype /Image /Width 1 /Height 1 /ColorSpace /DeviceRGB /BitsPerComponent 8"));
+  const picture = options.image;
+  const image = add(stream(picture?.jpeg ?? Buffer.from([40, 120, 220]), `/Type /XObject /Subtype /Image /Width ${picture?.width ?? 1} /Height ${picture?.height ?? 1} /ColorSpace /DeviceRGB /BitsPerComponent 8 ${picture ? "/Filter /DCTDecode" : ""}`));
   const refs = pages.map(lines => {
-    const commands = lines === null ? "q 200 0 0 200 72 500 cm /Image Do Q" : `BT /F1 11 Tf 16 TL 72 740 Td\n${lines.map(line => `${literal(line)} Tj T*`).join("\n")}\nET`;
+    const commands = lines === null ? (picture ? "q 480 0 0 288 72 350 cm /Image Do Q" : "q 200 0 0 200 72 500 cm /Image Do Q") : `BT /F1 11 Tf 16 TL 72 740 Td\n${lines.map(line => `${literal(line)} Tj T*`).join("\n")}\nET`;
     const content = add(stream(deflateSync(commands), "/Filter /FlateDecode"));
     return add(`<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 ${font} 0 R >> /XObject << /Image ${image} 0 R >> >> /Contents ${content} 0 R >>`);
   });

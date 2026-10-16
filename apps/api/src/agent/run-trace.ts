@@ -7,7 +7,7 @@ export function traceModelSettings(model: AgentModel): Record<string, unknown> {
   const settings = (model as unknown as { settings?: Record<string, unknown> }).settings;
   if (!settings) return {};
   const selected: Record<string, unknown> = {};
-  for (const [group, keys] of Object.entries({ reasoning: ["effort", "max_tokens", "exclude", "enabled"], provider: ["sort"], usage: ["include"] })) {
+  for (const [group, keys] of Object.entries({ reasoning: ["effort", "max_tokens", "exclude", "enabled"], provider: ["sort", "require_parameters"], usage: ["include"] })) {
     const value = settings[group];
     if (value && typeof value === "object") {
       selected[group] = Object.fromEntries(keys.filter((key) => key in value).map((key) => [key, (value as Record<string, unknown>)[key]]));
@@ -25,6 +25,8 @@ function traceErrorMessage(message: string): string {
 
 function traceJson(value: unknown): string {
   return JSON.stringify(value, (key, item: unknown) => {
+    if (item && typeof item === "object" && "type" in item && item.type === "file" && "mediaType" in item && typeof item.mediaType === "string" && item.mediaType.startsWith("image/")) return { ...item, data: "[omitted: private image bytes]" };
+    if (["image", "base64"].includes(key)) return "[omitted: private image bytes]";
     if (key === "error" && item != null && !(item instanceof Error)) {
       const detail = item as { message?: unknown; code?: unknown };
       item = Object.assign(new Error(typeof item === "string" ? item : typeof detail.message === "string" ? detail.message : "Non-Error detail omitted: may contain transport secrets"),

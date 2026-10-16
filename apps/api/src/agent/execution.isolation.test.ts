@@ -4352,3 +4352,279 @@ test('PDF ten-source evidence keeps every current identity and page count while 
   assert.equal(manifest.attachments[9].contentComplete, true);
   t.diagnostic(`PDF_TEN_SOURCES ${JSON.stringify({ evidenceBytes: Buffer.byteLength(text), currentIds: manifest.attachments.length })}`);
 });
+
+async function screenshot(format: 'png' | 'jpeg' = 'png', width = 800) {
+  return sharp(Buffer.from(`<svg width="${width}" height="480"><rect width="100%" height="100%" fill="#f3f5f7"/><rect x="20" y="20" width="760" height="440" rx="12" fill="white"/><text x="50" y="70" font-size="28">Meridian sales dashboard</text><text x="50" y="120" font-size="20">Revenue $42,750 | Growth 18.5%</text><rect x="60" y="260" width="130" height="150" fill="#23846b"/><rect x="240" y="200" width="130" height="210" fill="#23846b"/><rect x="420" y="150" width="130" height="260" fill="#23846b"/><text x="60" y="440" font-size="18">April</text><text x="240" y="440" font-size="18">May</text><text x="420" y="440" font-size="18">June</text></svg>`))[format]().toBuffer();
+}
+async function visionDeps(fixture: ReturnType<typeof attachmentFixture>, model: AgentModel, resolveVision: NonNullable<Awaited<ReturnType<AgentExecutionServiceDeps['resolveModel']>>['resolveVision']>) {
+  const persistence = memoryPersistence('user-1');
+  const thread = await persistence.getOwnedThread({ threadId: 'thread-1', ownerUserId: 'user-1' });
+  persistence.getOwnedThread = async () => ({ ...thread!, title: 'Vision checks' });
+  const deps = baseDeps(persistence, input => runAgent({ ...input, model }), undefined, 128_000);
+  return { ...deps, resolveModel: async () => ({ model, contextLength: 128_000, resolveVision }),
+    chatAttachments: fixture, attachmentExtraction: createAttachmentExtractionService(fixture.source) };
+}
+function providerImages(options: Parameters<NonNullable<MockLanguageModelV4['doStream']>>[0]) {
+  return options.prompt.flatMap(message => Array.isArray(message.content) ? message.content.filter(part => part.type === 'file' && part.mediaType.startsWith('image/')) : []);
+}
+
+test('vision validates actual PNG/JPEG, rejects spoofed/oversized/truncated inputs, preserves originals and reuses versioned derivatives', async (t) => {
+  const original = await screenshot();
+  const fixture = attachmentFixture([{ filename: 'dashboard.png', bytes: original, mediaType: 'image/png' },
+    { filename: 'spoof.jpg', bytes: original, mediaType: 'image/jpeg' },
+    { filename: 'broken.png', bytes: original.subarray(0, 40), mediaType: 'image/png' },
+    { filename: 'huge.png', bytes: await sharp({ create: { width: 5000, height: 4000, channels: 3, background: 'white' } }).png().toBuffer(), mediaType: 'image/png' }]);
+  const service = createAttachmentExtractionService(fixture.source);
+  const started = performance.now();
+  const { extraction } = await service.get(attachmentScope, fixture.rows[0]!.id);
+  assert.equal(extraction.image!.width, 800); assert.equal(extraction.image!.height, 480);
+  assert.equal(extraction.image!.mimeType, 'image/png');
+  const ref = { attachmentId: extraction.attachmentId, extractionId: extraction.extractionId };
+  const prepared = await service.view(attachmentScope, ref.attachmentId, ref.extractionId);
+  assert.equal((await sharp(Buffer.from(prepared.visual.representation.base64, 'base64')).metadata()).format, 'jpeg');
+  await createAttachmentExtractionService(fixture.source).view(attachmentScope, ref.attachmentId, ref.extractionId);
+  assert.equal(fixture.originalReads(), 1);
+  assert.equal(createHash('sha256').update(original).digest('hex'), fixture.rows[0]!.sha256);
+  for (const row of fixture.rows.slice(1)) await assert.rejects(service.get(attachmentScope, row.id), { code: 'VISUAL_PROCESSING_FAILED' });
+  await assert.rejects(service.view(attachmentScope, ref.attachmentId, 'old'), { code: 'STALE_EXTRACTION' });
+  const textTools = createAttachmentTools(service, attachmentScope);
+  const searched = await textTools['attachment.search']!.execute!({ attachmentIds: [ref.attachmentId], query: 'revenue' }, {} as never) as any;
+  assert.match(searched.sources[0].warning, /no extracted text/i);
+  const read = await textTools['attachment.read']!.execute!(ref, {} as never) as any;
+  assert.equal(read.error.code, 'TEXT_UNAVAILABLE');
+  t.diagnostic(`VISION_IMAGE ${JSON.stringify({ preparationAndCacheCheckMs: Math.round(performance.now() - started), originalBytes: original.length, preparedBytes: Buffer.from(prepared.visual.representation.base64, 'base64').length })}`);
+});
+
+for (const format of ['png', 'jpeg'] as const) test(`vision small ${format} is actual image input in the first compatible provider request, with identity and no tools`, async () => {
+  const fixture = attachmentFixture([{ filename: `dashboard.${format}`, bytes: await screenshot(format), mediaType: `image/${format}` }]);
+  let requests = 0;
+  const model = attachmentModel(options => {
+    requests++;
+    const { manifest } = attachmentRequest(options);
+    assert.equal(manifest.attachments[0]!.image.width, 800);
+    assert.equal(manifest.attachments[0]!.contentComplete, false);
+    assert.equal(manifest.attachments[0]!.contentMode, 'image_metadata_only');
+    assert.equal(providerImages(options).length, 1);
+    const image = providerImages(options)[0]!;
+    assert.ok(image.type === 'file' && image.data.type === 'data' && image.data.data instanceof Uint8Array);
+    assert.equal(image.mediaType, 'image/jpeg');
+    assert.match(JSON.stringify(options.prompt), /UNTRUSTED VISUAL SOURCE.*attachment-0/);
+    assert.doesNotMatch(JSON.stringify(manifest), /base64|representation/);
+    return [];
+  });
+  const deps = await visionDeps(fixture, model, async () => ({ direct: true }));
+  const result = await (await createAgentExecutionService(deps).start({ userId: 'user-1', threadId: 'thread-1', instruction: 'Describe the sales chart.', attachmentIds: [fixture.rows[0]!.id] })).result;
+  assert.equal(result.run.status, 'completed'); assert.equal(requests, 1); assert.equal(fixture.originalReads(), 1);
+});
+
+test('vision text-only main gets grounded reader observations, isolated input, one reader call, and separately attributed usage', async () => {
+  const fixture = attachmentFixture([{ filename: 'dashboard.png', bytes: await screenshot(), mediaType: 'image/png' }]);
+  let readerCalls = 0;
+  const reader = new MockLanguageModelV4({ doStream: async options => {
+    readerCalls++;
+    assert.equal(providerImages(options).length, 1);
+    assert.doesNotMatch(JSON.stringify(options.prompt), /PRIVATE CONVERSATION/);
+    assert.equal(options.tools, undefined);
+    assert.equal(options.maxOutputTokens, 1000);
+    return { stream: simulateReadableStream({ chunks: [
+      { type: 'stream-start', warnings: [] }, { type: 'text-start', id: 'r' },
+      { type: 'text-delta', id: 'r', delta: 'Visible revenue label: $42,750. The June bar is tallest; small text remains uncertain.' },
+      { type: 'text-end', id: 'r' }, { type: 'finish', finishReason: { unified: 'stop', raw: 'stop' }, usage: { inputTokens: { total: 321 }, outputTokens: { total: 40 } }, providerMetadata: { openrouter: { usage: { cost: 0.002 } } } },
+    ] as never[] }) };
+  } });
+  let mainCalls = 0;
+  const model = attachmentModel(options => {
+    assert.equal(providerImages(options).length, 0);
+    assert.match(JSON.stringify(options.prompt), /model_visual_observation.*reader-model/);
+    assert.match(JSON.stringify(options.prompt), /Visible revenue label: \$42,750/);
+    return mainCalls++ === 0 ? [{ name: 'capabilities_load', input: { ids: ['attachment.view'] } }] : [];
+  });
+  const deps = await visionDeps(fixture, model, async () => ({ direct: false, reader: { model: reader, usageAttribution: { provider: 'openrouter', model: 'reader-model', credentialSource: 'managed' } } }));
+  deps.runAgent = async input => runAgent({ ...input, model, maxTurns: mainCalls === 0 ? 1 : 5 });
+  const usage: any[] = [];
+  let before = 0; let after = 0;
+  const readerDeps = { ...deps,
+    modelUsage: { recordFromProviderResponse: async (event: unknown) => { usage.push(event); return { id: 'usage' } as never; } } as never,
+    managedUsagePolicy: { beforeManagedCall: async () => { before++; }, afterUsageRecorded: async () => { after++; } } as never,
+  };
+  const first = await (await createAgentExecutionService(readerDeps).start({ userId: 'user-1', threadId: 'thread-1', instruction: 'PRIVATE CONVERSATION: Use the attached chart.', attachmentIds: [fixture.rows[0]!.id] })).result;
+  assert.equal(first.run.errorCode, 'AGENT_MAX_TURNS');
+  const result = await (await createAgentExecutionService({ ...readerDeps, attachmentExtraction: createAttachmentExtractionService(fixture.source) }).start({ userId: 'user-1', threadId: 'thread-1', instruction: 'Continue', continueFromRunId: first.run.id })).result;
+  assert.equal(result.run.status, 'completed'); assert.equal(readerCalls, 1);
+  assert.equal(before, 1); assert.equal(after, 1);
+  assert.equal(usage[0].attribution.model, 'reader-model'); assert.equal(usage[0].usage.inputTokens, 321); assert.equal(usage[0].providerReportedCostUsd, 0.002);
+});
+
+test('vision unsupported route is explicit; target view enforces owner/thread/status and no visual claim', async () => {
+  const fixture = attachmentFixture([{ filename: 'dashboard.png', bytes: await screenshot(), mediaType: 'image/png' }]);
+  const model = attachmentModel(options => {
+    assert.equal(providerImages(options).length, 0);
+    assert.match(JSON.stringify(options.prompt), /VISION_UNSUPPORTED/);
+    return [];
+  });
+  const deps = await visionDeps(fixture, model, async () => ({ direct: false }));
+  const result = await (await createAgentExecutionService(deps).start({ userId: 'user-1', threadId: 'thread-1', instruction: 'Describe chart.', attachmentIds: [fixture.rows[0]!.id] })).result;
+  assert.equal(result.run.status, 'completed');
+  const { extraction } = await deps.attachmentExtraction.get(attachmentScope, fixture.rows[0]!.id);
+  const ref = { attachmentId: extraction.attachmentId, extractionId: extraction.extractionId };
+  const { createAttachmentVision } = await import('./attachment-vision.js');
+  for (const scope of [{ ...attachmentScope, userId: 'other' }, { ...attachmentScope, threadId: 'other' }, attachmentScope]) {
+    if (scope === attachmentScope) fixture.rows[0] = { ...fixture.rows[0]!, status: 'staged' };
+    const vision = createAttachmentVision({ service: deps.attachmentExtraction, scope, submittedIds: [], resolveRoute: async () => ({ direct: true }), beforeReader: async () => {}, recordReader: async () => {} });
+    assert.equal((await vision.view(ref) as any).error.code, 'ATTACHMENT_NOT_FOUND');
+  }
+  fixture.rows[0] = { ...fixture.rows[0]!, status: 'deleted' };
+  await assert.rejects(deps.attachmentExtraction.view(attachmentScope, ref.attachmentId, ref.extractionId), { code: 'ATTACHMENT_NOT_FOUND' });
+});
+
+test('vision mixed PDF keeps reliable text and sends only selected scanned physical page; cached render survives Continue with reasoning/tool order', async (t) => {
+  const fixture = attachmentFixture([{ filename: 'mixed.pdf', bytes: buildTestPdf([['Reliable extracted revenue $42,750.'], null, ['Another digital page with unchanged facts.']], { structure: true, image: { jpeg: await screenshot('jpeg'), width: 800, height: 480 } }), mediaType: 'application/pdf' }]);
+  let turn = 0;
+  let ref: { attachmentId: string; extractionId: string; page: number };
+  const model = attachmentModel(options => {
+    const { manifest } = attachmentRequest(options);
+    assert.match(JSON.stringify(options.prompt), /Reliable extracted revenue \$42,750/);
+    if (turn++ === 0) {
+      assert.equal(providerImages(options).length, 0);
+      ref = { attachmentId: manifest.attachments[0]!.attachmentId, extractionId: manifest.attachments[0]!.extractionId, page: 2 };
+      return [{ name: 'capabilities_load', input: { ids: ['attachment.view'] } }];
+    }
+    if (turn === 2) return [{ name: 'attachment_view', input: ref }];
+    assert.equal(providerImages(options).length, 1);
+    const prompt = JSON.stringify(options.prompt);
+    assert.match(prompt, /physicalPage.*2/); assert.match(prompt, /pageLabel.*1/); assert.match(prompt, /no extractable text|No extractable text/);
+    assert.match(prompt, /CONTINUED ENGINE SESSION/);
+    assert.ok(options.prompt.findIndex(message => message.role === 'tool') > options.prompt.findIndex(message => message.role === 'assistant'));
+    return [];
+  });
+  const deps = await visionDeps(fixture, model, async () => ({ direct: true }));
+  deps.runAgent = async input => runAgent({ ...input, model, maxTurns: turn === 0 ? 2 : 5 });
+  const start = performance.now();
+  const stopped = await (await createAgentExecutionService(deps).start({ userId: 'user-1', threadId: 'thread-1', instruction: 'Inspect the chart on physical page 2.', attachmentIds: [fixture.rows[0]!.id] })).result;
+  assert.equal(stopped.run.errorCode, 'AGENT_MAX_TURNS');
+  // A tool reference does not claim it has already been seen; render on the provider projection.
+  const resumedDeps = { ...deps, attachmentExtraction: createAttachmentExtractionService(fixture.source) };
+  const continued = await (await createAgentExecutionService(resumedDeps).start({ userId: 'user-1', threadId: 'thread-1', instruction: 'Continue', continueFromRunId: stopped.run.id })).result;
+  assert.equal(continued.run.status, 'completed');
+  assert.equal(fixture.originalReads(), 2);
+  const cached = JSON.parse(fixture.cache.get(fixture.rows[0]!.id)!.toString());
+  assert.equal(cached.renderedPage.page, 2);
+  const view = await createAttachmentExtractionService(fixture.source).view(attachmentScope, ref!.attachmentId, ref!.extractionId, 2);
+  assert.ok(view.visual.representation.width <= 1600); assert.equal(fixture.originalReads(), 2);
+  const steps = await deps.persistence.listStepsForRun({ runId: stopped.run.id, ownerUserId: 'user-1' });
+  assert.doesNotMatch(JSON.stringify(steps), /base64|data:image|representation/);
+  assert.match(JSON.stringify(steps), /visualReference/);
+  t.diagnostic(`VISION_PDF ${JSON.stringify({ extractionRenderContinueMs: Math.round(performance.now() - start), cacheBytes: fixture.cache.get(fixture.rows[0]!.id)!.length, renderedPages: 1, originalReads: fixture.originalReads() })}`);
+});
+
+test('vision large PDFs have text structure but no automatic page rendering or reader calls', async () => {
+  const fixture = attachmentFixture([{ filename: 'large.pdf', bytes: buildTestPdf(Array.from({ length: 80 }, (_, index) => index === 66 ? null : [`Business report page ${index + 1} revenue 12345.`])), mediaType: 'application/pdf' }]);
+  let routeChecks = 0;
+  const model = attachmentModel(options => { assert.equal(providerImages(options).length, 0); assert.equal(attachmentRequest(options).manifest.attachments[0]!.pageCount, 80); return []; });
+  const deps = await visionDeps(fixture, model, async () => { routeChecks++; return { direct: true }; });
+  const result = await (await createAgentExecutionService(deps).start({ userId: 'user-1', threadId: 'thread-1', instruction: 'Summarize text.', attachmentIds: [fixture.rows[0]!.id] })).result;
+  assert.equal(result.run.status, 'completed'); assert.equal(routeChecks, 0);
+  assert.equal(JSON.parse(fixture.cache.get(fixture.rows[0]!.id)!.toString()).renderedPage, undefined);
+});
+
+test('vision reader observations survive Continue without another call; revoked results and missing capability are removed from provider replay', async () => {
+  const { createAttachmentVision } = await import('./attachment-vision.js');
+  const fixture = attachmentFixture([{ filename: 'dashboard.png', bytes: await screenshot(), mediaType: 'image/png' }]);
+  const service = createAttachmentExtractionService(fixture.source);
+  const { extraction } = await service.get(attachmentScope, fixture.rows[0]!.id);
+  const ref = { attachmentId: extraction.attachmentId, extractionId: extraction.extractionId };
+  let calls = 0;
+  const reader = new MockLanguageModelV4({ doStream: async () => {
+    calls++;
+    return { stream: simulateReadableStream({ chunks: [{ type: 'stream-start', warnings: [] }, { type: 'text-start', id: 'r' }, { type: 'text-delta', id: 'r', delta: 'Visible sales chart.' }, { type: 'text-end', id: 'r' }, { type: 'finish', finishReason: { unified: 'stop', raw: 'stop' }, usage: { inputTokens: { total: 1 }, outputTokens: { total: 1 } } }] as never[] }) };
+  } });
+  const common = { service, scope: attachmentScope, submittedIds: [], beforeReader: async () => {}, recordReader: async () => {} };
+  const resolveRoute = async () => ({ direct: false, reader: { model: reader, usageAttribution: { provider: 'openrouter' as const, model: 'configured-reader', credentialSource: 'byok' as const } } });
+  const firstVision = createAttachmentVision({ ...common, resolveRoute });
+  const [original, duplicate] = await Promise.all([firstVision.view(ref), firstVision.view(ref)]);
+  assert.deepEqual(duplicate, original);
+  assert.equal(original.ok, true);
+  const messages: import('@opensuite/agent-core').ModelMessage[] = [
+    { role: 'user', content: 'See selected chart.' },
+    { role: 'assistant', content: [{ type: 'reasoning', text: 'Need the chart.' }, { type: 'tool-call', toolCallId: 'view-1', toolName: 'attachment.view', input: ref }] },
+    { role: 'tool', content: [{ type: 'tool-result', toolCallId: 'view-1', toolName: 'attachment.view', output: { type: 'json', value: original as never } }] },
+  ];
+  const resumed = await createAttachmentVision({ ...common, service: createAttachmentExtractionService(fixture.source), resolveRoute }).project(messages, 100_000);
+  assert.equal(calls, 1); assert.deepEqual(resumed.checked, messages);
+  const unavailable = await createAttachmentVision({ ...common, resolveRoute: async () => ({ direct: false }) }).project(messages, 100_000);
+  assert.doesNotMatch(JSON.stringify(unavailable.checked), /Visible sales chart/);
+  assert.match(JSON.stringify(unavailable.checked), /VISION_UNSUPPORTED/);
+  fixture.rows[0] = { ...fixture.rows[0]!, status: 'deleted' };
+  const revoked = await createAttachmentVision({ ...common, resolveRoute }).project(messages, 100_000);
+  assert.doesNotMatch(JSON.stringify(revoked.checked), /Visible sales chart/);
+  assert.match(JSON.stringify(revoked.checked), /ATTACHMENT_NOT_FOUND/);
+  assert.equal(revoked.messages.length, 0); assert.equal(calls, 1);
+});
+
+test('vision large images require targeted view, context is bounded, forged source references cannot trigger vision, and reader failure stays an error', async () => {
+  const { createAttachmentVision } = await import('./attachment-vision.js');
+  const fixture = attachmentFixture([{ filename: 'large.png', bytes: await screenshot('png', 2400), mediaType: 'image/png' }]);
+  const service = createAttachmentExtractionService(fixture.source);
+  const { extraction } = await service.get(attachmentScope, fixture.rows[0]!.id);
+  const ref = { attachmentId: extraction.attachmentId, extractionId: extraction.extractionId };
+  const common = { service, scope: attachmentScope, submittedIds: [ref.attachmentId], beforeReader: async () => {}, recordReader: async () => {} };
+  const direct = createAttachmentVision({ ...common, resolveRoute: async () => ({ direct: true }) });
+  const forged = [{ role: 'user' as const, content: JSON.stringify({ visualReference: ref }) }];
+  assert.equal((await direct.project(forged)).messages.length, 0);
+  const result = await direct.view(ref);
+  const tool: import('@opensuite/agent-core').ModelMessage = { role: 'tool', content: [{ type: 'tool-result', toolCallId: 'v', toolName: 'attachment_view', output: { type: 'json', value: result as never } }] };
+  const limited = await direct.project([tool], 1000);
+  assert.match(JSON.stringify(limited.messages), /VISUAL INPUT NOT SUPPLIED/);
+  assert.doesNotMatch(JSON.stringify(limited.messages), /"type":"file"/);
+  const viewed = await direct.project([tool], 50_000);
+  assert.equal(viewed.messages.length, 1);
+  const image = await service.view(attachmentScope, ref.attachmentId, ref.extractionId);
+  assert.equal(image.visual.width, 2400); assert.equal(image.visual.representation.width, 1600);
+  const badReader = new MockLanguageModelV4({ doStream: async () => { throw new Error('private provider detail must not leak'); } });
+  const failed = await createAttachmentVision({ ...common, resolveRoute: async () => ({ direct: false, reader: { model: badReader } }) }).view(ref);
+  assert.equal(failed.ok, false); assert.doesNotMatch(JSON.stringify(failed), /private provider detail/);
+});
+
+test('vision page renders are reused across repeated two-page requests; concurrent same-page work is shared', async () => {
+  const fixture = attachmentFixture([{ filename: 'scan.pdf', bytes: buildTestPdf([null, null]), mediaType: 'application/pdf' }]);
+  const service = createAttachmentExtractionService(fixture.source);
+  const { extraction } = await service.get(attachmentScope, fixture.rows[0]!.id);
+  const ref = { attachmentId: extraction.attachmentId, extractionId: extraction.extractionId };
+  const [first, duplicate] = await Promise.all([service.view(attachmentScope, ref.attachmentId, ref.extractionId, 1), service.view(attachmentScope, ref.attachmentId, ref.extractionId, 1)]);
+  assert.deepEqual(first.visual, duplicate.visual);
+  await service.view(attachmentScope, ref.attachmentId, ref.extractionId, 2);
+  await service.view(attachmentScope, ref.attachmentId, ref.extractionId, 1);
+  await service.view(attachmentScope, ref.attachmentId, ref.extractionId, 2);
+  assert.equal(fixture.originalReads(), 3);
+  fixture.rows[0] = { ...fixture.rows[0]!, status: 'deleted' };
+  await assert.rejects(service.view(attachmentScope, ref.attachmentId, ref.extractionId, 1), { code: 'ATTACHMENT_NOT_FOUND' });
+});
+
+test('vision reader call/output limits and usage failures stop further provider requests', async () => {
+  const { createAttachmentVision } = await import('./attachment-vision.js');
+  const png = await screenshot();
+  const fixture = attachmentFixture(Array.from({ length: 5 }, (_, index) => ({ filename: `chart-${index}.png`, bytes: png, mediaType: 'image/png' })));
+  const service = createAttachmentExtractionService(fixture.source);
+  const references = [];
+  for (const row of fixture.rows) { const { extraction } = await service.get(attachmentScope, row.id); references.push({ attachmentId: row.id, extractionId: extraction.extractionId }); }
+  let calls = 0;
+  const reader = new MockLanguageModelV4({ doStream: async options => {
+    calls++; assert.equal(options.maxOutputTokens, 1000); assert.equal(options.tools, undefined);
+    return { stream: simulateReadableStream({ chunks: [{ type: 'stream-start', warnings: [] }, { type: 'text-start', id: 'r' }, { type: 'text-delta', id: 'r', delta: 'Visible fact. '.repeat(400) }, { type: 'text-end', id: 'r' }, { type: 'finish', finishReason: { unified: 'stop', raw: 'stop' }, usage: { inputTokens: { total: 100 }, outputTokens: { total: 50 } } }] as never[] }) };
+  } });
+  const common = { service, scope: attachmentScope, submittedIds: [], resolveRoute: async () => ({ direct: false, reader: { model: reader } }), beforeReader: async () => {}, recordReader: async () => {} };
+  const vision = createAttachmentVision(common);
+  for (const ref of references.slice(0, 4)) {
+    const result = await vision.view(ref);
+    assert.ok(result.ok && 'observation' in result);
+    assert.equal(result.observation.length, 3000); assert.equal(result.truncated, true);
+  }
+  assert.equal((await vision.view(references[4]!) as any).error.code, 'VISION_LIMIT'); assert.equal(calls, 4);
+  const billingFailure = Object.assign(new Error('Managed AI credits are exhausted'), { code: 'MANAGED_USAGE_EXHAUSTED' });
+  const blocked = createAttachmentVision({ ...common, beforeReader: async () => { throw billingFailure; } });
+  await assert.rejects(blocked.view(references[0]!), billingFailure);
+  await assert.rejects(blocked.project([]), billingFailure); assert.equal(calls, 4);
+  const accountingFailed = createAttachmentVision({ ...common, recordReader: async () => { throw billingFailure; } });
+  await assert.rejects(accountingFailed.view(references[0]!), billingFailure);
+  await assert.rejects(accountingFailed.project([]), billingFailure); assert.equal(calls, 5);
+});

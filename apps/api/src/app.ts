@@ -1,3 +1,4 @@
+import { resolveOpenRouterVision } from "./openrouter-models/vision.js";
 import Fastify, { type FastifyError, type FastifyInstance } from "fastify";
 import cors from "@fastify/cors";
 import multipart from "@fastify/multipart";
@@ -366,6 +367,7 @@ export async function buildApp(
         );
         return {
           model: createOpenRouterModel(resolved),
+          resolveVision: () => resolveOpenRouterVision({ resolved, managedReader: config.agent.visualReaderModel, byokReader: config.agent.byokVisualReaderModel }),
           usageAttribution: {
             provider: resolved.provider,
             model: resolved.model,
