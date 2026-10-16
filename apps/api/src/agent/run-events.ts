@@ -241,6 +241,9 @@ export function createRunEventHandler(input: {
                   : {}),
           }),
         );
+        if (event.type === "tool_failed" && !/^[A-Z][A-Z0-9_]{2,63}$/.test(event.error)) {
+          logAgentLine(`[agent] TOOL-DETAIL ${event.toolName} ${JSON.stringify(summarizeError(event.error))}`);
+        }
         toolStartedAt.delete(event.toolCallId);
       }
     }

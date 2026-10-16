@@ -183,6 +183,13 @@
       "when": 1791122860188,
       "tag": "0025_workspace_asset_images",
       "breakpoints": true
+    },
+    {
+      "idx": 26,
+      "version": "7",
+      "when": 1792121070399,
+      "tag": "0026_document_drafts",
+      "breakpoints": true
     }
   ]
 }

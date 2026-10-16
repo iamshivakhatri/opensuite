@@ -11,6 +11,7 @@ import {
 
 import type { DocumentService } from "../documents/service.js";
 import {
+  readDocumentForEditing,
   DocumentAccessError,
   DocumentUploadError,
 } from "../documents/service.js";
@@ -46,6 +47,8 @@ export interface DocumentTransition {
 }
 
 export interface PrimaryDocxToolsResult {
+  readonly getActiveDraftId: () => string | null;
+  readonly getBaseDocument: () => { documentId: string; versionId: string; bytes: Uint8Array } | null;
   readonly restoreStyleState: (state: SavedDocxStyleState) => void;
   readonly tools: AgentToolSet;
   readonly applyStyleProfile: (profileId: string, profiles: Pick<StyleProfileService, 'get'>) => Promise<ReturnType<typeof styleApplicationSummary>>;
@@ -75,7 +78,7 @@ type SessionDocuments = Pick<
   | "appendDocumentVersion"
   | "createBlankDocxDocument"
   | "createOfficeDocumentFromBytes"
-> & Partial<Pick<DocumentService, "rename">>;
+> & Partial<Pick<DocumentService, "rename" | "readVersionForEditing">>;
 
 function mapHandles<T>(value: T, map: (handle: string) => string): T {
   if (!value || typeof value !== "object" || value instanceof Uint8Array) return value;
@@ -131,6 +134,8 @@ function createActiveDocxSession(input: {
 }) {
   let documentId: string | null = null;
   let versionId: string | null = null;
+  let baseDraftId: string | null = null;
+  let baseDocument: { documentId: string; versionId: string; bytes: Uint8Array } | null = null;
   let host: ReturnType<typeof bindDocxDocument> | null = null;
   let dirty = false;
   let styleFidelity: StyleFidelityReport | null = null;
@@ -214,9 +219,11 @@ function createActiveDocxSession(input: {
       ownerUserId: input.ownerUserId,
       baseVersionId: fromVersionId,
       source: "agent",
+      baseDraftId,
       bytes: Buffer.from(host.currentBytes()),
     });
     dirty = false;
+    baseDraftId = null;
     versionId = appended.version.id;
     try {
       await input.onVersionAdvanced?.({
@@ -234,10 +241,13 @@ function createActiveDocxSession(input: {
     readonly documentId: string;
     readonly versionId: string;
     readonly bytes: Uint8Array;
+    readonly draftId?: string | null;
   }): void {
     // Fresh host → fresh handle state; handles from the prior binding stay stale.
     documentId = next.documentId;
     versionId = next.versionId;
+    baseDraftId = next.draftId ?? null;
+    baseDocument = { documentId: next.documentId, versionId: next.versionId, bytes: next.bytes.slice() };
     host = bindHost(next);
     dirty = false;
     workingRevision = 0;
@@ -409,6 +419,8 @@ function createActiveDocxSession(input: {
 
   return {
     redirectingHost,
+    getBaseDocument: () => baseDocument,
+    getActiveDraftId: () => baseDraftId,
     getActiveDocumentId: () => documentId,
     getActiveVersionId: () => versionId,
     getStyleFidelity: () => styleFidelity,
@@ -465,15 +477,15 @@ function createActiveDocxSession(input: {
       const document = await input.documents.getOwnedDocument({ documentId: selectedDocumentId, ownerUserId: input.ownerUserId });
       if (document.workspaceId !== input.workspaceId || document.format !== "docx") return { ok: false, reasonCode: "DOCUMENT_NOT_EDITABLE" };
       const selectedVersion = selectedVersionId ?? document.latestVersion.id;
-      const bytes = await input.documents.readExactVersionBytes({ documentId: selectedDocumentId, versionId: selectedVersion, ownerUserId: input.ownerUserId });
-      rebind({ documentId: selectedDocumentId, versionId: selectedVersion, bytes: new Uint8Array(bytes) });
+      const { bytes, draftId } = await readDocumentForEditing(input.documents, { documentId: selectedDocumentId, versionId: selectedVersion, ownerUserId: input.ownerUserId });
+      rebind({ documentId: selectedDocumentId, versionId: selectedVersion, bytes: new Uint8Array(bytes), draftId });
       input.onDocumentSelected?.({ documentId: selectedDocumentId, versionId: selectedVersion });
       return { ok: true, documentId, versionId, name: document.name };
     },
     async inspectWorkingDocument(selectedDocumentId: string, focus: InspectFocus) {
       const document = await input.documents.getOwnedDocument({ documentId: selectedDocumentId, ownerUserId: input.ownerUserId });
       if (document.workspaceId !== input.workspaceId || document.format !== "docx") return { ok: false, reasonCode: "DOCUMENT_NOT_READABLE" };
-      const bytes = await input.documents.readExactVersionBytes({ documentId: selectedDocumentId, versionId: document.latestVersion.id, ownerUserId: input.ownerUserId });
+      const { bytes } = await readDocumentForEditing(input.documents, { documentId: selectedDocumentId, versionId: document.latestVersion.id, ownerUserId: input.ownerUserId });
       return input.binding.inspectDocx(new Uint8Array(bytes), { focus });
     },
     async renameDocument(selectedDocumentId: string, name: string) {
@@ -543,11 +555,7 @@ function createActiveDocxSession(input: {
           documentId: fromDocumentId,
           ownerUserId: input.ownerUserId,
         });
-        const bytes = await input.documents.readExactVersionBytes({
-          documentId: fromDocumentId,
-          versionId: fromVersionId,
-          ownerUserId: input.ownerUserId,
-        });
+        const bytes = Buffer.from(host!.currentBytes());
 
         const filename = duplicateFilename(source.name, title);
         const created = await input.documents.createOfficeDocumentFromBytes({
@@ -736,6 +744,8 @@ export async function createPrimaryDocxTools(input: {
       ...imageAssetTools,
     },
     documentId: session.getActiveDocumentId(),
+    getBaseDocument: session.getBaseDocument,
+    getActiveDraftId: session.getActiveDraftId,
     getActiveDocumentId: session.getActiveDocumentId,
     getActiveVersionId: session.getActiveVersionId,
     applyStyleProfile: session.applyStyleProfile,

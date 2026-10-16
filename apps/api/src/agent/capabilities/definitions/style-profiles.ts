@@ -34,7 +34,7 @@ export function createStyleProfileTools(input: {
         const current = input.currentDocument();
         const documentId = parsed.documentId ?? current.documentId;
         if (!documentId) throw new Error('Select a source document or provide documentId');
-        if (documentId === current.documentId && current.dirty) throw new Error('The selected document has unsaved edits. Learn its saved style in a later run.');
+        if (documentId === current.documentId && current.dirty) throw new Error('The selected document has unsaved edits or an autosaved draft. Save a document version before learning its style.');
         const versionId = parsed.versionId ?? (documentId === current.documentId ? current.versionId ?? undefined : undefined);
         return styleProfileSummary(await input.profiles.learnFromDocument({ ...parsed, documentId, ...(versionId ? { versionId } : {}), ownerUserId: input.ownerUserId, workspaceId: input.workspaceId }));
       },
@@ -54,6 +54,7 @@ export function createStyleProfileTools(input: {
 
 /** Named/personal style use, excluding generic requests such as “use an appropriate visual style”. */
 export function requestsSavedStyle(instruction: string): boolean {
+  instruction = instruction.replace(/\b(?:(?:my|our|the|saved|workspace|company)\s+)+brand(?:ing)?(?:\s+style)?\b/gi, 'workspace identity');
   return /\b(?:use|using|apply|with)\b[^.\n]{0,160}\b(?:saved|profile)\b[^.\n]{0,80}\bstyle\b/i.test(instruction)
     || /\b(?:use|using|apply|with)\s+(?:my|our|the saved)\s+[^.\n]{0,140}\bstyle\b/i.test(instruction)
     || /\b(?:[Uu]se|[Uu]sing|[Aa]pply)\s+(?!(?:an?\s+)?(?:appropriate|generic|visual|professional|clean|built-in)\b)(?:the\s+|this\s+)?[A-Z][^.!?\n]{1,100}\bStyle\b/.test(instruction)

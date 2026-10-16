@@ -187,6 +187,7 @@ export async function buildApp(
       "Content-Length",
       "X-Working-Revision",
       "X-Base-Version-Id",
+      "X-Draft-Id",
     ],
     credentials: true,
     maxAge: 86_400,

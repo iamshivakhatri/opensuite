@@ -14,14 +14,15 @@ export const alphaUserRateLimits = {
     { limit: 40, windowMs: DAY_MS },
   ],
   documentWrite: [{ limit: 20, windowMs: HOUR_MS }],
+  documentDraft: [{ limit: 120, windowMs: 60_000 }],
   workspaceCreate: [{ limit: 10, windowMs: DAY_MS }],
 } as const;
 
 export type UserRateLimitName = keyof typeof alphaUserRateLimits;
 export type UserRateLimitPolicy = Record<
-  UserRateLimitName,
+  Exclude<UserRateLimitName, 'documentDraft'>,
   readonly { readonly limit: number; readonly windowMs: number }[]
->;
+> & { documentDraft?: readonly { readonly limit: number; readonly windowMs: number }[] };
 
 export interface UserRateLimitResult {
   readonly allowed: boolean;
@@ -83,7 +84,7 @@ export function createUserRateLimiter(
       entries.set(key, entry);
 
       let retryAt = 0;
-      for (const rule of policy[name]) {
+      for (const rule of policy[name] ?? alphaUserRateLimits[name]) {
         const timestamps = entry.timestamps.filter(
           (timestamp) => timestamp > currentTime - rule.windowMs,
         );

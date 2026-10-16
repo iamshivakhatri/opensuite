@@ -1178,8 +1178,11 @@ test('scripted report creation applies the loaded skill workspace brand before s
   const execution = createAgentExecutionService({
     ...baseDeps(persistence, async (input) => {
       const firstTurn = await input.projectTools!({ turn: 1 } as never);
-      await firstTurn['capabilities.load']!.execute!({ ids: ['skills.reporting.analytical-report'] }, {} as never);
+      await firstTurn['capabilities.load']!.execute!({ ids: ['skills.reporting.analytical-report', 'workspace.get_brand'] }, {} as never);
       const tools = await input.projectTools!({ turn: 2 } as never);
+      const savedBrand = await tools['workspace.get_brand']!.execute!({}, {} as never);
+      assert.match(JSON.stringify(savedBrand), /Cincinnati Sports Club/);
+      assert.match(input.system ?? '', /empty style.list_profiles never proves the workspace brand is missing/);
       await tools['workspace.create_blank_document']!.execute!({ title: document.name }, {} as never);
       await tools['document.insert_paragraphs']!.execute!({ texts: ['Q3 operating report', 'Executive Summary', 'Revenue: $3.8M'], placement: { kind: 'end' } }, {} as never);
       await tools['document.set_paragraph_style']!.execute!({ target: { text: 'Q3 operating report' }, style: 'Title' }, {} as never);
@@ -1203,7 +1206,9 @@ test('scripted report creation applies the loaded skill workspace brand before s
       },
       createOfficeDocumentFromBytes: async () => { throw new Error('unused'); },
     },
-    workspaceBrand: { get: async () => {
+    workspaceBrand: { get: async (workspaceId, userId) => {
+      assert.equal(workspaceId, 'ws-1');
+      assert.equal(userId, 'user-1');
       brandReads++;
       return { schemaVersion: 1, workspaceId: 'ws-1', createdAt: '', updatedAt: '', logoAssetId: 'logo-1',
         organization: { name: 'Cincinnati Sports Club', website: '', email: '', phone: '', address: '' },
@@ -1217,7 +1222,7 @@ test('scripted report creation applies the loaded skill workspace brand before s
       },
     },
   });
-  const result = await (await execution.start({ userId: 'user-1', threadId: 'thread-1', instruction: 'Create a professional quarterly operating report with metrics.' })).result;
+  const result = await (await execution.start({ userId: 'user-1', threadId: 'thread-1', instruction: 'Create a professional quarterly operating report with metrics using our saved brand.' })).result;
   assert.equal(result.run.status, 'completed');
   assert.equal(brandReads, 1);
   assert.equal(logoReads, 1);
@@ -2371,6 +2376,38 @@ test('saved-style completion cannot succeed from assistant text or generic guida
   assert.equal(result.run.status, 'failed');
   assert.match(result.run.errorMessage ?? '', /saved style was not applied and verified/);
   assert.equal(result.assistantMessage, null);
+});
+
+test('workspace brand formatting cannot substitute for a requested saved document style', async () => {
+  const persistence = memoryPersistence('user-1');
+  const binding = await createNapiDocxEngineBinding();
+  const original = buildMinimalDocx(['Existing club content']);
+  const document = { id: 'doc-1', workspaceId: 'ws-1', name: 'Club.docx', format: 'docx', latestVersion: { id: 'v1' } };
+  const execution = createAgentExecutionService({
+    ...baseDeps(persistence, async input => {
+      const initial = await input.projectTools!({ turn: 1 } as never);
+      await initial['capabilities.load']!.execute!({ ids: ['document.apply_workspace_brand'] }, {} as never);
+      const tools = await input.projectTools!({ turn: 2 } as never);
+      await tools['document.apply_workspace_brand']!.execute!({}, {} as never);
+      await assert.rejects(async () => tools.finish!.execute!({}, {} as never), /style.apply_profile/);
+      return softResult('completed', 'Applied your saved Resume Style.');
+    }),
+    docxBinding: binding,
+    documents: {
+      listInWorkspace: async () => [document] as never,
+      getOwnedDocument: async () => document as never,
+      readExactVersionBytes: async () => original,
+      appendDocumentVersion: async () => ({ version: { id: 'v2', versionNumber: 2 } }) as never,
+      createBlankDocxDocument: async () => { throw new Error('unused'); },
+      createOfficeDocumentFromBytes: async () => { throw new Error('unused'); },
+    },
+    workspaceBrand: { get: async () => ({ schemaVersion: 1, workspaceId: 'ws-1', createdAt: '', updatedAt: '', logoAssetId: null,
+      organization: { name: 'Club', website: '', email: '', phone: '', address: '' },
+      colors: { primary: '#123456', secondary: null, accent: null }, typography: { headingFont: 'Georgia', bodyFont: 'Georgia' } }) },
+  });
+  const result = await (await execution.start({ userId: 'user-1', threadId: 'thread-1', activeDocumentId: 'doc-1', instruction: 'Apply my Resume Style to this document.' })).result;
+  assert.equal(result.run.status, 'failed');
+  assert.match(result.run.errorMessage ?? '', /saved style was not applied and verified/);
 });
 
 test("partial successful edits cannot present full-success completion", async () => {
@@ -3609,6 +3646,10 @@ test('Phase 6: attached references, current versions, revoked access, and change
   const badDocuments = { getOwnedDocument: async () => { throw new Error('deleted or revoked'); } } as unknown as AgentExecutionServiceDeps['documents'];
   await assert.rejects(run.restart({ documents: badDocuments }).start({ userId: 'user-1', threadId: 'thread-1', instruction: 'Continue', continueFromRunId: run.result.run.id }), /Document not found/);
   assert.equal(run.state.modelInputs.length, 20);
+  const changedDraft = { getOwnedDocument: async () => ({ id: 'doc-1', workspaceId: 'ws-1', format: 'docx', latestVersion: { id: 'v1' } }),
+    readVersionForEditing: async () => ({ bytes: run.state.bytes, draftId: 'new-human-draft' }),
+  } as unknown as AgentExecutionServiceDeps['documents'];
+  await assert.rejects(run.restart({ documents: changedDraft }).start({ userId: 'user-1', threadId: 'thread-1', instruction: 'Continue', continueFromRunId: run.result.run.id }), /draft changed since this task stopped/);
   // An external save changes the runtime version, without altering historical tool evidence.
   run.state.versionId = 'v3';
   run.state.versions.set('v3', Buffer.from(run.state.bytes));

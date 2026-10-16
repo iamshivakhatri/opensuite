@@ -356,11 +356,15 @@ export function createWorkspaceService(
             .select()
             .from(schema.workspaceAsset)
             .where(eq(schema.workspaceAsset.workspaceId, input.workspaceId));
+          const drafts = await tx.select({ storageKey: schema.documentDraft.storageKey, sizeBytes: schema.documentDraft.sizeBytes })
+            .from(schema.documentDraft).innerJoin(schema.document, eq(schema.documentDraft.documentId, schema.document.id))
+            .where(eq(schema.document.workspaceId, input.workspaceId));
           const reclaimedBytes =
+            drafts.reduce((total, draft) => total + draft.sizeBytes, 0) +
             assets.reduce((total, asset) => total + asset.sizeBytes, 0) +
             versions.reduce((total, version) => total + version.sizeBytes, 0);
 
-          for (const version of [...versions, ...assets]) {
+          for (const version of [...versions, ...assets, ...drafts]) {
             try {
               await storage.deleteObject(version.storageKey);
             } catch (error) {

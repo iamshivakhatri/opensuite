@@ -58,6 +58,9 @@ test("structure cache pages all blocks and isolates immutable versions", async (
   assert.equal(second.cache, "hit");
   assert.equal(next.cache, "miss");
   assert.equal(calls, 4);
+  const changedDraft = await cache.get({ versionId: "v1", bytes: new Uint8Array([1]), binding });
+  assert.equal(changedDraft.cache, "miss", "draft bytes must not reuse the saved version's cached structure");
+  assert.equal(calls, 6);
 });
 
 test("retrieval returns only high-confidence small structure", () => {

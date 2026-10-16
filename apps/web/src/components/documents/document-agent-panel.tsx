@@ -108,7 +108,11 @@ export function DocumentAgentPanel({
   onDocumentRenamed,
   onDocumentUploaded,
   onWorkingDocumentUpdated,
+  onBeforeRun,
+  onRunActiveChange,
 }: {
+  onBeforeRun?: () => Promise<void>;
+  onRunActiveChange?: (active: boolean) => void;
   workspaceId: string;
   documentId: string | null;
   documentName?: string;
@@ -254,6 +258,9 @@ export function DocumentAgentPanel({
     cancelling ||
     creatingChat ||
     (activeRun !== null && isActiveAgentRunStatus(activeRun.status));
+
+  const runActive = activeRun !== null && isActiveAgentRunStatus(activeRun.status);
+  React.useEffect(() => { onRunActiveChange?.(runActive); }, [onRunActiveChange, runActive]);
 
   const stopSse = React.useCallback(() => {
     sseGenerationRef.current += 1;
@@ -938,6 +945,7 @@ export function DocumentAgentPanel({
     const previousTagged = options?.restoreDraftOnError ? tagged : null;
     let id = threadId;
     try {
+      await onBeforeRun?.();
       if (options?.attachments?.length) {
         const uploadedIds = await uploadPromptAttachments(workspaceId, options.attachments, uploadDocument, (file, document) => {
           rememberDocumentName(document.id, document.name);

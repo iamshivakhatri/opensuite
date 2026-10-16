@@ -1,0 +1,125 @@
+import assert from 'node:assert/strict';
+import { randomUUID } from 'node:crypto';
+import { readFile } from 'node:fs/promises';
+import test from 'node:test';
+import Fastify from 'fastify';
+import multipart from '@fastify/multipart';
+import { createDbClient, schema } from '@opensuite/db';
+import { buildMinimalDocx, createNapiDocxEngineBinding } from '@opensuite/engine-client';
+import { createDocumentService, DocumentAccessError } from '../documents/service.js';
+import { createMemoryObjectStorage } from '../storage/index.js';
+import { createStorageAccountingService } from '../storage-accounting/service.js';
+import { createWorkspaceService } from '../workspaces/service.js';
+import { registerDocumentRoutes } from '../routes/documents.js';
+import type { DocumentPreferenceService } from '../documents/preferences.js';
+import { createUserRateLimiter } from '../user-rate-limit.js';
+import { createPrimaryDocxTools } from '../agent/docx-tools.js';
+import { multipartVersionSavePayload } from './support/test-env.js';
+
+const databaseUrl = process.env.DRAFT_TEST_DATABASE_URL;
+
+test('autosave replaces one draft; manual saves, conflicts, engine reads, restore, and purge preserve history', { skip: !databaseUrl }, async () => {
+  assert.ok(databaseUrl);
+  assert.ok(['localhost', '127.0.0.1', '[::1]'].includes(new URL(databaseUrl).hostname), 'Use an isolated local test database');
+  const admin = createDbClient({ databaseUrl });
+  const testSchema = `draft_test_${randomUUID().replaceAll('-', '')}`;
+  const quoted = `"${testSchema}"`;
+  await admin.pool.query(`CREATE SCHEMA ${quoted}`);
+  const url = new URL(databaseUrl);
+  url.searchParams.set('options', `-c search_path=${testSchema}`);
+  const client = createDbClient({ databaseUrl: url.toString() });
+  const app = Fastify();
+  try {
+    const folder = new URL('../../../../packages/db/migrations/', import.meta.url);
+    const journal = JSON.parse(await readFile(new URL('meta/_journal.json', folder), 'utf8')) as { entries: { tag: string }[] };
+    for (const entry of journal.entries) await client.pool.query((await readFile(new URL(`${entry.tag}.sql`, folder), 'utf8')).replaceAll('"public"', quoted));
+    await client.db.insert(schema.user).values([{ id: 'alice', name: 'Alice', email: 'alice@example.com' }, { id: 'bob', name: 'Bob', email: 'bob@example.com' }]);
+    const [workspace] = await client.db.insert(schema.workspace).values({ ownerUserId: 'alice', name: 'Draft test' }).returning();
+    assert.ok(workspace);
+    const storage = createMemoryObjectStorage();
+    const accounting = createStorageAccountingService(client.db, 1_000_000);
+    const options = { uploadMaxBytes: 100_000, storageAccounting: accounting };
+    const documents = createDocumentService(client.db, storage, options);
+    const workspaces = createWorkspaceService(client.db, storage, accounting);
+    const original = buildMinimalDocx(['Original saved text']);
+    const uploaded = await documents.createOfficeDocumentFromBytes({ workspaceId: workspace.id, ownerUserId: 'alice', filename: 'Notes.docx', bytes: original, source: 'upload' });
+    const documentId = uploaded.document.id;
+    const baseVersionId = uploaded.version.id;
+    await app.register(multipart);
+    registerDocumentRoutes(app, { api: { getSession: async ({ headers }) => {
+      const id = headers.get('x-test-user');
+      return id ? { user: { id, name: id, email: `${id}@example.com` }, session: {} } : null;
+    } } }, workspaces, documents, {} as DocumentPreferenceService, createUserRateLimiter());
+    const saveRequest = async (method: 'PUT' | 'POST', bytes: Buffer, version: string, draftId: string | null) => {
+      const payload = multipartVersionSavePayload('Notes.docx', bytes, version, draftId);
+      return app.inject({ method, url: `/api/documents/${documentId}/${method === 'PUT' ? 'draft' : 'versions'}`, headers: { ...payload.headers, 'x-test-user': 'alice' }, payload: payload.payload });
+    };
+    assert.equal((await app.inject({ method: 'GET', url: `/api/documents/${documentId}/draft` })).statusCode, 401);
+    assert.equal((await app.inject({ method: 'GET', url: `/api/documents/${documentId}/draft`, headers: { 'x-test-user': 'bob' } })).statusCode, 404);
+    let draftId: string | null = null;
+    let latest = original;
+    // More than the manual-write hourly limit: autosaves have a separate limit.
+    for (let index = 0; index < 25; index++) {
+      latest = buildMinimalDocx([`Pasted text ${index}`]);
+      const response = await saveRequest('PUT', latest, baseVersionId, draftId);
+      assert.equal(response.statusCode, 200, response.body);
+      draftId = response.json().draft.id;
+    }
+    assert.ok(draftId);
+    assert.equal((await documents.listVersions({ documentId, ownerUserId: 'alice' })).length, 1);
+    assert.deepEqual(await documents.readExactVersionBytes({ documentId, versionId: baseVersionId, ownerUserId: 'alice' }), original);
+    const restarted = createDocumentService(client.db, storage, options);
+    assert.deepEqual((await restarted.readVersionForEditing({ documentId, versionId: baseVersionId, ownerUserId: 'alice' })).bytes, latest);
+    const loaded = await app.inject({ method: 'GET', url: `/api/documents/${documentId}/draft`, headers: { 'x-test-user': 'alice' } });
+    assert.equal(loaded.headers['x-draft-id'], draftId);
+    assert.deepEqual(loaded.rawPayload, latest);
+    assert.equal(storage.objects.size, 2);
+    assert.equal((await accounting.reconcile('alice')).matches, true);
+    const staleId = draftId;
+    const race = await Promise.allSettled([1, 2].map(index => documents.saveDraft({ documentId, ownerUserId: 'alice', baseVersionId, baseDraftId: staleId, bytes: buildMinimalDocx([`Concurrent draft ${index}`]) })));
+    assert.equal(race.filter(result => result.status === 'fulfilled').length, 1);
+    assert.ok(race.some(result => result.status === 'rejected' && result.reason instanceof DocumentAccessError && result.reason.code === 'VERSION_CONFLICT'));
+    const current = await documents.readVersionForEditing({ documentId, versionId: baseVersionId, ownerUserId: 'alice' });
+    draftId = current.draftId;
+    assert.equal(storage.objects.size, 2);
+    assert.equal((await saveRequest('POST', current.bytes, baseVersionId, staleId)).statusCode, 409);
+    const manual = await saveRequest('POST', current.bytes, baseVersionId, draftId);
+    assert.equal(manual.statusCode, 201, manual.body);
+    const version2 = manual.json().version.id as string;
+    assert.equal((await documents.listVersions({ documentId, ownerUserId: 'alice' })).length, 2);
+    assert.equal((await app.inject({ method: 'GET', url: `/api/documents/${documentId}/draft`, headers: { 'x-test-user': 'alice' } })).statusCode, 204);
+    assert.equal(storage.objects.size, 2);
+    const draftBytes = buildMinimalDocx(['Agent must read this pasted content']);
+    const draft = await documents.saveDraft({ documentId, ownerUserId: 'alice', baseVersionId: version2, baseDraftId: null, bytes: draftBytes });
+    const binding = await createNapiDocxEngineBinding();
+    const session = (await createPrimaryDocxTools({ binding, documents, ownerUserId: 'alice', workspaceId: workspace.id, documentId, versionId: version2 }))!;
+    const found = await session.tools['document.find']!.execute!({ text: 'Agent must read this pasted content' }, {} as never);
+    assert.match(JSON.stringify(found), /Agent must read this pasted content/);
+    await session.flush();
+    assert.equal((await documents.listVersions({ documentId, ownerUserId: 'alice' })).length, 2, 'agent reads do not checkpoint drafts');
+    await session.tools['document.insert_paragraphs']!.execute!({ texts: ['Agent edit'], placement: { kind: 'end' } }, {} as never);
+    await documents.saveDraft({ documentId, ownerUserId: 'alice', baseVersionId: version2, baseDraftId: draft.id, bytes: buildMinimalDocx(['Newer human draft']) });
+    await assert.rejects(() => session.flush(), error => error instanceof DocumentAccessError && error.code === 'VERSION_CONFLICT');
+    assert.equal((await documents.listVersions({ documentId, ownerUserId: 'alice' })).length, 2);
+    assert.equal((await accounting.reconcile('alice')).matches, true);
+    await documents.restoreVersion({ documentId, versionId: baseVersionId, ownerUserId: 'alice' });
+    assert.equal(await documents.openDraft({ documentId, ownerUserId: 'alice' }), null);
+    assert.equal(storage.objects.size, 1);
+    await documents.saveDraft({ documentId, ownerUserId: 'alice', baseVersionId, baseDraftId: null, bytes: latest });
+    await documents.softDelete({ documentId, ownerUserId: 'alice' });
+    await documents.purge({ documentId, ownerUserId: 'alice' });
+    assert.equal(storage.objects.size, 0);
+    assert.equal((await accounting.status('alice')).usedBytes, 0);
+    const another = await documents.createOfficeDocumentFromBytes({ workspaceId: workspace.id, ownerUserId: 'alice', filename: 'Another.docx', bytes: original, source: 'upload' });
+    await documents.saveDraft({ documentId: another.document.id, ownerUserId: 'alice', baseVersionId: another.version.id, baseDraftId: null, bytes: latest });
+    await workspaces.softDelete({ workspaceId: workspace.id, ownerUserId: 'alice' });
+    await workspaces.purge({ workspaceId: workspace.id, ownerUserId: 'alice' });
+    assert.equal(storage.objects.size, 0);
+    assert.equal((await accounting.status('alice')).usedBytes, 0);
+  } finally {
+    await app.close();
+    await client.close();
+    await admin.pool.query(`DROP SCHEMA ${quoted} CASCADE`);
+    await admin.close();
+  }
+});

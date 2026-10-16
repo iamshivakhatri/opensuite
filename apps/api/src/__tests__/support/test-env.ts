@@ -47,12 +47,14 @@ export function multipartVersionSavePayload(
   filename: string,
   content: Buffer | string,
   baseVersionId: string,
+  baseDraftId?: string | null,
 ): { headers: Record<string, string>; payload: Buffer } {
   const boundary = "----opensuite-test-boundary";
   const bytes = typeof content === "string" ? Buffer.from(content) : content;
   const payload = Buffer.concat([
     Buffer.from(
       `--${boundary}\r\n` +
+        (baseDraftId ? `Content-Disposition: form-data; name="baseDraftId"\r\n\r\n${baseDraftId}\r\n--${boundary}\r\n` : '') +
         `Content-Disposition: form-data; name="baseVersionId"\r\n\r\n` +
         `${baseVersionId}\r\n` +
         `--${boundary}\r\n` +

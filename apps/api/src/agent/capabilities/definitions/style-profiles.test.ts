@@ -57,7 +57,8 @@ test('named saved-style prompts recommend exact loadable tools and prevent gener
     assert.equal(surface.session.load(['skills.career.resume']).ok, true);
     assert.ok(surface.projectTools()['style.apply_profile']);
   }
-  for (const prompt of ['Use an appropriate visual style.', 'Create a clean professional resume.', 'Learn the document style and save it.']) assert.equal(requestsSavedStyle(prompt), false, prompt);
+  for (const prompt of ['Use an appropriate visual style.', 'Create a clean professional resume.', 'Learn the document style and save it.', 'Use our saved brand style.', 'Use our saved company brand and a clean style.']) assert.equal(requestsSavedStyle(prompt), false, prompt);
+  assert.equal(requestsSavedStyle('Use our saved brand and apply my saved Resume Style.'), true);
 });
 
 test('apply capability validates ID and delegates to the working document service', async () => {

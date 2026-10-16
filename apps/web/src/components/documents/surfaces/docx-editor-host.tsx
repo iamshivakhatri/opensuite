@@ -23,6 +23,7 @@ export const DocxEditorHost = React.forwardRef<
     readonly documentBuffer: ArrayBuffer;
     readonly documentName: string;
     readonly resolvedTheme: ResolvedTheme;
+    readonly onChange?: () => void;
     readonly onDirtyChange: (dirty: boolean) => void;
     readonly onReady?: (api: DocxEditorRef) => void;
     readonly onError?: (error: Error) => void;
@@ -35,6 +36,7 @@ export const DocxEditorHost = React.forwardRef<
     documentName,
     resolvedTheme,
     onDirtyChange,
+    onChange,
     onReady,
     onError,
     onSelectionChange,
@@ -72,6 +74,7 @@ export const DocxEditorHost = React.forwardRef<
         className="h-full min-h-0"
         style={{ height: "100%", minHeight: 0 }}
         onDirtyChange={onDirtyChange}
+        onChange={onChange}
         onReady={onReady}
         onError={onError}
         onSelectionChange={onSelectionChange}

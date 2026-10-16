@@ -19,6 +19,7 @@ export interface SavedContinuation {
   context: { readonly safeInputBudgetTokens?: number };
   activeDocumentId: string | null;
   savedVersionId: string | null;
+  savedDraftId?: string | null;
   styleState?: SavedDocxStyleState;
   createdDocumentId?: string | null;
   editedDocumentId?: string | null;
@@ -36,6 +37,7 @@ const savedSchema = z.object({
   system: z.string().optional(), initialMessageCount: z.number().int().positive().optional(), retrievalMessage: z.string().optional(),
   direct: z.boolean().optional(), context: z.object({ safeInputBudgetTokens: z.number().optional() }).passthrough().optional(),
   activeDocumentId: z.string().nullable(), savedVersionId: z.string().nullable(),
+  savedDraftId: z.string().nullable().optional(),
   styleState: z.custom<SavedDocxStyleState>(value => !!value && typeof value === 'object' && 'appliedStyle' in value && 'styleFidelity' in value).optional(),
   createdDocumentId: z.string().nullable().optional(),
   editedDocumentId: z.string().nullable().optional(),

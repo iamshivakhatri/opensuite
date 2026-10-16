@@ -731,11 +731,29 @@ export function registerDocumentRoutes(
     },
   );
 
+  app.get("/api/documents/:documentId/draft", async (request, reply) => {
+    const user = await getRequestUser(auth, request);
+    if (!user) return reply.status(401).send(unauthenticated());
+    const params = DocumentIdParams.safeParse(request.params);
+    if (!params.success) return reply.status(400).send({ error: { statusCode: 400, code: "INVALID_DOCUMENT_ID", message: "Invalid document id" } });
+    try {
+      const download = await documents.openDraft({ documentId: params.data.documentId, ownerUserId: user.id });
+      if (!download) return reply.status(204).send();
+      return reply.header("Cache-Control", "no-store")
+        .header("Content-Type", download.contentType).header("Content-Length", String(download.contentLength))
+        .header("X-Draft-Id", download.draft.id).header("X-Base-Version-Id", download.draft.baseVersionId).send(download.body);
+    } catch (error) {
+      if (error instanceof DocumentAccessError) return reply.status(error.statusCode).send({ error: { statusCode: error.statusCode, code: error.code, message: error.message } });
+      throw error;
+    }
+  });
+
   /**
    * Human save: append exported Office bytes as a new immutable user version.
    * Client supplies baseVersionId + file only — never storage keys or version numbers.
    */
-  app.post("/api/documents/:documentId/versions", async (request, reply) => {
+  for (const endpoint of [{ method: "POST", url: "/api/documents/:documentId/versions" }, { method: "PUT", url: "/api/documents/:documentId/draft" }] as const) {
+  app.route({ method: endpoint.method, url: endpoint.url, handler: async (request, reply) => {
     const user = await getRequestUser(auth, request);
     if (!user) {
       return reply.status(401).send(unauthenticated());
@@ -752,16 +770,19 @@ export function registerDocumentRoutes(
       });
     }
 
-    const rateLimit = rateLimiter.consume(user.id, "documentWrite");
+    const rateLimit = rateLimiter.consume(user.id, endpoint.method === "PUT" ? "documentDraft" : "documentWrite");
     if (!rateLimit.allowed) return sendRateLimit(reply, rateLimit);
 
     let baseVersionId: string | undefined;
+    let baseDraftId: string | null = null;
     let bytes: Buffer | undefined;
 
     try {
       for await (const part of request.parts()) {
         if (part.type === "file") {
           bytes = await part.toBuffer();
+        } else if (part.type === "field" && part.fieldname === "baseDraftId") {
+          baseDraftId = typeof part.value === "string" && part.value.trim() ? part.value.trim() : null;
         } else if (
           part.type === "field" &&
           part.fieldname === "baseVersionId"
@@ -814,12 +835,21 @@ export function registerDocumentRoutes(
       });
     }
 
+    if (baseDraftId !== null && !z.uuid().safeParse(baseDraftId).success) {
+      return reply.status(400).send({ error: { statusCode: 400, code: "INVALID_DRAFT_ID", message: "baseDraftId must be a UUID" } });
+    }
     try {
+      if (endpoint.method === "PUT") {
+        const draft = await documents.saveDraft({ documentId: params.data.documentId, ownerUserId: user.id,
+          baseVersionId: baseParsed.data, baseDraftId, bytes });
+        return reply.send({ draft });
+      }
       const saved = await documents.appendDocumentVersion({
         documentId: params.data.documentId,
         ownerUserId: user.id,
         baseVersionId: baseParsed.data,
         source: "user",
+        baseDraftId,
         bytes,
       });
       return reply.status(201).send(saved);
@@ -844,5 +874,6 @@ export function registerDocumentRoutes(
       }
       throw error;
     }
-  });
+  } });
+  }
 }

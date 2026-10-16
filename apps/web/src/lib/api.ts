@@ -529,12 +529,14 @@ export async function saveDocumentVersion(
   documentId: string,
   input: {
     readonly baseVersionId: string;
+    readonly baseDraftId?: string | null;
     readonly file: Blob;
     readonly filename?: string;
   },
 ): Promise<{ document: ListedDocument; version: SavedDocumentVersion }> {
   const form = new FormData();
   form.append("baseVersionId", input.baseVersionId);
+  if (input.baseDraftId) form.append("baseDraftId", input.baseDraftId);
   form.append(
     "file",
     input.file,

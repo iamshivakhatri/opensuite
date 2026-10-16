@@ -107,6 +107,8 @@ export function WorkspaceIde({
   );
   const [restoreOpen, setRestoreOpen] = React.useState(false);
   const [restoreBusy, setRestoreBusy] = React.useState(false);
+  const [agentRunning, setAgentRunning] = React.useState(false);
+  const beforeAgentSaveRef = React.useRef<(() => Promise<void>) | null>(null);
   const [saveRequestId, setSaveRequestId] = React.useState(0);
   const [workingPreview, setWorkingPreview] = React.useState<{ runId: string; documentId: string; baseVersionId: string; revision: number } | null>(null);
   const dragDepth = React.useRef(0);
@@ -555,6 +557,8 @@ export function WorkspaceIde({
                   document={activeDocument}
                   viewVersionId={selectedVersionId}
                   saveRequestId={saveRequestId}
+                  beforeAgentSaveRef={beforeAgentSaveRef}
+                  agentRunning={agentRunning}
                   workingPreview={
                     viewingHistory
                       ? null
@@ -607,6 +611,8 @@ export function WorkspaceIde({
         ) : null}
         <div className={brandPage ? "hidden" : "flex min-h-0"}>
           <DocumentAgentPanel
+            onRunActiveChange={setAgentRunning}
+            onBeforeRun={async () => { await beforeAgentSaveRef.current?.(); }}
             workspaceId={workspaceId}
             documentId={documentId}
             documentName={activeDocument?.name}

@@ -2,12 +2,12 @@ import { jsonSchema } from "ai";
 import { defineTool } from "@opensuite/agent-core";
 import type { DocxEngineBinding } from "@opensuite/engine-client";
 
-import type { DocumentService } from "../documents/service.js";
+import { readDocumentForEditing, type DocumentService } from "../documents/service.js";
 
 const MAX_RESULTS = 8;
 const MAX_QUERY_LENGTH = 120;
 
-type SearchDocuments = Pick<DocumentService, "listInWorkspace" | "readExactVersionBytes">;
+type SearchDocuments = Pick<DocumentService, "listInWorkspace" | "readExactVersionBytes"> & Partial<Pick<DocumentService, "readVersionForEditing">>;
 
 /** Search the owner's workspace; matching a document never adds it to the working set. */
 export async function searchWorkspaceDocuments(input: {
@@ -40,7 +40,7 @@ export async function searchWorkspaceDocuments(input: {
       let snippet: string | undefined;
       if (document.format === "docx" && input.binding) {
         try {
-          const bytes = await input.documents.readExactVersionBytes({
+          const { bytes } = await readDocumentForEditing(input.documents, {
             documentId: document.id, versionId: document.latestVersion.id, ownerUserId: input.ownerUserId,
           });
           const found = await input.binding.findDocxText(new Uint8Array(bytes), { text: query });

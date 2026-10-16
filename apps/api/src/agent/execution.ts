@@ -2,6 +2,7 @@ import type { StyleProfileService } from "../style-profiles/service.js";
 import type { WorkspaceBrandService } from '../workspace-brand/service.js';
 import type { WorkspaceAssetService } from '../workspace-brand/assets.js';
 import { requestsSavedStyle, createStyleProfileTools } from "./capabilities/definitions/style-profiles.js";
+import { createWorkspaceBrandTools } from './capabilities/definitions/workspace-brand.js';
 import { documentSkillPolicy } from './capabilities/definitions/skills/index.js';
 import { resolveDocumentAppearance, shouldApplyAutomaticBrand } from '../document-appearance/resolve.js';
 import {
@@ -198,7 +199,7 @@ export interface AgentExecutionServiceDeps {
     | "appendDocumentVersion"
     | "createBlankDocxDocument"
     | "createOfficeDocumentFromBytes"
-  > & Partial<Pick<DocumentService, "rename">>;
+  > & Partial<Pick<DocumentService, "rename" | "readVersionForEditing">>;
   readonly resolveModel: (userId: string) => Promise<ResolvedExecutionModel>;
   readonly docxBinding?: DocxEngineBinding;
   readonly styleProfiles?: StyleProfileService;
@@ -269,6 +270,13 @@ export function createAgentExecutionService(deps: AgentExecutionServiceDeps) {
       });
       const primaryDocument = targetDocumentId === openDocument?.documentId ? openDocument
         : targetDocumentId ? await resolvePrimaryDocument(deps.documents, thread, input.userId, targetDocumentId, workspaceDocuments) : null;
+      if (continuation && primaryDocument && deps.documents.readVersionForEditing) {
+        const current = await deps.documents.readVersionForEditing({ documentId: primaryDocument.documentId,
+          versionId: primaryDocument.versionId, ownerUserId: input.userId });
+        if (current.draftId !== (continuation.saved.savedDraftId ?? null)) {
+          throw new AgentExecutionError('INVALID_CONTINUATION', 'The document draft changed since this task stopped. Start a new request.');
+        }
+      }
       const persistedWorkingDocumentIds = await deps.persistence.listWorkingDocumentIds({
         threadId: thread.id,
         ownerUserId: input.userId,
@@ -458,6 +466,7 @@ async function applyAutomaticWorkspaceAppearance(input: {
   readonly workspaceId: string;
   readonly ownerUserId: string;
   readonly instruction: string;
+  readonly getBrand: () => ReturnType<WorkspaceBrandService['get']>;
 }) {
   if (!input.deps.workspaceBrand) return;
   const documentId = input.boundTools.getActiveDocumentId();
@@ -467,7 +476,7 @@ async function applyAutomaticWorkspaceAppearance(input: {
     .map(documentSkillPolicy)
     .find((item) => item?.channels.length);
   if (!shouldApplyAutomaticBrand({ isNewDocument, policy, instruction: input.instruction })) return;
-  const brand = await input.deps.workspaceBrand.get(input.workspaceId, input.ownerUserId);
+  const brand = await input.getBrand();
   if (!brand) return;
   const wantsLogo = policy!.channels.includes('logo') && !!brand.logoAssetId;
   const workspaceLogo = wantsLogo && input.deps.workspaceAssets
@@ -696,13 +705,25 @@ async function runExecution(input: {
       description: "After your concise final response to the user, call this to end the run.",
     });
     const requiresSavedStyle = requestsSavedStyle(input.instruction);
+    let brandRead: ReturnType<WorkspaceBrandService['get']> | undefined;
+    const getBrand = () => brandRead ??= input.deps.workspaceBrand
+      ? input.deps.workspaceBrand.get(input.thread.workspaceId, input.ownerUserId)
+      : Promise.resolve(null);
     const tools: AgentToolSet = {
       ...(boundTools?.tools ?? {}),
       ...createStandaloneCapabilityTools(),
+      ...(input.deps.workspaceBrand ? createWorkspaceBrandTools({
+        getBrand,
+        ...(boundTools ? { applyBrand: (brand) => boundTools!.applyResolvedAppearance(resolveDocumentAppearance({
+          workspaceBrand: brand,
+          policy: { channels: ['typography', 'colors', 'tableAccent'] },
+          ...(boundTools!.getAppliedStyle() ? { savedStyle: boundTools!.getAppliedStyle()! } : {}),
+        })) } : {}),
+      }) : {}),
       ...(input.deps.styleProfiles ? createStyleProfileTools({
         profiles: input.deps.styleProfiles, ownerUserId: input.ownerUserId, workspaceId: input.thread.workspaceId,
         ...(boundTools ? { applyProfile: (id: string) => boundTools!.applyStyleProfile(id, input.deps.styleProfiles!) } : {}),
-        currentDocument: () => ({ documentId: boundTools?.getActiveDocumentId() ?? null, versionId: boundTools?.getActiveVersionId() ?? null, dirty: (boundTools?.getWorkingMutationCount() ?? 0) > 0 }),
+        currentDocument: () => ({ documentId: boundTools?.getActiveDocumentId() ?? null, versionId: boundTools?.getActiveVersionId() ?? null, dirty: (boundTools?.getWorkingMutationCount() ?? 0) > 0 || !!boundTools?.getActiveDraftId() }),
       }) : {}),
       "workspace.search_documents": createWorkspaceSearchTool({
         documents: input.deps.documents,
@@ -714,7 +735,7 @@ async function runExecution(input: {
         ...finish.tool,
         execute: async (args, context) => {
           const fidelity = boundTools?.getStyleFidelity();
-          if (!fidelity) throw new Error('Retrieve and apply the requested saved style with style.apply_profile before finishing. If required information is missing, use finish_with_input_needed and disclose it.');
+          if (!fidelity || !boundTools?.getAppliedStyle()) throw new Error('Retrieve and apply the requested saved style with style.apply_profile before finishing. If required information is missing, use finish_with_input_needed and disclose it.');
           if (!fidelity.summary.counts.matched || fidelity.summary.counts.mismatched) throw new Error('Saved style has mismatched fields. Resolve them or finish_with_input_needed and report the unmet style requirement.');
           return finish.tool.execute!(args, context);
         },
@@ -921,7 +942,9 @@ async function runExecution(input: {
       try {
         const sources = (retrieval?.workingSet ?? []).filter((item) => item.documentId !== target.documentId);
         const [before, after, ...currentSources] = await Promise.all([
-          input.deps.documents.readExactVersionBytes({ documentId: target.documentId, versionId: target.fromVersionId, ownerUserId: input.ownerUserId }),
+          boundTools?.getBaseDocument()?.documentId === target.documentId && boundTools.getBaseDocument()?.versionId === target.fromVersionId
+            ? Promise.resolve(Buffer.from(boundTools.getBaseDocument()!.bytes))
+            : input.deps.documents.readExactVersionBytes({ documentId: target.documentId, versionId: target.fromVersionId, ownerUserId: input.ownerUserId }),
           input.deps.documents.readExactVersionBytes({ documentId: target.documentId, versionId: target.versionId, ownerUserId: input.ownerUserId }),
           ...sources.map((item) => input.deps.documents.getOwnedDocument({ documentId: item.documentId, ownerUserId: input.ownerUserId })),
         ]);
@@ -1001,11 +1024,12 @@ async function runExecution(input: {
           ownerUserId: input.ownerUserId,
           instruction: input.instruction,
           createdDocumentId,
+          getBrand,
         });
       }
       const inputNeeded = isInputNeededTool(result.metrics?.toolCalls.filter(tool => tool.outcome === 'success' && isFinishTool(tool.toolName)).at(-1)?.toolName);
       const fidelity = boundTools?.getStyleFidelity();
-      if (requiresSavedStyle && isSuccessfulStop(result.stopReason) && !inputNeeded && (!fidelity?.summary.counts.matched || fidelity.summary.counts.mismatched)) {
+      if (requiresSavedStyle && isSuccessfulStop(result.stopReason) && !inputNeeded && (!boundTools?.getAppliedStyle() || !fidelity?.summary.counts.matched || fidelity.summary.counts.mismatched)) {
         throw new AgentExecutionError('SAVED_STYLE_NOT_APPLIED', 'The requested saved style was not applied and verified.');
       }
       await flushWorking();
@@ -1095,6 +1119,7 @@ async function runExecution(input: {
           direct: input.savedContinuation?.direct ?? !!retrieval?.refreshDirectMessage,
           context, activeDocumentId: boundTools?.getActiveDocumentId() ?? null,
           savedVersionId: boundTools?.getActiveVersionId() ?? null,
+          savedDraftId: boundTools?.getActiveDraftId() ?? null,
           createdDocumentId,
           ...(boundTools ? { styleState: { appliedStyle: boundTools.getAppliedStyle(), styleFidelity: boundTools.getStyleFidelity() } } : {}),
           editedDocumentId: boundTools?.getWorkingMutationCount() ? boundTools.getActiveDocumentId() : input.savedContinuation?.editedDocumentId ?? null,

@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import type {
   DocxEngineBinding,
   DocxInspectBodyBlockItem,
@@ -96,16 +97,17 @@ export class SlimDocumentStructureCache {
     readonly bytes: Uint8Array;
     readonly binding: DocxEngineBinding;
   }): Promise<{ readonly structure: SlimDocumentStructure; readonly cache: "hit" | "miss" }> {
-    const existing = this.entries.get(input.versionId);
+    const key = `${input.versionId}:${createHash('sha256').update(input.bytes).digest('hex')}`;
+    const existing = this.entries.get(key);
     if (existing) return { structure: await existing, cache: "hit" };
 
     const structure = loadStructure(input);
-    this.entries.set(input.versionId, structure);
+    this.entries.set(key, structure);
     if (this.entries.size > CACHE_LIMIT) this.entries.delete(this.entries.keys().next().value!);
     try {
       return { structure: await structure, cache: "miss" };
     } catch (error) {
-      this.entries.delete(input.versionId);
+      this.entries.delete(key);
       throw error;
     }
   }

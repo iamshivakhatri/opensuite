@@ -19,7 +19,11 @@ export function DocumentSurface({
   onRequestRestore,
   saveRequestId,
   workingPreview,
+  beforeAgentSaveRef,
+  agentRunning,
 }: {
+  readonly agentRunning?: boolean;
+  readonly beforeAgentSaveRef?: React.RefObject<(() => Promise<void>) | null>;
   readonly document: ListedDocument;
   readonly viewVersionId?: string | null;
   readonly onStatusChange?: (status: DocxSurfaceStatus) => void;
@@ -39,6 +43,8 @@ export function DocumentSurface({
           onRequestRestore={onRequestRestore}
           saveRequestId={saveRequestId}
           workingPreview={workingPreview}
+          beforeAgentSaveRef={beforeAgentSaveRef}
+          agentRunning={agentRunning}
         />
       );
     case "pptx":

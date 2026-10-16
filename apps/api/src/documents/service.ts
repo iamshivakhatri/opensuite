@@ -101,6 +101,23 @@ export interface DocumentDownload {
   readonly contentDisposition: string;
 }
 
+export interface DocumentDraftDto {
+  readonly id: string;
+  readonly baseVersionId: string;
+  readonly sizeBytes: number;
+  readonly updatedAt: string;
+}
+
+/** Compatibility for test services and hosts that only expose immutable reads. */
+export async function readDocumentForEditing(
+  documents: Pick<DocumentService, 'readExactVersionBytes'> & Partial<Pick<DocumentService, 'readVersionForEditing'>>,
+  input: { documentId: string; versionId: string; ownerUserId: string },
+) {
+  return documents.readVersionForEditing
+    ? documents.readVersionForEditing(input)
+    : { bytes: await documents.readExactVersionBytes(input), draftId: null };
+}
+
 export type DocumentUploadErrorCode =
   | "INVALID_FILENAME"
   | "UNSUPPORTED_FORMAT"
@@ -535,6 +552,74 @@ export function createDocumentService(
       });
     },
 
+    /** Replace the autosaved working copy without changing version history. */
+    async saveDraft(input: {
+      documentId: string; ownerUserId: string; baseVersionId: string;
+      baseDraftId: string | null; bytes: Buffer;
+    }): Promise<DocumentDraftDto> {
+      assertUploadBytes(input.bytes);
+      const owned = await this.getOwnedDocument(input);
+      if (owned.format !== "docx") throw new DocumentUploadError(400, "UNSUPPORTED_FORMAT", "Drafts are supported for DOCX only");
+      const id = createId();
+      const storageKey = `workspaces/${owned.workspaceId}/documents/${owned.id}/drafts/${id}/content.docx`;
+      await storage.putObject({ key: storageKey, body: input.bytes, contentType: contentTypeForFormat(owned.format) });
+      let previousKey: string | undefined;
+      try {
+        const draft = await db.transaction(async tx => {
+          const locked = await tx.execute(sql`
+            select ${schema.document.id} from ${schema.document}
+            inner join ${schema.workspace} on ${schema.document.workspaceId} = ${schema.workspace.id}
+            where ${schema.document.id} = ${owned.id} and ${schema.workspace.ownerUserId} = ${input.ownerUserId}
+              and ${schema.document.deletedAt} is null and ${schema.workspace.deletedAt} is null for update
+          `);
+          if (!locked.rows.length) throw new DocumentAccessError(404, "DOCUMENT_NOT_FOUND", "Document not found");
+          const [latest] = await tx.select({ id: schema.documentVersion.id }).from(schema.documentVersion)
+            .where(eq(schema.documentVersion.documentId, owned.id)).orderBy(desc(schema.documentVersion.versionNumber)).limit(1);
+          const [previous] = await tx.select().from(schema.documentDraft).where(eq(schema.documentDraft.documentId, owned.id)).limit(1);
+          if (latest?.id !== input.baseVersionId || (previous?.id ?? null) !== input.baseDraftId) {
+            throw new DocumentAccessError(409, "VERSION_CONFLICT", "Document changed elsewhere. Your local edits are still here.");
+          }
+          const delta = input.bytes.byteLength - (previous?.sizeBytes ?? 0);
+          if (delta > 0) await options.storageAccounting?.reserve(tx, input.ownerUserId, delta);
+          if (delta < 0) await options.storageAccounting?.release(tx, input.ownerUserId, -delta);
+          const updatedAt = new Date();
+          const values = { documentId: owned.id, id, baseVersionId: input.baseVersionId, storageKey, sizeBytes: input.bytes.byteLength, updatedAt };
+          await tx.insert(schema.documentDraft).values(values).onConflictDoUpdate({ target: schema.documentDraft.documentId, set: values });
+          previousKey = previous?.storageKey;
+          return { id, baseVersionId: input.baseVersionId, sizeBytes: input.bytes.byteLength, updatedAt: updatedAt.toISOString() };
+        });
+        if (previousKey) await cleanupStorageKey(previousKey);
+        return draft;
+      } catch (error) {
+        await cleanupStorageKey(storageKey);
+        if (error instanceof StorageQuotaError) throw new DocumentUploadError(409, "STORAGE_QUOTA_EXCEEDED", error.message);
+        throw error;
+      }
+    },
+
+    async openDraft(input: { documentId: string; ownerUserId: string }): Promise<(DocumentDownload & { draft: DocumentDraftDto }) | null> {
+      const owned = await this.getOwnedDocument(input);
+      const [draft] = await db.select().from(schema.documentDraft).where(and(
+        eq(schema.documentDraft.documentId, owned.id), eq(schema.documentDraft.baseVersionId, owned.latestVersion.id),
+      )).limit(1);
+      if (!draft) return null;
+      const download = await openStoredVersion({ documentId: owned.id, versionId: draft.baseVersionId,
+        name: owned.name, format: owned.format, sizeBytes: draft.sizeBytes, storageKey: draft.storageKey });
+      return { ...download, draft: { id: draft.id, baseVersionId: draft.baseVersionId, sizeBytes: draft.sizeBytes, updatedAt: draft.updatedAt.toISOString() } };
+    },
+
+    /** Current working bytes for the editor/agent. Exact-version reads remain immutable. */
+    async readVersionForEditing(input: { documentId: string; versionId: string; ownerUserId: string }): Promise<{ bytes: Buffer; draftId: string | null }> {
+      const draft = await this.openDraft(input);
+      if (draft && draft.draft.baseVersionId === input.versionId) {
+        const chunks: Buffer[] = [];
+        for await (const chunk of draft.body) chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+        return { bytes: Buffer.concat(chunks), draftId: draft.draft.id };
+      }
+      draft?.body.destroy();
+      return { bytes: await this.readExactVersionBytes(input), draftId: null };
+    },
+
     /**
      * Append an immutable Office artifact as the next version of an existing
      * document. Requires `baseVersionId` to equal the current latest version
@@ -546,6 +631,7 @@ export function createDocumentService(
       ownerUserId: string;
       baseVersionId: string;
       source: AppendDocumentVersionSource;
+      baseDraftId?: string | null;
       bytes: Buffer;
     }): Promise<AppendedDocumentDto> {
       if (!input.baseVersionId) {
@@ -603,6 +689,7 @@ export function createDocumentService(
         contentType: contentTypeForFormat(owned.format),
       });
 
+      let previousDraftKey: string | undefined;
       try {
         const created = await db.transaction(async (tx) => {
           // Serialize version allocation per document. Unique(document_id,
@@ -657,6 +744,15 @@ export function createDocumentService(
             );
           }
 
+          const [draft] = await tx.select().from(schema.documentDraft).where(eq(schema.documentDraft.documentId, owned.id)).limit(1);
+          if ((draft?.id ?? null) !== (input.baseDraftId ?? null)) {
+            throw new DocumentAccessError(409, "VERSION_CONFLICT", "Document draft changed elsewhere. Reload before saving.");
+          }
+          if (draft) {
+            await tx.delete(schema.documentDraft).where(eq(schema.documentDraft.documentId, owned.id));
+            await options.storageAccounting?.release(tx, input.ownerUserId, draft.sizeBytes);
+            previousDraftKey = draft.storageKey;
+          }
           await options.storageAccounting?.reserve(tx, input.ownerUserId, input.bytes.byteLength);
 
           const nextVersionNumber = latest.versionNumber + 1;
@@ -734,6 +830,7 @@ export function createDocumentService(
           };
         });
 
+        if (previousDraftKey) await cleanupStorageKey(previousDraftKey);
         return created;
       } catch (error) {
         await cleanupStorageKey(storageKey);
@@ -933,6 +1030,8 @@ export function createDocumentService(
         );
       }
 
+      const draft = await this.openDraft(input);
+      if (draft) return draft;
       return openStoredVersion({
         documentId: row.documentId,
         versionId: row.versionId,
@@ -1043,6 +1142,12 @@ export function createDocumentService(
                 gt(schema.documentVersion.versionNumber, target.versionNumber),
               ),
             );
+          const [draft] = await tx.select().from(schema.documentDraft).where(eq(schema.documentDraft.documentId, input.documentId)).limit(1);
+          if (draft) {
+            await storage.deleteObject(draft.storageKey);
+            await tx.delete(schema.documentDraft).where(eq(schema.documentDraft.documentId, input.documentId));
+            await options.storageAccounting?.release(tx, input.ownerUserId, draft.sizeBytes);
+          }
           if (discarded.length === 0) return;
 
           const reclaimedBytes = discarded.reduce(
@@ -1377,12 +1482,13 @@ export function createDocumentService(
             })
             .from(schema.documentVersion)
             .where(eq(schema.documentVersion.documentId, input.documentId));
-          const reclaimedBytes = versions.reduce(
+          const drafts = await tx.select().from(schema.documentDraft).where(eq(schema.documentDraft.documentId, input.documentId));
+          const reclaimedBytes = [...versions, ...drafts].reduce(
             (total, version) => total + version.sizeBytes,
             0,
           );
 
-          for (const version of versions) {
+          for (const version of [...versions, ...drafts]) {
             try {
               await storage.deleteObject(version.storageKey);
             } catch (error) {

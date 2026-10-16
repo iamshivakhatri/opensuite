@@ -13,6 +13,8 @@ import {
   saveDocumentVersion,
   type ListedDocument,
 } from "@/lib/api";
+import { fetchDocumentDraft, saveDocumentDraft } from "@/lib/document-drafts-api";
+import { createEditorSaveState } from "@/lib/editor-save";
 import { clearCasualLocalAutosave } from "@/lib/casual-autosave";
 import {
   assertEditorFieldsPreserved,
@@ -52,7 +54,7 @@ export type DocxSurfaceStatus = {
 
 /**
  * Host-owned DOCX surface: loads exact OpenSuite version bytes into Casual
- * Docs, edits locally, and saves via appendDocumentVersion (explicit only).
+ * Docs, edits locally, and autosaves a replaceable draft and creates versions on explicit Save.
  *
  * Version advances on the *same* document prefer Casual's imperative
  * `loadDocumentBuffer` so the React host stays mounted (Phase 4B). Remount is
@@ -66,7 +68,11 @@ export function DocxSurface({
   onRequestRestore,
   saveRequestId = 0,
   workingPreview = null,
+  beforeAgentSaveRef,
+  agentRunning = false,
 }: {
+  readonly agentRunning?: boolean;
+  readonly beforeAgentSaveRef?: React.RefObject<(() => Promise<void>) | null>;
   readonly document: ListedDocument;
   /** When set, load this version instead of the tip (read-only if not latest). */
   readonly viewVersionId?: string | null;
@@ -82,8 +88,14 @@ export function DocxSurface({
   const { resolvedTheme } = useTheme();
   const queryClient = useQueryClient();
   const editorRef = React.useRef<DocxEditorRef | null>(null);
+  const draftIdRef = React.useRef<string | null>(null);
+  const savedBufferRef = React.useRef<ArrayBuffer | null>(null);
+  const needsFullExportRef = React.useRef(false);
   const selectionRef = React.useRef<unknown>(null);
   const savingRef = React.useRef(false);
+  const saveState = React.useRef(createEditorSaveState()).current;
+  const [editRevision, setEditRevision] = React.useState(0);
+  const lastAutoSaveRevision = React.useRef(-1);
   const reloadingRef = React.useRef(false);
   const editorReadyRef = React.useRef(false);
   const previewBusyRef = React.useRef(false);
@@ -174,6 +186,16 @@ export function DocxSurface({
     saving,
   ]);
 
+  const loadEditorBytes = React.useCallback(async (versionId: string) => {
+    const draft = versionId === document.latestVersion.id ? await fetchDocumentDraft(document.id) : null;
+    if (draft && draft.baseVersionId !== versionId) throw new Error("This document changed. Reopen its latest version.");
+    const bytes = draft?.bytes ?? await queryClient.fetchQuery(documentVersionContentQuery(document.id, versionId));
+    if (!bytes) throw new Error("Document content is unavailable.");
+    draftIdRef.current = draft?.id ?? null;
+    saveState.reset(Boolean(draft));
+    return prepareDocxForEditor(bytes.slice(0));
+  }, [document.id, document.latestVersion.id, queryClient, saveState]);
+
   /**
    * First open / document switch: full load with loading phase.
    * Remounts the Casual host (keyed by document id + editorKey).
@@ -185,18 +207,16 @@ export function DocxSurface({
       setPhase("loading");
       setLoadError(null);
       setConflict(false);
+      saveState.reset();
+      needsFullExportRef.current = false;
       setDirty(false);
       setBuffer(null);
       try {
         // Drop Casual's local recovery draft so remount does not show
         // "Unsaved changes from … restore them?" after agent/server loads.
         await clearCasualLocalAutosave();
-        const bytes = await queryClient.fetchQuery(
-          documentVersionContentQuery(document.id, versionId),
-        );
-        // Detach a copy so Casual ownership cannot detach the React Query cache.
-        // Normalize legacy field prefixes so Casual models real Word fields.
-        const copy = await prepareDocxForEditor(bytes.slice(0));
+        const copy = await loadEditorBytes(versionId);
+        savedBufferRef.current = copy.slice(0);
         setBuffer(copy);
         setLoadedVersionId(versionId);
         setEditorKey((value) => value + 1);
@@ -209,7 +229,7 @@ export function DocxSurface({
         );
       }
     },
-    [beginSuppressDirty, document.id, queryClient],
+    [beginSuppressDirty, loadEditorBytes, saveState],
   );
 
   /**
@@ -238,16 +258,15 @@ export function DocxSurface({
 
       try {
         await clearCasualLocalAutosave();
-        const bytes = await queryClient.fetchQuery(
-          documentVersionContentQuery(document.id, versionId),
-        );
-        const copy = await prepareDocxForEditor(bytes.slice(0));
+        const copy = await loadEditorBytes(versionId);
         const api = editorRef.current;
 
         if (api && typeof api.loadDocumentBuffer === "function") {
           await api.loadDocumentBuffer(copy);
+          savedBufferRef.current = copy.slice(0);
           setBuffer(copy);
           setLoadedVersionId(versionId);
+          needsFullExportRef.current = false;
           setDirty(false);
           setConflict(false);
           setLoadError(null);
@@ -271,8 +290,10 @@ export function DocxSurface({
 
         // Fallback remount without blanking the whole surface into phase=loading.
         editorReadyRef.current = false;
+        savedBufferRef.current = copy.slice(0);
         setBuffer(copy);
         setLoadedVersionId(versionId);
+        needsFullExportRef.current = false;
         setDirty(false);
         setConflict(false);
         setLoadError(null);
@@ -291,7 +312,7 @@ export function DocxSurface({
         reloadingRef.current = false;
       }
     },
-    [beginSuppressDirty, document.id, queryClient, toast],
+    [beginSuppressDirty, loadEditorBytes, toast],
   );
 
   React.useEffect(() => {
@@ -349,6 +370,7 @@ export function DocxSurface({
               if (typeof page === "number" && page >= 1) api.scrollToPage(page);
             } catch { /* Viewport restore is best effort. */ }
             appliedPreviewRef.current = { runId: target.runId, revision: preview.revision };
+            savedBufferRef.current = prepared.slice(0);
             setBuffer(prepared);
             setDirty(false);
             beginSuppressDirty();
@@ -444,45 +466,35 @@ export function DocxSurface({
   }, [dirty, saving]);
 
   const persistBytes = React.useCallback(
-    async (bytes: ArrayBuffer) => {
-      if (!loadedVersionId || savingRef.current) return;
-      if (loadedVersionId !== latestVersionIdRef.current) {
-        toast({
-          tone: "error",
-          title: "Older version",
-          description:
-            "Restore this version as current before editing, or switch back to the latest tip.",
-        });
-        return;
+    async (bytes: ArrayBuffer, mode: "draft" | "version") => {
+      const baseVersionId = loadedVersionIdRef.current;
+      if (!baseVersionId) throw new Error("The document is still loading.");
+      if (baseVersionId !== latestVersionIdRef.current) {
+        throw new Error("Reload the latest version or restore this version before saving.");
       }
-      savingRef.current = true;
-      setSaving(true);
-      setConflict(false);
-
       try {
-        const result = await saveDocumentVersion(document.id, {
-          baseVersionId: loadedVersionId,
-          file: new Blob([bytes], {
-            type: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-          }),
-          filename: document.name,
-        });
+        const input = { baseVersionId, baseDraftId: draftIdRef.current,
+          file: new Blob([bytes], { type: "application/vnd.openxmlformats-officedocument.wordprocessingml.document" }),
+          filename: document.name };
+        if (mode === "draft") {
+          const draft = await saveDocumentDraft(document.id, input);
+          draftIdRef.current = draft.id;
+          savedBufferRef.current = bytes.slice(0);
+          return;
+        }
+        const result = await saveDocumentVersion(document.id, input);
+        draftIdRef.current = null;
 
         const nextVersionId = result.version.id;
-        const copy = bytes.slice(0);
-        // Content already matches the editor — update version pointers only.
-        // Do not remount / re-import; that was a major post-save flash.
-        setBuffer(copy);
+        // Changing documentBuffer re-imports the editor and can erase edits
+        // made during upload. Keep the prop stable; advance only the save baseline.
+        savedBufferRef.current = bytes.slice(0);
+        loadedVersionIdRef.current = nextVersionId;
+        latestVersionIdRef.current = result.document.latestVersion.id;
         setLoadedVersionId(nextVersionId);
         setLatestVersionId(result.document.latestVersion.id);
-        setDirty(false);
         setConflict(false);
         onDocumentUpdated?.(result.document);
-        toast({
-          tone: "success",
-          title: "Saved",
-          description: `Version ${result.version.versionNumber}`,
-        });
       } catch (error) {
         if (error instanceof ApiError && error.code === "VERSION_CONFLICT") {
           setConflict(true);
@@ -494,73 +506,73 @@ export function DocxSurface({
           } catch {
             // keep conflict UI even if refresh fails
           }
-          toast({
-            tone: "error",
-            title: "Version conflict",
-            description:
-              "A newer version exists. Your unsaved edits are still here.",
-          });
-          return;
         }
+        throw error;
+      }
+    },
+    [document.id, document.name, onDocumentUpdated],
+  );
 
-        toast({
-          tone: "error",
-          title: "Save failed",
-          description: userFacingError(error, "Could not save this document."),
-        });
+  const save = React.useCallback(async (mode: "draft" | "version" = "draft") => {
+    if (phaseRef.current !== "ready" || conflictRef.current || viewingHistory || agentRunning || previewTargetRef.current) return false;
+    return saveState.save(async () => {
+      savingRef.current = true;
+      setSaving(true);
+      try {
+        const api = editorRef.current;
+        if (!api) throw new Error("Wait for the document to finish loading.");
+        const exportRevision = saveState.revision;
+        const selective = !needsFullExportRef.current;
+        needsFullExportRef.current = true;
+        const bytes = await api.export({ selective });
+        if (!bytes) throw new Error("The editor could not export this document.");
+        // Casual clears its change markers after export, including overlapping edits.
+        needsFullExportRef.current = saveState.revision !== exportRevision;
+        if (savedBufferRef.current) await assertEditorFieldsPreserved(savedBufferRef.current, bytes);
+        await persistBytes(bytes, mode);
+        await clearCasualLocalAutosave().catch(() => {});
+      } catch (error) {
+        toast({ tone: "error", title: "Save failed", description: userFacingError(error, "Could not save this document.") });
+        throw error;
       } finally {
         savingRef.current = false;
         setSaving(false);
       }
-    },
-    [document.id, document.name, loadedVersionId, onDocumentUpdated, toast],
-  );
+    }, mode === "version").then((ok) => {
+      dirtyRef.current = saveState.isDirty();
+      setDirty(dirtyRef.current);
+      return ok;
+    });
+  }, [agentRunning, persistBytes, saveState, toast, viewingHistory]);
 
-  const save = React.useCallback(async () => {
-    if (savingRef.current || phase !== "ready" || conflict) return;
-    if (!dirty) {
-      toast({
-        tone: "success",
-        title: "Already saved",
-        description: "No local edits to persist.",
-      });
-      return;
-    }
-    const api = editorRef.current;
-    if (!api) {
-      toast({
-        tone: "error",
-        title: "Editor not ready",
-        description: "Wait for the document to finish loading.",
-      });
-      return;
-    }
+  // Save after editing pauses. A failed save stays dirty until another edit or Save.
+  React.useEffect(() => {
+    if (!dirty || saving || conflict || agentRunning || viewingHistory || workingPreview || phase !== "ready" || lastAutoSaveRevision.current === editRevision) return;
+    const timer = window.setTimeout(() => {
+      lastAutoSaveRevision.current = editRevision;
+      void save();
+    }, 1000);
+    return () => window.clearTimeout(timer);
+  }, [agentRunning, editRevision, dirty, conflict, phase, save, saving, viewingHistory, workingPreview]);
 
-    try {
-      // Prefer Casual selective paragraph patching so untouched field XML stays
-      // in the original package parts. Falls back to full repack internally.
-      const bytes = await api.export({ selective: true });
-      if (!bytes) {
-        toast({
-          tone: "error",
-          title: "Export failed",
-          description: "Casual Docs could not serialize this document.",
-        });
-        return;
+  React.useEffect(() => {
+    if (!beforeAgentSaveRef) return;
+    beforeAgentSaveRef.current = async () => {
+      while (saveState.isDirty()) {
+        if (!await save()) throw new Error("Save your document changes before starting the agent.");
       }
-      if (buffer) {
-        await assertEditorFieldsPreserved(buffer, bytes);
-      }
-      await persistBytes(bytes);
-      await clearCasualLocalAutosave();
-    } catch (error) {
-      toast({
-        tone: "error",
-        title: "Save failed",
-        description: userFacingError(error, "Could not export this document."),
-      });
-    }
-  }, [buffer, conflict, dirty, persistBytes, phase, toast]);
+    };
+    return () => { beforeAgentSaveRef.current = null; };
+  }, [beforeAgentSaveRef, save, saveState]);
+
+  function markChanged() {
+    if (!editorReadyRef.current || reloadingRef.current || viewingHistory) return;
+    suppressDirtyRef.current = false;
+    saveState.changed();
+    dirtyRef.current = true;
+    setDirty(true);
+    setEditRevision(value => value + 1);
+  }
 
   // Parent-driven save (header button / Cmd+S).
   React.useEffect(() => {
@@ -568,7 +580,7 @@ export function DocxSurface({
       return;
     }
     lastSaveRequestId.current = saveRequestId;
-    void save();
+    void save("version");
   }, [save, saveRequestId]);
 
   // Capture Cmd/Ctrl+S before Casual / browser defaults.
@@ -578,7 +590,7 @@ export function DocxSurface({
       if (event.key.toLowerCase() !== "s") return;
       event.preventDefault();
       event.stopPropagation();
-      void save();
+      void save("version");
     }
     window.addEventListener("keydown", onKey, true);
     return () => window.removeEventListener("keydown", onKey, true);
@@ -675,8 +687,7 @@ export function DocxSurface({
       <div className="min-h-0 flex-1 overflow-hidden" onInputCapture={(event) => {
         if (phaseRef.current === "ready" && event.nativeEvent.isTrusted &&
             event.target instanceof Element && event.target.closest('[contenteditable="true"]')) {
-          dirtyRef.current = true;
-          setDirty(true);
+          markChanged();
         }
       }}>
         <DocxEditorHost
@@ -688,12 +699,10 @@ export function DocxSurface({
           documentName={document.name}
           resolvedTheme={resolvedTheme}
           onReady={handleEditorReady}
+          onChange={markChanged}
           onDirtyChange={(next) => {
-            if (next && (!editorReadyRef.current || suppressDirtyRef.current)) {
-              return;
-            }
-            dirtyRef.current = next;
-            setDirty(next);
+            if (next && editorReadyRef.current && !suppressDirtyRef.current) markChanged();
+            // Casual's local autosave does not mean the server saved these edits.
           }}
           onError={(error) => {
             toast({
@@ -709,7 +718,7 @@ export function DocxSurface({
           // Do not wire Casual's onSave → persistBytes.
           // Casual can fire save on remount / internal autosave while the agent
           // advances versions, which races baseVersionId → VERSION_CONFLICT.
-          // OpenSuite Save / ⌘S is the only persist path (window keydown + header).
+          // OpenSuite serializes automatic, explicit, and before-agent saves.
         />
       </div>
 

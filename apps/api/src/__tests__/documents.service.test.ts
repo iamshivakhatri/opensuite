@@ -199,6 +199,8 @@ test("missing storage object maps to STORAGE_OBJECT_MISSING without leaking prov
     },
   });
 
+  documents.openDraft = async () => null;
+
   await assert.rejects(
     () =>
       documents.openLatestDownload({

@@ -1,7 +1,7 @@
 import type { AgentToolSet, ModelMessage } from "@opensuite/agent-core";
 import type { DocxEngineBinding } from "@opensuite/engine-client";
 
-import type { DocumentService } from "../documents/service.js";
+import { readDocumentForEditing, type DocumentService } from "../documents/service.js";
 import { formatWorkspaceManifest } from "./workspace-manifest.js";
 import type { AgentRunReportRetrieval } from "./agent-run-report.js";
 import {
@@ -184,7 +184,7 @@ export async function prepareContext(input: {
   readonly runShort: string;
   readonly cache: SlimDocumentStructureCache;
   readonly binding: DocxEngineBinding | undefined;
-  readonly documents: Pick<DocumentService, "listInWorkspace" | "readExactVersionBytes">;
+  readonly documents: Pick<DocumentService, "listInWorkspace" | "readExactVersionBytes"> & Partial<Pick<DocumentService, "readVersionForEditing">>;
   readonly workspaceDocuments?: Awaited<ReturnType<DocumentService["listInWorkspace"]>>;
   readonly ownerUserId: string;
   readonly workspaceId: string;
@@ -330,7 +330,7 @@ async function loadRetrievedContext(input: {
   readonly trace?: RunTrace;
   readonly cache: SlimDocumentStructureCache;
   readonly binding: DocxEngineBinding | undefined;
-  readonly documents: Pick<DocumentService, "listInWorkspace" | "readExactVersionBytes">;
+  readonly documents: Pick<DocumentService, "listInWorkspace" | "readExactVersionBytes"> & Partial<Pick<DocumentService, "readVersionForEditing">>;
   readonly workspaceDocuments: Awaited<ReturnType<DocumentService["listInWorkspace"]>> | undefined;
   readonly ownerUserId: string;
   readonly instruction: string;
@@ -369,11 +369,11 @@ async function loadRetrievedContext(input: {
       binding: input.binding,
       cache: input.cache,
       availableEvidenceTokens: input.availableEvidenceTokens,
-      readBytes: async (artifact) => new Uint8Array(await input.documents.readExactVersionBytes({
+      readBytes: async (artifact) => new Uint8Array((await readDocumentForEditing(input.documents, {
         documentId: artifact.documentId,
         versionId: artifact.versionId,
         ownerUserId: input.ownerUserId,
-      })),
+      })).bytes),
     });
     const message = retrieved.message;
     input.trace?.write("## Retrieval — Document Evidence / Injected Context", retrieved);

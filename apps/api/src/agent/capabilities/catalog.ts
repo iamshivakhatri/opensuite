@@ -1,4 +1,5 @@
 import { styleProfileCapabilities } from "./definitions/style-profiles.js";
+import { workspaceBrandCapabilities } from "./definitions/workspace-brand.js";
 import { CapabilityRegistry } from "./core/registry.js";
 import { builtInGroups, builtInTools } from "./definitions/built-in.js";
 import { calculatorCapability, createCalculatorTool } from "./definitions/compute/calculator.js";
@@ -9,6 +10,7 @@ import { documentStyles } from "./definitions/styles/index.js";
 export const capabilityRegistry = new CapabilityRegistry([
   ...builtInGroups,
   ...styleProfileCapabilities,
+  ...workspaceBrandCapabilities,
   calculatorCapability,
   ...documentSkills,
   ...documentStyles,
