@@ -2541,6 +2541,8 @@ async function runScriptedDocx(input: {
   readonly maxTurns?: number;
   readonly documentIds?: readonly string[];
   readonly references?: readonly { id: string; name: string; bytes: Buffer }[];
+  readonly attachments?: ReturnType<typeof attachmentFixture>;
+  readonly resolveVision?: NonNullable<Awaited<ReturnType<AgentExecutionServiceDeps['resolveModel']>>['resolveVision']>;
 }) {
   const binding = input.binding ?? await createNapiDocxEngineBinding();
   const persistence = memoryPersistence("user-1");
@@ -2599,12 +2601,13 @@ async function runScriptedDocx(input: {
   const deps = baseDeps(persistence, async (agentInput) => {
     state.runtime = await runAgent({ ...agentInput, model, ...(input.maxTurns ? { maxTurns: input.maxTurns } : {}) });
     return state.runtime;
-  });
+  }, undefined, input.attachments ? 128_000 : undefined);
   const executionDeps: AgentExecutionServiceDeps = {
     ...deps,
     docxBinding: binding,
+    ...(input.attachments ? { chatAttachments: input.attachments, attachmentExtraction: createAttachmentExtractionService(input.attachments.source, binding) } : {}),
     agentRunReportSink: (report) => { state.reports.push(report); },
-    resolveModel: async (userId) => ({ ...await deps.resolveModel(userId), usageAttribution: input.managedDebit
+    resolveModel: async (userId) => ({ ...await deps.resolveModel(userId), ...(input.resolveVision ? { resolveVision: input.resolveVision } : {}), usageAttribution: input.managedDebit
       ? { provider: "openrouter", model: "scripted", credentialSource: "managed" }
       : { provider: "openai", model: "scripted", credentialSource: "byok" } }),
     modelUsage: { recordFromProviderResponse: async ({ attribution, usage }: { attribution: { agentRunId?: string | null }; usage?: { inputTokens?: number } }) => {
@@ -2618,9 +2621,9 @@ async function runScriptedDocx(input: {
     } } : {}),
     documents: {
       ...deps.documents,
-      ...(input.references ? { listInWorkspace: async () => [
+      ...(input.references || input.attachments ? { listInWorkspace: async () => [
         { id: 'doc-1', name: 'Roster.docx', workspaceId: 'ws-1', format: 'docx', latestVersion: { id: state.versionId } },
-        ...input.references!.map(reference => ({ id: reference.id, name: reference.name, workspaceId: 'ws-1', format: 'docx', latestVersion: { id: `${reference.id}-v1` } })),
+        ...(input.references ?? []).map(reference => ({ id: reference.id, name: reference.name, workspaceId: 'ws-1', format: 'docx', latestVersion: { id: `${reference.id}-v1` } })),
       ] as never } : {}),
       getOwnedDocument: async ({ documentId }) => {
         const reference = input.references?.find(reference => reference.id === documentId);
@@ -2648,6 +2651,7 @@ async function runScriptedDocx(input: {
   const result = await (await execution.start({
     userId: "user-1", threadId: "thread-1", activeDocumentId: "doc-1", instruction: input.instruction,
     documentIds: input.documentIds,
+    attachmentIds: input.attachments?.rows.map(row => row.id),
     signal: controller.signal, liveEvents: { emit: (event) => { state.events.push(event); } },
   })).result;
   return { binding, result, state, execution, restart: (overrides: Partial<AgentExecutionServiceDeps> = {}) => createAgentExecutionService({ ...executionDeps, ...overrides }) };
@@ -3944,11 +3948,16 @@ for (const format of ['txt', 'pdf'] as const) test(`attachment ${format} evidenc
   assert.equal(fixture.originalReads(), 1);
 });
 
-test('scripted provider creates and saves a new native document from DOCX and note attachment evidence', async () => {
+for (const multimodal of [false, true]) test(`scripted provider creates and saves a new native document from ${multimodal ? 'all five source formats' : 'DOCX and note attachment evidence'}`, async (t) => {
   const binding = await createNapiDocxEngineBinding();
   const fixture = attachmentFixture([
     { filename: 'facts.docx', bytes: Buffer.from(buildDocxBody([{ kind: 'paragraph', text: 'Revenue target is $73,500.' }, { kind: 'table', rows: [['Owner', 'Mira']] }])), mediaType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' },
     { filename: 'note.txt', bytes: Buffer.from('Deliver the report on June 12.'), mediaType: 'text/plain' },
+    ...(multimodal ? [
+      { filename: 'audience.md', bytes: Buffer.from('# Report audience\nAudience: operations leadership.'), mediaType: 'text/markdown' },
+      { filename: 'period.pdf', bytes: buildTestPdf([['Approved period: Q3 2026.']]), mediaType: 'application/pdf' },
+      { filename: 'dashboard.png', bytes: await screenshot(), mediaType: 'image/png' },
+    ] : []),
   ]);
   const persistence = memoryPersistence('user-1');
   const thread = await persistence.getOwnedThread({ threadId: 'thread-1', ownerUserId: 'user-1' });
@@ -3957,16 +3966,28 @@ test('scripted provider creates and saves a new native document from DOCX and no
   let appends = 0;
   let saved = Buffer.from(binding.createBlankDocx());
   let document = { id: 'new-document', name: 'Combined report.docx', format: 'docx', workspaceId: 'ws-1', latestVersion: { id: 'v1' } };
+  const content = ['Launch report', 'Revenue target is $73,500.', 'Owner: Mira.', 'Deliver the report on June 12.',
+    ...(multimodal ? ['Audience: operations leadership.', 'Approved period: Q3 2026 (period.pdf, physical page 1).', 'Visual observation: June appears tallest in dashboard.png; small labels remain uncertain.'] : [])];
+  let peakEvidenceBytes = 0;
   const model = attachmentModel(options => {
     assert.match(JSON.stringify(options.prompt), /Revenue target is \$73,500/);
     assert.match(JSON.stringify(options.prompt), /Deliver the report on June 12/);
     assert.match(JSON.stringify(options.prompt), /Mira/);
+    const { text, manifest } = attachmentRequest(options);
+    peakEvidenceBytes = Math.max(peakEvidenceBytes, Buffer.byteLength(text));
+    assert.equal(manifest.attachments.length, multimodal ? 5 : 2);
+    if (multimodal) {
+      assert.match(text, /Audience: operations leadership/); assert.match(text, /Approved period: Q3 2026/);
+      assert.equal(providerImages(options).length, 1);
+    }
     if (turn++ === 0) return [{ name: 'workspace_create_blank_document', input: { title: document.name } }];
-    if (turn === 2) return [{ name: 'document_insert_paragraphs', input: { placement: { kind: 'end' }, texts: ['Revenue target is $73,500.', 'Owner: Mira.', 'Deliver the report on June 12.'] } }];
+    if (turn === 2) return [{ name: 'document_insert_paragraphs', input: { placement: { kind: 'end' }, texts: content } },
+      { name: 'document_set_paragraph_style', input: { target: { text: 'Launch report' }, style: 'Heading 1' } }];
     return [];
   });
   const deps = baseDeps(persistence, input => runAgent({ ...input, model }), undefined, 128_000);
   const result = await (await createAgentExecutionService({ ...deps, docxBinding: binding, chatAttachments: fixture, attachmentExtraction: createAttachmentExtractionService(fixture.source, binding),
+    ...(multimodal ? { resolveModel: async () => ({ model, contextLength: 128_000, resolveVision: async () => ({ direct: true }) }) } : {}),
     documents: { ...deps.documents, getOwnedDocument: async () => document as never, readExactVersionBytes: async () => saved,
       createBlankDocxDocument: async () => ({ document, version: { id: 'v1', versionNumber: 1 } }) as never,
       appendDocumentVersion: async ({ bytes }) => { appends++; saved = Buffer.from(bytes); document = { ...document, latestVersion: { id: 'v2' } }; return { version: { id: 'v2', versionNumber: 2 } } as never; },
@@ -3978,8 +3999,14 @@ test('scripted provider creates and saves a new native document from DOCX and no
   assert.ok(paragraphs.includes('Revenue target is $73,500.'));
   assert.ok(paragraphs.includes('Owner: Mira.'));
   assert.ok(paragraphs.includes('Deliver the report on June 12.'));
-  assert.equal(fixture.originalReads(), 2);
+  for (const text of content) assert.ok(paragraphs.includes(text));
+  const headings = await binding.inspectDocx(saved, { focus: { kind: 'headings' } });
+  assert.ok(headings.headings!.items.some(item => item.text === 'Launch report'));
+  assert.equal(fixture.originalReads(), multimodal ? 5 : 2);
   assert.ok(persistence.workingDocumentIds.every(id => !id.startsWith('attachment-')));
+  assert.equal(persistence.steps.filter(step => step.kind === 'tool').length, 3);
+  assert.equal(turn, 3);
+  t.diagnostic(`ATTACHMENT_WORKFLOW ${JSON.stringify({ name: multimodal ? 'create-five-formats' : 'create-small-sources', modelTurns: turn, toolCalls: 3, unnecessaryDiscoveryOrInspection: 0, originalReads: fixture.originalReads(), appendedVersions: appends, peakEvidenceBytes })}`);
 });
 
 test('malformed DOCX, invalid text and malformed PDF produce bounded errors without cached success', async () => {
@@ -4627,4 +4654,258 @@ test('vision reader call/output limits and usage failures stop further provider 
   const accountingFailed = createAttachmentVision({ ...common, recordReader: async () => { throw billingFailure; } });
   await assert.rejects(accountingFailed.view(references[0]!), billingFailure);
   await assert.rejects(accountingFailed.project([]), billingFailure); assert.equal(calls, 5);
+});
+
+function attachmentWorkflowMeasurement(t: { diagnostic(message: string): void }, name: string, run: Awaited<ReturnType<typeof runScriptedDocx>>, fixture: ReturnType<typeof attachmentFixture>) {
+  const tools = run.state.reports.flatMap(report => report.tools);
+  assert.equal(tools.filter(tool => ['attachment.list', 'capabilities.list', 'capabilities.search', 'workspace.search_documents', 'document.inspect', 'document.find'].includes(tool.name)).length, 0);
+  const evidenceBytes = run.state.modelInputs.map(input => Buffer.byteLength(promptAttachmentManifest(JSON.parse(input)).text));
+  t.diagnostic(`ATTACHMENT_WORKFLOW ${JSON.stringify({ name, modelTurns: run.state.reports.reduce((sum, report) => sum + report.modelTurns, 0), toolCalls: tools.length,
+    unnecessaryDiscoveryOrInspection: 0, originalReads: fixture.originalReads(), versions: run.state.appends, peakEvidenceBytes: Math.max(...evidenceBytes),
+    peakDiagnosticRequestBytes: run.state.peakModelRequestBytes })}`);
+}
+
+function promptAttachmentManifest(prompt: unknown) {
+  const messages = prompt as Parameters<NonNullable<MockLanguageModelV4['doStream']>>[0]['prompt'];
+  return attachmentRequest({ prompt: messages } as Parameters<NonNullable<MockLanguageModelV4['doStream']>>[0]);
+}
+
+test('C2 workflow: large financial PDF and notes update the selected report, exact totals and unrelated content survive', async (t) => {
+  const binding = await createNapiDocxEngineBinding();
+  const base = Buffer.from(buildDocxBody([
+    { kind: 'paragraph', text: 'Q3 2026 operating report' },
+    { kind: 'paragraph', text: 'Keep this signed legal notice.' },
+    { kind: 'table', rows: [['Metric', 'Value'], ['Revenue', '$40,000.00'], ['Cost', '$20,000.00'], ['Profit', '$20,000.00']] },
+    { kind: 'table', rows: [['Unrelated', 'Status'], ['Archive', 'Approved']] },
+  ]));
+  const styled = (await binding.executeDocxOperation!(base, 'set_text_formatting', { target: { text: 'Keep this signed legal notice.' }, italic: true })).output!;
+  const seed = Buffer.from((await binding.executeDocxInsertPicture!(styled, { imageBytes: await screenshot(), placement: { kind: 'end' }, widthEmu: 914400, heightEmu: 548640 })).output!);
+  const fixture = attachmentFixture([
+    { filename: 'finance.pdf', mediaType: 'application/pdf', bytes: buildTestPdf(Array.from({ length: 80 }, (_, index) => [
+      `Operating records, physical page ${index + 1}.`,
+      ...Array.from({ length: 24 }, (_, row) => `Record ${row + 1}: archived operational activity, retain for review.`),
+      ...(index === 66 ? ['Approved figures: Q3 2026 revenue $42,750.25; cost $19,125.00; profit $23,625.25.'] : []),
+    ]), { structure: true, title: 'Finance records' }) },
+    { filename: 'notes.txt', mediaType: 'text/plain', bytes: Buffer.from('Update Q3 2026 using Approved figures. Keep all unrelated report content.') },
+  ]);
+  const run = await runScriptedDocx({ binding, bytes: seed, attachments: fixture, instruction: 'Update this document from the approved figures in finance.pdf and notes.txt.', turns: [
+    prompt => {
+      const { manifest, text } = promptAttachmentManifest(prompt);
+      assert.equal(manifest.attachments[0]!.pageCount, 80);
+      assert.equal(manifest.attachments[0]!.contentComplete, false);
+      assert.equal(manifest.attachments[1]!.contentComplete, true);
+      assert.ok(Buffer.byteLength(text) <= 12_000);
+      return { calls: [{ name: 'capabilities_load', input: { ids: ['attachment.search'] } }] };
+    },
+    { calls: [{ name: 'attachment_search', input: { attachmentIds: [fixture.rows[0]!.id], query: 'Approved figures' } }] },
+    prompt => {
+      const text = JSON.stringify(prompt);
+      assert.match(text, /page:67/); assert.match(text, /42,750\.25/); assert.match(text, /19,125\.00/); assert.match(text, /23,625\.25/);
+      assert.match(text, new RegExp(fixture.rows[0]!.sha256));
+      return { calls: [{ name: 'document_set_table_cells_text', input: { table: { headerCells: ['Metric', 'Value'] }, updates: [
+        { target: { row: { kind: 'label', text: 'Revenue' }, column: { kind: 'header', text: 'Value' } }, expectedCurrentText: '$40,000.00', replacement: '$42,750.25' },
+        { target: { row: { kind: 'label', text: 'Cost' }, column: { kind: 'header', text: 'Value' } }, expectedCurrentText: '$20,000.00', replacement: '$19,125.00' },
+        { target: { row: { kind: 'label', text: 'Profit' }, column: { kind: 'header', text: 'Value' } }, expectedCurrentText: '$20,000.00', replacement: '$23,625.25' },
+      ] } }] };
+    },
+    { calls: [{ name: 'finish', input: {} }] },
+  ] });
+  assert.equal(run.result.run.status, 'completed', run.result.run.errorMessage ?? '');
+  assert.equal(run.state.appends, 1);
+  assert.equal(run.state.reports[0]!.document?.finalDocumentId, 'doc-1');
+  const before = await binding.inspectDocx(seed, { focus: { kind: 'tables' } });
+  const after = await binding.inspectDocx(run.state.bytes, { focus: { kind: 'tables' } });
+  assert.deepEqual(after.tables!.items[0]!.rows.map(row => row.cells), [['Metric', 'Value'], ['Revenue', '$42,750.25'], ['Cost', '$19,125.00'], ['Profit', '$23,625.25']]);
+  assert.equal(4_275_025 - 1_912_500, 2_362_525);
+  assert.deepEqual(after.tables!.items[1]!.rows, before.tables!.items[1]!.rows);
+  const blocks = await binding.inspectDocx(run.state.bytes, { focus: { kind: 'body_blocks' } });
+  assert.equal(blocks.bodyBlocks!.items.filter(block => block.kind === 'picture').length, 1);
+  const beforeStyle = await binding.inspectDocxStyleSnapshot(seed);
+  const afterStyle = await binding.inspectDocxStyleSnapshot(run.state.bytes);
+  assert.deepEqual(afterStyle, beforeStyle);
+  assert.equal(fixture.originalReads(), 2);
+  attachmentWorkflowMeasurement(t, 'financial-update', run, fixture);
+});
+
+test('C2 workflow: screenshot and selectively viewed scan produce a native DOCX section with qualified visual references', async (t) => {
+  const jpeg = await screenshot('jpeg');
+  const fixture = attachmentFixture([
+    { filename: 'dashboard.png', mediaType: 'image/png', bytes: await screenshot() },
+    { filename: 'scanned.pdf', mediaType: 'application/pdf', bytes: buildTestPdf([['Reliable text: report belongs to Meridian.'], null, ['Unrelated appendix.']], { image: { jpeg, width: 800, height: 480 } }) },
+  ]);
+  const text = 'Visual observation: June appears tallest (dashboard.png; scanned.pdf, physical page 2). Small labels remain uncertain; this is model interpretation.';
+  const run = await runScriptedDocx({ bytes: Buffer.from(buildMinimalDocx(['Visual report'])), attachments: fixture, resolveVision: async () => ({ direct: true }), instruction: 'Update this document: add a section about the dashboard and scanned physical page 2, naming sources and uncertainty.', turns: [
+    prompt => {
+      const options = { prompt } as Parameters<NonNullable<MockLanguageModelV4['doStream']>>[0];
+      assert.equal(providerImages(options).length, 1);
+      const image = providerImages(options)[0]!;
+      assert.ok(image.type === 'file' && image.mediaType === 'image/jpeg' && image.data.type === 'data');
+      return { calls: [{ name: 'capabilities_load', input: { ids: ['attachment.view'] } }] };
+    },
+    prompt => {
+      const { manifest } = promptAttachmentManifest(prompt);
+      return { calls: [{ name: 'attachment_view', input: { attachmentId: fixture.rows[1]!.id, extractionId: manifest.attachments[1]!.extractionId, page: 2 } }] };
+    },
+    prompt => {
+      assert.equal(providerImages({ prompt } as Parameters<NonNullable<MockLanguageModelV4['doStream']>>[0]).length, 2);
+      assert.match(JSON.stringify(prompt), /physicalPage.*2/);
+      assert.match(JSON.stringify(prompt), /Reliable text: report belongs to Meridian/);
+      return { calls: [{ name: 'document_insert_paragraphs', input: { placement: { kind: 'end' }, texts: [text] } }] };
+    },
+    { calls: [{ name: 'finish', input: {} }] },
+  ] });
+  assert.equal(run.result.run.status, 'completed', run.result.run.errorMessage ?? '');
+  const paragraphs = await run.binding.inspectDocx(run.state.bytes, { focus: { kind: 'paragraphs' } });
+  assert.ok(paragraphs.paragraphs!.items.some(item => item.text === text));
+  const cached = JSON.parse(fixture.cache.get(fixture.rows[1]!.id)!.toString());
+  assert.equal(cached.renderedPage.page, 2);
+  assert.equal(fixture.originalReads(), 3);
+  assert.doesNotMatch(JSON.stringify(run.state.persistence.steps), /base64|data:image|representation/);
+  attachmentWorkflowMeasurement(t, 'mocked-visual-section', run, fixture);
+});
+
+test('C2 workflow: conflicting same-period figures request a decision and preserve the current report', async (t) => {
+  const seed = Buffer.from(buildMinimalDocx(['Q3 2026 revenue: $40,000.']));
+  const fixture = attachmentFixture([
+    { filename: 'finance.txt', mediaType: 'text/plain', bytes: Buffer.from('Q3 2026 revenue: $42,750.') },
+    { filename: 'sales.md', mediaType: 'text/markdown', bytes: Buffer.from('# Sales update\nQ3 2026 revenue: $43,250.') },
+  ]);
+  const run = await runScriptedDocx({ bytes: seed, attachments: fixture, instruction: 'Update this document using both sources.', turns: [prompt => {
+    const { manifest } = promptAttachmentManifest(prompt);
+    assert.equal(manifest.attachments.length, 2);
+    assert.ok(manifest.attachments.every(source => source.contentComplete));
+    const text = JSON.stringify(prompt);
+    for (const value of ['42,750', '43,250', '40,000']) assert.ok(text.includes(value));
+    assert.match(text, /never silently reconcile conflicting values/);
+    return { calls: [{ name: 'request_clarification', input: { question: 'Q3 2026 revenue is $42,750 in finance.txt and $43,250 in sales.md. Which source should control the report?' } }] };
+  }] });
+  assert.equal(run.result.run.status, 'completed_with_input_needed');
+  assert.equal(run.state.appends, 0);
+  assert.deepEqual(run.state.bytes, seed);
+  assert.match(run.result.assistantMessage!.content, /finance.txt.*sales.md/);
+  attachmentWorkflowMeasurement(t, 'conflicting-figures', run, fixture);
+});
+
+test('C2 workflow: multiple source formats Continue after a saved edit without duplicate mutations or lost capabilities', async (t) => {
+  const fixture = attachmentFixture([
+    { filename: 'owner.txt', mediaType: 'text/plain', bytes: Buffer.from('Owner: Mira.') },
+    { filename: 'plan.md', mediaType: 'text/markdown', bytes: Buffer.from('# Delivery\nDelivery: June 12.') },
+    { filename: 'finance.pdf', mediaType: 'application/pdf', bytes: buildTestPdf([['Approved budget: $42,750.25.']]) },
+  ]);
+  let originalReference: Record<string, unknown>;
+  const run = await runScriptedDocx({ bytes: Buffer.from(buildMinimalDocx(['Owner: pending.', 'Preserve this paragraph.'])), attachments: fixture, maxTurns: 2,
+    instruction: 'Update this document with the owner, delivery and approved budget from all sources.', turns: [
+      prompt => {
+        const { manifest } = promptAttachmentManifest(prompt);
+        assert.equal(manifest.attachments.length, 3);
+        originalReference = { attachmentId: fixture.rows[1]!.id, extractionId: manifest.attachments[1]!.extractionId, location: 'line:2' };
+        return { calls: [{ name: 'document_replace_text', input: { target: { text: 'Owner: pending.' }, expectedCurrentText: 'Owner: pending.', replacement: 'Owner: Mira.' } }] };
+      },
+      { calls: [{ name: 'capabilities_load', input: { ids: ['attachment.read'] } }] },
+      prompt => {
+        const text = JSON.stringify(prompt);
+        assert.match(text, /Historical tool calls have already executed/);
+        assert.match(text, /document_replace_text/);
+        assert.match(text, /Owner: Mira/);
+        assert.match(text, /approved budget from all sources/);
+        const { manifest } = promptAttachmentManifest(prompt);
+        assert.equal(manifest.attachments[1]!.extractionId, originalReference.extractionId);
+        return { calls: [{ name: 'document_insert_paragraphs', input: { placement: { kind: 'end' }, texts: ['Delivery: June 12.', 'Approved budget: $42,750.25.'] } }] };
+      },
+      { calls: [{ name: 'finish', input: {} }] },
+    ] });
+  assert.equal(run.result.run.errorCode, 'AGENT_MAX_TURNS');
+  assert.equal(run.state.appends, 1);
+  const toolsBefore = run.state.exposedTools[1]!;
+  const resumed = await (await run.restart({ attachmentExtraction: createAttachmentExtractionService(fixture.source, run.binding) }).start({ userId: 'user-1', threadId: 'thread-1', instruction: 'Continue', continueFromRunId: run.result.run.id })).result;
+  assert.equal(resumed.run.status, 'completed', resumed.run.errorMessage ?? '');
+  assert.ok(run.state.exposedTools[2]!.includes('attachment_read'));
+  assert.ok(run.state.exposedTools[2]!.length > toolsBefore.length);
+  assert.equal(run.state.appends, 2);
+  assert.equal(run.state.versionId, 'v3');
+  assert.equal(run.state.reports.flatMap(report => report.tools).filter(tool => tool.name === 'document.replace_text').length, 1);
+  const paragraphs = (await run.binding.inspectDocx(run.state.bytes, { focus: { kind: 'paragraphs' } })).paragraphs!.items.map(item => item.text);
+  for (const text of ['Owner: Mira.', 'Preserve this paragraph.', 'Delivery: June 12.', 'Approved budget: $42,750.25.']) assert.equal(paragraphs.filter(item => item === text).length, 1);
+  assert.equal(fixture.originalReads(), 3);
+  attachmentWorkflowMeasurement(t, 'continue-saved-edit', run, fixture);
+});
+
+for (const stopAfterCopy of [false, true]) test(`C2 workflow: explicitly copy an attached DOCX then edit only its workspace copy; Continue=${stopAfterCopy}`, async (t) => {
+  const binding = await createNapiDocxEngineBinding();
+  const original = Buffer.from(buildDocxBody([{ kind: 'paragraph', text: 'Original source wording.' }, { kind: 'table', rows: [['Owner', 'Mira']] }]));
+  const fixture = attachmentFixture([{ filename: 'source.docx', bytes: original, mediaType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' }]);
+  const persistence = memoryPersistence('user-1');
+  const thread = await persistence.getOwnedThread({ threadId: 'thread-1', ownerUserId: 'user-1' });
+  persistence.getOwnedThread = async () => ({ ...thread!, title: 'Copy attachment' });
+  let turn = 0; let creates = 0; let appends = 0;
+  const versions = new Map<string, Buffer>();
+  let versionId = 'copy-v1';
+  const document = () => ({ id: 'workspace-copy', name: 'Editable copy.docx', workspaceId: 'ws-1', format: 'docx', latestVersion: { id: versionId } });
+  const model = attachmentModel(options => {
+    const { manifest } = attachmentRequest(options);
+    if (turn++ === 0) return [{ name: 'capabilities_load', input: { ids: ['workspace.copy_attachment'] } }];
+    if (turn === 2) return [{ name: 'workspace_copy_attachment', input: { attachmentId: fixture.rows[0]!.id, extractionId: manifest.attachments[0]!.extractionId, title: 'Editable copy.docx' } }];
+    assert.match(JSON.stringify(options.prompt), /sourceAttachmentId.*attachment-0/);
+    if (turn === 3) return [{ name: 'document_replace_text', input: { target: { text: 'Original source wording.' }, expectedCurrentText: 'Original source wording.', replacement: 'Edited workspace wording.' } }];
+    return [{ name: 'finish', input: {} }];
+  });
+  const reports: AgentRunReport[] = [];
+  const deps = baseDeps(persistence, input => runAgent({ ...input, model, maxTurns: stopAfterCopy && turn === 0 ? 2 : 5 }), undefined, 128_000);
+  const copyDeps: AgentExecutionServiceDeps = { ...deps, agentRunReportSink: report => { reports.push(report); }, docxBinding: binding, chatAttachments: fixture, attachmentExtraction: createAttachmentExtractionService(fixture.source, binding), documents: {
+    ...deps.documents,
+    getOwnedDocument: async ({ documentId }) => { assert.equal(documentId, 'workspace-copy'); return document() as never; },
+    readExactVersionBytes: async ({ versionId }) => versions.get(versionId)!,
+    createOfficeDocumentFromBytes: async input => {
+      creates++; assert.deepEqual(input.bytes, original); assert.equal(input.source, 'agent'); assert.equal(input.workspaceId, 'ws-1');
+      versions.set('copy-v1', Buffer.from(input.bytes));
+      return { document: document(), version: { id: 'copy-v1', versionNumber: 1 } } as never;
+    },
+    appendDocumentVersion: async input => {
+      appends++; assert.equal(input.documentId, 'workspace-copy'); assert.equal(input.baseVersionId, 'copy-v1');
+      versionId = 'copy-v2'; versions.set(versionId, Buffer.from(input.bytes));
+      return { version: { id: versionId, versionNumber: 2 } } as never;
+    },
+  } };
+  let result = await (await createAgentExecutionService(copyDeps).start({ userId: 'user-1', threadId: 'thread-1', instruction: 'Create an editable workspace copy of source.docx named Editable copy.docx, then replace its first paragraph with Edited workspace wording.', attachmentIds: [fixture.rows[0]!.id] })).result;
+  if (stopAfterCopy) {
+    assert.equal(result.run.errorCode, 'AGENT_MAX_TURNS');
+    assert.equal(creates, 1); assert.equal(appends, 0);
+    assert.match(result.run.errorMessage!, /Changes made so far were preserved/);
+    assert.equal(reports[0]!.outcome, 'partial');
+    result = await (await createAgentExecutionService({ ...copyDeps, attachmentExtraction: createAttachmentExtractionService(fixture.source, binding) }).start({ userId: 'user-1', threadId: 'thread-1', instruction: 'Continue', continueFromRunId: result.run.id })).result;
+  }
+  assert.equal(result.run.status, 'completed', result.run.errorMessage ?? '');
+  assert.equal(creates, 1); assert.equal(appends, 1); assert.equal(turn, 4);
+  assert.deepEqual(versions.get('copy-v1'), original);
+  assert.equal(createHash('sha256').update(original).digest('hex'), fixture.rows[0]!.sha256);
+  const paragraphs = await binding.inspectDocx(versions.get('copy-v2')!, { focus: { kind: 'paragraphs' } });
+  assert.ok(paragraphs.paragraphs!.items.some(item => item.text === 'Edited workspace wording.'));
+  assert.ok(persistence.workingDocumentIds.every(id => id === 'workspace-copy'));
+  assert.equal(persistence.steps.filter(step => step.kind === 'tool').length, 4);
+  t.diagnostic(`ATTACHMENT_WORKFLOW ${JSON.stringify({ name: 'editable-copy', modelTurns: turn, toolCalls: 4, unnecessaryDiscoveryOrInspection: 0, originalReads: fixture.originalReads(), creates, appendedVersions: appends })}`);
+});
+
+test('C2 attachment copy refuses stale, changed, staged, deleted and foreign sources before workspace creation', async () => {
+  const binding = await createNapiDocxEngineBinding();
+  const bytes = Buffer.from(buildMinimalDocx(['Private original.']));
+  const fixture = attachmentFixture([
+    { filename: 'private.docx', bytes, mediaType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' },
+    { filename: 'note.txt', bytes: Buffer.from('Not a DOCX.'), mediaType: 'text/plain' },
+  ]);
+  const service = createAttachmentExtractionService(fixture.source, binding);
+  const { extraction } = await service.get(attachmentScope, fixture.rows[0]!.id);
+  for (const scope of [{ ...attachmentScope, userId: 'other' }, { ...attachmentScope, threadId: 'other' }, { ...attachmentScope, workspaceId: 'other' }]) {
+    await assert.rejects(service.readDocxCopy(scope, extraction.attachmentId, extraction.extractionId), { code: 'ATTACHMENT_NOT_FOUND' });
+  }
+  await assert.rejects(service.readDocxCopy(attachmentScope, extraction.attachmentId, 'stale'), { code: 'STALE_EXTRACTION' });
+  await assert.rejects(service.readDocxCopy(attachmentScope, fixture.rows[1]!.id, extraction.extractionId), { code: 'INVALID_REFERENCE' });
+  const originalRow = fixture.rows[0]!;
+  for (const status of ['staged', 'deleted'] as const) {
+    fixture.rows[0] = { ...originalRow, status };
+    await assert.rejects(service.readDocxCopy(attachmentScope, extraction.attachmentId, extraction.extractionId), { code: 'ATTACHMENT_NOT_FOUND' });
+  }
+  fixture.rows[0] = originalRow;
+  bytes[bytes.length - 1] = bytes[bytes.length - 1]! ^ 1;
+  await assert.rejects(service.readDocxCopy(attachmentScope, extraction.attachmentId, extraction.extractionId), { code: 'ATTACHMENT_CHANGED' });
+  assert.equal(fixture.originalReads(), 2, 'refused identity/access checks must not read original bytes');
 });

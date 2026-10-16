@@ -15,6 +15,10 @@ import { registerChatAttachmentRoutes } from "../routes/chat-attachments.js";
 import { createAgentPersistenceService } from "../agent/persistence.js";
 import { createAttachmentExtractionService } from "./extraction.js";
 import { buildTestPdf } from "./pdf-test-fixture.js";
+import { buildMinimalDocx, createNapiDocxEngineBinding } from "@opensuite/engine-client";
+import { MockLanguageModelV4, simulateReadableStream } from "ai/test";
+import { createDocumentService } from "../documents/service.js";
+import { createAgentExecutionService } from "../agent/execution.js";
 
 const pdf = buildTestPdf([["Private report: revenue $42,750."], ["Owner Mira; physical page two."]]);
 const png = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 0]);
@@ -258,6 +262,55 @@ test(
       await attachments.remove({ workspaceId, userId: alice, attachmentId: pdfAtt.id });
       assert.equal(storage.objects.has(pdfCacheKey), false);
       await assert.rejects(createAttachmentExtractionService(extractionSource).get(cacheScope, pdfAtt.id), /not found/i);
+
+      // Exercise the real binding, immutable version store, and agent loop together.
+      const binding = await createNapiDocxEngineBinding();
+      const originalDocx = Buffer.from(buildMinimalDocx(["Original source paragraph."]));
+      const sourceDocx = await attachments.upload({ workspaceId, userId: alice, filename: "source.docx", bytes: originalDocx });
+      const sourceNote = await attachments.upload({ workspaceId, userId: alice, filename: "approved.txt", bytes: Buffer.from("Approved budget: $42,750.25.") });
+      await client.db.update(schema.agentThread).set({ title: "Attachment workflow" }).where(eq(schema.agentThread.id, thread.id));
+      const documents = createDocumentService(client.db, storage, { uploadMaxBytes: 25 * 1024 * 1024, storageAccounting: accounting });
+      let providerTurns = 0;
+      const model = new MockLanguageModelV4({ doStream: async options => {
+        providerTurns++;
+        const evidence = options.prompt.find(message => message.role === "user" && JSON.stringify(message).includes("CHAT ATTACHMENT EVIDENCE"));
+        assert.ok(evidence && Array.isArray(evidence.content));
+        const text = evidence.content.map(part => part.type === "text" ? part.text : "").join("");
+        const manifest = JSON.parse(text.slice(text.indexOf("\n") + 1));
+        assert.match(text, /Approved budget: \$42,750\.25/);
+        const source = manifest.attachments.find((item: { attachmentId: string }) => item.attachmentId === sourceDocx.id);
+        assert.ok(source?.extractionId);
+        const calls = providerTurns === 1
+          ? [{ toolName: "capabilities_load", input: { ids: ["workspace.copy_attachment"] } }]
+          : providerTurns === 2
+          ? [{ toolName: "workspace_copy_attachment", input: { attachmentId: sourceDocx.id, extractionId: source.extractionId, title: "Editable report.docx" } }]
+          : providerTurns === 3
+            ? [{ toolName: "document_insert_paragraphs", input: { placement: { kind: "end" }, texts: ["Approved budget: $42,750.25."] } }]
+            : [{ toolName: "finish", input: {} }];
+        return { stream: simulateReadableStream({ chunks: [
+          { type: "stream-start", warnings: [] },
+          ...calls.map(call => ({ type: "tool-call", toolCallId: `workflow-${providerTurns}`, toolName: call.toolName, input: JSON.stringify(call.input) })),
+          { type: "finish", finishReason: { unified: "tool-calls", raw: "tool-calls" }, usage: { inputTokens: { total: 10 }, outputTokens: { total: 5 } } },
+        ] as never[] }) };
+      } });
+      const workflow = await (await createAgentExecutionService({ persistence, documents, docxBinding: binding, chatAttachments: attachments,
+        attachmentExtraction: createAttachmentExtractionService(attachments, binding), resolveModel: async () => ({ model, contextLength: 128_000 }),
+      }).start({ userId: alice, threadId: thread.id, instruction: "Create an editable workspace copy of source.docx named Editable report.docx and append the approved budget from approved.txt.", attachmentIds: [sourceDocx.id, sourceNote.id] })).result;
+      assert.equal(workflow.run.status, "completed", workflow.run.errorMessage ?? "");
+      assert.equal(providerTurns, 4);
+      const workspaceDocs = await documents.listInWorkspace(workspaceId, alice);
+      assert.equal(workspaceDocs.length, 1);
+      const report = workspaceDocs[0]!;
+      assert.equal(report.name, "Editable report.docx");
+      assert.equal(report.latestVersion?.versionNumber, 2);
+      const reportBytes = await documents.readExactVersionBytes({ documentId: report.id, versionId: report.latestVersion!.id, ownerUserId: alice });
+      const reportText = (await binding.inspectDocx(reportBytes, { focus: { kind: "paragraphs" } })).paragraphs!.items.map(item => item.text);
+      assert.ok(reportText.includes("Original source paragraph."));
+      assert.ok(reportText.includes("Approved budget: $42,750.25."));
+      const unchangedSource = await attachments.read({ workspaceId, userId: alice, attachmentId: sourceDocx.id });
+      const originalChunks = [];
+      for await (const chunk of unchangedSource.body) originalChunks.push(Buffer.from(chunk));
+      assert.deepEqual(Buffer.concat(originalChunks), originalDocx);
 
       const tinyQuota = createChatAttachmentService(
         client.db,

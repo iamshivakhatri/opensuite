@@ -261,8 +261,8 @@ function failedMutationRecovered(failed: AgentRunMetrics["toolCalls"][number], c
  * Technical run outcome from runtime + document facts — never LLM-judged.
  *
  * - cancelled: abort signal / cancelled settlement
- * - partial: terminal failure or unrecovered mutate work after a version advance
- * - failure: terminal failure / unrecovered mutates with no version advance
+ * - partial: terminal failure or unrecovered mutate work after a saved change
+ * - failure: terminal failure / unrecovered mutates with no saved change
  * - success: clean successful stop with no unrecovered mutate failures
  */
 export function deriveRunOutcome(input: {
@@ -270,12 +270,14 @@ export function deriveRunOutcome(input: {
   readonly terminalFailure?: boolean;
   readonly inputNeeded?: boolean;
   readonly versionAdvanceCount: number;
+  readonly documentCreated?: boolean;
   readonly unrecoveredFailedMutates?: number;
 }): AgentRunOutcome {
   if (input.cancelled) return "cancelled";
-  if (input.terminalFailure && input.versionAdvanceCount > 0) return "partial";
+  const savedChanges = input.versionAdvanceCount > 0 || input.documentCreated === true;
+  if (input.terminalFailure && savedChanges) return "partial";
   if (input.terminalFailure) return "failure";
-  if ((input.unrecoveredFailedMutates ?? 0) > 0 && input.versionAdvanceCount > 0) return "partial";
+  if ((input.unrecoveredFailedMutates ?? 0) > 0 && savedChanges) return "partial";
   if ((input.unrecoveredFailedMutates ?? 0) > 0) return "failure";
   if (input.inputNeeded) return "partial";
   return "success";
@@ -331,6 +333,7 @@ export function composeAgentRunReport(
     cancelled,
     terminalFailure,
     versionAdvanceCount: advances.length,
+    documentCreated: (input.documentTransitions?.length ?? 0) > 0,
     unrecoveredFailedMutates,
     inputNeeded: input.inputNeeded,
   });

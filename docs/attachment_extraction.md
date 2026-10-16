@@ -293,7 +293,7 @@ Generated dashboard screenshots and a mixed PDF containing the dashboard scan
 cover image validation, text preservation, targeted rendering, cache reuse,
 Continue, unsupported routes, credential-source separation, ownership/deletion,
 reader limits/failure/accounting and log redaction. No paid model calls are used.
-Part 7 should check real-model visual accuracy, browser attachment/Continue flows,
+Manual checks still need real-model visual accuracy, browser attachment/Continue flows,
 and native PDF rendering inside the production Linux image with permitted routes.
 
 Final checks: API 483 passed / 25 configuration skips; API/web typechecks, isolated
@@ -316,3 +316,7 @@ Reader usage is a separately attributed event in the existing usage ledger;
 main-loop run-report turn counts still describe the main model only. Linux
 container rendering and browser/manual accuracy checks remain unverified. No
 paid model calls, push, deployment or automatic document image insertion.
+
+C2 Part 7 integrates these sources with native DOCX creation, updates, explicit
+editable copies, saved versions and Continue. See [workflow verification and
+limits](attachment_workflows.md) for deterministic scenarios and manual gates.

@@ -75,6 +75,8 @@ const openrouterInclusivePricing: ModelPricingEntry = {
 };
 
 test("deriveRunOutcome: cancelled / partial / failure / success", () => {
+  assert.equal(deriveRunOutcome({ versionAdvanceCount: 0, documentCreated: true, terminalFailure: true }), "partial");
+  assert.equal(deriveRunOutcome({ versionAdvanceCount: 0, documentCreated: true, unrecoveredFailedMutates: 1 }), "partial");
   assert.equal(deriveRunOutcome({ versionAdvanceCount: 0, inputNeeded: true }), "partial");
   assert.equal(
     deriveRunOutcome({ cancelled: true, versionAdvanceCount: 0 }),

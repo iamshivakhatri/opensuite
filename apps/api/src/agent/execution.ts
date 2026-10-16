@@ -615,6 +615,8 @@ async function runExecution(input: {
   let flushAttempted = false;
   let persistenceFailure = false;
   const versionAdvances: DocumentVersionAdvance[] = [];
+  const hasSavedChanges = () => versionAdvances.length > 0 || (boundTools?.getTransitions().length ?? 0) > 0 ||
+    !!input.savedContinuation?.editedDocumentId || !!input.savedContinuation?.createdDocumentId;
   const usageAccounting = {
     modelUsage: input.deps.modelUsage,
     managedUsagePolicy: input.deps.managedUsagePolicy,
@@ -700,6 +702,9 @@ async function runExecution(input: {
       ? input.deps.workspaceBrand.get(input.thread.workspaceId, input.ownerUserId)
       : Promise.resolve(null);
     boundTools = await createPrimaryDocxTools({
+      ...(input.deps.attachmentExtraction ? { readAttachmentDocx: (attachmentId, extractionId) => input.deps.attachmentExtraction!.readDocxCopy(
+        { workspaceId: input.thread.workspaceId, userId: input.ownerUserId, threadId: input.thread.id }, attachmentId, extractionId,
+      ) } : {}),
       binding: input.deps.docxBinding,
       documents: input.deps.documents,
       ownerUserId: input.ownerUserId,
@@ -1250,7 +1255,7 @@ async function runExecution(input: {
         run: input.run,
         liveEvents: input.liveEvents,
         failureCode: failureCodeForStopReason(result.stopReason),
-        failureMessage: boundedStopMessage(result.stopReason, versionAdvances.length > 0 || !!input.savedContinuation?.editedDocumentId),
+        failureMessage: boundedStopMessage(result.stopReason, hasSavedChanges()),
         transcript: transcript.entries(boundTools?.getActiveDocumentId(), [...capabilitySession?.loaded ?? []].sort()),
       });
     }
@@ -1258,7 +1263,7 @@ async function runExecution(input: {
     if (unfinishedWork) {
       transcript.finish();
       const blocking = verificationChecks.filter((check) => check.status === "fail" && BLOCKING_VERIFICATION_IDS.has(check.id));
-      const preserved = versionAdvances.length > 0 || !!input.savedContinuation?.editedDocumentId;
+      const preserved = hasSavedChanges();
       const unresolved = unrecoveredMutates.length
         ? unrecoveredMutates.join(", ")
         : blocking.map((check) => check.message).join("; ");
@@ -1327,7 +1332,7 @@ async function runExecution(input: {
     await recordFailedRunUsage(getRunMetricsFromError(error)?.usage);
     return settleTerminalRunFailure({
       error: terminalError,
-      changesPreserved: versionAdvances.length > 0,
+      changesPreserved: hasSavedChanges(),
       cancelled: input.signal?.aborted === true && !persistenceFailure,
       persistence: input.deps.persistence,
       ownerUserId: input.ownerUserId,

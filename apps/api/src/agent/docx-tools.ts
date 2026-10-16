@@ -28,6 +28,7 @@ import type { StyleProfileService } from '../style-profiles/service.js';
 import type { StyleFidelityReport } from '../style-profiles/fidelity.js';
 import type { StyleProfileData } from '@opensuite/contracts';
 import type { ResolvedAppearance } from '../document-appearance/resolve.js';
+import { ChatAttachmentError } from "../chat-attachments/service.js";
 import { formatFieldRefreshLog, refreshWorkingDocxFields } from "./field-refresh.js";
 
 function docxCaps(binding: DocxEngineBinding): Set<string> {
@@ -80,6 +81,8 @@ type SessionDocuments = Pick<
   | "createOfficeDocumentFromBytes"
 > & Partial<Pick<DocumentService, "rename" | "readVersionForEditing">>;
 
+type ReadAttachmentDocx = (attachmentId: string, extractionId: string) => Promise<{ filename: string; bytes: Buffer }>;
+
 function mapHandles<T>(value: T, map: (handle: string) => string): T {
   if (!value || typeof value !== "object" || value instanceof Uint8Array) return value;
   if (Array.isArray(value)) return value.map(item => mapHandles(item, map)) as T;
@@ -110,6 +113,7 @@ const SEMANTIC_HANDLE_ALTERNATIVES = new Set([
  * lifecycle rebinds affect subsequent calls without rebuilding the toolset.
  */
 function createActiveDocxSession(input: {
+  readonly readAttachmentDocx?: ReadAttachmentDocx;
   readonly binding: DocxEngineBinding;
   readonly documents: SessionDocuments;
   readonly ownerUserId: string;
@@ -545,6 +549,24 @@ function createActiveDocxSession(input: {
         throw error;
       }
     },
+    async copyAttachment(attachmentId: string, extractionId: string, title?: string) {
+      if (!input.readAttachmentDocx) return { ok: false, reasonCode: "ATTACHMENTS_UNAVAILABLE" };
+      try {
+        const source = await input.readAttachmentDocx(attachmentId, extractionId);
+        await flush();
+        const fromDocumentId = documentId;
+        const created = await input.documents.createOfficeDocumentFromBytes({
+          workspaceId: input.workspaceId, ownerUserId: input.ownerUserId,
+          filename: duplicateFilename(source.filename, title), bytes: source.bytes, source: "agent", format: "docx",
+        });
+        return { ...await activateCreated({ kind: "created", fromDocumentId,
+          documentId: created.document.id, versionId: created.version.id, name: created.document.name, bytes: source.bytes }),
+          sourceAttachmentId: attachmentId, sourceExtractionId: extractionId };
+      } catch (error) {
+        if (error instanceof ChatAttachmentError || error instanceof DocumentUploadError) return { ok: false, reasonCode: error.code, status: "error" };
+        throw error;
+      }
+    },
     async duplicateCurrent(title?: string) {
       if (!documentId || !versionId) {
         return {
@@ -622,6 +644,7 @@ const requiredTitleInput = jsonSchema<{ title: string }>({
 });
 
 function createLifecycleTools(session: {
+  copyAttachment: (attachmentId: string, extractionId: string, title?: string) => Promise<unknown>;
   createBlank: (title?: string) => Promise<unknown>;
   duplicateCurrent: (title?: string) => Promise<unknown>;
   renameDocument: (documentId: string, name: string) => Promise<unknown>;
@@ -629,6 +652,12 @@ function createLifecycleTools(session: {
   inspectWorkingDocument: (documentId: string, focus: InspectFocus) => Promise<unknown>;
 }): AgentToolSet {
   return {
+    "workspace.copy_attachment": defineTool<{ attachmentId: string; extractionId: string; title?: string }, unknown>({
+      kind: "mutate",
+      description: "Only when the user explicitly asks for an editable copy of an attached DOCX: copy its original bytes into a new workspace document and make the copy active. Use manifest attachmentId/extractionId. The read-only attachment remains unchanged. No inspection or reconstruction is needed.",
+      inputSchema: jsonSchema({ type: "object", properties: { attachmentId: { type: "string", minLength: 1 }, extractionId: { type: "string", minLength: 1 }, title: { type: "string" } }, required: ["attachmentId", "extractionId"], additionalProperties: false }),
+      execute: ({ attachmentId, extractionId, title }) => session.copyAttachment(attachmentId, extractionId, title),
+    }),
     "workspace.create_blank_document": defineTool({
       kind: "mutate",
       description:
@@ -679,6 +708,7 @@ function createLifecycleTools(session: {
  * Returns undefined when there is no engine binding.
  */
 export async function createPrimaryDocxTools(input: {
+  readonly readAttachmentDocx?: ReadAttachmentDocx;
   readonly binding: DocxEngineBinding | undefined;
   readonly documents: SessionDocuments;
   readonly ownerUserId: string;
@@ -711,6 +741,7 @@ export async function createPrimaryDocxTools(input: {
   }
 
   const session = createActiveDocxSession({
+    readAttachmentDocx: input.readAttachmentDocx,
     binding: input.binding,
     documents: input.documents,
     ownerUserId: input.ownerUserId,
@@ -744,11 +775,13 @@ export async function createPrimaryDocxTools(input: {
         canReplace: caps.has("replace_picture"),
       })
     : {};
+  const lifecycleTools = createLifecycleTools(session);
+  if (!input.readAttachmentDocx) delete lifecycleTools["workspace.copy_attachment"];
 
   return {
     tools: {
       ...createDocumentTools(session.redirectingHost),
-      ...createLifecycleTools(session),
+      ...lifecycleTools,
       ...imageAssetTools,
     },
     documentId: session.getActiveDocumentId(),

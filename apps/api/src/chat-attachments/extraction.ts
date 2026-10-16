@@ -227,6 +227,16 @@ export function createAttachmentExtractionService(source: AttachmentSource, bind
   return {
     source,
     cached,
+    async readDocxCopy(scope: AttachmentScope, attachmentId: string, extractionId: string) {
+      const meta = await source.getBound({ ...scope, attachmentId });
+      if (meta.mediaType !== "application/vnd.openxmlformats-officedocument.wordprocessingml.document") extractionError("INVALID_REFERENCE", "Only a DOCX attachment can become an editable DOCX copy");
+      const current = await identity(meta);
+      if (current.extractionId !== extractionId) extractionError("STALE_EXTRACTION", "Attachment extraction changed; use the current manifest reference");
+      await this.get(scope, attachmentId); // Reuse the validated native extraction.
+      const bytes = await original(scope, meta);
+      await source.getBound({ ...scope, attachmentId });
+      return { filename: meta.filename, bytes };
+    },
     async view(scope: AttachmentScope, attachmentId: string, extractionId: string, page?: number) {
       const { meta, extraction } = await this.get(scope, attachmentId);
       if (extraction.extractionId !== extractionId) extractionError("STALE_EXTRACTION", "Attachment extraction changed; use the current manifest reference");
