@@ -3709,7 +3709,7 @@ function attachmentFixture(files: { filename: string; bytes: Buffer; mediaType: 
       return row;
     },
     list: async (input) => input.threadId === attachmentScope.threadId && input.userId === attachmentScope.userId
-      ? rows.filter(row => row.status === 'bound').slice(input.offset ?? 0, (input.offset ?? 0) + (input.limit ?? 50)) : [],
+      ? rows.filter(row => row.status === 'bound' && (input.mentionedIn === undefined || input.mentionedIn.toLowerCase().includes(row.filename.toLowerCase()) || input.mentionedIn.includes(row.id))).slice(input.offset ?? 0, (input.offset ?? 0) + (input.limit ?? 50)) : [],
     read: async (input) => {
       const meta = await source.getBound({ ...attachmentScope, ...input });
       originalReads++;
@@ -3736,7 +3736,15 @@ function attachmentModel(reply: (options: Parameters<NonNullable<MockLanguageMod
   } });
 }
 
-test('attachment first provider request includes small TXT, Markdown and native DOCX tables without retrieval calls; follow-ups reuse extraction', async () => {
+function attachmentRequest(options: Parameters<NonNullable<MockLanguageModelV4['doStream']>>[0]) {
+  const message = options.prompt.find(message => message.role === 'user' && JSON.stringify(message).includes('CHAT ATTACHMENT EVIDENCE'));
+  assert.ok(message, 'attachment manifest must be present in the actual provider request');
+  const text = typeof message.content === 'string' ? message.content : message.content.map(part => part.type === 'text' ? part.text : '').join('');
+  const manifest = JSON.parse(text.slice(text.indexOf('\n') + 1)) as { attachments: Record<string, any>[]; historyMayBeIncomplete: boolean };
+  return { text, manifest };
+}
+
+test('attachment first provider request includes small TXT, Markdown and native DOCX tables without retrieval calls; follow-ups reuse extraction', async (t) => {
   const binding = await createNapiDocxEngineBinding();
   const seed = Buffer.from(buildDocxBody([{ kind: 'paragraph', text: 'Launch facts' }, { kind: 'table', rows: [['Metric', 'Value'], ['Budget', '$42,000']] }]));
   const listed = await binding.executeDocxOperation!(seed, 'set_paragraphs_list', { targets: [{ text: 'Launch facts' }], kind: 'bullet' });
@@ -3765,6 +3773,33 @@ test('attachment first provider request includes small TXT, Markdown and native 
     assert.match(prompt, /\$42,000/);
     assert.match(prompt, /contentMode\\?":\\?"complete/);
     assert.doesNotMatch(prompt, /metadata only/);
+    const { text, manifest } = attachmentRequest(options);
+    assert.equal(manifest.attachments.length, 3);
+    for (const source of manifest.attachments) {
+      assert.ok(source.attachmentId && source.sha256 && source.extractionId);
+      assert.ok(source.sizeBytes > 0 && source.extractedCharacters > 0);
+      assert.equal(source.contentMode, 'complete');
+      assert.equal(source.contentComplete, true);
+      assert.equal(source.includedCharacters, source.extractedCharacters);
+    }
+    const [note, plan, facts] = manifest.attachments;
+    assert.equal(note!.format, 'txt');
+    assert.equal(note!.title, 'note.txt');
+    assert.equal(note!.titleSource, 'filename');
+    assert.equal(note!.outline.headingCount, 0);
+    assert.deepEqual(note!.outline.headings, []);
+    assert.equal(plan!.title, 'Plan');
+    assert.equal(plan!.titleSource, 'heading');
+    assert.equal(plan!.titleLocation, 'line:1');
+    assert.deepEqual(plan!.outline.headings.map((heading: any) => [heading.location, heading.level, heading.section]), [['line:1', 1, ['Plan']], ['line:2', 2, ['Plan', 'Schedule']]]);
+    assert.equal(facts!.format, 'docx');
+    assert.equal(facts!.title, 'facts.docx');
+    assert.equal(facts!.titleSource, 'filename');
+    assert.equal(facts!.headingSource, 'main_body');
+    assert.equal(facts!.outline.tableCount, 1);
+    assert.deepEqual(facts!.outline.tables[0], { location: 'table:1', rows: 2, columns: 2, firstRow: ['Metric', 'Value'] });
+    assert.match(text, /Word page headers\/footers are not inspected/);
+    if (!requests) t.diagnostic(`ATTACHMENT_SMALL_AWARENESS ${JSON.stringify({ evidenceBytes: Buffer.byteLength(text), providerMessageCharacters: JSON.stringify(options.prompt).length, toolCalls: 0 })}`);
     assert.match(options.prompt.find(message => message.role === 'system')?.content ?? '', /never document IDs or mutation handles/);
     assert.equal(options.tools?.some(tool => 'name' in tool && tool.name === 'attachment_read'), false);
     requests++;
@@ -3802,7 +3837,7 @@ test('large attachment context shares one budget; dynamic search/read retains ex
   assert.match(context, /ORCHID-742/);
   assert.doesNotMatch(context, /Unrelated body 299/);
   assert.equal((context.match(/outline_and_excerpts/g) ?? []).length, 4);
-  assert.equal(await evidence(100), undefined);
+  await assert.rejects(evidence(100), { code: 'ATTACHMENT_CONTEXT_LIMIT' });
   const persistence = memoryPersistence('user-1');
   const thread = await persistence.getOwnedThread({ threadId: 'thread-1', ownerUserId: 'user-1' });
   persistence.getOwnedThread = async () => ({ ...thread!, title: 'Large source checks' });
@@ -3812,6 +3847,15 @@ test('large attachment context shares one budget; dynamic search/read retains ex
     assert.ok(Buffer.byteLength(content) <= 12_000);
     assert.match(content, /ORCHID-742/);
     assert.doesNotMatch(content, /Unrelated body 299/);
+    const { manifest } = attachmentRequest(options);
+    for (const source of manifest.attachments) {
+      assert.equal(source.title, 'Annual facts');
+      assert.equal(source.titleSource, 'heading');
+      assert.equal(source.headingSource, 'main_body');
+      assert.equal(source.outline.headings[0].location, 'paragraph:1');
+      assert.ok(source.extractedCharacters > 30_000);
+      assert.ok(source.includedCharacters < source.extractedCharacters);
+    }
     t.diagnostic(`ATTACHMENT_MEASUREMENT ${JSON.stringify({ originalDocxBytes: bytes.length * 4, extractedCharacters: [...fixture.cache.values()].reduce((total, value) => total + JSON.parse(value.toString()).units.reduce((sum: number, unit: { text: string }) => sum + unit.text.length, 0), 0), evidenceBytes: Buffer.byteLength(content), attachments: 4, originalReads: fixture.originalReads() })}`);
     return [];
   });
@@ -3959,20 +4003,21 @@ test('malformed DOCX, invalid text and unsupported PDF produce bounded errors wi
   assert.equal(fixture.cache.size, 0);
 });
 
-test('attachment context guard keeps the complete user instruction and omits optional evidence when there is no room', async () => {
+test('attachment context guard preserves the instruction and fails clearly before a provider request if current identities cannot fit', async () => {
   const fixture = attachmentFixture([{ filename: 'source.txt', bytes: Buffer.from('Optional private evidence'), mediaType: 'text/plain' }]);
   const persistence = memoryPersistence('user-1');
   const thread = await persistence.getOwnedThread({ threadId: 'thread-1', ownerUserId: 'user-1' });
   persistence.getOwnedThread = async () => ({ ...thread!, title: 'Budget check' });
   const instruction = 'Keep this exact instruction: ' + 'Every user word must remain. '.repeat(80);
-  const model = attachmentModel(options => {
-    assert.ok(options.prompt.some(message => message.role === 'user' && message.content.some(part => part.type === 'text' && part.text === instruction)));
-    assert.doesNotMatch(JSON.stringify(options.prompt), /Optional private evidence|CHAT ATTACHMENT EVIDENCE/);
-    return [];
-  });
+  let requests = 0;
+  const model = attachmentModel(() => { requests++; return []; });
   const deps = baseDeps(persistence, input => runAgent({ ...input, model }), undefined, 1_024);
   const result = await (await createAgentExecutionService({ ...deps, chatAttachments: fixture, attachmentExtraction: createAttachmentExtractionService(fixture.source) }).start({ userId: 'user-1', threadId: 'thread-1', instruction, attachmentIds: [fixture.rows[0]!.id] })).result;
-  assert.equal(result.run.status, 'completed');
+  assert.equal(result.run.status, 'failed');
+  assert.equal(result.run.errorCode, 'ATTACHMENT_CONTEXT_LIMIT');
+  assert.match(result.run.errorMessage!, /all current attachment identities/);
+  assert.equal(result.userMessage.content, instruction);
+  assert.equal(requests, 0);
   assert.equal(fixture.originalReads(), 0);
 });
 
@@ -3994,4 +4039,107 @@ test('cached unrelated attachments are omitted while a named previous note is su
   const deps = baseDeps(persistence, input => runAgent({ ...input, model }), undefined, 128_000);
   const result = await (await createAgentExecutionService({ ...deps, chatAttachments: fixture, attachmentExtraction: service }).start({ userId: 'user-1', threadId: 'thread-1', instruction: 'Summarize launch.txt.' })).result;
   assert.equal(result.run.status, 'completed');
+});
+
+test('initial provider manifest retains ten current identities and bounds large outlines, including extraction failures', async (t) => {
+  const body = Array.from({ length: 120 }, (_, index) => `## Section ${index}\n${'Detailed source text. '.repeat(20)}`).join('\n');
+  const fixture = attachmentFixture(Array.from({ length: 10 }, (_, index) => index === 0
+    ? { filename: 'invalid.txt', bytes: Buffer.from([0xc3, 0x28]), mediaType: 'text/plain' }
+    : { filename: `outline-${index}.md`, bytes: Buffer.from(`# Source ${index}\n${body}`), mediaType: 'text/markdown' }));
+  const persistence = memoryPersistence('user-1');
+  const thread = await persistence.getOwnedThread({ threadId: 'thread-1', ownerUserId: 'user-1' });
+  persistence.getOwnedThread = async () => ({ ...thread!, title: 'All sources' });
+  const model = attachmentModel(options => {
+    const { text, manifest } = attachmentRequest(options);
+    assert.ok(Buffer.byteLength(text) <= 12_000);
+    assert.deepEqual(manifest.attachments.map(source => source.attachmentId), fixture.rows.map(row => row.id));
+    for (const [index, source] of manifest.attachments.entries()) {
+      assert.equal(source.filename, fixture.rows[index]!.filename);
+      assert.equal(source.sha256, fixture.rows[index]!.sha256);
+      assert.equal(source.sizeBytes, fixture.rows[index]!.sizeBytes);
+      assert.equal(source.source, 'current');
+      if (!index) {
+        assert.equal(source.format, 'txt');
+        assert.equal(source.error.code, 'INVALID_ENCODING');
+        assert.equal(source.titleSource, 'filename');
+        assert.equal(source.contentMode, 'unavailable');
+      } else {
+        assert.equal(source.title, `Source ${index}`);
+        assert.equal(source.outline.headingCount, 121);
+        assert.equal(source.outline.tableCount, 0);
+        assert.ok(source.outline.headings.length >= 1 && source.outline.headings.length <= 24);
+        assert.ok(source.outline.remainingHeadings > 0);
+        assert.ok(source.extractionId);
+        assert.equal(source.contentComplete, false);
+        assert.equal(source.content, undefined);
+      }
+    }
+    t.diagnostic(`ATTACHMENT_TEN_SOURCE_AWARENESS ${JSON.stringify({ evidenceBytes: Buffer.byteLength(text), attachments: manifest.attachments.length, toolCalls: 0 })}`);
+    return [];
+  });
+  const deps = baseDeps(persistence, input => runAgent({ ...input, model }), undefined, 128_000);
+  const result = await (await createAgentExecutionService({ ...deps, chatAttachments: fixture, attachmentExtraction: createAttachmentExtractionService(fixture.source) }).start({ userId: 'user-1', threadId: 'thread-1', instruction: 'Describe the attached sources.', attachmentIds: fixture.rows.map(row => row.id) })).result;
+  assert.equal(result.run.status, 'completed');
+  assert.equal(persistence.steps.filter(step => step.kind === 'tool').length, 0);
+});
+
+test('initial provider manifest includes a named older source beyond recent history even with ten current attachments', async () => {
+  const fixture = attachmentFixture(Array.from({ length: 72 }, (_, index) => ({ filename: index < 10 ? `new-${index}.txt` : `old-note-${index}.txt`, bytes: Buffer.from(`Fact for source ${index}.`), mediaType: 'text/plain' })));
+  const persistence = memoryPersistence('user-1');
+  const thread = await persistence.getOwnedThread({ threadId: 'thread-1', ownerUserId: 'user-1' });
+  persistence.getOwnedThread = async () => ({ ...thread!, title: 'Older named source' });
+  const model = attachmentModel(options => {
+    const { manifest } = attachmentRequest(options);
+    assert.equal(manifest.attachments.length, 11);
+    assert.deepEqual(manifest.attachments.filter(source => source.source === 'current').map(source => source.attachmentId), fixture.rows.slice(0, 10).map(row => row.id));
+    const earlier = manifest.attachments.find(source => source.attachmentId === fixture.rows[65]!.id)!;
+    assert.equal(earlier.source, 'previous');
+    assert.equal(earlier.title, 'old-note-65.txt');
+    assert.equal(earlier.titleSource, 'filename');
+    assert.ok(earlier.extractionId);
+    assert.equal(manifest.historyMayBeIncomplete, true);
+    assert.doesNotMatch(JSON.stringify(manifest), /old-note-64.txt/);
+    return [];
+  });
+  const deps = baseDeps(persistence, input => runAgent({ ...input, model }), undefined, 128_000);
+  const result = await (await createAgentExecutionService({ ...deps, chatAttachments: fixture, attachmentExtraction: createAttachmentExtractionService(fixture.source) }).start({ userId: 'user-1', threadId: 'thread-1', instruction: 'Use the new sources with OLD-NOTE-65.TXT.', attachmentIds: fixture.rows.slice(0, 10).map(row => row.id) })).result;
+  assert.equal(result.run.status, 'completed');
+  assert.equal(fixture.originalReads(), 11, 'unrelated older source bodies are never inspected');
+});
+
+test('scripted large-source task loads search/read directly from the manifest without listing or confirming known structure', async (t) => {
+  const fixture = attachmentFixture([{ filename: 'launch.md', mediaType: 'text/markdown', bytes: Buffer.from('# Launch Plan\n## Budget\n' + 'Cost item: 100 units.\n'.repeat(200) + '## Deployment\nIssued value: VIOLET-204.\n') }]);
+  const persistence = memoryPersistence('user-1');
+  const thread = await persistence.getOwnedThread({ threadId: 'thread-1', ownerUserId: 'user-1' });
+  persistence.getOwnedThread = async () => ({ ...thread!, title: 'Targeted attachment retrieval' });
+  let turn = 0;
+  let reference: { attachmentId: string; extractionId: string; location: string; section: boolean; limit: number };
+  const model = attachmentModel(options => {
+    if (turn++ === 0) {
+      const { text, manifest } = attachmentRequest(options);
+      const source = manifest.attachments[0]!;
+      assert.equal(source.title, 'Launch Plan');
+      const budget = source.outline.headings.find((heading: any) => heading.title === 'Budget');
+      assert.ok(budget);
+      assert.doesNotMatch(text, /VIOLET-204/);
+      reference = { attachmentId: source.attachmentId, extractionId: source.extractionId, location: budget.location, section: true, limit: 2 };
+      return [{ name: 'capabilities_load', input: { ids: ['attachment.search', 'attachment.read'] } }];
+    }
+    assert.equal(options.tools?.some(tool => 'name' in tool && tool.name === 'attachment_list'), false);
+    if (turn === 2) return [
+      { name: 'attachment_read', input: reference },
+      { name: 'attachment_search', input: { attachmentIds: [reference.attachmentId], query: 'Issued value' } },
+    ];
+    const results = JSON.stringify(options.prompt.filter(message => message.role === 'tool'));
+    assert.match(results, /Cost item: 100 units/);
+    assert.match(results, /VIOLET-204/);
+    return [];
+  });
+  const deps = baseDeps(persistence, input => runAgent({ ...input, model }), undefined, 128_000);
+  const result = await (await createAgentExecutionService({ ...deps, chatAttachments: fixture, attachmentExtraction: createAttachmentExtractionService(fixture.source) }).start({ userId: 'user-1', threadId: 'thread-1', instruction: 'Summarize Budget and give the access credential.', attachmentIds: [fixture.rows[0]!.id] })).result;
+  assert.equal(result.run.status, 'completed');
+  const calls = persistence.steps.filter(step => step.kind === 'tool').map(step => step.name);
+  assert.deepEqual(calls, ['capabilities.load', 'attachment.read', 'attachment.search']);
+  assert.equal(fixture.originalReads(), 1);
+  t.diagnostic(`ATTACHMENT_TARGETED_AWARENESS ${JSON.stringify({ providerRequests: turn, toolCalls: calls.length, attachmentListCalls: 0, capabilityListOrSearchCalls: 0, originalReads: fixture.originalReads() })}`);
 });

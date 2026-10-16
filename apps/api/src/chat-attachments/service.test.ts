@@ -168,6 +168,11 @@ test(
       assert.equal(bound[0]?.threadId, thread.id);
       assert.equal(bound[0]?.messageId, message.id);
       const cacheScope = { workspaceId, userId: alice, threadId: thread.id, attachmentId: pdfAtt.id };
+      const pdfMeta = await attachments.get(cacheScope);
+      assert.deepEqual((await attachments.list({ ...cacheScope, status: "bound", mentionedIn: `Use ${pdfMeta.filename.toUpperCase()}.` })).map(row => row.id), [pdfAtt.id]);
+      assert.deepEqual((await attachments.list({ ...cacheScope, status: "bound", mentionedIn: `Use attachment ${pdfAtt.id}.` })).map(row => row.id), [pdfAtt.id]);
+      assert.deepEqual(await attachments.list({ ...cacheScope, status: "bound", mentionedIn: "No named source" }), []);
+      await assert.rejects(attachments.list({ ...cacheScope, userId: bob, status: "bound", mentionedIn: pdfMeta.filename }), /not found/i);
       await attachments.saveExtraction({ ...cacheScope, bytes: Buffer.from('{"cached":"source evidence"}') });
       assert.equal((await attachments.readExtraction(cacheScope))?.toString(), '{"cached":"source evidence"}');
       await assert.rejects(attachments.readExtraction({ ...cacheScope, userId: bob }), /not found/i);
@@ -188,6 +193,7 @@ test(
         createdByUserId: alice,
       });
       await assert.rejects(attachments.readExtraction({ ...cacheScope, threadId: otherThread.id }), /not found/i);
+      assert.deepEqual(await attachments.list({ ...cacheScope, threadId: otherThread.id, status: "bound", mentionedIn: pdfMeta.filename }), []);
       const otherMessage = await persistence.appendMessage({
         threadId: otherThread.id,
         ownerUserId: alice,

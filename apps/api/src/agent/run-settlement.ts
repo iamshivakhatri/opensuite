@@ -223,6 +223,9 @@ export async function settleTerminalRunFailure(input: {
 /** Only known, safe reasons reach persisted run status and the Agent Panel. */
 export function describeRunFailure(error: unknown, transcript: readonly TranscriptEntry[]): { code: string; message: string } | null {
   const code = error && typeof error === "object" && "code" in error ? error.code : undefined;
+  if (code === "ATTACHMENT_CONTEXT_LIMIT") {
+    return { code, message: "There is not enough model context to include all current attachment identities. Shorten the request or use a model with a larger context window." };
+  }
   if (code === "SAVED_STYLE_NOT_APPLIED") {
     return { code, message: "The requested saved style was not applied and verified. The task is incomplete." };
   }

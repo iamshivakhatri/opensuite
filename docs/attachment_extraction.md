@@ -25,27 +25,53 @@ per attachment replaces older extractor versions; no database table or persisten
 worker is added. Concurrent requests for the same source share work. New model
 turns, follow-ups, restarts, and Continue reuse the persisted representation.
 
-`agent/attachment-evidence.ts` projects evidence immediately before each provider
-request. Newly submitted attachments have priority. Previous sources are selected
-by filename, explicit prior-source wording, or lexical matches in cached content
-among the newest 50 bound attachments. Older sources remain accessible through
-paged discovery. Unrelated prior source bodies are omitted. Compact manifests are
-reserved first, then complete tiny representations (up to 4,000 serialized bytes),
-then bounded outlines and matching excerpts. One 12,000-byte budget covers all
-sources. Remaining input room is calculated after the system, tools, instruction,
-and current conversation using existing context estimates; attachment bytes use a
-more conservative one-byte-per-token allowance. No instruction or active tool
-exchange is shortened to make room. Full model-aware context management is still
-Part 10.
+`agent/attachment-evidence.ts` projects an attachment manifest immediately before
+each provider request, including before the first tool call. Every current source
+keeps its attachment ID, filename, format, original hash/size, and current/prior
+label, including sources whose extraction fails or is unsupported. Extracted
+sources also supply extraction identity, text size, title and title source,
+heading hierarchy/section locations, table count/dimensions/first-row labels, and
+how much body text was included. The first extracted heading supplies the display
+title; otherwise the filename is explicitly marked as the fallback. No Word
+core-properties title is inspected or invented. DOCX headings are main-body
+headings, distinct from Word page headers and footers, which remain uninspected.
 
-The existing capability registry exposes `attachment.list`, `attachment.search`,
-and `attachment.read` as dynamic tools. Load their exact IDs through
-`capabilities.load`; the `attachment` domain is discoverable through list/search.
-Listing pages cached readiness and compact structure; lexical search ranks exact
-phrases and keyword matches. Read accepts exact locations, table/row prefixes,
-heading sections, or bounded indexed ranges. Long text and multi-location reads
-return continuation offsets, completeness, and remaining-location counts. A copied
-extraction ID rejects stale references.
+All ten possible current identities are reserved first. Up to five prior sources
+are selected independently of that count. An authorized metadata query finds
+filenames/IDs explicitly mentioned in the instruction regardless of age. Explicit
+matches take priority; otherwise prior-source wording or lexical matches in cached
+content select from the newest 50 bound sources. This does not inspect unrelated
+original files. `historyMayBeIncomplete` flags bounded or omitted history; paged
+`attachment.list` remains available for older sources outside the manifest.
+
+Compact structure is reserved separately from body inclusion, so small files
+retain useful headings/tables alongside complete text. Tiny extracted content
+(up to 4,000 serialized bytes of locations/text) is included completely when it
+fits; larger sources provide bounded outlines and matching excerpts. Outlines
+prefer relevant headings and report total/remaining heading and table counts.
+One 12,000-byte budget covers metadata, structure, and body evidence. Remaining
+input room is calculated after the system, tools, instruction, and conversation
+using existing estimates; attachment bytes use a more conservative one-byte-per-
+token allowance. Older metadata and outline/body detail can be omitted explicitly.
+If current identities cannot fit, the run fails with `ATTACHMENT_CONTEXT_LIMIT`
+before the provider request instead of hiding a current source or trimming the
+instruction. Full model-aware context management remains Part 10.
+
+Use inline evidence immediately when sufficient. For an unknown fact/location,
+load `attachment.search` directly with manifest IDs. For more detail at a known
+section/location, load `attachment.read` directly and copy attachment ID,
+extraction ID, and heading/table/line location; heading locations support
+`section=true`. Do not list, search, read, or inspect to confirm supplied facts or
+structure. `attachment.list` is only for older sources omitted from bounded
+history. These instructions appear in the system policy, capability catalog, and
+tool descriptions; no extra discovery or model call is added automatically.
+
+The existing dynamic capability registry still owns list/search/read exposure.
+Read accepts exact locations, table/row prefixes, heading sections, or bounded
+indexed ranges. Long reads return continuation offsets, completeness, and
+remaining-location counts. A copied extraction ID rejects stale references.
+The extraction representation, version, private cache, and native reader are
+unchanged by Part 4.1.
 
 Every extraction, cache access, search, and read checks the current owner and
 thread and requires a bound message attachment. Tools accept attachment IDs, never
@@ -79,5 +105,12 @@ UTF-8 errors, and unchanged originals/targets. The isolated PostgreSQL test cove
 real binding authorization and cache cleanup. A scripted provider creates a new
 native document from a DOCX and a short note, saving both sources' facts in one
 new version. Four large DOCX sources contain 149,228 extracted characters and
-project 4,752 evidence bytes with one original read per source. No paid model
-calls were used.
+project 5,397 initial evidence bytes, up from Part 4's 4,752 (+645 bytes), with one
+original read per source. Three small TXT/Markdown/native DOCX sources use 3,613
+evidence bytes and zero tools. Ten current sources with large outlines and one
+invalid encoding retain all identities in 11,644 bytes without tools. A named
+prior source outside recent history appears alongside ten current sources without
+listing. A targeted large-source task uses one exact capability load plus one
+section read and one search across three provider requests, with zero attachment
+lists or capability list/search calls. Continue, security, and saved native document
+creation checks remain passing. No paid model calls were used.

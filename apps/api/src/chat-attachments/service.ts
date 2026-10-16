@@ -295,6 +295,7 @@ export function createChatAttachmentService(
       status?: "staged" | "bound";
       limit?: number;
       offset?: number;
+      mentionedIn?: string;
     }): Promise<ChatAttachmentDto[]> {
       await requireWorkspace(input.workspaceId, input.userId);
       if (input.threadId) await requireOwnedThread(db, input.threadId, input.workspaceId, input.userId);
@@ -306,6 +307,9 @@ export function createChatAttachmentService(
           and(
             eq(schema.chatAttachment.workspaceId, input.workspaceId),
             eq(schema.chatAttachment.ownerUserId, input.userId),
+            input.mentionedIn !== undefined
+              ? sql`(position(lower(${schema.chatAttachment.filename}) in lower(${input.mentionedIn})) > 0 or position(${schema.chatAttachment.id}::text in ${input.mentionedIn}) > 0)`
+              : undefined,
             input.threadId
               ? eq(schema.chatAttachment.threadId, input.threadId)
               : undefined,
