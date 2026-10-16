@@ -229,6 +229,7 @@ export function createAgentRunManager(deps: AgentRunManagerDeps) {
     instruction: string;
     activeDocumentId?: string;
     documentIds?: readonly string[];
+    attachmentIds?: readonly string[];
     continueFromRunId?: string;
   }): Promise<StartedLiveRun> {
     const abort = new AbortController();
@@ -252,6 +253,9 @@ export function createAgentRunManager(deps: AgentRunManagerDeps) {
         : {}),
       ...(input.documentIds !== undefined
         ? { documentIds: input.documentIds }
+        : {}),
+      ...(input.attachmentIds !== undefined
+        ? { attachmentIds: input.attachmentIds }
         : {}),
       signal: abort.signal,
       liveEvents,

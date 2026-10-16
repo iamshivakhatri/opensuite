@@ -20,6 +20,7 @@ export interface AgentMessageDto {
   readonly role: "user" | "assistant";
   readonly content: string;
   readonly documentIds?: readonly string[];
+  readonly attachmentIds?: readonly string[];
   readonly createdAt: string;
 }
 
@@ -67,6 +68,9 @@ export function toAgentMessageDto(message: AgentMessage): AgentMessageDto {
     role: message.role,
     content: message.content,
     ...(message.documentIds?.length ? { documentIds: message.documentIds } : {}),
+    ...(message.attachmentIds?.length
+      ? { attachmentIds: message.attachmentIds }
+      : {}),
     createdAt: message.createdAt,
   };
 }

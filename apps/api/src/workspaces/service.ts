@@ -359,12 +359,24 @@ export function createWorkspaceService(
           const drafts = await tx.select({ storageKey: schema.documentDraft.storageKey, sizeBytes: schema.documentDraft.sizeBytes })
             .from(schema.documentDraft).innerJoin(schema.document, eq(schema.documentDraft.documentId, schema.document.id))
             .where(eq(schema.document.workspaceId, input.workspaceId));
+          const attachments = await tx
+            .select({
+              storageKey: schema.chatAttachment.storageKey,
+              sizeBytes: schema.chatAttachment.sizeBytes,
+              status: schema.chatAttachment.status,
+            })
+            .from(schema.chatAttachment)
+            .where(eq(schema.chatAttachment.workspaceId, input.workspaceId));
+          const liveAttachments = attachments.filter(
+            (attachment) => attachment.status === "staged" || attachment.status === "bound",
+          );
           const reclaimedBytes =
             drafts.reduce((total, draft) => total + draft.sizeBytes, 0) +
             assets.reduce((total, asset) => total + asset.sizeBytes, 0) +
-            versions.reduce((total, version) => total + version.sizeBytes, 0);
+            versions.reduce((total, version) => total + version.sizeBytes, 0) +
+            liveAttachments.reduce((total, attachment) => total + attachment.sizeBytes, 0);
 
-          for (const version of [...versions, ...assets, ...drafts]) {
+          for (const version of [...versions, ...assets, ...drafts, ...liveAttachments]) {
             try {
               await storage.deleteObject(version.storageKey);
             } catch (error) {
@@ -397,6 +409,10 @@ export function createWorkspaceService(
                 or ${schema.agentThreadWorkingDocument.documentId} in (${documentIds})`,
             );
           await tx.delete(schema.agentRun).where(sql`${schema.agentRun.threadId} in (${threadIds})`);
+          // Attachments reference messages/threads; remove before agent history.
+          await tx
+            .delete(schema.chatAttachment)
+            .where(eq(schema.chatAttachment.workspaceId, input.workspaceId));
           await tx.delete(schema.agentMessage).where(sql`${schema.agentMessage.threadId} in (${threadIds})`);
           await tx.delete(schema.agentThread).where(eq(schema.agentThread.workspaceId, input.workspaceId));
           await tx.delete(schema.documentUserState).where(sql`${schema.documentUserState.documentId} in (

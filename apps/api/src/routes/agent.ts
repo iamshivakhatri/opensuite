@@ -87,6 +87,10 @@ const CreateRunBody = z.object({
     .array(z.uuid("documentIds must be UUIDs"))
     .max(20, "At most 20 tagged documents")
     .optional(),
+  attachmentIds: z
+    .array(z.uuid("attachmentIds must be UUIDs"))
+    .max(10, "At most 10 chat attachments")
+    .optional(),
   continueFromRunId: z.uuid("continueFromRunId must be a UUID").optional(),
 });
 
@@ -371,6 +375,9 @@ export function registerAgentRoutes(
           : {}),
         ...(body.data.documentIds !== undefined
           ? { documentIds: body.data.documentIds }
+          : {}),
+        ...(body.data.attachmentIds !== undefined
+          ? { attachmentIds: body.data.attachmentIds }
           : {}),
       });
       return reply.status(202).send({
@@ -803,6 +810,18 @@ function mapExecutionError(
       return reply.status(409).send({
         error: {
           statusCode: 409,
+          message: error.message,
+          code: error.code,
+        },
+      });
+    }
+    if (
+      error.code === "INVALID_ATTACHMENTS" ||
+      error.code === "ATTACHMENT_NOT_READY"
+    ) {
+      return reply.status(400).send({
+        error: {
+          statusCode: 400,
           message: error.message,
           code: error.code,
         },

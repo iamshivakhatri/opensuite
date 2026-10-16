@@ -4,7 +4,10 @@ import * as React from "react";
 
 import { DocumentFormatIcon } from "@/components/files/document-format-icon";
 import { Button } from "@/components/ui/button";
-import type { PromptAttachment } from "@/lib/agent-prompt-attachments";
+import {
+  CHAT_ATTACHMENT_ACCEPT,
+  type PromptAttachment,
+} from "@/lib/agent-prompt-attachments";
 import { formatProgressElapsed } from "@/lib/agent-progress";
 import type { ListedDocument } from "@/lib/api";
 import { focusRingClass } from "@/lib/focus-scope";
@@ -30,7 +33,8 @@ type AgentComposerProps = {
     items: readonly PromptAttachment[];
     error: string | null;
     onAttach: (files: File[]) => void;
-    onRemove: (file: File) => void;
+    onRemove: (item: PromptAttachment) => void;
+    onRetry: (item: PromptAttachment) => void;
   };
   status: {
     ready: boolean;
@@ -38,12 +42,19 @@ type AgentComposerProps = {
     canStop: boolean;
     cancelling: boolean;
     submitting: boolean;
+    uploadsPending: boolean;
     dragOver: boolean;
     wallClockMs: number | null;
   };
   onSubmit: () => void;
   onStop: () => void;
 };
+
+function attachmentLabel(item: PromptAttachment): string {
+  if (item.status === "uploading" || item.status === "pending") return "Uploading";
+  if (item.status === "error") return "Failed";
+  return "Ready";
+}
 
 /** Composer presentation + local mention/keyboard interaction for the agent panel. */
 export function AgentComposer({
@@ -87,7 +98,6 @@ export function AgentComposer({
       setMentionQuery(match[1] ?? "");
     } else {
       setMentionOpen(false);
-      setMentionQuery("");
     }
   }
 
@@ -137,6 +147,13 @@ export function AgentComposer({
     }
   }
 
+  const sendDisabled =
+    status.busy ||
+    !status.ready ||
+    draft.trim().length === 0 ||
+    status.uploadsPending ||
+    attachments.items.some((item) => item.status === "error");
+
   return (
     <div className="shrink-0 border-t border-line bg-sidebar px-3 py-2.5">
       {byokModelLabel ? (
@@ -178,19 +195,41 @@ export function AgentComposer({
         ) : null}
         {attachments.items.length > 0 ? (
           <div className="mb-1.5 flex flex-wrap gap-1">
-            {attachments.items.map(({ file, document }) => (
-              <button
-                key={file.name + file.lastModified + file.size}
-                type="button"
-                title={`Remove ${file.name}`}
-                aria-label={`Remove attachment ${file.name}`}
-                disabled={status.busy}
-                onClick={() => attachments.onRemove(file)}
-                className={cn(focusRingClass, "inline-flex max-w-full items-center gap-1 rounded-[var(--radius-sm)] bg-primary-soft px-1.5 py-0.5 text-[length:var(--text-2xs)] font-medium text-primary-hover disabled:opacity-50")}
+            {attachments.items.map((item) => (
+              <span
+                key={item.localId}
+                className={cn(
+                  "inline-flex max-w-full items-center gap-1 rounded-[var(--radius-sm)] px-1.5 py-0.5 text-[length:var(--text-2xs)] font-medium",
+                  item.status === "error"
+                    ? "bg-danger/10 text-danger"
+                    : "bg-primary-soft text-primary-hover",
+                )}
               >
-                <span className="truncate">{file.name}</span>
-                <span className="opacity-60">{document ? "Uploaded" : status.submitting ? "Uploading" : "Ready"} · ×</span>
-              </button>
+                <span className="truncate">{item.file.name}</span>
+                <span className="opacity-60">{attachmentLabel(item)}</span>
+                {item.status === "error" ? (
+                  <button
+                    type="button"
+                    title={`Retry ${item.file.name}`}
+                    aria-label={`Retry attachment ${item.file.name}`}
+                    disabled={status.busy}
+                    onClick={() => attachments.onRetry(item)}
+                    className={cn(focusRingClass, "opacity-80 hover:opacity-100 disabled:opacity-50")}
+                  >
+                    Retry
+                  </button>
+                ) : null}
+                <button
+                  type="button"
+                  title={`Remove ${item.file.name}`}
+                  aria-label={`Remove attachment ${item.file.name}`}
+                  disabled={status.busy || item.status === "uploading"}
+                  onClick={() => attachments.onRemove(item)}
+                  className={cn(focusRingClass, "opacity-60 hover:opacity-100 disabled:opacity-50")}
+                >
+                  ×
+                </button>
+              </span>
             ))}
           </div>
         ) : null}
@@ -240,16 +279,16 @@ export function AgentComposer({
             <input
               ref={attachmentInputRef}
               type="file"
-              accept=".docx,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+              accept={CHAT_ATTACHMENT_ACCEPT}
               multiple
               className="sr-only"
-              aria-label="Attach DOCX files"
+              aria-label="Attach files"
               onChange={(event) => {
                 attachments.onAttach(Array.from(event.target.files ?? []));
                 event.target.value = "";
               }}
             />
-            <button type="button" disabled={status.busy || !status.ready} onClick={() => attachmentInputRef.current?.click()} aria-label="Attach DOCX files" title="Attach DOCX files" className={cn(focusRingClass, "rounded-[var(--radius-sm)] px-1 text-[length:var(--text-sm)] text-ink-faint hover:text-ink disabled:opacity-50")}>＋</button>
+            <button type="button" disabled={status.busy || !status.ready} onClick={() => attachmentInputRef.current?.click()} aria-label="Attach files" title="Attach files" className={cn(focusRingClass, "rounded-[var(--radius-sm)] px-1 text-[length:var(--text-sm)] text-ink-faint hover:text-ink disabled:opacity-50")}>＋</button>
             <span className="truncate text-[length:var(--text-2xs)] tabular-nums text-ink-faint">
               {status.canStop && status.wallClockMs !== null ? formatProgressElapsed(status.wallClockMs) : null}
             </span>
@@ -276,11 +315,9 @@ export function AgentComposer({
               type="button"
               variant="primary"
               size="icon"
-              disabled={
-                status.busy || !status.ready || draft.trim().length === 0
-              }
+              disabled={sendDisabled}
               onClick={onSubmit}
-              title="Send"
+              title={status.uploadsPending ? "Uploading attachments…" : "Send"}
               aria-label="Send message"
               className="shrink-0 disabled:bg-primary-soft disabled:text-ink-faint disabled:opacity-100"
             >

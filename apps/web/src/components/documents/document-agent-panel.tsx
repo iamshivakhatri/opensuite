@@ -23,11 +23,18 @@ import {
   shouldClearLiveTranscript,
 } from "@/lib/agent-messages";
 import { shouldAcceptSubmit } from "@/lib/agent-submit";
-import { addPromptAttachmentFiles, uploadPromptAttachments, type PromptAttachment } from "@/lib/agent-prompt-attachments";
+import {
+  addPromptAttachmentFiles,
+  attachmentIdsReady,
+  hasPendingUploads,
+  uploadPromptAttachments,
+  type PromptAttachment,
+} from "@/lib/agent-prompt-attachments";
 import {
   ApiError,
   cancelAgentRun,
   createWorkspaceAgentThread,
+  deleteChatAttachment,
   getAgentMessages,
   getAgentRun,
   getDocument,
@@ -36,7 +43,7 @@ import {
   renameAgentThread,
   startAgentRun,
   subscribeAgentRunEvents,
-  uploadDocument,
+  uploadChatAttachment,
   type AgentMessage,
   type AgentMessagesCursor,
   type AgentRun,
@@ -203,9 +210,40 @@ export function DocumentAgentPanel({
     if (drop.files.length) attachFiles(drop.files);
   }
 
+  function patchAttachment(localId: string, patch: Partial<PromptAttachment>) {
+    setAttachments((previous) =>
+      previous.map((item) => (item.localId === localId ? { ...item, ...patch } : item)),
+    );
+  }
+
   function attachFiles(files: File[]) {
-    setAttachmentError(files.some((file) => !/\.docx$/i.test(file.name)) ? "Only DOCX files can be attached." : null);
-    setAttachments((previous) => addPromptAttachmentFiles(previous, files));
+    const { items, rejected } = addPromptAttachmentFiles(attachments, files);
+    setAttachmentError(
+      rejected
+        ? "Supported attachments: DOCX, PDF, TXT, Markdown, PNG, JPEG."
+        : null,
+    );
+    setAttachments(items);
+    const pending = items.filter((item) => item.status === "pending");
+    if (!pending.length) return;
+    void uploadPromptAttachments(
+      workspaceId,
+      pending,
+      uploadChatAttachment,
+      patchAttachment,
+      threadId ? { threadId } : undefined,
+    ).catch((error) => {
+      setAttachmentError(
+        userFacingError(error, "Could not upload attachment. Try again."),
+      );
+    });
+  }
+
+  async function removeAttachment(item: PromptAttachment) {
+    setAttachments((previous) => previous.filter((entry) => entry.localId !== item.localId));
+    if (item.attachment?.id) {
+      await deleteChatAttachment(workspaceId, item.attachment.id).catch(() => undefined);
+    }
   }
   const [activeRun, setActiveRun] = React.useState<AgentRun | null>(null);
   const [progress, setProgress] = React.useState<AgentProgressLine[]>([]);
@@ -921,7 +959,11 @@ export function DocumentAgentPanel({
   async function submitInstruction(
     instruction: string,
     documentIds: string[],
-    options?: { restoreDraftOnError?: boolean; continueFromRunId?: string; attachments?: readonly PromptAttachment[] },
+    options?: {
+      restoreDraftOnError?: boolean;
+      continueFromRunId?: string;
+      attachmentIds?: readonly string[];
+    },
   ) {
     if (
       !shouldAcceptSubmit({
@@ -943,18 +985,10 @@ export function DocumentAgentPanel({
 
     const optimisticId = `local-${Date.now()}`;
     const previousTagged = options?.restoreDraftOnError ? tagged : null;
+    const attachmentIds = [...(options?.attachmentIds ?? [])];
     let id = threadId;
     try {
       await onBeforeRun?.();
-      if (options?.attachments?.length) {
-        const uploadedIds = await uploadPromptAttachments(workspaceId, options.attachments, uploadDocument, (file, document) => {
-          rememberDocumentName(document.id, document.name);
-          setAttachments((previous) => previous.map((item) => item.file === file ? { file, document } : item));
-          setWorkspaceFiles((previous) => [...previous, document]);
-          onDocumentUploaded?.(document);
-        });
-        documentIds = [...new Set([...documentIds, ...uploadedIds])];
-      }
       setMessages((prev) => [
         ...prev,
         {
@@ -962,6 +996,7 @@ export function DocumentAgentPanel({
           role: "user",
           content: instruction,
           ...(documentIds.length ? { documentIds } : {}),
+          ...(attachmentIds.length ? { attachmentIds } : {}),
           createdAt: new Date().toISOString(),
         },
       ]);
@@ -980,11 +1015,12 @@ export function DocumentAgentPanel({
       const run = await startAgentRun(id, instruction, {
         activeDocumentId: documentId,
         documentIds,
+        ...(attachmentIds.length ? { attachmentIds } : {}),
         ...(options?.continueFromRunId
           ? { continueFromRunId: options.continueFromRunId }
           : {}),
       });
-      if (options?.attachments) setAttachments([]);
+      if (attachmentIds.length) setAttachments([]);
       if (!options?.restoreDraftOnError) setTagged([]);
       await refreshMessages(id);
       attachRun(run, id);
@@ -1030,15 +1066,28 @@ export function DocumentAgentPanel({
     ) {
       return;
     }
-    if (tagged.length + attachments.length > 20) {
-      setAttachmentError("Use at most 20 documents in one message.");
+    if (tagged.length > 20) {
+      setAttachmentError("Use at most 20 tagged documents in one message.");
+      return;
+    }
+    if (attachments.length > 10) {
+      setAttachmentError("Use at most 10 chat attachments in one message.");
+      return;
+    }
+    if (hasPendingUploads(attachments)) {
+      setAttachmentError("Wait for uploads to finish before sending.");
+      return;
+    }
+    const readyIds = attachmentIdsReady(attachments);
+    if (attachments.length > 0 && !readyIds) {
+      setAttachmentError("Fix or remove failed attachments before sending.");
       return;
     }
     setAttachmentError(null);
     const documentIds = taggedDocumentIdsForRun();
     await submitInstruction(instruction, documentIds, {
       restoreDraftOnError: true,
-      attachments,
+      ...(readyIds?.length ? { attachmentIds: readyIds } : {}),
     });
   }
 
@@ -1074,7 +1123,11 @@ export function DocumentAgentPanel({
         ...(documentId ? [documentId] : []),
       ]),
     ];
-    await submitInstruction(lastUserMessage.content, documentIds);
+    await submitInstruction(lastUserMessage.content, documentIds, {
+      ...(lastUserMessage.attachmentIds?.length
+        ? { attachmentIds: lastUserMessage.attachmentIds }
+        : {}),
+    });
   }
 
   async function handleContinue() {
@@ -1528,8 +1581,21 @@ export function DocumentAgentPanel({
           items: attachments,
           error: attachmentError,
           onAttach: attachFiles,
-          onRemove: (file) =>
-            setAttachments((previous) => previous.filter((item) => item.file !== file)),
+          onRemove: (item) => void removeAttachment(item),
+          onRetry: (item) => {
+            patchAttachment(item.localId, { status: "pending", error: undefined });
+            void uploadPromptAttachments(
+              workspaceId,
+              [{ ...item, status: "pending", error: undefined }],
+              uploadChatAttachment,
+              patchAttachment,
+              threadId ? { threadId } : undefined,
+            ).catch((error) => {
+              setAttachmentError(
+                userFacingError(error, "Could not upload attachment. Try again."),
+              );
+            });
+          },
         }}
         status={{
           ready: phase.kind === "ready",
@@ -1537,6 +1603,7 @@ export function DocumentAgentPanel({
           canStop,
           cancelling,
           submitting,
+          uploadsPending: hasPendingUploads(attachments),
           dragOver: dragOverComposer,
           wallClockMs,
         }}

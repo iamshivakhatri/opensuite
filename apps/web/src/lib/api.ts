@@ -579,7 +579,23 @@ export interface AgentMessage {
   readonly role: "user" | "assistant";
   readonly content: string;
   readonly documentIds?: readonly string[];
+  readonly attachmentIds?: readonly string[];
   readonly createdAt: string;
+}
+
+export interface ChatAttachment {
+  readonly id: string;
+  readonly workspaceId: string;
+  readonly threadId: string | null;
+  readonly messageId: string | null;
+  readonly kind: "file" | "text";
+  readonly filename: string;
+  readonly mediaType: string;
+  readonly sizeBytes: number;
+  readonly sha256: string;
+  readonly status: "staged" | "bound" | "deleted";
+  readonly createdAt: string;
+  readonly boundAt: string | null;
 }
 
 export interface AgentRun {
@@ -730,6 +746,7 @@ export async function startAgentRun(
   options?: {
     activeDocumentId?: string | null;
     documentIds?: readonly string[];
+    attachmentIds?: readonly string[];
     continueFromRunId?: string;
   },
 ): Promise<AgentRun> {
@@ -742,6 +759,9 @@ export async function startAgentRun(
       ...(options?.documentIds && options.documentIds.length > 0
         ? { documentIds: [...options.documentIds] }
         : {}),
+      ...(options?.attachmentIds && options.attachmentIds.length > 0
+        ? { attachmentIds: [...options.attachmentIds] }
+        : {}),
       ...(options?.continueFromRunId
         ? { continueFromRunId: options.continueFromRunId }
         : {}),
@@ -752,6 +772,40 @@ export async function startAgentRun(
   }
   const body = (await response.json()) as { run: AgentRun };
   return body.run;
+}
+
+export async function uploadChatAttachment(
+  workspaceId: string,
+  file: File,
+  options?: { threadId?: string },
+): Promise<{ attachment: ChatAttachment }> {
+  const body = new FormData();
+  body.append("file", file, file.name);
+  if (options?.threadId) body.append("threadId", options.threadId);
+  const query = options?.threadId
+    ? `?threadId=${encodeURIComponent(options.threadId)}`
+    : "";
+  const response = await apiFetch(
+    `/api/workspaces/${workspaceId}/chat-attachments${query}`,
+    { method: "POST", body },
+  );
+  if (!response.ok) {
+    throw await parseApiError(response);
+  }
+  return (await response.json()) as { attachment: ChatAttachment };
+}
+
+export async function deleteChatAttachment(
+  workspaceId: string,
+  attachmentId: string,
+): Promise<void> {
+  const response = await apiFetch(
+    `/api/workspaces/${workspaceId}/chat-attachments/${attachmentId}`,
+    { method: "DELETE" },
+  );
+  if (!response.ok && response.status !== 404) {
+    throw await parseApiError(response);
+  }
 }
 
 export async function getAgentRun(runId: string): Promise<{

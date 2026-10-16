@@ -5,3 +5,4 @@ export * from "./ai.js";
 export * from './style-profiles.js';
 export * from './workspace-brand.js';
 export * from './document-drafts.js';
+export * from "./chat-attachments.js";

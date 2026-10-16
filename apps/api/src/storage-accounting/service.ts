@@ -50,7 +50,19 @@ export function createStorageAccountingService(db: Db, quotaBytes: number) {
       const [drafts] = await db.select({ usedBytes: sql<number>`coalesce(sum(${schema.documentDraft.sizeBytes}), 0)::bigint` })
         .from(schema.documentDraft).innerJoin(schema.document, eq(schema.documentDraft.documentId, schema.document.id))
         .innerJoin(schema.workspace, eq(schema.document.workspaceId, schema.workspace.id)).where(eq(schema.workspace.ownerUserId, userId));
-      return Number(row?.usedBytes ?? 0) + Number(assets?.usedBytes ?? 0) + Number(drafts?.usedBytes ?? 0);
+      const [attachments] = await db
+        .select({ usedBytes: sql<number>`coalesce(sum(${schema.chatAttachment.sizeBytes}), 0)::bigint` })
+        .from(schema.chatAttachment)
+        .innerJoin(schema.workspace, eq(schema.chatAttachment.workspaceId, schema.workspace.id))
+        .where(
+          sql`${schema.workspace.ownerUserId} = ${userId} and ${schema.chatAttachment.status} in ('staged', 'bound')`,
+        );
+      return (
+        Number(row?.usedBytes ?? 0) +
+        Number(assets?.usedBytes ?? 0) +
+        Number(drafts?.usedBytes ?? 0) +
+        Number(attachments?.usedBytes ?? 0)
+      );
     },
     async reconcile(userId: string) {
       const [status, expectedBytes] = await Promise.all([

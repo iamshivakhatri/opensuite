@@ -46,7 +46,9 @@ import {
 import { createStyleProfileService } from "./style-profiles/service.js";
 import { createWorkspaceAssetService } from "./workspace-brand/assets.js";
 import { createWorkspaceBrandService } from "./workspace-brand/service.js";
+import { createChatAttachmentService } from "./chat-attachments/service.js";
 import { registerWorkspaceBrandRoutes } from "./routes/workspace-brand.js";
+import { registerChatAttachmentRoutes } from "./routes/chat-attachments.js";
 import { registerStyleProfileRoutes } from "./routes/style-profiles.js";
 import { createDocumentService } from "./documents/service.js";
 import { createDocumentPreferenceService } from "./documents/preferences.js";
@@ -319,6 +321,10 @@ export async function buildApp(
   const workspaceAssets = createWorkspaceAssetService(
     deps.db, deps.storage, workspaces, storageAccounting,
   );
+  const chatAttachments = createChatAttachmentService(
+    deps.db, deps.storage, workspaces, storageAccounting,
+    { maxBytes: config.uploadMaxBytes },
+  );
   const workspaceBrand = createWorkspaceBrandService(deps.db, workspaceAssets);
   const preferences = createDocumentPreferenceService(deps.db);
   const managedUsagePolicy = deps.managedUsagePolicy ?? createManagedTrialService(
@@ -342,6 +348,7 @@ export async function buildApp(
       styleProfiles,
       workspaceBrand,
       workspaceAssets,
+      chatAttachments,
       ...(docxBinding ? { docxBinding } : {}),
       resolveModel: async (userId: string) => {
         const resolved = await aiModelResolver!.resolve(userId);
@@ -422,7 +429,9 @@ export async function buildApp(
   registerSearchRoutes(app, deps.auth, search);
   registerStyleProfileRoutes(app, deps.auth, styleProfiles);
   registerWorkspaceBrandRoutes(app, deps.auth, workspaceBrand, workspaceAssets);
+  registerChatAttachmentRoutes(app, deps.auth, chatAttachments);
   registerAgentRoutes(app, {
+
     auth: deps.auth,
     persistence: agentPersistence,
     runManager: agentRunManager,

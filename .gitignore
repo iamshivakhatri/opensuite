@@ -64,6 +64,7 @@ packages/db/migrations/*.sql
 !packages/db/migrations/0024_workspace_brand.sql
 !packages/db/migrations/0025_workspace_asset_images.sql
 !packages/db/migrations/0026_document_drafts.sql
+!packages/db/migrations/0027_colossal_thunderbolt.sql
 packages/db/migrations/meta/*.json
 !packages/db/migrations/meta/_journal.json
 !packages/db/migrations/meta/0000_snapshot.json
@@ -90,5 +91,6 @@ notes.txt
 !packages/db/migrations/meta/0024_snapshot.json
 !packages/db/migrations/meta/0025_snapshot.json
 !packages/db/migrations/meta/0026_snapshot.json
+!packages/db/migrations/meta/0027_snapshot.json
 
 .agent-traces

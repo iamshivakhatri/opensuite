@@ -135,8 +135,14 @@ export const agentMessage = pgTable(
     role: agentMessageRoleEnum("role").notNull(),
     content: text("content").notNull(),
     documentIds: jsonb("document_ids").$type<string[]>().notNull().default([]),
+    /** Chat-scoped attachment IDs (not workspace documents). */
+    attachmentIds: jsonb("attachment_ids")
+      .$type<string[]>()
+      .notNull()
+      .default([]),
     createdAt: timestamp("created_at").defaultNow().notNull(),
   },
+
   (table) => [
     index("agent_message_thread_id_created_at_id_idx").on(
       table.threadId,

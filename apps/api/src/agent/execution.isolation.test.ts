@@ -324,6 +324,7 @@ function memoryPersistence(ownerUserId: string): AgentPersistenceService & {
       role: AgentMessage["role"];
       content: string;
       documentIds?: readonly string[];
+      attachmentIds?: readonly string[];
     }) {
       const message: AgentMessage = {
         id: `msg-${++messageSeq}`,
@@ -331,6 +332,7 @@ function memoryPersistence(ownerUserId: string): AgentPersistenceService & {
         role: input.role,
         content: input.content,
         ...(input.documentIds?.length ? { documentIds: input.documentIds } : {}),
+        ...(input.attachmentIds?.length ? { attachmentIds: input.attachmentIds } : {}),
         createdAt: now(),
       };
       messages.push(message);

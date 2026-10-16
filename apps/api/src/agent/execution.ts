@@ -1,6 +1,11 @@
 import type { StyleProfileService } from "../style-profiles/service.js";
 import type { WorkspaceBrandService } from '../workspace-brand/service.js';
 import type { WorkspaceAssetService } from '../workspace-brand/assets.js';
+import {
+  ChatAttachmentError,
+  type ChatAttachmentDto,
+  type ChatAttachmentService,
+} from "../chat-attachments/service.js";
 import { requestsSavedStyle, createStyleProfileTools } from "./capabilities/definitions/style-profiles.js";
 import { createWorkspaceBrandTools } from './capabilities/definitions/workspace-brand.js';
 import { documentSkillPolicy } from './capabilities/definitions/skills/index.js';
@@ -154,7 +159,9 @@ export type AgentExecutionErrorCode =
   | "AGENT_EXECUTION_FAILED"
   | "AGENT_PERSISTENCE_FAILED"
   | "DOCX_ENGINE_UNAVAILABLE"
-  | "SAVED_STYLE_NOT_APPLIED";
+  | "SAVED_STYLE_NOT_APPLIED"
+  | "INVALID_ATTACHMENTS"
+  | "ATTACHMENT_NOT_READY";
 
 export class AgentExecutionError extends Error {
   constructor(readonly code: AgentExecutionErrorCode, message: string) {
@@ -169,6 +176,7 @@ export interface AgentExecutionInput {
   readonly instruction: string;
   readonly activeDocumentId?: string;
   readonly documentIds?: readonly string[];
+  readonly attachmentIds?: readonly string[];
   readonly continueFromRunId?: string;
   readonly signal?: AbortSignal;
   readonly liveEvents?: AgentEventSink;
@@ -205,6 +213,7 @@ export interface AgentExecutionServiceDeps {
   readonly styleProfiles?: StyleProfileService;
   readonly workspaceBrand?: Pick<WorkspaceBrandService, 'get'>;
   readonly workspaceAssets?: Pick<WorkspaceAssetService, 'readBytes' | 'listImages'>;
+  readonly chatAttachments?: Pick<ChatAttachmentService, "bindToMessage" | "metadataForIds">;
   readonly modelUsage?: ModelUsageService;
   readonly managedUsagePolicy?: ManagedUsagePolicy;
   readonly agentRunReportSink?: AgentRunReportSink;
@@ -282,6 +291,10 @@ export function createAgentExecutionService(deps: AgentExecutionServiceDeps) {
         ownerUserId: input.userId,
       });
       const submittedDocumentIds = [...new Set([...(continuation?.documentIds ?? []), ...(input.documentIds ?? [])])];
+      const submittedAttachmentIds = [...new Set([
+        ...(continuation?.attachmentIds ?? []),
+        ...(input.attachmentIds ?? []),
+      ])];
       const workingDocumentIds = [...new Set([
         ...persistedWorkingDocumentIds,
         ...(openDocument ? [openDocument.documentId] : []),
@@ -301,9 +314,47 @@ export function createAgentExecutionService(deps: AgentExecutionServiceDeps) {
             role: "user",
             content: input.instruction,
             documentIds: input.documentIds,
+            attachmentIds: submittedAttachmentIds,
           },
           tx,
         );
+        let boundAttachments: ChatAttachmentDto[] = [];
+        if (submittedAttachmentIds.length > 0) {
+          if (!deps.chatAttachments) {
+            throw new AgentExecutionError(
+              "INVALID_ATTACHMENTS",
+              "Chat attachments are unavailable",
+            );
+          }
+          try {
+            boundAttachments = await deps.chatAttachments.bindToMessage(
+              {
+                workspaceId: thread.workspaceId,
+                userId: input.userId,
+                threadId: thread.id,
+                messageId: userMessage.id,
+                attachmentIds: submittedAttachmentIds,
+              },
+              tx,
+            );
+          } catch (error) {
+            if (error instanceof ChatAttachmentError) {
+              throw new AgentExecutionError(
+                error.code === "ATTACHMENT_NOT_READY"
+                  ? "ATTACHMENT_NOT_READY"
+                  : "INVALID_ATTACHMENTS",
+                error.message,
+              );
+            }
+            throw error;
+          }
+          if (boundAttachments.length !== submittedAttachmentIds.length) {
+            throw new AgentExecutionError(
+              "INVALID_ATTACHMENTS",
+              "One or more attachments are missing or inaccessible",
+            );
+          }
+        }
         const run = await deps.persistence.createRun(
           {
             threadId: thread.id,
@@ -315,7 +366,7 @@ export function createAgentExecutionService(deps: AgentExecutionServiceDeps) {
           },
           tx,
         );
-        return { userMessage, run };
+        return { userMessage, run, boundAttachments };
       });
 
       // Banner logged once retrieval resolves (target/sources known).
@@ -336,6 +387,11 @@ export function createAgentExecutionService(deps: AgentExecutionServiceDeps) {
           ...(engineIdentity ? { engine: engineIdentity } : {}) },
       }) : undefined;
       let getWorkingDocument = () => null as ReturnType<AgentExecutionHandle["getWorkingDocument"]>;
+      const baseInstruction = continuation?.instruction ?? input.instruction;
+      const instruction = appendAttachmentMetadataNote(
+        baseInstruction,
+        started.boundAttachments,
+      );
       const execution = runExecution({
         deps,
         trace,
@@ -349,7 +405,7 @@ export function createAgentExecutionService(deps: AgentExecutionServiceDeps) {
         structureCache,
         workspaceDocuments,
         ownerUserId: input.userId,
-        instruction: continuation?.instruction ?? input.instruction,
+        instruction,
         submittedDocumentIds,
         workingDocumentIds,
         ...(continuation ? { continuationPreviousRunId: input.continueFromRunId,
@@ -398,7 +454,7 @@ async function resolveContinuation(
   persistence: AgentPersistenceService,
   input: AgentExecutionInput,
   thread: AgentThread,
-): Promise<{ readonly triggeringMessageId: string; readonly saved: SavedContinuation; readonly instruction: string; readonly documentIds: readonly string[]; readonly documentId: string | null; readonly loadedCapabilityIds: readonly string[] }> {
+): Promise<{ readonly triggeringMessageId: string; readonly saved: SavedContinuation; readonly instruction: string; readonly documentIds: readonly string[]; readonly attachmentIds: readonly string[]; readonly documentId: string | null; readonly loadedCapabilityIds: readonly string[] }> {
   const prior = await persistence.getRun({
     runId: input.continueFromRunId!,
     ownerUserId: input.userId,
@@ -430,10 +486,24 @@ async function resolveContinuation(
     triggeringMessageId: original.id,
     instruction: original.content,
     documentIds: original.documentIds ?? [],
+    attachmentIds: original.attachmentIds ?? [],
     loadedCapabilityIds: ([...steps].reverse().map((step) => step.output?.loadedCapabilityIds)
       .find(Array.isArray) ?? []).filter((id): id is string => typeof id === "string"),
     documentId: saved.activeDocumentId,
   };
+}
+
+/** Metadata-only note for Part 3; contents are not loaded into the model. */
+function appendAttachmentMetadataNote(
+  instruction: string,
+  attachments: readonly ChatAttachmentDto[],
+): string {
+  if (attachments.length === 0) return instruction;
+  const lines = attachments.map(
+    (attachment) =>
+      `- ${attachment.filename} (${attachment.mediaType}, ${attachment.sizeBytes} bytes, id=${attachment.id})`,
+  );
+  return `${instruction}\n\nChat attachments (metadata only; file contents are not loaded in this turn):\n${lines.join("\n")}`;
 }
 
 async function resolvePrimaryDocument(

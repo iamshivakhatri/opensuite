@@ -62,6 +62,7 @@ export interface AgentMessage {
   readonly role: AgentMessageRole;
   readonly content: string;
   readonly documentIds?: readonly string[];
+  readonly attachmentIds?: readonly string[];
   readonly createdAt: string;
 }
 
@@ -210,6 +211,7 @@ function toMessage(row: {
   role: AgentMessageRole;
   content: string;
   documentIds: string[];
+  attachmentIds: string[];
   createdAt: Date;
 }): AgentMessage {
   return {
@@ -218,6 +220,7 @@ function toMessage(row: {
     role: row.role,
     content: row.content,
     documentIds: row.documentIds,
+    attachmentIds: row.attachmentIds,
     createdAt: row.createdAt.toISOString(),
   };
 }
@@ -323,6 +326,7 @@ const messageSelect = {
   role: schema.agentMessage.role,
   content: schema.agentMessage.content,
   documentIds: schema.agentMessage.documentIds,
+  attachmentIds: schema.agentMessage.attachmentIds,
   createdAt: schema.agentMessage.createdAt,
 } as const;
 
@@ -1120,6 +1124,7 @@ export function createAgentPersistenceService(db: Db) {
         role: AgentMessageRole;
         content: string;
         documentIds?: readonly string[];
+        attachmentIds?: readonly string[];
       },
       tx?: AgentPersistenceExecutor,
     ): Promise<AgentMessage> {
@@ -1133,6 +1138,7 @@ export function createAgentPersistenceService(db: Db) {
           role: input.role,
           content: input.content,
           documentIds: [...new Set(input.documentIds ?? [])],
+          attachmentIds: [...new Set(input.attachmentIds ?? [])],
         })
         .returning(messageSelect);
 
