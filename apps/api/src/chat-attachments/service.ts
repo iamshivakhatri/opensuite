@@ -135,10 +135,21 @@ export function createChatAttachmentService(
     }
   }
 
+  async function getBound(input: { workspaceId: string; userId: string; threadId: string; attachmentId: string }) {
+    await requireWorkspace(input.workspaceId, input.userId);
+    await requireOwnedThread(db, input.threadId, input.workspaceId, input.userId);
+    const row = await getOwnedRow(db, input.workspaceId, input.userId, input.attachmentId);
+    if (!row || row.status !== "bound" || row.threadId !== input.threadId || !row.messageId) {
+      throw new ChatAttachmentError(404, "ATTACHMENT_NOT_FOUND", "Bound attachment not found in this chat");
+    }
+    return row;
+  }
+
   /** Soft-delete one attachment: drop bytes, release quota, block future reads. */
   async function markDeleted(tx: Db, row: typeof schema.chatAttachment.$inferSelect) {
     if (row.status === "deleted") return;
     await deleteObjectBestEffort(row.storageKey);
+    await deleteObjectBestEffort(`${row.storageKey}/extraction.json`);
     await tx
       .update(schema.chatAttachment)
       .set({
@@ -152,6 +163,48 @@ export function createChatAttachmentService(
 
   return {
     requireWorkspace,
+
+    async getBound(input: Parameters<typeof getBound>[0]) {
+      return toDto(await getBound(input));
+    },
+
+    async readExtraction(input: Parameters<typeof getBound>[0]): Promise<Buffer | null> {
+      const row = await getBound(input);
+      try {
+        const object = await storage.getObject(`${row.storageKey}/extraction.json`);
+        const chunks: Buffer[] = [];
+        let size = 0;
+        const timer = setTimeout(() => object.body.destroy(new ChatAttachmentError(400, "EXTRACTION_TIMEOUT", "Cached extraction read exceeded 10 seconds")), 10_000);
+        try {
+          for await (const chunk of object.body) {
+            size += chunk.length;
+            if (size > 4 * 1024 * 1024) return null;
+            chunks.push(Buffer.from(chunk));
+          }
+        } finally {
+          clearTimeout(timer);
+          object.body.destroy();
+        }
+        await getBound(input);
+        return Buffer.concat(chunks);
+      } catch (error) {
+        if (error instanceof ObjectNotFoundError) return null;
+        throw error;
+      }
+    },
+
+    async saveExtraction(input: Parameters<typeof getBound>[0] & { bytes: Buffer }) {
+      const row = await getBound(input);
+      if (input.bytes.length > 4 * 1024 * 1024) throw new ChatAttachmentError(400, "EXTRACTION_LIMIT", "Extracted attachment is too large");
+      const key = `${row.storageKey}/extraction.json`;
+      await storage.putObject({ key, body: input.bytes, contentType: "application/json" });
+      try {
+        await getBound(input);
+      } catch (error) {
+        await deleteObjectBestEffort(key);
+        throw error;
+      }
+    },
 
     async upload(input: {
       workspaceId: string;
@@ -241,8 +294,10 @@ export function createChatAttachmentService(
       threadId?: string;
       status?: "staged" | "bound";
       limit?: number;
+      offset?: number;
     }): Promise<ChatAttachmentDto[]> {
       await requireWorkspace(input.workspaceId, input.userId);
+      if (input.threadId) await requireOwnedThread(db, input.threadId, input.workspaceId, input.userId);
       const limit = Math.min(50, Math.max(1, input.limit ?? 50));
       const rows = await db
         .select()
@@ -259,7 +314,8 @@ export function createChatAttachmentService(
               : inArray(schema.chatAttachment.status, ["staged", "bound"]),
           ),
         )
-        .orderBy(sql`${schema.chatAttachment.createdAt} desc`)
+        .orderBy(sql`${schema.chatAttachment.createdAt} desc`, sql`${schema.chatAttachment.id} desc`)
+        .offset(Math.max(0, input.offset ?? 0))
         .limit(limit);
       return rows.map(toDto);
     },

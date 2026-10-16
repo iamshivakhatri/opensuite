@@ -167,6 +167,10 @@ test(
       assert.equal(bound[0]?.status, "bound");
       assert.equal(bound[0]?.threadId, thread.id);
       assert.equal(bound[0]?.messageId, message.id);
+      const cacheScope = { workspaceId, userId: alice, threadId: thread.id, attachmentId: pdfAtt.id };
+      await attachments.saveExtraction({ ...cacheScope, bytes: Buffer.from('{"cached":"source evidence"}') });
+      assert.equal((await attachments.readExtraction(cacheScope))?.toString(), '{"cached":"source evidence"}');
+      await assert.rejects(attachments.readExtraction({ ...cacheScope, userId: bob }), /not found/i);
 
       // Same-thread re-reference must not fail or duplicate bind side effects.
       const again = await attachments.bindToMessage({
@@ -183,6 +187,7 @@ test(
         ownerUserId: alice,
         createdByUserId: alice,
       });
+      await assert.rejects(attachments.readExtraction({ ...cacheScope, threadId: otherThread.id }), /not found/i);
       const otherMessage = await persistence.appendMessage({
         threadId: otherThread.id,
         ownerUserId: alice,
@@ -207,11 +212,14 @@ test(
         filename: "temp.txt",
         bytes: Buffer.from("temp"),
       });
-      await attachments.remove({
-        workspaceId,
-        userId: alice,
-        attachmentId: staged.id,
-      });
+      await assert.rejects(attachments.getBound({ ...cacheScope, attachmentId: staged.id }), /not found/i);
+      await attachments.bindToMessage({ workspaceId, userId: alice, threadId: thread.id, messageId: message.id, attachmentIds: [staged.id] });
+      await attachments.saveExtraction({ ...cacheScope, attachmentId: staged.id, bytes: Buffer.from('temporary cache') });
+      const deletedCacheKey = `workspaces/${workspaceId}/chat-attachments/${staged.id}/extraction.json`;
+      assert.equal(storage.objects.has(deletedCacheKey), true);
+      await attachments.remove({ workspaceId, userId: alice, attachmentId: staged.id });
+      assert.equal(storage.objects.has(deletedCacheKey), false);
+      await assert.rejects(attachments.readExtraction({ ...cacheScope, attachmentId: staged.id }), /not found/i);
       await assert.rejects(
         () =>
           attachments.get({
@@ -283,6 +291,7 @@ test(
         .from(schema.chatAttachment)
         .where(eq(schema.chatAttachment.workspaceId, workspaceId));
       assert.equal(remaining.length, 0);
+      assert.ok([...storage.objects.keys()].every(key => !key.startsWith(`workspaces/${workspaceId}/chat-attachments/`)));
       assert.equal((await accounting.status(alice)).usedBytes, 0);
     } finally {
       await app.close();

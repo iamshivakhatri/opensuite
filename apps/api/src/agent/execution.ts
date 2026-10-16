@@ -85,6 +85,8 @@ import { SlimDocumentStructureCache } from "./document-retrieval.js";
 import { generateThreadTitle } from "./thread-title.js";
 import { recordModelUsage, type ModelCallUsage } from "./usage-accounting.js";
 import { estimateTokens } from "./context-projection.js";
+import type { AttachmentExtractionService } from "../chat-attachments/extraction.js";
+import { ATTACHMENT_SOURCE_POLICY, createAttachmentEvidence, createAttachmentTools } from "./attachment-evidence.js";
 import { compactThreadContext, logContextCompaction } from "./context-compaction.js";
 import { buildAgentOperatingInstruction, buildDocumentUpdateInstruction } from "./operating-instruction.js";
 import { createWorkspaceSearchTool } from "./workspace-search.js";
@@ -214,6 +216,7 @@ export interface AgentExecutionServiceDeps {
   readonly workspaceBrand?: Pick<WorkspaceBrandService, 'get'>;
   readonly workspaceAssets?: Pick<WorkspaceAssetService, 'readBytes' | 'listImages'>;
   readonly chatAttachments?: Pick<ChatAttachmentService, "bindToMessage" | "metadataForIds">;
+  readonly attachmentExtraction?: AttachmentExtractionService;
   readonly modelUsage?: ModelUsageService;
   readonly managedUsagePolicy?: ManagedUsagePolicy;
   readonly agentRunReportSink?: AgentRunReportSink;
@@ -388,7 +391,7 @@ export function createAgentExecutionService(deps: AgentExecutionServiceDeps) {
       }) : undefined;
       let getWorkingDocument = () => null as ReturnType<AgentExecutionHandle["getWorkingDocument"]>;
       const baseInstruction = continuation?.instruction ?? input.instruction;
-      const instruction = appendAttachmentMetadataNote(
+      const instruction = deps.attachmentExtraction ? baseInstruction : appendAttachmentMetadataNote(
         baseInstruction,
         started.boundAttachments,
       );
@@ -407,6 +410,7 @@ export function createAgentExecutionService(deps: AgentExecutionServiceDeps) {
         ownerUserId: input.userId,
         instruction,
         submittedDocumentIds,
+        submittedAttachmentIds,
         workingDocumentIds,
         ...(continuation ? { continuationPreviousRunId: input.continueFromRunId,
           loadedCapabilityIds: continuation.loadedCapabilityIds,
@@ -592,6 +596,7 @@ async function runExecution(input: {
   readonly ownerUserId: string;
   readonly instruction: string;
   readonly submittedDocumentIds: readonly string[];
+  readonly submittedAttachmentIds: readonly string[];
   readonly workingDocumentIds: readonly string[];
   readonly editableDocumentId?: string;
   readonly continuationPreviousRunId?: string;
@@ -783,9 +788,14 @@ async function runExecution(input: {
       description: "After your concise final response to the user, call this to end the run.",
     });
     const requiresSavedStyle = requestsSavedStyle(input.instruction);
+    const attachmentScope = { workspaceId: input.thread.workspaceId, userId: input.ownerUserId, threadId: input.thread.id };
+    const attachmentEvidence = input.deps.attachmentExtraction
+      ? createAttachmentEvidence(input.deps.attachmentExtraction, attachmentScope, input.submittedAttachmentIds, input.instruction)
+      : undefined;
     const tools: AgentToolSet = {
       ...(boundTools?.tools ?? {}),
       ...createStandaloneCapabilityTools(),
+      ...(input.deps.attachmentExtraction ? createAttachmentTools(input.deps.attachmentExtraction, attachmentScope) : {}),
       ...(input.deps.workspaceBrand ? createWorkspaceBrandTools({
         getBrand,
         ...(boundTools ? { applyBrand: async (brand, includeLogo) => {
@@ -850,7 +860,7 @@ async function runExecution(input: {
     // Recheck each saved ID against this run's tool bindings and request policy.
     for (const id of input.loadedCapabilityIds ?? []) toolSurface.session.load([id], 0);
     const initialTools = toolSurface.session.projectTools();
-    const system = input.savedContinuation?.system ?? buildAgentOperatingInstruction(
+    const system = (input.savedContinuation?.system ?? buildAgentOperatingInstruction(
       Object.keys(initialTools).map(providerSafeToolName),
       toolSurface.capabilityIndex,
       recommendations,
@@ -864,7 +874,8 @@ async function runExecution(input: {
       (boundTools?.getActiveDocumentId()
         ? `\n\nActive document ID: ${boundTools.getActiveDocumentId()}. Use document tools directly for this target; select another document only to switch targets.`
         : "") +
-      "\n\nSearch and inspection do not select a target. Keep edits narrow and preserve unrelated structure and formatting.";
+      "\n\nSearch and inspection do not select a target. Keep edits narrow and preserve unrelated structure and formatting.") +
+      (attachmentEvidence && !input.savedContinuation?.system?.includes(ATTACHMENT_SOURCE_POLICY) ? `\n\n${ATTACHMENT_SOURCE_POLICY}` : "");
 
     const prepared = await prepareContext({
       trace: input.trace,
@@ -985,7 +996,16 @@ async function runExecution(input: {
       const guidance = projectLoadedInstructions(toolSurface.session, instructionBudget);
       const runtimeState = input.savedContinuation ? [{ role: 'user' as const, content:
         `CONTINUED ENGINE SESSION\nCurrent document ID: ${boundTools?.getActiveDocumentId() ?? 'none'}; current version: ${boundTools?.getActiveVersionId() ?? 'none'}. Earlier opaque handles are stale; inspect again before using handles. Saved version at the boundary: ${input.savedContinuation.savedVersionId ?? 'none'}. Historical tool calls have already executed.` }] : [];
-      const modelMessages = [...projected, ...runtimeState, ...(guidance ? [guidance.message] : [])];
+      const baseMessages = [...projected, ...runtimeState, ...(guidance ? [guidance.message] : [])];
+      // One byte per token is deliberately more conservative than the general estimator.
+      // Optional attachment evidence never trims the instruction or active conversation.
+      const remaining = context.safeInputBudgetTokens === undefined ? undefined : Math.max(0,
+        context.safeInputBudgetTokens - estimateTokens(system) - estimateTokens(toolContext(currentTools)) - estimateTokens(JSON.stringify(baseMessages)),
+      );
+      const evidence = await attachmentEvidence?.(remaining);
+      const modelMessages = evidence
+        ? [{ role: "user" as const, content: evidence }, ...baseMessages]
+        : baseMessages;
       const inRunMessages = projected.slice(initialMessageCount);
       continuation = { turn: ++modelTurn, mode: "provider",
         priorAssistantReasoningReplayed: inRunMessages.some((message) => message.role === "assistant" &&

@@ -383,6 +383,13 @@ export function createWorkspaceService(
               if (!(error instanceof ObjectNotFoundError)) throw error;
             }
           }
+          for (const attachment of attachments) {
+            try {
+              await storage.deleteObject(`${attachment.storageKey}/extraction.json`);
+            } catch (error) {
+              if (!(error instanceof ObjectNotFoundError)) throw error;
+            }
+          }
 
           const threadIds = tx
             .select({ id: schema.agentThread.id })

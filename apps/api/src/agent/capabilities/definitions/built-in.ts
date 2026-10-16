@@ -1,6 +1,7 @@
 import type { CapabilityDefinition } from "../core/registry.js";
 
 export const builtInGroups: CapabilityDefinition[] = [
+  { id: "attachment", parentId: null, kind: "group", title: "Chat attachments", description: "Discover, search, and read attached TXT, Markdown, and DOCX source evidence without changing document targets", aliases: ["attached files", "source notes"], projection: "dynamic" },
   { id: "document.more_operations", parentId: "document", kind: "group", title: "More document operations", description: "Additional operations supplied by the installed document engine", projection: "dynamic" },
   { id: "document.notes", parentId: "document", kind: "group", title: "Footnotes and endnotes", description: "Inspect, insert, edit, and delete ordinary Word notes", aliases: ["footnote", "endnote"], projection: "dynamic" },
   { id: "document.fields", parentId: "document", kind: "group", title: "Fields and table of contents", description: "Inspect Word fields, insert a refreshable table of contents, and add PAGE/NUMPAGES including Page X of Y in a footer", projection: "dynamic" },
@@ -71,6 +72,7 @@ const tool = (name: string, parentId: string, projection: "always" | "dynamic"):
 });
 
 export const builtInTools: CapabilityDefinition[] = [
+  ...["list", "search", "read"].map(name => tool(`attachment.${name}`, "attachment", "dynamic")),
   ...common.map((name) => tool(name, name.startsWith("document.") ? "document" : name.startsWith("workspace.") ? "workspace" : "agent", "always")),
   ...Object.entries(dynamic).flatMap(([parent, names]) => names.map((name) => tool(`document.${name}`, parent, "dynamic"))),
 ];

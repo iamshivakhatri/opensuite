@@ -47,6 +47,7 @@ import { createStyleProfileService } from "./style-profiles/service.js";
 import { createWorkspaceAssetService } from "./workspace-brand/assets.js";
 import { createWorkspaceBrandService } from "./workspace-brand/service.js";
 import { createChatAttachmentService } from "./chat-attachments/service.js";
+import { createAttachmentExtractionService } from "./chat-attachments/extraction.js";
 import { registerWorkspaceBrandRoutes } from "./routes/workspace-brand.js";
 import { registerChatAttachmentRoutes } from "./routes/chat-attachments.js";
 import { registerStyleProfileRoutes } from "./routes/style-profiles.js";
@@ -349,6 +350,7 @@ export async function buildApp(
       workspaceBrand,
       workspaceAssets,
       chatAttachments,
+      attachmentExtraction: createAttachmentExtractionService(chatAttachments, docxBinding),
       ...(docxBinding ? { docxBinding } : {}),
       resolveModel: async (userId: string) => {
         const resolved = await aiModelResolver!.resolve(userId);

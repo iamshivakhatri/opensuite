@@ -1,4 +1,10 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
+import { Readable } from "node:stream";
+import { createAttachmentExtractionService, type AttachmentSource, type AttachmentScope } from "../chat-attachments/extraction.js";
+import { ChatAttachmentError, type ChatAttachmentDto } from "../chat-attachments/service.js";
+import { createAttachmentEvidence, createAttachmentTools } from "./attachment-evidence.js";
+import { createToolSurface } from "./capabilities/runtime/tool-surface.js";
 import { test } from "node:test";
 import { mkdtempSync, readFileSync, readdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -7,7 +13,7 @@ import { join } from "node:path";
 import { runAgent, type RunAgentResult, type RunModelResult, type AgentModel } from "@opensuite/agent-core";
 import { MockLanguageModelV4, simulateReadableStream } from "ai/test";
 import sharp from "sharp";
-import { bindDocxDocument, buildMinimalDocx, createNapiDocxEngineBinding, inspectDocxStyleSnapshot } from "@opensuite/engine-client";
+import { bindDocxDocument, buildDocxBody, buildMinimalDocx, createNapiDocxEngineBinding, inspectDocxStyleSnapshot } from "@opensuite/engine-client";
 import type { AgentRunReport } from "./agent-run-report.js";
 
 import {
@@ -3688,4 +3694,304 @@ test('Phase 6: attached references, current versions, revoked access, and change
   const tools = (prompt: typeof original) => prompt.filter((message: { role: string }) => message.role === 'assistant' || message.role === 'tool');
   assert.deepEqual(tools(continued).slice(0, tools(original).length), tools(original));
   assert.match(run.state.modelInputs[21]!, /"toolCallId":"21-0","toolName":"document_inspect","output":\{"type":"json","value":\{"ok":true/);
+});
+
+const attachmentScope: AttachmentScope = { workspaceId: 'ws-1', userId: 'user-1', threadId: 'thread-1' };
+function attachmentFixture(files: { filename: string; bytes: Buffer; mediaType: string }[]) {
+  const rows = files.map((file, index): ChatAttachmentDto => ({ id: `attachment-${index}`, ...attachmentScope, filename: file.filename, mediaType: file.mediaType,
+    sizeBytes: file.bytes.length, sha256: createHash('sha256').update(file.bytes).digest('hex'), status: 'bound', messageId: 'msg-original', kind: 'file', createdAt: now(), boundAt: now() }));
+  const cache = new Map<string, Buffer>();
+  let originalReads = 0;
+  const source: AttachmentSource = {
+    getBound: async (input) => {
+      const row = rows.find(row => row.id === input.attachmentId);
+      if (input.userId !== attachmentScope.userId || input.workspaceId !== attachmentScope.workspaceId || input.threadId !== attachmentScope.threadId || !row || row.status !== 'bound') throw new ChatAttachmentError(404, 'ATTACHMENT_NOT_FOUND', 'Attachment not found');
+      return row;
+    },
+    list: async (input) => input.threadId === attachmentScope.threadId && input.userId === attachmentScope.userId
+      ? rows.filter(row => row.status === 'bound').slice(input.offset ?? 0, (input.offset ?? 0) + (input.limit ?? 50)) : [],
+    read: async (input) => {
+      const meta = await source.getBound({ ...attachmentScope, ...input });
+      originalReads++;
+      const bytes = files[rows.indexOf(meta)]!.bytes;
+      return { ...meta, body: Readable.from([bytes]), contentLength: bytes.length };
+    },
+    readExtraction: async (input) => { await source.getBound(input); return cache.get(input.attachmentId) ?? null; },
+    saveExtraction: async (input) => { await source.getBound(input); cache.set(input.attachmentId, input.bytes); },
+  };
+  return { source, rows, cache, originalReads: () => originalReads,
+    bindToMessage: async (input: { attachmentIds: readonly string[] }) => Promise.all(input.attachmentIds.map(attachmentId => source.getBound({ ...attachmentScope, attachmentId }))), metadataForIds: async () => rows };
+}
+function attachmentModel(reply: (options: Parameters<NonNullable<MockLanguageModelV4['doStream']>>[0]) => { name: string; input: unknown }[]) {
+  let turn = 0;
+  return new MockLanguageModelV4({ doStream: async (options) => {
+    const calls = reply(options);
+    turn++;
+    return { stream: simulateReadableStream({ chunks: [
+      { type: 'stream-start', warnings: [] },
+      ...calls.map((call, index) => ({ type: 'tool-call', toolCallId: `attachment-call-${turn}-${index}`, toolName: call.name, input: JSON.stringify(call.input) })),
+      ...(!calls.length ? [{ type: 'text-start', id: 'answer' }, { type: 'text-delta', id: 'answer', delta: 'Done.' }, { type: 'text-end', id: 'answer' }] : []),
+      { type: 'finish', finishReason: { unified: calls.length ? 'tool-calls' : 'stop', raw: 'stop' }, usage: { inputTokens: { total: 20 }, outputTokens: { total: 4 } } },
+    ] as never[] }) };
+  } });
+}
+
+test('attachment first provider request includes small TXT, Markdown and native DOCX tables without retrieval calls; follow-ups reuse extraction', async () => {
+  const binding = await createNapiDocxEngineBinding();
+  const seed = Buffer.from(buildDocxBody([{ kind: 'paragraph', text: 'Launch facts' }, { kind: 'table', rows: [['Metric', 'Value'], ['Budget', '$42,000']] }]));
+  const listed = await binding.executeDocxOperation!(seed, 'set_paragraphs_list', { targets: [{ text: 'Launch facts' }], kind: 'bullet' });
+  assert.ok(listed.output);
+  const original = Buffer.from(listed.output);
+  const originalCopy = Buffer.from(original);
+  const fixture = attachmentFixture([
+    { filename: 'note.txt', bytes: Buffer.from('\ufeffOwner: Mira\r\nShip in June'), mediaType: 'text/plain' },
+    { filename: 'plan.md', bytes: Buffer.from('# Plan\n## Schedule\nLaunch is June 12.\n<script>untrusted</script>'), mediaType: 'text/markdown' },
+    { filename: 'facts.docx', bytes: original, mediaType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' },
+  ]);
+  const extraction = createAttachmentExtractionService(fixture.source, binding);
+  const persistence = memoryPersistence('user-1');
+  const thread = await persistence.getOwnedThread({ threadId: 'thread-1', ownerUserId: 'user-1' });
+  persistence.getOwnedThread = async () => ({ ...thread!, title: 'Attachment checks' });
+  let requests = 0;
+  const model = attachmentModel(options => {
+    const prompt = JSON.stringify(options.prompt);
+    assert.match(prompt, /Owner: Mira/);
+    assert.match(prompt, /Ship in June/);
+    assert.match(prompt, /line:3/);
+    assert.match(prompt, /Schedule/);
+    assert.match(prompt, /Launch facts/);
+    assert.match(prompt, /bullet/);
+    assert.match(prompt, /table:1\/row:2\/column:2/);
+    assert.match(prompt, /\$42,000/);
+    assert.match(prompt, /contentMode\\?":\\?"complete/);
+    assert.doesNotMatch(prompt, /metadata only/);
+    assert.match(options.prompt.find(message => message.role === 'system')?.content ?? '', /never document IDs or mutation handles/);
+    assert.equal(options.tools?.some(tool => 'name' in tool && tool.name === 'attachment_read'), false);
+    requests++;
+    return [];
+  });
+  const deps = baseDeps(persistence, input => runAgent({ ...input, model }), undefined, 128_000);
+  const execution = createAgentExecutionService({ ...deps, docxBinding: binding, chatAttachments: fixture, attachmentExtraction: extraction });
+  const first = await (await execution.start({ userId: 'user-1', threadId: 'thread-1', instruction: 'Read these sources.', attachmentIds: fixture.rows.map(row => row.id) })).result;
+  assert.equal(first.run.status, 'completed');
+  assert.equal(persistence.steps.filter(step => step.kind === 'tool').length, 0);
+  assert.equal(fixture.originalReads(), 3);
+  // A fresh service stands in for a restarted API process: persisted representations are reused.
+  const restarted = createAgentExecutionService({ ...deps, docxBinding: binding, chatAttachments: fixture, attachmentExtraction: createAttachmentExtractionService(fixture.source, binding) });
+  const followUp = await (await restarted.start({ userId: 'user-1', threadId: 'thread-1', instruction: 'Use the previous attachments again.' })).result;
+  assert.equal(followUp.run.status, 'completed');
+  assert.equal(requests, 2);
+  assert.equal(fixture.originalReads(), 3);
+  assert.equal(persistence.workingDocumentIds.length, 0);
+  assert.deepEqual(original, originalCopy);
+});
+
+test('large attachment context shares one budget; dynamic search/read retains exact provenance and rejects stale/deleted/cross-chat references', async (t) => {
+  const binding = await createNapiDocxEngineBinding();
+  let bytes = Buffer.from(buildDocxBody([{ kind: 'paragraph', text: 'Annual facts' },
+    ...Array.from({ length: 300 }, (_, index) => ({ kind: 'paragraph' as const, text: index === 240 ? 'Exact launch code: ORCHID-742.' : `Unrelated body ${index}: ${'filler '.repeat(15)}` }))]));
+  const styled = await binding.executeDocxSetParagraphStyle(bytes, { target: { text: 'Annual facts' }, style: 'Heading 1' });
+  assert.ok(styled.output);
+  bytes = Buffer.from(styled.output);
+  const fixture = attachmentFixture(Array.from({ length: 4 }, (_, index) => ({ filename: `large-${index}.docx`, bytes, mediaType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' })));
+  const service = createAttachmentExtractionService(fixture.source, binding);
+  const evidence = createAttachmentEvidence(service, attachmentScope, fixture.rows.map(row => row.id), 'Find the launch code');
+  const context = (await evidence(12_000))!;
+  assert.ok(Buffer.byteLength(context) <= 12_000);
+  assert.match(context, /Annual facts/);
+  assert.match(context, /ORCHID-742/);
+  assert.doesNotMatch(context, /Unrelated body 299/);
+  assert.equal((context.match(/outline_and_excerpts/g) ?? []).length, 4);
+  assert.equal(await evidence(100), undefined);
+  const persistence = memoryPersistence('user-1');
+  const thread = await persistence.getOwnedThread({ threadId: 'thread-1', ownerUserId: 'user-1' });
+  persistence.getOwnedThread = async () => ({ ...thread!, title: 'Large source checks' });
+  const model = attachmentModel(options => {
+    const evidenceMessage = options.prompt.find(message => message.role === 'user' && JSON.stringify(message).includes('CHAT ATTACHMENT EVIDENCE'))!;
+    const content = typeof evidenceMessage.content === 'string' ? evidenceMessage.content : evidenceMessage.content.map(part => part.type === 'text' ? part.text : '').join('');
+    assert.ok(Buffer.byteLength(content) <= 12_000);
+    assert.match(content, /ORCHID-742/);
+    assert.doesNotMatch(content, /Unrelated body 299/);
+    t.diagnostic(`ATTACHMENT_MEASUREMENT ${JSON.stringify({ originalDocxBytes: bytes.length * 4, extractedCharacters: [...fixture.cache.values()].reduce((total, value) => total + JSON.parse(value.toString()).units.reduce((sum: number, unit: { text: string }) => sum + unit.text.length, 0), 0), evidenceBytes: Buffer.byteLength(content), attachments: 4, originalReads: fixture.originalReads() })}`);
+    return [];
+  });
+  const deps = baseDeps(persistence, input => runAgent({ ...input, model }), undefined, 128_000);
+  const run = await (await createAgentExecutionService({ ...deps, docxBinding: binding, chatAttachments: fixture, attachmentExtraction: service }).start({ userId: 'user-1', threadId: 'thread-1', instruction: 'Find the launch code', attachmentIds: fixture.rows.map(row => row.id) })).result;
+  assert.equal(run.run.status, 'completed');
+
+  const surface = createToolSurface(createAttachmentTools(service, attachmentScope));
+  assert.equal(surface.initialTools['attachment.read'], undefined);
+  assert.ok(JSON.stringify(surface.session.list('attachment')).includes('attachment.search'));
+  assert.equal(surface.session.load(['attachment.search', 'attachment.read', 'attachment.list']).ok, true);
+  const tools = surface.session.projectTools();
+  const call = async (name: string, args: unknown) => await tools[name]!.execute!(args, {} as never) as Record<string, any>;
+  const search = await call('attachment.search', { attachmentIds: [fixture.rows[0]!.id], query: 'ORCHID-742' });
+  assert.equal(search.matches[0].location, 'paragraph:242');
+  assert.equal(search.matches[0].sha256, fixture.rows[0]!.sha256);
+  const reference = { attachmentId: fixture.rows[0]!.id, extractionId: search.matches[0].extractionId, location: search.matches[0].location };
+  const read = await call('attachment.read', reference);
+  assert.equal(read.complete, true);
+  assert.equal(read.content[0].text, 'Exact launch code: ORCHID-742.');
+  assert.equal((await call('attachment.read', { ...reference, extractionId: 'stale' })).error.code, 'STALE_EXTRACTION');
+  assert.equal((await call('attachment.read', { ...reference, location: 'table:99' })).error.code, 'INVALID_REFERENCE');
+  for (const scope of [{ ...attachmentScope, threadId: 'other-chat' }, { ...attachmentScope, userId: 'other-user' }]) {
+    const result = await createAttachmentTools(service, scope)['attachment.read']!.execute!(reference, {} as never) as any;
+    assert.equal(result.error.code, 'ATTACHMENT_NOT_FOUND');
+  }
+  fixture.rows[0] = { ...fixture.rows[0]!, status: 'deleted' };
+  assert.equal((await call('attachment.read', reference)).error.code, 'ATTACHMENT_NOT_FOUND');
+  assert.doesNotMatch((await evidence(12_000))!, /"attachmentId":"attachment-0"/);
+  assert.equal(fixture.originalReads(), 4);
+});
+
+test('attachment read pagination reconstructs long lines without dropping text', async () => {
+  const text = 'Unique long line. '.repeat(900);
+  const fixture = attachmentFixture([{ filename: 'long.txt', bytes: Buffer.from(text), mediaType: 'text/plain' }]);
+  const service = createAttachmentExtractionService(fixture.source);
+  const { extraction } = await service.get(attachmentScope, fixture.rows[0]!.id);
+  const tool = createAttachmentTools(service, attachmentScope)['attachment.read']!;
+  let next: { offset: number; textOffset: number } | null = { offset: 0, textOffset: 0 };
+  let reconstructed = '';
+  while (next) {
+    const result = await tool.execute!({ attachmentId: fixture.rows[0]!.id, extractionId: extraction.extractionId, ...next }, {} as never) as any;
+    assert.equal(result.ok, true);
+    assert.ok(JSON.stringify(result).length < 10_000);
+    reconstructed += result.content.map((part: any) => part.text).join('');
+    next = result.next;
+  }
+  assert.equal(reconstructed, text);
+  assert.equal(fixture.originalReads(), 1);
+});
+
+test('attachment evidence survives a stopped run and Continue with loaded retrieval tools and the original instruction', async () => {
+  const fixture = attachmentFixture([{ filename: 'source.txt', bytes: Buffer.from('Project code: IRIS-918.'), mediaType: 'text/plain' }]);
+  const service = createAttachmentExtractionService(fixture.source);
+  const persistence = memoryPersistence('user-1');
+  const thread = await persistence.getOwnedThread({ threadId: 'thread-1', ownerUserId: 'user-1' });
+  persistence.getOwnedThread = async () => ({ ...thread!, title: 'Continue attachments' });
+  let turn = 0;
+  let reference: { attachmentId: string; extractionId: string; location: string };
+  const model = attachmentModel(options => {
+    const prompt = JSON.stringify(options.prompt);
+    assert.match(prompt, /Use the project code from the source note/);
+    assert.match(prompt, /IRIS-918/);
+    if (turn++ === 0) {
+      const evidenceMessage = options.prompt.find(message => message.role === 'user' && JSON.stringify(message).includes('CHAT ATTACHMENT EVIDENCE'))!;
+      const evidenceText = typeof evidenceMessage.content === 'string' ? evidenceMessage.content : evidenceMessage.content.map(part => part.type === 'text' ? part.text : '').join('');
+      const evidence = JSON.parse(evidenceText.slice(evidenceText.indexOf('\n') + 1)).attachments[0];
+      reference = { attachmentId: evidence.attachmentId, extractionId: evidence.extractionId, location: 'line:1' };
+      return [{ name: 'capabilities_load', input: { ids: ['attachment.read'] } }];
+    }
+    assert.ok(options.tools?.some(tool => 'name' in tool && tool.name === 'attachment_read'));
+    if (turn === 2) {
+      assert.match(prompt, /CONTINUED ENGINE SESSION/);
+      return [{ name: 'attachment_read', input: reference }];
+    }
+    assert.match(prompt, /Project code: IRIS-918/);
+    return [];
+  });
+  const deps = { ...baseDeps(persistence, input => runAgent({ ...input, model, maxTurns: turn === 0 ? 1 : 5 }), undefined, 128_000), chatAttachments: fixture };
+  const first = await (await createAgentExecutionService({ ...deps, attachmentExtraction: service }).start({ userId: 'user-1', threadId: 'thread-1', instruction: 'Use the project code from the source note', attachmentIds: [fixture.rows[0]!.id] })).result;
+  assert.equal(first.run.errorCode, 'AGENT_MAX_TURNS');
+  const continued = await (await createAgentExecutionService({ ...deps, attachmentExtraction: createAttachmentExtractionService(fixture.source) }).start({ userId: 'user-1', threadId: 'thread-1', instruction: 'Continue', continueFromRunId: first.run.id })).result;
+  assert.equal(continued.run.status, 'completed');
+  assert.equal(turn, 3);
+  assert.equal(fixture.originalReads(), 1);
+});
+
+test('scripted provider creates and saves a new native document from DOCX and note attachment evidence', async () => {
+  const binding = await createNapiDocxEngineBinding();
+  const fixture = attachmentFixture([
+    { filename: 'facts.docx', bytes: Buffer.from(buildDocxBody([{ kind: 'paragraph', text: 'Revenue target is $73,500.' }, { kind: 'table', rows: [['Owner', 'Mira']] }])), mediaType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' },
+    { filename: 'note.txt', bytes: Buffer.from('Deliver the report on June 12.'), mediaType: 'text/plain' },
+  ]);
+  const persistence = memoryPersistence('user-1');
+  const thread = await persistence.getOwnedThread({ threadId: 'thread-1', ownerUserId: 'user-1' });
+  persistence.getOwnedThread = async () => ({ ...thread!, title: 'Attachment creation' });
+  let turn = 0;
+  let appends = 0;
+  let saved = Buffer.from(binding.createBlankDocx());
+  let document = { id: 'new-document', name: 'Combined report.docx', format: 'docx', workspaceId: 'ws-1', latestVersion: { id: 'v1' } };
+  const model = attachmentModel(options => {
+    assert.match(JSON.stringify(options.prompt), /Revenue target is \$73,500/);
+    assert.match(JSON.stringify(options.prompt), /Deliver the report on June 12/);
+    assert.match(JSON.stringify(options.prompt), /Mira/);
+    if (turn++ === 0) return [{ name: 'workspace_create_blank_document', input: { title: document.name } }];
+    if (turn === 2) return [{ name: 'document_insert_paragraphs', input: { placement: { kind: 'end' }, texts: ['Revenue target is $73,500.', 'Owner: Mira.', 'Deliver the report on June 12.'] } }];
+    return [];
+  });
+  const deps = baseDeps(persistence, input => runAgent({ ...input, model }), undefined, 128_000);
+  const result = await (await createAgentExecutionService({ ...deps, docxBinding: binding, chatAttachments: fixture, attachmentExtraction: createAttachmentExtractionService(fixture.source, binding),
+    documents: { ...deps.documents, getOwnedDocument: async () => document as never, readExactVersionBytes: async () => saved,
+      createBlankDocxDocument: async () => ({ document, version: { id: 'v1', versionNumber: 1 } }) as never,
+      appendDocumentVersion: async ({ bytes }) => { appends++; saved = Buffer.from(bytes); document = { ...document, latestVersion: { id: 'v2' } }; return { version: { id: 'v2', versionNumber: 2 } } as never; },
+    },
+  }).start({ userId: 'user-1', threadId: 'thread-1', instruction: 'Create a new report using both attached sources.', attachmentIds: fixture.rows.map(row => row.id) })).result;
+  assert.equal(result.run.status, 'completed');
+  assert.equal(appends, 1);
+  const paragraphs = (await binding.inspectDocx(saved, { focus: { kind: 'paragraphs' } })).paragraphs!.items.map(item => item.text);
+  assert.ok(paragraphs.includes('Revenue target is $73,500.'));
+  assert.ok(paragraphs.includes('Owner: Mira.'));
+  assert.ok(paragraphs.includes('Deliver the report on June 12.'));
+  assert.equal(fixture.originalReads(), 2);
+  assert.ok(persistence.workingDocumentIds.every(id => !id.startsWith('attachment-')));
+});
+
+test('malformed DOCX, invalid text and unsupported PDF produce bounded errors without cached success', async () => {
+  const binding = await createNapiDocxEngineBinding();
+  const corrupt = Buffer.from(buildMinimalDocx(['Unreadable']));
+  const payload = 30 + corrupt.readUInt16LE(26) + corrupt.readUInt16LE(28);
+  corrupt[payload] = corrupt[payload]! ^ 0xff;
+  const fixture = attachmentFixture([
+    { filename: 'bad.docx', bytes: Buffer.from('PK\x03\x04broken'), mediaType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' },
+    { filename: 'bad.txt', bytes: Buffer.from([0xc3, 0x28]), mediaType: 'text/plain' },
+    { filename: 'future.pdf', bytes: Buffer.from('%PDF-future'), mediaType: 'application/pdf' },
+    { filename: 'corrupt.docx', bytes: corrupt, mediaType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' },
+  ]);
+  const service = createAttachmentExtractionService(fixture.source, binding);
+  const tool = createAttachmentTools(service, attachmentScope)['attachment.search']!;
+  for (const [index, code] of ['INVALID_DOCX', 'INVALID_ENCODING', 'EXTRACTION_UNSUPPORTED', 'INVALID_DOCX'].entries()) {
+    const result = await tool.execute!({ attachmentIds: [fixture.rows[index]!.id], query: 'fact' }, {} as never) as any;
+    assert.equal(result.error.code, code);
+  }
+  fixture.rows[0] = { ...fixture.rows[0]!, status: 'staged' };
+  await assert.rejects(service.get(attachmentScope, fixture.rows[0]!.id), { code: 'ATTACHMENT_NOT_FOUND' });
+  assert.equal(fixture.cache.size, 0);
+});
+
+test('attachment context guard keeps the complete user instruction and omits optional evidence when there is no room', async () => {
+  const fixture = attachmentFixture([{ filename: 'source.txt', bytes: Buffer.from('Optional private evidence'), mediaType: 'text/plain' }]);
+  const persistence = memoryPersistence('user-1');
+  const thread = await persistence.getOwnedThread({ threadId: 'thread-1', ownerUserId: 'user-1' });
+  persistence.getOwnedThread = async () => ({ ...thread!, title: 'Budget check' });
+  const instruction = 'Keep this exact instruction: ' + 'Every user word must remain. '.repeat(80);
+  const model = attachmentModel(options => {
+    assert.ok(options.prompt.some(message => message.role === 'user' && message.content.some(part => part.type === 'text' && part.text === instruction)));
+    assert.doesNotMatch(JSON.stringify(options.prompt), /Optional private evidence|CHAT ATTACHMENT EVIDENCE/);
+    return [];
+  });
+  const deps = baseDeps(persistence, input => runAgent({ ...input, model }), undefined, 1_024);
+  const result = await (await createAgentExecutionService({ ...deps, chatAttachments: fixture, attachmentExtraction: createAttachmentExtractionService(fixture.source) }).start({ userId: 'user-1', threadId: 'thread-1', instruction, attachmentIds: [fixture.rows[0]!.id] })).result;
+  assert.equal(result.run.status, 'completed');
+  assert.equal(fixture.originalReads(), 0);
+});
+
+test('cached unrelated attachments are omitted while a named previous note is supplied directly', async () => {
+  const fixture = attachmentFixture([
+    { filename: 'payroll.txt', bytes: Buffer.from('Private payroll material.'), mediaType: 'text/plain' },
+    { filename: 'launch.txt', bytes: Buffer.from('The launch opens in June.'), mediaType: 'text/plain' },
+  ]);
+  const service = createAttachmentExtractionService(fixture.source);
+  await service.get(attachmentScope, fixture.rows[0]!.id);
+  const persistence = memoryPersistence('user-1');
+  const thread = await persistence.getOwnedThread({ threadId: 'thread-1', ownerUserId: 'user-1' });
+  persistence.getOwnedThread = async () => ({ ...thread!, title: 'Relevant source check' });
+  const model = attachmentModel(options => {
+    assert.match(JSON.stringify(options.prompt), /The launch opens in June/);
+    assert.doesNotMatch(JSON.stringify(options.prompt), /Private payroll material|payroll.txt/);
+    return [];
+  });
+  const deps = baseDeps(persistence, input => runAgent({ ...input, model }), undefined, 128_000);
+  const result = await (await createAgentExecutionService({ ...deps, chatAttachments: fixture, attachmentExtraction: service }).start({ userId: 'user-1', threadId: 'thread-1', instruction: 'Summarize launch.txt.' })).result;
+  assert.equal(result.run.status, 'completed');
 });
