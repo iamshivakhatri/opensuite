@@ -101,6 +101,16 @@ missing selectors, deterministic recovery and delegated judgment do not justify
 clarification. The schema is question-only; structured choices are deferred.
 The generic runtime, scheduling and both existing finish tools are unchanged.
 
+## Selecting state before reads
+
+Reads still run concurrently. A host can mark a mutation `beforeReads` when it
+changes the state that reads depend on, as `workspace.select_document` does.
+That mutation and any preceding mutations run in their original order before
+reads start. Failure skips the remaining batch, including reads, rather than
+reading the previous target. Ordinary batches retain concurrent reads followed
+by ordered mutations. Tool results retain model call order; the scheduling flag
+is never included in provider schemas.
+
 ## Capability discovery
 
 The API owns a process-wide capability catalog in `apps/api/src/agent/capabilities/`.

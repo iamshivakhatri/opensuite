@@ -102,3 +102,18 @@ test("currently open titled edit binds the open document before search or select
     documents: [...documents, { id: "board", name: "Board Report.docx", format: "docx" }],
   }), "board");
 });
+
+test('open report remains the explicit target when a chat-only source clause is present', () => {
+  const input = { openDocumentId: 'bluepeak', documentIds: [], documents: [
+    { id: 'bluepeak', name: 'BluePeak Software — November 2026 Delivery Brief.docx', format: 'docx' },
+    { id: 'other', name: 'Other.docx', format: 'docx' },
+  ] };
+  for (const instruction of ['Update the report using the attached PDF.', 'Revise it based on attached delivery notes.']) {
+    assert.equal(resolveDocumentTarget({ ...input, instruction }), 'bluepeak');
+    assert.equal(resolveDocumentTarget({ ...input, openDocumentId: null, instruction }), null);
+    assert.equal(resolveDocumentTarget({ ...input, documentIds: ['other'], instruction }), null);
+  }
+  for (const instruction of ['Create a report using the attached PDF.', 'Update another report using the attached PDF.', 'Use the report as a source for Other.', 'Update the report and Other using the PDF.']) {
+    assert.equal(resolveDocumentTarget({ ...input, instruction }), null);
+  }
+});

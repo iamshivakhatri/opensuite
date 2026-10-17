@@ -1104,3 +1104,62 @@ test("projection preserves concurrent reads, sequential mutations, failure skipp
   assert.equal(result.turns, 2);
   assert.equal(result.stopReason, "completed");
 });
+
+for (const failed of [false, true]) test(`context changes precede concurrent reads; failure=${failed}`, async () => {
+  let selected = false;
+  let secondRead!: () => void;
+  const bothStarted = new Promise<void>(resolve => { secondRead = resolve; });
+  const seen: string[] = [];
+  const model = new MockLanguageModelV4({ doStream: async () => ({ stream: simulateReadableStream({ chunks: toolCallChunks([
+    { id: 'read-1', name: 'read_one', input: {} },
+    { id: 'select', name: 'select', input: {} },
+    { id: 'read-2', name: 'read_two', input: {} },
+    { id: 'write', name: 'write', input: {} },
+  ]) }) }) });
+  const result = await runAgent({ model, maxTurns: 1, signal: AbortSignal.timeout(2000), messages: [{ role: 'user', content: 'go' }], tools: {
+    select: defineTool({ kind: 'mutate', beforeReads: true, description: 'Select state', inputSchema: emptyObjectSchema, execute: async () => {
+      await Promise.resolve();
+      seen.push('select'); selected = !failed;
+      return failed ? { ok: false, reasonCode: 'UNAUTHORIZED' } : { ok: true };
+    } }),
+    read_one: defineTool({ kind: 'read', description: 'First read', inputSchema: emptyObjectSchema, execute: async () => {
+      assert.equal(selected, true); seen.push('read-one');
+      await bothStarted;
+      return 'one';
+    } }),
+    read_two: defineTool({ kind: 'read', description: 'Second read', inputSchema: emptyObjectSchema, execute: () => {
+      assert.equal(selected, true); seen.push('read-two'); secondRead(); return 'two';
+    } }),
+    write: defineTool({ kind: 'mutate', description: 'Write', inputSchema: emptyObjectSchema, execute: () => { seen.push('write'); return 'saved'; } }),
+  } });
+  assert.deepEqual(seen, failed ? ['select'] : ['select', 'read-one', 'read-two', 'write']);
+  const toolResults = result.continuation!.messages.filter(message => message.role === 'tool').flatMap(message => message.content).filter(part => part.type === 'tool-result');
+  assert.deepEqual(toolResults.map(part => part.toolCallId), ['read-1', 'select', 'read-2', 'write']);
+  if (failed) assert.match(JSON.stringify(toolResults), /PRIOR_MUTATION_FAILED/);
+});
+
+test('context scheduling preserves earlier mutation order', async () => {
+  const seen: string[] = [];
+  const model = new MockLanguageModelV4({ doStream: async () => ({ stream: simulateReadableStream({ chunks: toolCallChunks([
+    { id: 'write', name: 'write', input: {} }, { id: 'select', name: 'select', input: {} }, { id: 'read', name: 'read', input: {} },
+  ]) }) }) });
+  await runAgent({ model, maxTurns: 1, messages: [{ role: 'user', content: 'go' }], tools: {
+    write: defineTool({ kind: 'mutate', description: 'Earlier write', inputSchema: emptyObjectSchema, execute: () => { seen.push('write'); return 'saved'; } }),
+    select: defineTool({ kind: 'mutate', beforeReads: true, description: 'Change state', inputSchema: emptyObjectSchema, execute: () => { seen.push('select'); return 'selected'; } }),
+    read: defineTool({ kind: 'read', description: 'Read state', inputSchema: emptyObjectSchema, execute: () => { seen.push('read'); return 'read'; } }),
+  } });
+  assert.deepEqual(seen, ['write', 'select', 'read']);
+});
+
+test('cancellation after a model response prevents context-changing mutations', async () => {
+  const controller = new AbortController();
+  let calls = 0;
+  const model = new MockLanguageModelV4({ doStream: async () => ({ stream: simulateReadableStream({ chunks: toolCallChunks([
+    { id: 'select', name: 'select', input: {} },
+  ]) }) }) });
+  await assert.rejects(runAgent({ model, messages: [{ role: 'user', content: 'go' }], signal: controller.signal,
+    onEvent: event => { if (event.type === 'model_turn_completed') controller.abort(new Error('User cancelled')); },
+    tools: { select: defineTool({ kind: 'mutate', beforeReads: true, description: 'Select state', inputSchema: emptyObjectSchema, execute: () => { calls++; return 'selected'; } }) },
+  }), /User cancelled/);
+  assert.equal(calls, 0);
+});

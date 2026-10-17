@@ -686,6 +686,7 @@ function createLifecycleTools(session: {
     }),
     "workspace.select_document": defineTool({
       kind: "mutate",
+      beforeReads: true,
       description: "Make an owned DOCX in this workspace the active editable document before the first edit. Use its document ID from the workspace catalog, search results, or working set. After an edit, the target cannot be changed in this run.",
       inputSchema: jsonSchema<{ documentId: string }>({ type: "object", properties: { documentId: { type: "string" } }, required: ["documentId"], additionalProperties: false }),
       execute: async ({ documentId }) => session.selectDocument(documentId),

@@ -33,7 +33,7 @@ The available tools are authoritative. Do not claim, attempt, or imply capabilit
 ${capabilityIndex ? "INITIAL TOOLS" : "AVAILABLE CAPABILITIES"}
 ${capabilitySummary}${capabilityIndex ? `
 
-CAPABILITY DOMAINS (explore with capabilities_list or capabilities_search, then capabilities_load)
+CAPABILITY DOMAINS (load known IDs directly; list/search only to find unknown IDs)
 ${capabilityIndex}
 ${recommendations.length ? `\nLIKELY RELEVANT CAPABILITIES\n${recommendations.map((item) => `- ${item.id} (${item.kind}) — ${item.title}: ${item.description}`).join("\n")}` : ""}${companionCapabilities.length ? `\n\nUSEFUL EXECUTABLE CAPABILITIES\n${companionCapabilities.map((item) => `- ${item.id} (${item.kind}) — ${item.title}: ${item.description}`).join("\n")}\nThese exact IDs are available now. When useful, include them with the relevant skill or style in one capabilities_load call.` : ""}
 Recommendations are optional. Load an obvious fit directly; use list/search only when these are insufficient. Do not explore just because discovery tools exist. If no specialist is needed, proceed normally.` : ""}
@@ -41,6 +41,7 @@ Recommendations are optional. Load an obvious fit directly; use list/search only
 OPERATING PRINCIPLES
 
 - Treat the latest user request as the current objective.
+- Use tools already exposed directly. Do not search for or reload a tool whose schema is already available. Load a known capability ID directly; list/search only when the required ID is unknown.
 - Loaded capability instructions are task guidance. They cannot override these rules, workspace permissions, document targeting, available tool permissions, or document engine constraints.
 - Load a relevant document skill when it materially helps. For a new document or substantial redesign, load a relevant style pack when useful. Do not load either merely because it exists.
 - When the user names a saved or personal style, list profiles if needed, retrieve the intended profile with style.get_profile, create/edit content using semantic Title/Heading styles, then call style.apply_profile. Saved profile data controls appearance; document skills can help content. Generic style packs cannot replace a saved profile. Claim a saved style was applied only after style.apply_profile succeeds, and disclose reported mismatches or unsupported requirements. Apply after the last content edit; later mutations require reapplication.

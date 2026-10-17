@@ -1,3 +1,4 @@
+import { createSourceVerification } from "./source-verification.js";
 import { createAttachmentVision, type VisionRoute } from "./attachment-vision.js";
 import type { StyleProfileService } from "../style-profiles/service.js";
 import type { WorkspaceBrandService } from '../workspace-brand/service.js';
@@ -609,6 +610,15 @@ async function runExecution(input: {
   readonly setWorkingDocumentGetter: (getter: AgentExecutionHandle["getWorkingDocument"]) => void;
 }): Promise<AgentExecutionResult> {
   const transcript = createTranscriptCollector();
+  const sourceVerification = createSourceVerification({ documents: input.deps.documents,
+    attachments: input.deps.attachmentExtraction,
+    scope: { workspaceId: input.thread.workspaceId, userId: input.ownerUserId, threadId: input.thread.id },
+    submittedIds: input.submittedAttachmentIds,
+    saved: input.savedContinuation?.sourceReferences,
+    earlierEvidenceUnavailable: !!input.savedContinuation && !input.savedContinuation.sourceReferences &&
+      (input.submittedAttachmentIds.length > 0 || input.workingDocumentIds.some(id => id !== input.primaryDocumentId)),
+  });
+  const attachmentExtraction = sourceVerification.extraction;
   const capabilityTelemetry = createCapabilityTelemetry(input.run.id, input.model.usageAttribution?.model ?? "unknown", input.deps.capabilityEventSink);
   let boundTools: Awaited<ReturnType<typeof createPrimaryDocxTools>>;
   let capabilitySession: ReturnType<typeof createToolSurface>["session"] | undefined;
@@ -702,11 +712,11 @@ async function runExecution(input: {
       ? input.deps.workspaceBrand.get(input.thread.workspaceId, input.ownerUserId)
       : Promise.resolve(null);
     boundTools = await createPrimaryDocxTools({
-      ...(input.deps.attachmentExtraction ? { readAttachmentDocx: (attachmentId, extractionId) => input.deps.attachmentExtraction!.readDocxCopy(
+      ...(attachmentExtraction ? { readAttachmentDocx: (attachmentId, extractionId) => attachmentExtraction.readDocxCopy(
         { workspaceId: input.thread.workspaceId, userId: input.ownerUserId, threadId: input.thread.id }, attachmentId, extractionId,
       ) } : {}),
       binding: input.deps.docxBinding,
-      documents: input.deps.documents,
+      documents: sourceVerification.documents,
       ownerUserId: input.ownerUserId,
       workspaceId: input.thread.workspaceId,
       documentId: input.primaryDocumentId,
@@ -796,21 +806,21 @@ async function runExecution(input: {
     });
     const requiresSavedStyle = requestsSavedStyle(input.instruction);
     const attachmentScope = { workspaceId: input.thread.workspaceId, userId: input.ownerUserId, threadId: input.thread.id };
-    const attachmentVision = input.deps.attachmentExtraction ? createAttachmentVision({
-      service: input.deps.attachmentExtraction, scope: attachmentScope, submittedIds: input.submittedAttachmentIds,
+    const attachmentVision = attachmentExtraction ? createAttachmentVision({
+      service: attachmentExtraction, scope: attachmentScope, submittedIds: input.submittedAttachmentIds,
       resolveRoute: input.model.resolveVision, signal: input.signal, savedObservations: input.savedContinuation?.visualObservations,
       beforeReader: async (reader) => {
         if (reader.usageAttribution?.credentialSource === "managed") await input.deps.managedUsagePolicy?.beforeManagedCall(input.ownerUserId);
       },
       recordReader: async (reader, usage) => recordModelUsage({ ...usageAccounting, attribution: reader.usageAttribution, usage }),
     }) : undefined;
-    const attachmentEvidence = input.deps.attachmentExtraction
-      ? createAttachmentEvidence(input.deps.attachmentExtraction, attachmentScope, input.submittedAttachmentIds, input.instruction)
+    const attachmentEvidence = attachmentExtraction
+      ? createAttachmentEvidence(attachmentExtraction, attachmentScope, input.submittedAttachmentIds, input.instruction)
       : undefined;
     const tools: AgentToolSet = {
       ...(boundTools?.tools ?? {}),
       ...createStandaloneCapabilityTools(),
-      ...(input.deps.attachmentExtraction ? createAttachmentTools(input.deps.attachmentExtraction, attachmentScope, attachmentVision?.view) : {}),
+      ...(attachmentExtraction ? createAttachmentTools(attachmentExtraction, attachmentScope, attachmentVision?.view) : {}),
       ...(input.deps.workspaceBrand ? createWorkspaceBrandTools({
         getBrand,
         ...(boundTools ? { applyBrand: async (brand, includeLogo) => {
@@ -831,7 +841,7 @@ async function runExecution(input: {
         currentDocument: () => ({ documentId: boundTools?.getActiveDocumentId() ?? null, versionId: boundTools?.getActiveVersionId() ?? null, dirty: (boundTools?.getWorkingMutationCount() ?? 0) > 0 || !!boundTools?.getActiveDraftId() }),
       }) : {}),
       "workspace.search_documents": createWorkspaceSearchTool({
-        documents: input.deps.documents,
+        documents: sourceVerification.documents,
         ...(input.deps.docxBinding ? { binding: input.deps.docxBinding } : {}),
         ownerUserId: input.ownerUserId,
         workspaceId: input.thread.workspaceId,
@@ -905,7 +915,7 @@ async function runExecution(input: {
       runShort,
       cache: input.structureCache,
       binding: input.deps.docxBinding,
-      documents: input.deps.documents,
+      documents: sourceVerification.documents,
       workspaceDocuments: input.workspaceDocuments,
       ownerUserId: input.ownerUserId,
       workspaceId: input.thread.workspaceId,
@@ -1057,13 +1067,12 @@ async function runExecution(input: {
       }
       const target = savedTarget as { documentId: string; fromVersionId: string; versionId: string };
       try {
-        const sources = (retrieval?.workingSet ?? []).filter((item) => item.documentId !== target.documentId);
-        const [before, after, ...currentSources] = await Promise.all([
+        const [before, after, sourceCheck] = await Promise.all([
           boundTools?.getBaseDocument()?.documentId === target.documentId && boundTools.getBaseDocument()?.versionId === target.fromVersionId
             ? Promise.resolve(Buffer.from(boundTools.getBaseDocument()!.bytes))
             : input.deps.documents.readExactVersionBytes({ documentId: target.documentId, versionId: target.fromVersionId, ownerUserId: input.ownerUserId }),
           input.deps.documents.readExactVersionBytes({ documentId: target.documentId, versionId: target.versionId, ownerUserId: input.ownerUserId }),
-          ...sources.map((item) => input.deps.documents.getOwnedDocument({ documentId: item.documentId, ownerUserId: input.ownerUserId })),
+          sourceVerification.verify(target.documentId, attachmentVision?.snapshot()),
         ]);
         const unrecovered = unrecoveredFailedMutateToolNames(metrics);
         const checks = await verifyDocumentUpdate({
@@ -1074,11 +1083,8 @@ async function runExecution(input: {
           created: createdDocumentId === target.documentId,
           inputNeeded: isInputNeededTool(metrics?.toolCalls.filter((tool) => tool.outcome === "success" && isFinishTool(tool.toolName)).at(-1)?.toolName),
           targetAdvanced: target.fromVersionId !== target.versionId,
-          sourcesUnchanged: input.workingDocumentIds.every((id) => id === target.documentId)
-            ? true
-            : retrieval && input.workingDocumentIds.every((id) => id === target.documentId || sources.some((source) => source.documentId === id))
-              ? sources.every((item, index) => currentSources[index]?.latestVersion.id === item.versionId)
-              : null,
+          sourcesUnchanged: null,
+          sourceCheck,
         });
         const fidelity = boundTools.getStyleFidelity();
         if (fidelity) {
@@ -1228,6 +1234,7 @@ async function runExecution(input: {
       transcript.finish();
       if (result.continuation && !persistenceFailure) {
         transcript.continuation({ version: 1,
+          sourceReferences: sourceVerification.snapshot(),
           ...(attachmentVision ? { visualObservations: attachmentVision.snapshot() } : {}),
           ...(input.savedContinuation ? { parentRunId: input.continuationPreviousRunId } : {}),
           messages: result.continuation.messages.slice(input.savedContinuation?.messages.length ?? 0),

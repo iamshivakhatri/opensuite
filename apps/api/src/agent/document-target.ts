@@ -47,6 +47,11 @@ export function resolveDocumentTarget(input: {
     return title && editRequest.toLowerCase().includes(title);
   });
   if (mentioned.length > 1) return null;
+  // A source clause does not make an otherwise explicit current target ambiguous.
+  const otherTaggedTarget = input.documentIds.some((id) => id !== input.openDocumentId);
+  if (input.openDocumentId && !otherTaggedTarget && !mentioned.length &&
+      !/\b(?:other|another|all|across|both)\b/i.test(editRequest) &&
+      new RegExp(`${EDIT_VERB}\\s+(?:it|the\\s+(?:document|docx|file|report))\\b`, "i").test(editRequest)) return input.openDocumentId;
   const targets = mentioned.filter((document) => {
     const title = document.name.replace(/\.docx$/i, "").replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
     if (!title) return false;

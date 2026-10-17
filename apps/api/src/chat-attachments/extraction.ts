@@ -291,6 +291,17 @@ export function createAttachmentExtractionService(source: AttachmentSource, bind
   return {
     source,
     cached,
+    async verifySource(scope: AttachmentScope, expected: Pick<AttachmentExtraction, "attachmentId" | "sha256" | "extractionId">) {
+      const meta = await source.getBound({ ...scope, attachmentId: expected.attachmentId });
+      if (meta.sha256 !== expected.sha256 || (await identity(meta)).extractionId !== expected.extractionId) {
+        extractionError("ATTACHMENT_CHANGED", "Attachment identity changed during the run");
+      }
+      const saved = await cached(scope, meta);
+      if (!saved || saved.extractionId !== expected.extractionId) extractionError("EXTRACTION_UNAVAILABLE", "Recorded extraction is unavailable");
+      await original(scope, meta); // Check stored bytes too, including when evidence came from cache.
+      const current = await source.getBound({ ...scope, attachmentId: meta.id });
+      if (current.sha256 !== expected.sha256 || (await identity(current)).extractionId !== expected.extractionId) extractionError("ATTACHMENT_CHANGED", "Attachment changed during verification");
+    },
     async readDocxCopy(scope: AttachmentScope, attachmentId: string, extractionId: string) {
       const meta = await source.getBound({ ...scope, attachmentId });
       if (meta.mediaType !== "application/vnd.openxmlformats-officedocument.wordprocessingml.document") extractionError("INVALID_REFERENCE", "Only a DOCX attachment can become an editable DOCX copy");

@@ -393,6 +393,7 @@ export async function verifyDocumentUpdate(input: {
   instruction: string;
   targetAdvanced: boolean;
   sourcesUnchanged: boolean | null;
+  sourceCheck?: DocumentCheck;
   successfulMutations?: readonly string[];
   unrecoveredFailedMutations?: readonly string[];
   created?: boolean;
@@ -402,7 +403,7 @@ export async function verifyDocumentUpdate(input: {
   const unrecovered = input.unrecoveredFailedMutations ?? [];
   const checks: DocumentCheck[] = [
     { id: "target", status: input.targetAdvanced ? "pass" : "fail", message: input.targetAdvanced ? "Target updated" : "Target did not advance" },
-    { id: "sources", status: input.sourcesUnchanged === null ? "skipped" : input.sourcesUnchanged ? "pass" : "warning", message: input.sourcesUnchanged === null ? "Source versions unavailable" : input.sourcesUnchanged ? "Source documents unchanged" : "A source document changed during the run; the update used the version read earlier" },
+    input.sourceCheck ?? { id: "sources", status: input.sourcesUnchanged === null ? "skipped" : input.sourcesUnchanged ? "pass" : "warning", message: input.sourcesUnchanged === null ? "Source versions unavailable" : input.sourcesUnchanged ? "Source documents unchanged" : "A source document changed during the run; the update used the version read earlier" },
   ];
   let after;
   try {

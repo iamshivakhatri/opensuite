@@ -297,6 +297,12 @@ test(
         attachmentExtraction: createAttachmentExtractionService(attachments, binding), resolveModel: async () => ({ model, contextLength: 128_000 }),
       }).start({ userId: alice, threadId: thread.id, instruction: "Create an editable workspace copy of source.docx named Editable report.docx and append the approved budget from approved.txt.", attachmentIds: [sourceDocx.id, sourceNote.id] })).result;
       assert.equal(workflow.run.status, "completed", workflow.run.errorMessage ?? "");
+      const storedSteps = await persistence.listStepsForRun({ runId: workflow.run.id, ownerUserId: alice });
+      const sourceCheck = (storedSteps.find(step => step.kind === "validation")!.output!.checks as { id: string; evidence?: string }[]).find(check => check.id === "sources")!;
+      const verifiedSources = JSON.parse(sourceCheck.evidence!) as { source: { attachmentId?: string }; status: string }[];
+      for (const attachmentId of [sourceDocx.id, sourceNote.id]) {
+        assert.equal(verifiedSources.find(item => item.source.attachmentId === attachmentId)?.status, "verified");
+      }
       assert.equal(providerTurns, 4);
       const workspaceDocs = await documents.listInWorkspace(workspaceId, alice);
       assert.equal(workspaceDocs.length, 1);

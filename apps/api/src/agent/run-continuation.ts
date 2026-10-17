@@ -1,3 +1,4 @@
+import type { SavedSourceReferences } from "./source-verification.js";
 import type { SavedVisualObservation } from "./attachment-vision.js";
 import { modelMessageSchema } from 'ai';
 import { z } from 'zod';
@@ -9,6 +10,7 @@ import type { SavedDocxStyleState } from './docx-tools.js';
 export interface SavedContinuation {
   version: 1;
   visualObservations?: readonly SavedVisualObservation[];
+  sourceReferences?: SavedSourceReferences;
   parentRunId?: string;
   messages: AgentContinuation['messages'];
   turns: number;
@@ -28,6 +30,12 @@ export interface SavedContinuation {
 }
 
 const savedSchema = z.object({
+  sourceReferences: z.object({
+    workspace: z.array(z.object({ documentId: z.string(), versionId: z.string(), draftId: z.string().nullable(), sha256: z.string().length(64) })),
+    attachments: z.array(z.object({ attachmentId: z.string(), sha256: z.string().length(64), extractionId: z.string() })),
+    visuals: z.array(z.object({ attachmentId: z.string(), extractionId: z.string(), page: z.number().int().min(1).max(500).optional() })),
+    earlierEvidenceUnavailable: z.boolean(),
+  }).optional(),
   visualObservations: z.array(z.object({
     ok: z.literal(true), visualReference: z.object({ attachmentId: z.string(), extractionId: z.string(), page: z.number().int().min(1).max(500).optional() }),
     evidenceType: z.literal("model_visual_observation"), untrusted: z.literal(true), model: z.string().max(300), resolvedModel: z.string().optional(),

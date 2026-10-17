@@ -250,16 +250,34 @@ export async function runAgent(input: RunAgentInput): Promise<RunAgentResult> {
       const results = new Map<string, ToolResultPart>();
       const reads: ToolCall[] = [];
       const mutations: ToolCall[] = [];
+      let beforeReadCount = 0;
       for (const call of calls) {
         const kind = resolveTool(turnTools, call.toolName)?.kind;
-        if (kind === "mutate") mutations.push(call);
-        else reads.push(call);
+        if (kind === "mutate") {
+          mutations.push(call);
+          if (resolveTool(turnTools, call.toolName)?.beforeReads) beforeReadCount = mutations.length;
+        } else reads.push(call);
       }
 
-      // Reads: concurrent (side-effect-free enough to overlap).
+      // Context changes must finish before reads can observe the selected state.
+      let failedMutationCallId: string | null = null;
+      // Keep mutation order: never move a selection ahead of an earlier edit.
+      const contextChanges = mutations.slice(0, beforeReadCount);
+      for (const call of contextChanges) {
+        if (input.signal?.aborted) throw abortReason(input.signal);
+        if (failedMutationCallId) {
+          recordSkip({ input: turnInput, call, results, metrics, turn: turns, reason: "PRIOR_MUTATION_FAILED", failedToolCallId: failedMutationCallId });
+          continue;
+        }
+        const outcome = await runCall({ input: turnInput, call, fuse, results, messages: transcript, metrics, turn: turns, now });
+        if (outcome !== "ok") failedMutationCallId = call.toolCallId;
+      }
+
+      // Reads remain concurrent after a successful context change.
       await Promise.all(
-        reads.map((call) =>
-          runCall({
+        reads.map((call) => failedMutationCallId
+          ? recordSkip({ input: turnInput, call, results, metrics, turn: turns, reason: "PRIOR_MUTATION_FAILED", failedToolCallId: failedMutationCallId })
+          : runCall({
             input: turnInput,
             call,
             fuse,
@@ -273,8 +291,7 @@ export async function runAgent(input: RunAgentInput): Promise<RunAgentResult> {
       );
 
       // Mutations: sequential; the first failure skips the remainder.
-      let failedMutationCallId: string | null = null;
-      for (const call of mutations) {
+      for (const call of mutations.slice(contextChanges.length)) {
         if (input.signal?.aborted) throw abortReason(input.signal);
         if (failedMutationCallId) {
           recordSkip({ input: turnInput, call, results, metrics, turn: turns, reason: "PRIOR_MUTATION_FAILED", failedToolCallId: failedMutationCallId });
@@ -604,6 +621,7 @@ function schemaOnlyTools(tools: AgentToolSet): ToolSet {
     delete rest.kind;
     delete rest.terminal;
     delete rest.effectKeys;
+    delete rest.beforeReads;
     out[providerSafeToolName(name)] = rest;
   }
   return out as ToolSet;

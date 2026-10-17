@@ -2538,6 +2538,7 @@ async function runScriptedDocx(input: {
   /** Bill as managed OpenRouter; the hook runs once per debit. */
   readonly managedDebit?: (event: { id: string }) => Promise<void>;
   readonly unreadableSavedVersion?: boolean;
+  readonly documentName?: string;
   readonly maxTurns?: number;
   readonly documentIds?: readonly string[];
   readonly references?: readonly { id: string; name: string; bytes: Buffer }[];
@@ -2622,12 +2623,12 @@ async function runScriptedDocx(input: {
     documents: {
       ...deps.documents,
       ...(input.references || input.attachments ? { listInWorkspace: async () => [
-        { id: 'doc-1', name: 'Roster.docx', workspaceId: 'ws-1', format: 'docx', latestVersion: { id: state.versionId } },
+        { id: 'doc-1', name: input.documentName ?? 'Roster.docx', workspaceId: 'ws-1', format: 'docx', latestVersion: { id: state.versionId } },
         ...(input.references ?? []).map(reference => ({ id: reference.id, name: reference.name, workspaceId: 'ws-1', format: 'docx', latestVersion: { id: `${reference.id}-v1` } })),
       ] as never } : {}),
       getOwnedDocument: async ({ documentId }) => {
         const reference = input.references?.find(reference => reference.id === documentId);
-        return { id: documentId, name: reference?.name ?? 'Roster.docx', workspaceId: 'ws-1', format: 'docx', latestVersion: { id: reference ? `${reference.id}-v1` : state.versionId } } as never;
+        return { id: documentId, name: reference?.name ?? input.documentName ?? 'Roster.docx', workspaceId: 'ws-1', format: 'docx', latestVersion: { id: reference ? `${reference.id}-v1` : state.versionId } } as never;
       },
       readExactVersionBytes: async ({ documentId, versionId }) => {
         const reference = input.references?.find(reference => reference.id === documentId);
@@ -2932,6 +2933,7 @@ test("every terminal path bills once, debits once, and settles a truthful durabl
     readonly turns: readonly (ScriptedTurn | ((prompt: unknown) => ScriptedTurn))[];
     readonly managedDebit?: (event: { id: string }) => Promise<void>;
     readonly unreadableSavedVersion?: boolean;
+  readonly documentName?: string;
     readonly status: AgentRun["status"];
     readonly code: string | null;
     /** Summed input tokens of the one usage event, or null for no event. */
@@ -4002,7 +4004,7 @@ for (const multimodal of [false, true]) test(`scripted provider creates and save
   for (const text of content) assert.ok(paragraphs.includes(text));
   const headings = await binding.inspectDocx(saved, { focus: { kind: 'headings' } });
   assert.ok(headings.headings!.items.some(item => item.text === 'Launch report'));
-  assert.equal(fixture.originalReads(), multimodal ? 5 : 2);
+  assert.equal(fixture.originalReads(), multimodal ? 10 : 4, "includes final source hash checks");
   assert.ok(persistence.workingDocumentIds.every(id => !id.startsWith('attachment-')));
   assert.equal(persistence.steps.filter(step => step.kind === 'tool').length, 3);
   assert.equal(turn, 3);
@@ -4723,7 +4725,7 @@ test('C2 workflow: large financial PDF and notes update the selected report, exa
   const beforeStyle = await binding.inspectDocxStyleSnapshot(seed);
   const afterStyle = await binding.inspectDocxStyleSnapshot(run.state.bytes);
   assert.deepEqual(afterStyle, beforeStyle);
-  assert.equal(fixture.originalReads(), 2);
+  assert.equal(fixture.originalReads(), 4, 'two initial reads and two final source hash checks');
   attachmentWorkflowMeasurement(t, 'financial-update', run, fixture);
 });
 
@@ -4759,7 +4761,11 @@ test('C2 workflow: screenshot and selectively viewed scan produce a native DOCX 
   assert.ok(paragraphs.paragraphs!.items.some(item => item.text === text));
   const cached = JSON.parse(fixture.cache.get(fixture.rows[1]!.id)!.toString());
   assert.equal(cached.renderedPage.page, 2);
-  assert.equal(fixture.originalReads(), 3);
+  assert.equal(fixture.originalReads(), 5, 'includes final source hash checks');
+  const sourceCheck = (run.state.persistence.steps.find(step => step.kind === 'validation')!.output!.checks as import('./document-verification.js').DocumentCheck[]).find(check => check.id === 'sources')!;
+  assert.equal(sourceCheck.status, 'pass');
+  assert.match(sourceCheck.evidence!, /visualReferences/);
+  assert.match(sourceCheck.evidence!, /"page":2/);
   assert.doesNotMatch(JSON.stringify(run.state.persistence.steps), /base64|data:image|representation/);
   attachmentWorkflowMeasurement(t, 'mocked-visual-section', run, fixture);
 });
@@ -4826,7 +4832,7 @@ test('C2 workflow: multiple source formats Continue after a saved edit without d
   assert.equal(run.state.reports.flatMap(report => report.tools).filter(tool => tool.name === 'document.replace_text').length, 1);
   const paragraphs = (await run.binding.inspectDocx(run.state.bytes, { focus: { kind: 'paragraphs' } })).paragraphs!.items.map(item => item.text);
   for (const text of ['Owner: Mira.', 'Preserve this paragraph.', 'Delivery: June 12.', 'Approved budget: $42,750.25.']) assert.equal(paragraphs.filter(item => item === text).length, 1);
-  assert.equal(fixture.originalReads(), 3);
+  assert.equal(fixture.originalReads(), 9, 'three initial reads plus checks at both saved boundaries');
   attachmentWorkflowMeasurement(t, 'continue-saved-edit', run, fixture);
 });
 
@@ -4980,4 +4986,147 @@ test('PDF render failure reaches attachment.view immediately while good extracte
   const read = await tools['attachment.read']!.execute!({ attachmentId: ref.attachmentId, extractionId: ref.extractionId, location: 'page:1' }, {} as never) as any;
   assert.equal(read.ok, true);
   assert.match(read.content[0].text, /42,750/);
+});
+
+for (const explicitCurrentTarget of [true, false]) test(`C2 stabilization: BluePeak PDF update; current target=${explicitCurrentTarget}`, async (t) => {
+  const title = 'BluePeak Software — November 2026 Delivery Brief';
+  const fixture = attachmentFixture([{ filename: 'BluePeak delivery.pdf', mediaType: 'application/pdf', bytes: buildTestPdf([
+    ['BluePeak Software delivery brief. Owner: Mira. Approved budget: $42,750.25.'],
+  ]) }]);
+  const seed = Buffer.from(buildMinimalDocx([title, 'Owner: pending.', 'Preserve the signed legal notice.']));
+  const edit = { name: 'document_replace_text', input: { target: { text: 'Owner: pending.' }, expectedCurrentText: 'Owner: pending.', replacement: 'Owner: Mira.' } };
+  // The same scripted policy also reproduces the old select/inspect recovery path.
+  const reply = (prompt: unknown): ScriptedTurn => {
+    const text = JSON.stringify(prompt);
+    const manifest = promptAttachmentManifest(prompt).manifest.attachments[0]!;
+    assert.equal(manifest.contentComplete, true);
+    assert.match(text, /Owner: Mira/);
+    if (text.includes('"toolName":"document_replace_text","output"')) return { calls: [{ name: 'finish', input: {} }] };
+    if (text.includes('Active document ID: doc-1') || /"toolName":"document_inspect","output":\{"type":"json","value":\{"ok":true/.test(text)) return { calls: [edit] };
+    if (text.includes('"toolName":"workspace_select_document","output"')) return { calls: [{ name: 'document_inspect', input: { kind: 'body_blocks' } }] };
+    return { calls: [
+      { name: 'workspace_select_document', input: { documentId: 'doc-1' } },
+      { name: 'document_inspect', input: { kind: 'body_blocks' } },
+    ] };
+  };
+  const run = await runScriptedDocx({ bytes: seed, documentName: `${title}.docx`, attachments: fixture,
+    instruction: explicitCurrentTarget ? 'Update the report using the attached BluePeak delivery PDF.' : 'Use the attached BluePeak delivery PDF to update the owner.',
+    turns: Array.from({ length: 5 }, () => reply),
+  });
+  const report = run.state.reports[0]!;
+  const tools = report.tools;
+  const requests = run.state.modelRequests.map(value => JSON.parse(value));
+  const schemaChars = requests.map(value => JSON.stringify(value.tools).length);
+  t.diagnostic(`C2_STABILIZATION ${JSON.stringify({ currentTarget: explicitCurrentTarget, modelTurns: report.modelTurns, toolCalls: tools.length,
+    toolErrors: tools.filter(tool => tool.outcome !== 'success').length, peakTools: Math.max(...run.state.exposedTools.map(names => names.length)),
+    peakSchemaChars: Math.max(...schemaChars), cumulativeSchemaChars: schemaChars.reduce((sum, chars) => sum + chars, 0),
+    estimatedInputTokens: run.state.estimatedModelInputTokens, toolsMs: tools.reduce((sum, tool) => sum + tool.durationMs, 0), originalReads: fixture.originalReads() })}`);
+  assert.equal(run.result.run.status, 'completed', run.result.run.errorMessage ?? '');
+  assert.equal(report.modelTurns, explicitCurrentTarget ? 2 : 3);
+  assert.equal(tools.length, explicitCurrentTarget ? 2 : 4);
+  assert.ok(tools.every(tool => tool.outcome === 'success'));
+  assert.ok(tools.every(tool => !tool.name.startsWith('capabilities.') && !tool.name.startsWith('attachment.')));
+  const checks = run.state.persistence.steps.find(step => step.kind === 'validation')!.output!.checks as import('./document-verification.js').DocumentCheck[];
+  const source = checks.find(check => check.id === 'sources')!;
+  assert.equal(source.status, 'pass');
+  assert.match(source.evidence!, new RegExp(fixture.rows[0]!.sha256));
+  assert.match(source.evidence!, /page:1/);
+  assert.match(source.evidence!, /extractionId/);
+  assert.equal(run.state.appends, 1);
+  const paragraphs = (await run.binding.inspectDocx(run.state.bytes, { focus: { kind: 'paragraphs' } })).paragraphs!.items.map(item => item.text);
+  assert.deepEqual(paragraphs, [title, 'Owner: Mira.', 'Preserve the signed legal notice.']);
+  assert.deepEqual(await inspectDocxStyleSnapshot(seed), await inspectDocxStyleSnapshot(run.state.bytes));
+});
+
+test('C2 source verification checks attachments, original bytes, extraction cache and saved visual identities', async (t) => {
+  const { createSourceVerification } = await import('./source-verification.js');
+  for (const scenario of ['verified', 'changed metadata', 'changed bytes', 'deleted', 'unauthorized', 'missing extraction', 'unavailable storage', 'changed interpretation'] as const) await t.test(scenario, async () => {
+    const files = [{ filename: 'source.txt', bytes: Buffer.from('Owner: Mira.'), mediaType: 'text/plain' }];
+    const fixture = attachmentFixture(files);
+    const service = createAttachmentExtractionService(fixture.source);
+    const tracker = createSourceVerification({ documents: baseDeps(memoryPersistence('user-1'), async () => softResult('completed')).documents,
+      attachments: service, scope: attachmentScope, submittedIds: [fixture.rows[0]!.id] });
+    const { extraction } = await tracker.extraction!.get(attachmentScope, fixture.rows[0]!.id);
+    const observations: import('./attachment-vision.js').SavedVisualObservation[] = [];
+    if (scenario === 'changed metadata') fixture.rows[0] = { ...fixture.rows[0]!, sha256: 'f'.repeat(64) };
+    if (scenario === 'changed bytes') files[0]!.bytes = Buffer.from('Owner: Zane.');
+    if (scenario === 'deleted') fixture.rows[0] = { ...fixture.rows[0]!, status: 'deleted' };
+    if (scenario === 'unauthorized') fixture.source.getBound = async () => { throw new ChatAttachmentError(404, 'ATTACHMENT_NOT_FOUND', 'Attachment not found'); };
+    if (scenario === 'missing extraction') fixture.cache.clear();
+    if (scenario === 'unavailable storage') fixture.source.read = async () => { throw new Error('storage unavailable'); };
+    if (scenario === 'changed interpretation') observations.push({ visualReference: { attachmentId: extraction.attachmentId, extractionId: 'old-extraction', page: 1 },
+      ok: true, evidenceType: 'model_visual_observation', untrusted: true, model: 'reader', sha256: extraction.sha256,
+      filename: 'source.txt', sourceWarnings: [], observation: 'Visible owner Mira.', truncated: false, warning: 'Interpretation' });
+    const check = await tracker.verify('target', observations);
+    assert.equal(check.status, scenario === 'verified' ? 'pass' : 'warning');
+    const expected = scenario === 'verified' ? 'verified' : ['missing extraction', 'unavailable storage'].includes(scenario) ? 'unavailable' : 'changed_or_inaccessible';
+    assert.equal(JSON.parse(check.evidence!)[0].status, expected);
+    if (observations.length) assert.match(check.evidence!, /observationSha256/);
+  });
+});
+
+test('C2 source verification distinguishes no source and exact workspace draft/version/byte identity', async () => {
+  const { createSourceVerification } = await import('./source-verification.js');
+  const deps = baseDeps(memoryPersistence('user-1'), async () => softResult('completed'));
+  let versionId = 'saved-1';
+  let draftId: string | null = 'draft-1';
+  let bytes = Buffer.from('workspace source bytes');
+  let denied = false;
+  const documents = { ...deps.documents,
+    getOwnedDocument: async () => { if (denied) throw Object.assign(new Error('denied'), { statusCode: 404 }); return { workspaceId: 'ws-1', latestVersion: { id: versionId } } as never; },
+    readVersionForEditing: async () => ({ bytes, draftId }),
+  };
+  const tracker = createSourceVerification({ documents, scope: attachmentScope, submittedIds: [] });
+  assert.deepEqual((await tracker.verify('target')).message, 'No source used');
+  assert.equal((await tracker.verify('target')).status, 'skipped');
+  const legacy = createSourceVerification({ documents, scope: attachmentScope, submittedIds: [], earlierEvidenceUnavailable: true });
+  assert.equal((await legacy.verify('target')).status, 'warning');
+  await tracker.documents.readVersionForEditing!({ documentId: 'source', versionId, ownerUserId: 'user-1' });
+  assert.equal((await tracker.verify('target')).status, 'pass');
+  draftId = 'draft-2'; assert.equal((await tracker.verify('target')).status, 'warning');
+  draftId = 'draft-1'; bytes = Buffer.from('changed bytes'); assert.equal((await tracker.verify('target')).status, 'warning');
+  bytes = Buffer.from('workspace source bytes'); versionId = 'saved-2'; assert.equal((await tracker.verify('target')).status, 'warning');
+  denied = true; assert.match((await tracker.verify('target')).message, /no longer authorized/);
+});
+
+test('C2 stabilization: a changed cached PDF warns after saving without changing unrelated DOCX content', async () => {
+  const files = [{ filename: 'delivery.pdf', mediaType: 'application/pdf', bytes: buildTestPdf([['Owner: Mira.']]) }];
+  const fixture = attachmentFixture(files);
+  const run = await runScriptedDocx({ bytes: Buffer.from(buildMinimalDocx(['Owner: pending.', 'Keep the original agreement.'])), attachments: fixture,
+    instruction: 'Update the report using the attached delivery PDF.', turns: [
+      { calls: [{ name: 'document_replace_text', input: { target: { text: 'Owner: pending.' }, expectedCurrentText: 'Owner: pending.', replacement: 'Owner: Mira.' } }] },
+      () => { files[0]!.bytes = buildTestPdf([['Owner: Zane.']]); return { calls: [{ name: 'finish', input: {} }] }; },
+    ] });
+  assert.equal(run.result.run.status, 'completed');
+  assert.equal(run.state.appends, 1);
+  const checks = run.state.persistence.steps.find(step => step.kind === 'validation')!.output!.checks as import('./document-verification.js').DocumentCheck[];
+  assert.equal(checks.find(check => check.id === 'sources')!.status, 'warning');
+  assert.match(checks.find(check => check.id === 'sources')!.evidence!, /changed_or_inaccessible/);
+  assert.deepEqual((await run.binding.inspectDocx(run.state.bytes, { focus: { kind: 'paragraphs' } })).paragraphs!.items.map(item => item.text),
+    ['Owner: Mira.', 'Keep the original agreement.']);
+});
+
+test('C2 stabilization: Continue retains the original PDF identity when source metadata and bytes change', async () => {
+  const files = [{ filename: 'delivery.pdf', mediaType: 'application/pdf', bytes: buildTestPdf([['Owner: Mira.']]) }];
+  const fixture = attachmentFixture(files);
+  const originalHash = fixture.rows[0]!.sha256;
+  const run = await runScriptedDocx({ bytes: Buffer.from(buildMinimalDocx(['Owner: pending.', 'Preserve the agreement.'])), attachments: fixture, maxTurns: 1,
+    instruction: 'Update the report using the attached delivery PDF and add an update note.', turns: [
+      { calls: [{ name: 'document_replace_text', input: { target: { text: 'Owner: pending.' }, expectedCurrentText: 'Owner: pending.', replacement: 'Owner: Mira.' } }] },
+      { calls: [{ name: 'document_insert_paragraphs', input: { placement: { kind: 'end' }, texts: ['Update note: owner recorded from the original delivery PDF.'] } }, { name: 'finish', input: {} }] },
+    ] });
+  assert.equal(run.result.run.errorCode, 'AGENT_MAX_TURNS');
+  files[0]!.bytes = buildTestPdf([['Owner: Zane.']]);
+  fixture.rows[0] = { ...fixture.rows[0]!, sizeBytes: files[0]!.bytes.length, sha256: createHash('sha256').update(files[0]!.bytes).digest('hex') };
+  const resumed = await (await run.restart({ attachmentExtraction: createAttachmentExtractionService(fixture.source, run.binding) }).start({
+    userId: 'user-1', threadId: 'thread-1', instruction: 'Continue', continueFromRunId: run.result.run.id,
+  })).result;
+  assert.equal(resumed.run.status, 'completed');
+  assert.equal(run.state.appends, 2);
+  const sourceChecks = run.state.persistence.steps.filter(step => step.kind === 'validation').flatMap(step => step.output!.checks as import('./document-verification.js').DocumentCheck[]).filter(check => check.id === 'sources');
+  assert.equal(sourceChecks[0]!.status, 'pass');
+  assert.equal(sourceChecks.at(-1)!.status, 'warning');
+  assert.match(sourceChecks.at(-1)!.evidence!, new RegExp(originalHash));
+  assert.match(sourceChecks.at(-1)!.evidence!, /changed_or_inaccessible/);
+  assert.equal(run.state.reports.flatMap(report => report.tools).filter(tool => tool.name === 'document.replace_text').length, 1);
 });

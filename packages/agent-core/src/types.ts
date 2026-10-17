@@ -44,6 +44,8 @@ export type AgentTool = Tool & {
    * text. Honoured only when no mutation failed in the same batch.
    */
   readonly terminal?: boolean;
+  /** Run this mutation and preceding mutations before the batch's concurrent reads. */
+  readonly beforeReads?: boolean;
   /**
    * Opaque identity of the work one call attempted, one key per unit of work,
    * recorded on the call metric so a host can tell whether a later success
@@ -61,6 +63,7 @@ export interface DefineToolSpec<Input, Output> {
   readonly inputSchema: InputSchema<Input>;
   readonly terminal?: boolean;
   readonly effectKeys?: AgentTool["effectKeys"];
+  readonly beforeReads?: boolean;
   execute(
     input: Input,
     ctx: {
@@ -78,7 +81,7 @@ export interface DefineToolSpec<Input, Output> {
 export function defineTool<Input, Output>(
   spec: DefineToolSpec<Input, Output>,
 ): AgentTool {
-  const { kind, terminal, effectKeys, description, inputSchema, execute } = spec;
+  const { kind, terminal, beforeReads, effectKeys, description, inputSchema, execute } = spec;
   const base = aiTool({
     description,
     inputSchema,
@@ -88,6 +91,7 @@ export function defineTool<Input, Output>(
     kind,
     ...(terminal !== undefined ? { terminal } : {}),
     ...(effectKeys ? { effectKeys } : {}),
+    ...(beforeReads ? { beforeReads } : {}),
   }) as AgentTool;
 }
 
