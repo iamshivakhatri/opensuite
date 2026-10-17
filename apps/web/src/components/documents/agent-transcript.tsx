@@ -7,8 +7,10 @@ import { AgentRunProgress } from "@/components/documents/agent-run-progress";
 import { Button } from "@/components/ui/button";
 import { AgentMarkdown } from "@/lib/agent-markdown";
 import {
+  messageAttachments,
   messageTaggedDocuments,
   presentationStepsForAssistantMessage,
+  type MessageAttachmentChip,
 } from "@/lib/agent-messages";
 import {
   presentAgentRun,
@@ -17,9 +19,73 @@ import {
   type AgentTurnProgress,
   type LiveTranscriptEntry,
 } from "@/lib/agent-progress";
-import type { AgentMessage, AgentStep } from "@/lib/api";
+import type { AgentMessage, AgentStep, ChatAttachment } from "@/lib/api";
 import { focusRingClass } from "@/lib/focus-scope";
+import { formatStorageBytes } from "@/lib/storage-model";
 import { cn } from "@/lib/utils";
+
+function MessageAttachmentChips({
+  chips,
+  onDownload,
+}: {
+  chips: readonly MessageAttachmentChip[];
+  onDownload?: (attachmentId: string, filename: string) => void;
+}) {
+  if (chips.length === 0) return null;
+  return (
+    <div className="mb-1.5 flex flex-wrap gap-1">
+      {chips.map((chip) => {
+        const sizeLabel =
+          chip.sizeBytes !== null ? formatStorageBytes(chip.sizeBytes) : null;
+        const body = (
+          <>
+            <span
+              aria-hidden
+              className="shrink-0 rounded-[2px] bg-surface/70 px-1 py-px font-mono text-[10px] leading-none tracking-wide opacity-80"
+            >
+              {chip.typeLabel}
+            </span>
+            <span className="truncate">{chip.filename}</span>
+            {sizeLabel ? (
+              <span className="shrink-0 opacity-60">{sizeLabel}</span>
+            ) : null}
+          </>
+        );
+        if (chip.available && onDownload) {
+          return (
+            <button
+              key={chip.id}
+              type="button"
+              title={`Download ${chip.filename}`}
+              aria-label={`Download attachment ${chip.filename}`}
+              onClick={() => onDownload(chip.id, chip.filename)}
+              className={cn(
+                focusRingClass,
+                "inline-flex max-w-full items-center gap-1 rounded-[var(--radius-sm)] bg-primary-soft px-1.5 py-0.5 text-[length:var(--text-2xs)] font-medium text-primary-hover hover:bg-primary/15",
+              )}
+            >
+              {body}
+            </button>
+          );
+        }
+        return (
+          <span
+            key={chip.id}
+            title={chip.available ? chip.filename : "Attachment unavailable"}
+            className={cn(
+              "inline-flex max-w-full items-center gap-1 rounded-[var(--radius-sm)] px-1.5 py-0.5 text-[length:var(--text-2xs)] font-medium",
+              chip.available
+                ? "bg-primary-soft text-primary-hover"
+                : "bg-secondary-soft text-ink-faint",
+            )}
+          >
+            {body}
+          </span>
+        );
+      })}
+    </div>
+  );
+}
 
 function stepProgressLine(step: AgentStep): AgentProgressLine | null {
   if (step.kind === "narration" || step.kind === "validation" || step.status === "cancelled") return null;
@@ -194,6 +260,11 @@ type AgentTranscriptProps = {
   messages: readonly AgentMessage[];
   runStepsByMessageId: Readonly<Record<string, readonly AgentStep[]>>;
   documentsForTags: readonly { readonly id: string; readonly name: string }[];
+  attachmentsForMessages: readonly Pick<
+    ChatAttachment,
+    "id" | "filename" | "mediaType" | "sizeBytes" | "status"
+  >[];
+  onDownloadAttachment?: (attachmentId: string, filename: string) => void;
   live: {
     active: boolean;
     entries: readonly LiveTranscriptEntry[];
@@ -234,6 +305,8 @@ export function AgentTranscript({
   messages,
   runStepsByMessageId,
   documentsForTags,
+  attachmentsForMessages,
+  onDownloadAttachment,
   live,
   turn,
   actions,
@@ -280,6 +353,10 @@ export function AgentTranscript({
           const transcriptSteps = runStepsByMessageId[message.id];
           if (message.role === "user") {
             const messageTags = messageTaggedDocuments(message, documentsForTags);
+            const attachmentChips = messageAttachments(
+              message,
+              attachmentsForMessages,
+            );
             const isContinue = message.content.trim() === "Continue";
             const priorUser = messages
               .slice(0, index)
@@ -312,6 +389,12 @@ export function AgentTranscript({
                       </span>
                     ))}
                   </div>
+                ) : null}
+                {!compact ? (
+                  <MessageAttachmentChips
+                    chips={attachmentChips}
+                    onDownload={onDownloadAttachment}
+                  />
                 ) : null}
                 {isRetryDuplicate ? "Retry" : message.content}
               </div>

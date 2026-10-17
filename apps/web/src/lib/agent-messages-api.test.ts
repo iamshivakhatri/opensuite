@@ -95,5 +95,48 @@ describe("getAgentMessages (C6 pagination client)", () => {
     const page = await api.getAgentMessages("thread-1");
     assert.equal(page.hasMore, false);
     assert.equal(page.oldestCursor, null);
+    assert.deepEqual(page.attachments, []);
+  });
+
+  it("returns attachment metadata included with the messages page", async () => {
+    globalThis.fetch = (async () =>
+      new Response(
+        JSON.stringify({
+          messages: [
+            {
+              id: "m1",
+              role: "user",
+              content: "Read these",
+              attachmentIds: ["att-1", "att-2"],
+              createdAt: "2026-01-01T00:00:00.000Z",
+            },
+          ],
+          attachments: [
+            {
+              id: "att-1",
+              filename: "a.txt",
+              mediaType: "text/plain",
+              sizeBytes: 4,
+              status: "bound",
+            },
+            {
+              id: "att-2",
+              filename: "b.pdf",
+              mediaType: "application/pdf",
+              sizeBytes: 8,
+              status: "bound",
+            },
+          ],
+          page: { hasMore: false },
+          latestRun: null,
+        }),
+        { status: 200, headers: { "Content-Type": "application/json" } },
+      )) as typeof fetch;
+
+    const api = await loadApi();
+    const page = await api.getAgentMessages("thread-1");
+    assert.equal(page.messages[0]?.attachmentIds?.length, 2);
+    assert.equal(page.attachments.length, 2);
+    assert.equal(page.attachments[0]?.filename, "a.txt");
   });
 });

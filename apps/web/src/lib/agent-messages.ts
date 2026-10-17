@@ -1,4 +1,9 @@
-import type { AgentMessage, AgentStep, ListedDocument } from "@/lib/api";
+import type {
+  AgentMessage,
+  AgentStep,
+  ChatAttachment,
+  ListedDocument,
+} from "./api.ts";
 
 /**
  * Pure message-list merge helpers for the Agent Panel's paginated transcript
@@ -74,4 +79,74 @@ export function messageTaggedDocuments(
     id: documentId,
     name: byId.get(documentId) ?? "Attached document",
   }));
+}
+
+export type MessageAttachmentChip = {
+  readonly id: string;
+  readonly filename: string;
+  readonly typeLabel: string;
+  readonly sizeBytes: number | null;
+  readonly available: boolean;
+};
+
+/** Short file-type label for chat attachment chips (PDF, DOCX, TXT, …). */
+export function chatAttachmentTypeLabel(
+  filename: string,
+  mediaType?: string,
+): string {
+  const ext = filename.includes(".")
+    ? filename.slice(filename.lastIndexOf(".") + 1).toUpperCase()
+    : "";
+  if (ext === "MARKDOWN") return "MD";
+  if (ext === "JPEG") return "JPG";
+  if (ext) return ext.slice(0, 4);
+  if (mediaType?.includes("pdf")) return "PDF";
+  if (mediaType?.includes("wordprocessingml")) return "DOCX";
+  if (mediaType?.startsWith("image/")) return "IMG";
+  if (mediaType?.startsWith("text/")) return "TXT";
+  return "FILE";
+}
+
+/** Merges attachment metadata pages by id (newest/incoming wins). */
+export function mergeAttachmentCatalog(
+  prev: readonly ChatAttachment[],
+  incoming: readonly ChatAttachment[],
+): ChatAttachment[] {
+  if (incoming.length === 0) return [...prev];
+  const byId = new Map(prev.map((item) => [item.id, item]));
+  for (const item of incoming) byId.set(item.id, item);
+  return [...byId.values()];
+}
+
+/**
+ * Resolves one historical message's chat attachments from persisted records.
+ * Missing/deleted IDs still produce a chip so history stays honest.
+ */
+export function messageAttachments(
+  message: AgentMessage,
+  catalog: readonly Pick<
+    ChatAttachment,
+    "id" | "filename" | "mediaType" | "sizeBytes" | "status"
+  >[],
+): MessageAttachmentChip[] {
+  const byId = new Map(catalog.map((item) => [item.id, item]));
+  return (message.attachmentIds ?? []).map((attachmentId) => {
+    const meta = byId.get(attachmentId);
+    if (!meta || meta.status === "deleted") {
+      return {
+        id: attachmentId,
+        filename: "Unavailable attachment",
+        typeLabel: "FILE",
+        sizeBytes: null,
+        available: false,
+      };
+    }
+    return {
+      id: meta.id,
+      filename: meta.filename,
+      typeLabel: chatAttachmentTypeLabel(meta.filename, meta.mediaType),
+      sizeBytes: meta.sizeBytes,
+      available: true,
+    };
+  });
 }

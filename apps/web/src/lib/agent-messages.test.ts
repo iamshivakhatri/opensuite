@@ -3,6 +3,9 @@ import { describe, it } from "node:test";
 
 import {
   mergeMessagePage,
+  chatAttachmentTypeLabel,
+  mergeAttachmentCatalog,
+  messageAttachments,
   messageTaggedDocuments,
   presentationStepsForAssistantMessage,
   prependOlderMessages,
@@ -140,6 +143,107 @@ it("still shows a chip when the document id is not in the workspace list yet", (
   assert.deepEqual(messageTaggedDocuments(tagged, []), [
     { id: "missing", name: "Attached document" },
   ]);
+});
+
+it("keeps submitted chat attachments on only their historical message", () => {
+  const catalog = [
+    {
+      id: "a1",
+      filename: "notes.txt",
+      mediaType: "text/plain",
+      sizeBytes: 12,
+      status: "bound" as const,
+    },
+    {
+      id: "a2",
+      filename: "plan.pdf",
+      mediaType: "application/pdf",
+      sizeBytes: 2048,
+      status: "bound" as const,
+    },
+    {
+      id: "a3",
+      filename: "draft.docx",
+      mediaType:
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+      sizeBytes: 4096,
+      status: "bound" as const,
+    },
+  ];
+  const tagged = {
+    ...msg("tagged", "2026-01-01T00:00:00.000Z"),
+    attachmentIds: ["a1", "a2", "a3"],
+  };
+  const chips = messageAttachments(tagged, catalog);
+  assert.deepEqual(
+    chips.map((chip) => [chip.filename, chip.typeLabel, chip.available]),
+    [
+      ["notes.txt", "TXT", true],
+      ["plan.pdf", "PDF", true],
+      ["draft.docx", "DOCX", true],
+    ],
+  );
+  assert.equal(messageAttachments(msg("plain", "2026-01-01T00:00:01.000Z"), catalog).length, 0);
+});
+
+it("shows an unavailable chip when attachment metadata is missing", () => {
+  const tagged = {
+    ...msg("tagged", "2026-01-01T00:00:00.000Z"),
+    attachmentIds: ["gone"],
+  };
+  assert.deepEqual(messageAttachments(tagged, []), [
+    {
+      id: "gone",
+      filename: "Unavailable attachment",
+      typeLabel: "FILE",
+      sizeBytes: null,
+      available: false,
+    },
+  ]);
+});
+
+it("merges attachment catalog pages by id without duplicating", () => {
+  const first = [
+    {
+      id: "a1",
+      workspaceId: "w",
+      threadId: "t",
+      messageId: "m1",
+      kind: "file" as const,
+      filename: "old.txt",
+      mediaType: "text/plain",
+      sizeBytes: 1,
+      sha256: "x",
+      status: "bound" as const,
+      createdAt: "2026-01-01T00:00:00.000Z",
+      boundAt: null,
+    },
+  ];
+  const second = [
+    {
+      ...first[0]!,
+      filename: "new.txt",
+      sizeBytes: 2,
+    },
+    {
+      id: "a2",
+      workspaceId: "w",
+      threadId: "t",
+      messageId: "m2",
+      kind: "file" as const,
+      filename: "extra.pdf",
+      mediaType: "application/pdf",
+      sizeBytes: 3,
+      sha256: "y",
+      status: "bound" as const,
+      createdAt: "2026-01-01T00:00:01.000Z",
+      boundAt: null,
+    },
+  ];
+  const merged = mergeAttachmentCatalog(first, second);
+  assert.equal(merged.length, 2);
+  assert.equal(merged.find((item) => item.id === "a1")?.filename, "new.txt");
+  assert.equal(chatAttachmentTypeLabel("readme.markdown"), "MD");
 });
 
 describe("assistant transcript reconciliation (finish narration vs message)", () => {

@@ -21,6 +21,10 @@ import {
 import type { AgentExecutionLeaseService } from "../agent/execution-lease.js";
 import { MAX_THREAD_TITLE_LENGTH } from "../agent/thread-title.js";
 import { getRequestUser, type SessionAuth } from "../auth/session.js";
+import type {
+  ChatAttachmentDto,
+  ChatAttachmentService,
+} from "../chat-attachments/service.js";
 import {
   sendRateLimit,
   type UserRateLimiter,
@@ -114,6 +118,8 @@ export interface AgentRouteDeps {
   /** Required on hijacked SSE — reply.hijack bypasses @fastify/cors. */
   readonly webOrigins: readonly string[];
   readonly rateLimiter: UserRateLimiter;
+  /** Optional: enriches GET /messages with attachment metadata for the page. */
+  readonly chatAttachments?: Pick<ChatAttachmentService, "metadataForIds">;
 }
 
 const TERMINAL_RUN_STATUSES = new Set([
@@ -130,7 +136,8 @@ export function registerAgentRoutes(
   app: FastifyInstance,
   deps: AgentRouteDeps,
 ): void {
-  const { auth, persistence, runManager, lease, webOrigins, rateLimiter } = deps;
+  const { auth, persistence, runManager, lease, webOrigins, rateLimiter, chatAttachments } =
+    deps;
 
   app.get(
     "/api/workspaces/:workspaceId/agent/threads",
@@ -315,9 +322,29 @@ export function registerAgentRoutes(
         ownerUserId: user.id,
         messageIds: page.messages.map((message) => message.id),
       });
+      const attachmentIds = [
+        ...new Set(
+          page.messages.flatMap((message) => message.attachmentIds ?? []),
+        ),
+      ];
+      let attachments: ChatAttachmentDto[] = [];
+      if (chatAttachments && attachmentIds.length > 0) {
+        const thread = await persistence.getOwnedThread({
+          threadId: params.data.threadId,
+          ownerUserId: user.id,
+        });
+        if (thread) {
+          attachments = await chatAttachments.metadataForIds({
+            workspaceId: thread.workspaceId,
+            userId: user.id,
+            attachmentIds,
+          });
+        }
+      }
       return reply.send({
         messages: page.messages.map(toAgentMessageDto),
         runs: runs.map(toAgentRunDto),
+        ...(attachments.length > 0 ? { attachments } : {}),
         page: {
           hasMore: page.hasMore,
           ...(page.hasMore && page.oldestCursor

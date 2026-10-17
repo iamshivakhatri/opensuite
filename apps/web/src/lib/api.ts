@@ -699,6 +699,7 @@ export interface AgentMessagesCursor {
 export interface AgentMessagesPage {
   readonly messages: AgentMessage[];
   readonly runs: AgentRun[];
+  readonly attachments: ChatAttachment[];
   readonly latestRun: AgentRun | null;
   readonly hasMore: boolean;
   readonly oldestCursor: AgentMessagesCursor | null;
@@ -728,12 +729,14 @@ export async function getAgentMessages(
   const body = (await response.json()) as {
     messages: AgentMessage[];
     runs?: AgentRun[];
+    attachments?: ChatAttachment[];
     page?: { hasMore: boolean; oldestCursor?: AgentMessagesCursor | null };
     latestRun?: AgentRun | null;
   };
   return {
     messages: body.messages,
     runs: body.runs ?? [],
+    attachments: body.attachments ?? [],
     latestRun: body.latestRun ?? null,
     hasMore: body.page?.hasMore ?? false,
     oldestCursor: body.page?.oldestCursor ?? null,
@@ -805,6 +808,43 @@ export async function deleteChatAttachment(
   );
   if (!response.ok && response.status !== 404) {
     throw await parseApiError(response);
+  }
+}
+
+/**
+ * Downloads a chat attachment through the Fastify API (authorized bytes).
+ * Prefer Content-Disposition; fall back to the known filename for display.
+ */
+export async function downloadChatAttachment(
+  workspaceId: string,
+  attachmentId: string,
+  options?: { readonly filename?: string },
+): Promise<void> {
+  const response = await apiFetch(
+    `/api/workspaces/${workspaceId}/chat-attachments/${attachmentId}`,
+  );
+  if (!response.ok) {
+    throw await parseApiError(response);
+  }
+
+  const blob = await response.blob();
+  const fromHeader = filenameFromContentDisposition(
+    response.headers.get("Content-Disposition"),
+  );
+  const fromUi = options?.filename?.trim();
+  const filename = fromHeader || fromUi || "attachment";
+
+  const objectUrl = URL.createObjectURL(blob);
+  try {
+    const anchor = document.createElement("a");
+    anchor.href = objectUrl;
+    anchor.download = filename;
+    anchor.rel = "noopener";
+    document.body.appendChild(anchor);
+    anchor.click();
+    anchor.remove();
+  } finally {
+    URL.revokeObjectURL(objectUrl);
   }
 }
 

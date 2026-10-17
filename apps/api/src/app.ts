@@ -435,13 +435,13 @@ export async function buildApp(
   registerWorkspaceBrandRoutes(app, deps.auth, workspaceBrand, workspaceAssets);
   registerChatAttachmentRoutes(app, deps.auth, chatAttachments);
   registerAgentRoutes(app, {
-
     auth: deps.auth,
     persistence: agentPersistence,
     runManager: agentRunManager,
     lease: agentExecutionLease,
     webOrigins: config.webOrigins,
     rateLimiter,
+    chatAttachments,
   });
 
   return app;

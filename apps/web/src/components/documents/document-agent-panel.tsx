@@ -18,6 +18,7 @@ import {
 import { AgentComposer } from "@/components/documents/agent-composer";
 import { AgentTranscript } from "@/components/documents/agent-transcript";
 import {
+  mergeAttachmentCatalog,
   mergeMessagePage,
   prependOlderMessages,
   shouldClearLiveTranscript,
@@ -35,6 +36,7 @@ import {
   cancelAgentRun,
   createWorkspaceAgentThread,
   deleteChatAttachment,
+  downloadChatAttachment,
   getAgentMessages,
   getAgentRun,
   getDocument,
@@ -49,6 +51,7 @@ import {
   type AgentRun,
   type AgentStep,
   type AgentThread,
+  type ChatAttachment,
   type ListedDocument,
 } from "@/lib/api";
 import {
@@ -177,6 +180,10 @@ export function DocumentAgentPanel({
   const [tagged, setTagged] = React.useState<TaggedDocument[]>([]);
   const [attachments, setAttachments] = React.useState<PromptAttachment[]>([]);
   const [attachmentError, setAttachmentError] = React.useState<string | null>(null);
+  /** Persisted chat-attachment metadata for chips in the transcript (by id). */
+  const [messageAttachmentCatalog, setMessageAttachmentCatalog] = React.useState<
+    ChatAttachment[]
+  >([]);
   const [workspaceFiles, setWorkspaceFiles] = React.useState<ListedDocument[]>(
     [],
   );
@@ -407,6 +414,9 @@ export function DocumentAgentPanel({
       return result;
     }
     setMessages((prev) => mergeMessagePage(prev, result.messages));
+    setMessageAttachmentCatalog((prev) =>
+      mergeAttachmentCatalog(prev, result.attachments),
+    );
     setHasMoreMessages(result.hasMore);
     setOldestMessagesCursor(result.oldestCursor);
     void Promise.all(result.runs.map((run) => getAgentRun(run.id))).then((snapshots) => {
@@ -433,6 +443,9 @@ export function DocumentAgentPanel({
         return;
       }
       setMessages((prev) => prependOlderMessages(prev, result.messages));
+      setMessageAttachmentCatalog((prev) =>
+        mergeAttachmentCatalog(prev, result.attachments),
+      );
       setHasMoreMessages(result.hasMore);
       setOldestMessagesCursor(result.oldestCursor);
       void Promise.all(result.runs.map((run) => getAgentRun(run.id))).then((snapshots) => {
@@ -851,6 +864,7 @@ export function DocumentAgentPanel({
         activeThreadRequestRef.current = null;
         setThreadId(null);
         setMessages([]);
+        setMessageAttachmentCatalog([]);
         setHasMoreMessages(false);
         setOldestMessagesCursor(null);
         setLoadOlderMessagesError(null);
@@ -861,6 +875,7 @@ export function DocumentAgentPanel({
       activeThreadRequestRef.current = latest.id;
       setThreadId(latest.id);
       setMessages([]);
+      setMessageAttachmentCatalog([]);
       setHasMoreMessages(false);
       setOldestMessagesCursor(null);
       setLoadOlderMessagesError(null);
@@ -986,6 +1001,14 @@ export function DocumentAgentPanel({
     const optimisticId = `local-${Date.now()}`;
     const previousTagged = options?.restoreDraftOnError ? tagged : null;
     const attachmentIds = [...(options?.attachmentIds ?? [])];
+    const optimisticAttachments = attachments
+      .filter(
+        (item) =>
+          item.status === "ready" &&
+          item.attachment &&
+          attachmentIds.includes(item.attachment.id),
+      )
+      .map((item) => item.attachment!);
     let id = threadId;
     try {
       await onBeforeRun?.();
@@ -1000,6 +1023,27 @@ export function DocumentAgentPanel({
           createdAt: new Date().toISOString(),
         },
       ]);
+      if (optimisticAttachments.length) {
+        setMessageAttachmentCatalog((prev) =>
+          mergeAttachmentCatalog(
+            prev,
+            optimisticAttachments.map((item) => ({
+              id: item.id,
+              workspaceId,
+              threadId: id,
+              messageId: null,
+              kind: "file" as const,
+              filename: item.filename,
+              mediaType: item.mediaType,
+              sizeBytes: item.sizeBytes,
+              sha256: "",
+              status: item.status,
+              createdAt: new Date().toISOString(),
+              boundAt: null,
+            })),
+          ),
+        );
+      }
       if (options?.restoreDraftOnError) {
         setDraft("");
         setTagged([]);
@@ -1214,6 +1258,7 @@ export function DocumentAgentPanel({
     // C6: reset pagination state so old cursors/pages never leak into the new thread.
     activeThreadRequestRef.current = nextId;
     setMessages([]);
+    setMessageAttachmentCatalog([]);
     setHasMoreMessages(false);
     setOldestMessagesCursor(null);
     setLoadOlderMessagesError(null);
@@ -1280,6 +1325,7 @@ export function DocumentAgentPanel({
       activeThreadRequestRef.current = thread.id;
       setThreadId(thread.id);
       setMessages([]);
+      setMessageAttachmentCatalog([]);
       setHasMoreMessages(false);
       setOldestMessagesCursor(null);
       setLoadOlderMessagesError(null);
@@ -1533,6 +1579,12 @@ export function DocumentAgentPanel({
             messages={messages}
             runStepsByMessageId={runStepsByMessageId}
             documentsForTags={documentsForTags}
+            attachmentsForMessages={messageAttachmentCatalog}
+            onDownloadAttachment={(attachmentId, filename) => {
+              void downloadChatAttachment(workspaceId, attachmentId, {
+                filename,
+              }).catch(() => undefined);
+            }}
             live={{
               active: isLiveTurn,
               entries: liveTranscript,
