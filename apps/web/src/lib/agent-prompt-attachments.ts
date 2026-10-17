@@ -26,6 +26,38 @@ export function isSupportedChatAttachment(file: File): boolean {
   return SUPPORTED_EXT.test(file.name);
 }
 
+export function isImageAttachmentName(name: string): boolean {
+  return /\.(png|jpe?g)$/i.test(name);
+}
+
+/**
+ * Image files from a paste event, named for the chat-attachment upload flow.
+ * Returns none when the clipboard also carries text (e.g. cells copied from a
+ * spreadsheet), so ordinary text paste is never intercepted. Unsupported image
+ * types keep their own extension so the normal validation rejects them.
+ */
+export function pastedImageFiles(
+  data: Pick<DataTransfer, "items" | "getData"> | null,
+  now: Date = new Date(),
+): File[] {
+  if (!data || data.getData("text/plain")) return [];
+  const pad = (value: number) => String(value).padStart(2, "0");
+  const stamp = `${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}-${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}`;
+  const blobs = Array.from(data.items ?? [])
+    .filter((item) => item.kind === "file" && item.type.startsWith("image/"))
+    .map((item) => item.getAsFile())
+    .filter((blob): blob is File => blob !== null);
+  return blobs.map((blob, index) => {
+    const subtype = blob.type.slice("image/".length).replace(/[^a-z0-9].*$/i, "");
+    const ext = subtype === "jpeg" ? "jpg" : subtype || "img";
+    const suffix = index === 0 ? "" : `-${index + 1}`;
+    return new File([blob], `pasted-image-${stamp}${suffix}.${ext}`, {
+      type: blob.type,
+      lastModified: now.getTime(),
+    });
+  });
+}
+
 export function addPromptAttachmentFiles(
   current: readonly PromptAttachment[],
   files: readonly File[],

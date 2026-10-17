@@ -4,6 +4,7 @@ import * as React from "react";
 
 import "@/styles/agent-live.css";
 import { AgentRunProgress } from "@/components/documents/agent-run-progress";
+import { ImageAttachmentThumb } from "@/components/documents/image-attachment-thumb";
 import { Button } from "@/components/ui/button";
 import { AgentMarkdown } from "@/lib/agent-markdown";
 import {
@@ -23,6 +24,28 @@ import type { AgentMessage, AgentStep, ChatAttachment } from "@/lib/api";
 import { focusRingClass } from "@/lib/focus-scope";
 import { formatStorageBytes } from "@/lib/storage-model";
 import { cn } from "@/lib/utils";
+
+function MessageImageThumbs({
+  chips,
+  load,
+}: {
+  chips: readonly MessageAttachmentChip[];
+  load: (attachmentId: string) => Promise<Blob>;
+}) {
+  if (chips.length === 0) return null;
+  return (
+    <div className="mb-1.5 flex flex-wrap gap-1.5">
+      {chips.map((chip) => (
+        <ImageAttachmentThumb
+          key={chip.id}
+          name={chip.filename}
+          attachmentId={chip.id}
+          load={load}
+        />
+      ))}
+    </div>
+  );
+}
 
 function MessageAttachmentChips({
   chips,
@@ -265,6 +288,7 @@ type AgentTranscriptProps = {
     "id" | "filename" | "mediaType" | "sizeBytes" | "status"
   >[];
   onDownloadAttachment?: (attachmentId: string, filename: string) => void;
+  loadAttachmentImage?: (attachmentId: string) => Promise<Blob>;
   live: {
     active: boolean;
     entries: readonly LiveTranscriptEntry[];
@@ -307,6 +331,7 @@ export function AgentTranscript({
   documentsForTags,
   attachmentsForMessages,
   onDownloadAttachment,
+  loadAttachmentImage,
   live,
   turn,
   actions,
@@ -391,10 +416,20 @@ export function AgentTranscript({
                   </div>
                 ) : null}
                 {!compact ? (
-                  <MessageAttachmentChips
-                    chips={attachmentChips}
-                    onDownload={onDownloadAttachment}
-                  />
+                  <>
+                    {loadAttachmentImage ? (
+                      <MessageImageThumbs
+                        chips={attachmentChips.filter((chip) => chip.available && chip.isImage)}
+                        load={loadAttachmentImage}
+                      />
+                    ) : null}
+                    <MessageAttachmentChips
+                      chips={attachmentChips.filter(
+                        (chip) => !(loadAttachmentImage && chip.available && chip.isImage),
+                      )}
+                      onDownload={onDownloadAttachment}
+                    />
+                  </>
                 ) : null}
                 {isRetryDuplicate ? "Retry" : message.content}
               </div>

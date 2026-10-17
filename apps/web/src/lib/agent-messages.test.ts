@@ -198,8 +198,26 @@ it("shows an unavailable chip when attachment metadata is missing", () => {
       typeLabel: "FILE",
       sizeBytes: null,
       available: false,
+      isImage: false,
     },
   ]);
+});
+
+it("marks PNG/JPEG attachments as images and keeps other files as chips", () => {
+  const catalog = [
+    { id: "i1", filename: "shot.png", mediaType: "image/png", sizeBytes: 5, status: "bound" as const },
+    { id: "i2", filename: "photo.jpg", mediaType: "image/jpeg", sizeBytes: 5, status: "bound" as const },
+    { id: "p1", filename: "plan.pdf", mediaType: "application/pdf", sizeBytes: 5, status: "bound" as const },
+    { id: "i3", filename: "gone.png", mediaType: "image/png", sizeBytes: 5, status: "deleted" as const },
+  ];
+  const chips = messageAttachments(
+    { ...msg("m", "2026-01-01T00:00:00.000Z"), attachmentIds: ["i1", "i2", "p1", "i3"] },
+    catalog,
+  );
+  assert.deepEqual(
+    chips.map((chip) => [chip.id, chip.isImage, chip.available]),
+    [["i1", true, true], ["i2", true, true], ["p1", false, true], ["i3", false, false]],
+  );
 });
 
 it("merges attachment catalog pages by id without duplicating", () => {

@@ -2,10 +2,13 @@
 
 import * as React from "react";
 
+import { ImageAttachmentThumb } from "@/components/documents/image-attachment-thumb";
 import { DocumentFormatIcon } from "@/components/files/document-format-icon";
 import { Button } from "@/components/ui/button";
 import {
   CHAT_ATTACHMENT_ACCEPT,
+  isImageAttachmentName,
+  pastedImageFiles,
   type PromptAttachment,
 } from "@/lib/agent-prompt-attachments";
 import { formatProgressElapsed } from "@/lib/agent-progress";
@@ -147,6 +150,16 @@ export function AgentComposer({
     }
   }
 
+  const imageItems = attachments.items.filter((item) => isImageAttachmentName(item.file.name));
+  const fileItems = attachments.items.filter((item) => !isImageAttachmentName(item.file.name));
+
+  function onComposerPaste(event: React.ClipboardEvent<HTMLTextAreaElement>) {
+    const files = pastedImageFiles(event.clipboardData);
+    if (files.length === 0) return;
+    event.preventDefault();
+    attachments.onAttach(files);
+  }
+
   const sendDisabled =
     status.busy ||
     !status.ready ||
@@ -193,9 +206,59 @@ export function AgentComposer({
             ))}
           </div>
         ) : null}
-        {attachments.items.length > 0 ? (
+        {imageItems.length > 0 ? (
+          <div className="mb-1.5 flex flex-wrap gap-1.5">
+            {imageItems.map((item) => (
+              <ImageAttachmentThumb
+                key={item.localId}
+                name={item.file.name}
+                file={item.file}
+                invalid={item.status === "error"}
+              >
+                {item.status === "uploading" || item.status === "pending" ? (
+                  <span
+                    role="status"
+                    aria-label={`Uploading ${item.file.name}`}
+                    className="pointer-events-none absolute inset-0 flex items-center justify-center rounded-lg bg-black/40 text-[length:var(--text-2xs)] text-white"
+                  >
+                    …
+                  </span>
+                ) : null}
+                {item.status === "error" ? (
+                  <button
+                    type="button"
+                    title={item.error ?? `Retry ${item.file.name}`}
+                    aria-label={`Retry attachment ${item.file.name}`}
+                    disabled={status.busy}
+                    onClick={() => attachments.onRetry(item)}
+                    className={cn(
+                      focusRingClass,
+                      "absolute inset-x-0 bottom-0 rounded-b-lg bg-danger/80 py-0.5 text-[length:var(--text-2xs)] font-medium text-white disabled:opacity-50",
+                    )}
+                  >
+                    Retry
+                  </button>
+                ) : null}
+                <button
+                  type="button"
+                  title={`Remove ${item.file.name}`}
+                  aria-label={`Remove attachment ${item.file.name}`}
+                  disabled={status.busy || item.status === "uploading"}
+                  onClick={() => attachments.onRemove(item)}
+                  className={cn(
+                    focusRingClass,
+                    "absolute -right-1 -top-1 flex size-4 items-center justify-center rounded-full border border-line bg-surface text-[length:var(--text-2xs)] leading-none text-ink-faint hover:text-ink disabled:opacity-50",
+                  )}
+                >
+                  ×
+                </button>
+              </ImageAttachmentThumb>
+            ))}
+          </div>
+        ) : null}
+        {fileItems.length > 0 ? (
           <div className="mb-1.5 flex flex-wrap gap-1">
-            {attachments.items.map((item) => (
+            {fileItems.map((item) => (
               <span
                 key={item.localId}
                 className={cn(
@@ -264,6 +327,7 @@ export function AgentComposer({
             disabled={status.canStop || !status.ready}
             onChange={(event) => updateDraftAndMention(event.target.value)}
             onKeyDown={onComposerKeyDown}
+            onPaste={onComposerPaste}
             aria-label="Message to agent"
             placeholder={
               status.canStop ? undefined : "Ask OpenSuite… (@ to tag a file)"

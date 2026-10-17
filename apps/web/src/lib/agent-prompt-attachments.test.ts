@@ -5,6 +5,7 @@ import {
   addPromptAttachmentFiles,
   attachmentIdsReady,
   hasPendingUploads,
+  pastedImageFiles,
   uploadPromptAttachments,
   type PromptAttachment,
 } from "./agent-prompt-attachments.ts";
@@ -114,4 +115,40 @@ test("send stays blocked while any upload is pending", () => {
   ];
   assert.equal(hasPendingUploads(attachments), true);
   assert.equal(attachmentIdsReady(attachments), null);
+});
+
+function clipboard(text: string, files: Array<{ type: string; blob?: Blob }>) {
+  return {
+    getData: (kind: string) => (kind === "text/plain" ? text : ""),
+    items: files.map((entry) => ({
+      kind: "file",
+      type: entry.type,
+      getAsFile: () => (entry.blob ?? new Blob(["x"], { type: entry.type })) as File,
+    })),
+  } as unknown as DataTransfer;
+}
+
+test("pasted screenshots become uniquely named PNG/JPEG files", () => {
+  const now = new Date(2026, 9, 16, 21, 36, 5);
+  const files = pastedImageFiles(
+    clipboard("", [{ type: "image/png" }, { type: "image/jpeg" }]),
+    now,
+  );
+  assert.deepEqual(
+    files.map((item) => [item.name, item.type]),
+    [
+      ["pasted-image-20261016-213605.png", "image/png"],
+      ["pasted-image-20261016-213605-2.jpg", "image/jpeg"],
+    ],
+  );
+  assert.equal(addPromptAttachmentFiles([], files).items.length, 2);
+});
+
+test("paste leaves text clipboards alone and rejects unsupported image types", () => {
+  assert.deepEqual(pastedImageFiles(clipboard("a1\tb1", [{ type: "image/png" }])), []);
+  assert.deepEqual(pastedImageFiles(clipboard("", [])), []);
+  assert.deepEqual(pastedImageFiles(null), []);
+  const gif = pastedImageFiles(clipboard("", [{ type: "image/gif" }]));
+  assert.equal(gif.length, 1);
+  assert.equal(addPromptAttachmentFiles([], gif).rejected, true);
 });

@@ -811,6 +811,20 @@ export async function deleteChatAttachment(
   }
 }
 
+/** Authorized attachment bytes (for image thumbnails/previews via object URLs). */
+export async function fetchChatAttachmentBlob(
+  workspaceId: string,
+  attachmentId: string,
+): Promise<Blob> {
+  const response = await apiFetch(
+    `/api/workspaces/${workspaceId}/chat-attachments/${attachmentId}`,
+  );
+  if (!response.ok) {
+    throw await parseApiError(response);
+  }
+  return response.blob();
+}
+
 /**
  * Downloads a chat attachment through the Fastify API (authorized bytes).
  * Prefer Content-Disposition; fall back to the known filename for display.

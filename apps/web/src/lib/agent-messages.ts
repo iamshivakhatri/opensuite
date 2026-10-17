@@ -87,6 +87,7 @@ export type MessageAttachmentChip = {
   readonly typeLabel: string;
   readonly sizeBytes: number | null;
   readonly available: boolean;
+  readonly isImage: boolean;
 };
 
 /** Short file-type label for chat attachment chips (PDF, DOCX, TXT, …). */
@@ -139,6 +140,7 @@ export function messageAttachments(
         typeLabel: "FILE",
         sizeBytes: null,
         available: false,
+        isImage: false,
       };
     }
     return {
@@ -147,6 +149,7 @@ export function messageAttachments(
       typeLabel: chatAttachmentTypeLabel(meta.filename, meta.mediaType),
       sizeBytes: meta.sizeBytes,
       available: true,
+      isImage: /^image\/(png|jpeg)$/.test(meta.mediaType),
     };
   });
 }

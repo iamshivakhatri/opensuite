@@ -37,6 +37,7 @@ import {
   createWorkspaceAgentThread,
   deleteChatAttachment,
   downloadChatAttachment,
+  fetchChatAttachmentBlob,
   getAgentMessages,
   getAgentRun,
   getDocument,
@@ -245,6 +246,11 @@ export function DocumentAgentPanel({
       );
     });
   }
+
+  const loadAttachmentImage = React.useCallback(
+    (attachmentId: string) => fetchChatAttachmentBlob(workspaceId, attachmentId),
+    [workspaceId],
+  );
 
   async function removeAttachment(item: PromptAttachment) {
     setAttachments((previous) => previous.filter((entry) => entry.localId !== item.localId));
@@ -1585,6 +1591,7 @@ export function DocumentAgentPanel({
                 filename,
               }).catch(() => undefined);
             }}
+            loadAttachmentImage={loadAttachmentImage}
             live={{
               active: isLiveTurn,
               entries: liveTranscript,
