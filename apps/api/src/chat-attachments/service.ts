@@ -17,6 +17,8 @@ export class ChatAttachmentError extends Error {
     readonly statusCode: number,
     readonly code: string,
     message: string,
+    readonly retryable = false,
+    readonly stage?: string,
   ) {
     super(message);
   }
@@ -174,7 +176,7 @@ export function createChatAttachmentService(
         const object = await storage.getObject(`${row.storageKey}/extraction.json`);
         const chunks: Buffer[] = [];
         let size = 0;
-        const timer = setTimeout(() => object.body.destroy(new ChatAttachmentError(400, "EXTRACTION_TIMEOUT", "Cached extraction read exceeded 10 seconds")), 10_000);
+        const timer = setTimeout(() => object.body.destroy(new ChatAttachmentError(503, "EXTRACTION_TIMEOUT", "Cached extraction read exceeded 10 seconds", true, "cache_read")), 10_000);
         try {
           for await (const chunk of object.body) {
             size += chunk.length;

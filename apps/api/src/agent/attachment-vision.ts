@@ -1,5 +1,5 @@
 import { runModel, type AgentModel, type ModelMessage } from "@opensuite/agent-core";
-import type { AttachmentExtractionService, AttachmentScope } from "../chat-attachments/extraction.js";
+import { attachmentErrorResult, type AttachmentExtractionService, type AttachmentScope } from "../chat-attachments/extraction.js";
 import { ChatAttachmentError } from "../chat-attachments/service.js";
 import type { AgentModelUsageAttribution } from "./execution.js";
 import type { ModelCallUsage } from "./usage-accounting.js";
@@ -11,10 +11,7 @@ type Observation = SavedVisualObservation;
 type VisualReference = { attachmentId: string; extractionId: string; page?: number };
 const MAX_VISUALS = 2;
 const VISUAL_TOKEN_RESERVE = 8192;
-function failure(error: unknown) {
-  return { ok: false as const, error: { code: error instanceof ChatAttachmentError ? error.code : "VISION_FAILED",
-    message: error instanceof ChatAttachmentError ? error.message : "Visual evidence could not be read safely; no visual understanding was established" } };
-}
+const failure = (error: unknown) => attachmentErrorResult(error, "VISION_FAILED");
 function reference(value: unknown): VisualReference | undefined {
   if (!value || typeof value !== "object") return;
   const item = value as Partial<VisualReference>;
@@ -52,7 +49,10 @@ export function createAttachmentVision(input: {
       if (!parsed) throw new ChatAttachmentError(400, "INVALID_REFERENCE", "Invalid visual reference");
       await validate(parsed);
       const selected = await getRoute();
-      if (selected.direct) return { ok: true, visualReference: parsed, delivery: "request_local_image", warning: "Reference only. Visual evidence is supplied separately to the next model request." };
+      if (selected.direct) {
+        await input.service.view(input.scope, parsed.attachmentId, parsed.extractionId, parsed.page);
+        return { ok: true, visualReference: parsed, delivery: "request_local_image", warning: "Reference only. Visual evidence is supplied separately to the next model request." };
+      }
       if (!selected.reader) throw new ChatAttachmentError(400, "VISION_UNSUPPORTED", "The selected model/endpoint does not support images and no permitted visual reader is configured. Image metadata is not visual understanding.");
       const cached = observations.get(key(parsed));
       const readerModel = selected.reader.usageAttribution?.model ?? (typeof selected.reader.model === "string" ? selected.reader.model : selected.reader.model.modelId);

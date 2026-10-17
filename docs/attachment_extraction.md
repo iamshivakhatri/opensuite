@@ -17,7 +17,7 @@ large-source outlines include table dimensions and first-row labels. Native
 handles are used only during extraction and are never persisted.
 
 PDF uses Mozilla `pdfjs-dist@5.6.205` locally in the short-lived
-`pdf-extraction-worker.ts` child process. Its API supports text streaming,
+`pdf-extraction-worker.mjs` child process. Its API supports text streaming,
 metadata, internal bookmark destinations, and page labels without rendering or a
 viewer. The API requires Node 20.19+ on Node 20, or Node 22.13+. PDF.js is preferred
 over a text-only wrapper because page warnings, labels and real bookmarks remain
@@ -62,6 +62,36 @@ per attachment replaces older extractor versions; no database table or persisten
 worker is added. Concurrent requests for the same source share work. New model
 turns, follow-ups, restarts, and Continue reuse the persisted representation.
 
+PDF reliability: the original BluePeak digital report and Cedarbridge mixed scan
+reproduced `EXTRACTION_FAILED` in local source-mode execution. Capturing the worker
+stderr established `FATAL ERROR: Reached heap limit Allocation failed - JavaScript
+heap out of memory` / `SIGABRT` with the inherited `tsx` loader under the existing
+128 MiB heap bound. The same PDF.js 5.6.205 workers without that loader extracted
+both originals successfully. Compiled-only tests had exercised the real parser
+and renderer, but missed development-loader memory overhead.
+
+PDF text and visual workers now use plain JavaScript modules (`.mjs`) with checked
+JSDoc types. TypeScript copies them into the API build. They do not inherit Node
+loader/startup options; DOCX retains its existing TypeScript worker path. PDF.js,
+canvas, network restrictions, authorization and processing limits are retained.
+Unexpected PDF child startup/exit failures get at most one retry; parse/password,
+timeout, memory-limit and render failures do not. No failures are saved as
+successful representations. Bounded in-memory failures expire after five seconds
+for temporary errors or 60 seconds for permanent errors; authorization is checked
+before reuse. The current run's manifest retains an already reported failure,
+rather than processing it before every model request. A later request can retry.
+
+Processing diagnostics identify operation, stage, stable code, safe message,
+retryability, attachment ID/type and duration. Tool errors also set `reasonCode`,
+which the existing Agent Core events use instead of generic `TOOL_FAILED`.
+Sanitized stack frames remain on the local exception; `ATTACHMENT_DEBUG=1` includes
+them in non-production logs. Worker stderr and parser error text are never logged.
+Failures expose text/page-view availability and instruct the agent to explain an
+unusable source without repeated discovery. Page-level missing text in an otherwise
+successful extraction still permits selected-page viewing. Direct vision checks
+the rendered image before returning a successful view reference, so render errors
+reach the tool call immediately while healthy text remains usable.
+
 `agent/attachment-evidence.ts` projects an attachment manifest immediately before
 each provider request, including before the first tool call. Every current source
 keeps its attachment ID, filename, format, original hash/size, and current/prior
@@ -83,7 +113,7 @@ original files. `historyMayBeIncomplete` flags bounded or omitted history; paged
 
 Compact structure is reserved separately from body inclusion, so small files
 retain useful headings/tables alongside complete text. Tiny extracted content
-(up to 4,000 serialized bytes of locations/text and bounded page hints) is included completely when it
+(up to 4,000 serialized bytes; PDFs count text and physical page references before layout hints) is included completely when it
 fits; larger sources provide bounded outlines and matching excerpts. Outlines
 prefer relevant headings and report total/remaining heading and table counts.
 PDFs add physical page counts, text-status counts, real bookmarks, literal page
@@ -294,7 +324,7 @@ cover image validation, text preservation, targeted rendering, cache reuse,
 Continue, unsupported routes, credential-source separation, ownership/deletion,
 reader limits/failure/accounting and log redaction. No paid model calls are used.
 Manual checks still need real-model visual accuracy, browser attachment/Continue flows,
-and native PDF rendering inside the production Linux image with permitted routes.
+and permitted vision routes. PDF worker rendering is now verified on Linux ARM64 (see the reliability verification below); Linux x64 remains unverified.
 
 Final checks: API 483 passed / 25 configuration skips; API/web typechecks, isolated
 PostgreSQL attachment test, and `git diff --check` pass. No push or paid model calls.
@@ -313,10 +343,38 @@ PNG/JPEG tasks use one main request and zero tools; text-only automatic reading
 uses one isolated reader request, including across Continue. These measurements
 use deterministic mocked provider responses, not live latency or accuracy tests.
 Reader usage is a separately attributed event in the existing usage ledger;
-main-loop run-report turn counts still describe the main model only. Linux
-container rendering and browser/manual accuracy checks remain unverified. No
+main-loop run-report turn counts still describe the main model only. Browser/manual accuracy checks remain unverified; current Linux ARM64 PDF checks are recorded below. No
 paid model calls, push, deployment or automatic document image insertion.
 
 C2 Part 7 integrates these sources with native DOCX creation, updates, explicit
 editable copies, saved versions and Continue. See [workflow verification and
 limits](attachment_workflows.md) for deterministic scenarios and manual gates.
+
+
+## PDF reliability verification
+
+The original two-page BluePeak PDF extracts 1,343 / 1,239 characters, both marked
+`digital_text`. The original Cedarbridge mixed PDF extracts 401 characters from
+page 1 and marks page 2 `no_text`; rendering page 2 produces a readable scanned
+table. Selected-page JPEGs are 1224 × 1584. The same shared API service succeeds
+in local source-mode Node 22.22.3 and the Debian-based Linux ARM64 API image.
+Both short originals now include all extracted text in initial context. Search,
+page reads, selected-page rendering, cache reuse after service restart and original
+hash checks pass. The Linux test uses read-only samples and disabled networking.
+
+Permanent regressions run the source API with actual `tsx` startup options, plus
+real PDF.js parsing/rendering; they cover digital/mixed PDFs, initial context,
+search/read/view, restart cache reuse, one unexpected-worker-exit retry, exhausted
+retry reuse and recovery, temporary cache failure expiry, invalid-PDF manifest
+availability, zero unrelated workspace reads, safe diagnostics and immediate
+render failure with healthy text still available. Existing tests cover corrupt/
+encrypted PDFs, resource limits, cross-user/thread/deleted sources, other formats,
+Continue and actual SDK/OpenRouter provider-bound image messages. The scripted
+invalid-source request ends after one model turn and no retrieval/discovery tools;
+this verifies supplied context and runtime behavior, not live-model obedience.
+
+Final checks: API 512 passed / 25 configuration skips; Core 42 passed; API/web/Core
+typechecks, the isolated PostgreSQL upload/bind/cache/restart/auth/deletion test,
+Linux image build/native-load acceptance and `git diff --check` pass. Browser
+dogfooding, live-model accuracy, Node 20 and Linux x64 remain unverified. No paid
+inference, dependency replacement, resource-limit increase, push or deployment.

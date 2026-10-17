@@ -3727,7 +3727,7 @@ function attachmentFixture(files: { filename: string; bytes: Buffer; mediaType: 
   return { source, rows, cache, originalReads: () => originalReads,
     bindToMessage: async (input: { attachmentIds: readonly string[] }) => Promise.all(input.attachmentIds.map(attachmentId => source.getBound({ ...attachmentScope, attachmentId }))), metadataForIds: async () => rows };
 }
-function attachmentModel(reply: (options: Parameters<NonNullable<MockLanguageModelV4['doStream']>>[0]) => { name: string; input: unknown }[]) {
+function attachmentModel(reply: (options: Parameters<NonNullable<MockLanguageModelV4['doStream']>>[0]) => { name: string; input: unknown }[], answer = 'Done.') {
   let turn = 0;
   return new MockLanguageModelV4({ doStream: async (options) => {
     const calls = reply(options);
@@ -3735,7 +3735,7 @@ function attachmentModel(reply: (options: Parameters<NonNullable<MockLanguageMod
     return { stream: simulateReadableStream({ chunks: [
       { type: 'stream-start', warnings: [] },
       ...calls.map((call, index) => ({ type: 'tool-call', toolCallId: `attachment-call-${turn}-${index}`, toolName: call.name, input: JSON.stringify(call.input) })),
-      ...(!calls.length ? [{ type: 'text-start', id: 'answer' }, { type: 'text-delta', id: 'answer', delta: 'Done.' }, { type: 'text-end', id: 'answer' }] : []),
+      ...(!calls.length ? [{ type: 'text-start', id: 'answer' }, { type: 'text-delta', id: 'answer', delta: answer }, { type: 'text-end', id: 'answer' }] : []),
       { type: 'finish', finishReason: { unified: calls.length ? 'tool-calls' : 'stop', raw: 'stop' }, usage: { inputTokens: { total: 20 }, outputTokens: { total: 4 } } },
     ] as never[] }) };
   } });
@@ -4908,4 +4908,76 @@ test('C2 attachment copy refuses stale, changed, staged, deleted and foreign sou
   bytes[bytes.length - 1] = bytes[bytes.length - 1]! ^ 1;
   await assert.rejects(service.readDocxCopy(attachmentScope, extraction.attachmentId, extraction.extractionId), { code: 'ATTACHMENT_CHANGED' });
   assert.equal(fixture.originalReads(), 2, 'refused identity/access checks must not read original bytes');
+});
+
+test('failed PDF is explicit in the initial provider manifest, does not retrieve unrelated documents, and is not repeatedly processed', async () => {
+  const fixture = attachmentFixture([{ filename: 'broken.pdf', bytes: Buffer.from('%PDF-1.7\ncorrupt body'), mediaType: 'application/pdf' }]);
+  const service = createAttachmentExtractionService(fixture.source);
+  const binding = await createNapiDocxEngineBinding();
+  const persistence = memoryPersistence('user-1');
+  const thread = await persistence.getOwnedThread({ threadId: 'thread-1', ownerUserId: 'user-1' });
+  persistence.getOwnedThread = async () => ({ ...thread!, title: 'PDF failure check' });
+  let requests = 0;
+  let workspaceReads = 0;
+  const model = attachmentModel(options => {
+    requests++;
+    const source = attachmentRequest(options).manifest.attachments[0]!;
+    assert.equal(source.error.code, 'INVALID_PDF');
+    assert.equal(source.reasonCode, 'INVALID_PDF');
+    assert.equal(source.error.retryable, false);
+    assert.equal(source.error.stage, 'pdf_open');
+    assert.equal(source.extractionStatus, 'failed');
+    assert.equal(source.textAvailability, 'unavailable');
+    assert.equal(source.pageViewAvailability, 'unavailable');
+    assert.match(source.recovery, /Do not repeat/);
+    assert.doesNotMatch(JSON.stringify(source), /stack|storageKey|corrupt body/);
+    return [];
+  }, 'I could not read this PDF. Please provide a usable copy.');
+  const deps = baseDeps(persistence, input => runAgent({ ...input, model }), undefined, 128_000);
+  const execution = createAgentExecutionService({ ...deps, docxBinding: binding, chatAttachments: fixture, attachmentExtraction: service,
+    documents: { ...deps.documents, listInWorkspace: async () => [{ id: 'unrelated', name: 'Workspace budget.docx', workspaceId: 'ws-1', format: 'docx', latestVersion: { id: 'v1' } }] as never,
+      readExactVersionBytes: async () => { workspaceReads++; return Buffer.from(buildMinimalDocx(['Unrelated workspace content'])); } } });
+  const result = await (await execution.start({ userId: 'user-1', threadId: 'thread-1', instruction: 'Summarize the attached PDF.', attachmentIds: [fixture.rows[0]!.id] })).result;
+  assert.match(result.assistantMessage?.content ?? "", /could not read this PDF/);
+  assert.equal(requests, 1);
+  assert.equal(workspaceReads, 0);
+  const project = createAttachmentEvidence(service, attachmentScope, [fixture.rows[0]!.id], 'Summarize the attachment.');
+  await project(12_000); await project(12_000);
+  const tools = createAttachmentTools(service, attachmentScope);
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const failed = await tools['attachment.search']!.execute!({ attachmentIds: [fixture.rows[0]!.id], query: 'revenue' }, {} as never) as any;
+    assert.equal(failed.reasonCode, 'INVALID_PDF');
+  }
+  assert.equal(fixture.originalReads(), 1, 'manifest projection and alternate text tools share the bounded failure');
+  assert.equal(fixture.cache.size, 0);
+  fixture.rows[0] = { ...fixture.rows[0]!, status: 'deleted' };
+  await assert.rejects(service.get(attachmentScope, fixture.rows[0]!.id), { code: 'ATTACHMENT_NOT_FOUND' });
+  assert.equal(await project(12_000), undefined);
+});
+
+test('PDF render failure reaches attachment.view immediately while good extracted text remains usable', async () => {
+  const { createAttachmentVision } = await import('./attachment-vision.js');
+  const bytes = buildTestPdf([['Healthy digital report with revenue $42,750.'], ['Damaged page text']]);
+  const marker = Buffer.from('/Filter /FlateDecode >>\nstream\n');
+  const start = bytes.indexOf(marker, bytes.indexOf(marker) + 1) + marker.length;
+  bytes.fill(0, start, start + 8);
+  const fixture = attachmentFixture([{ filename: 'damaged.pdf', bytes, mediaType: 'application/pdf' }]);
+  const service = createAttachmentExtractionService(fixture.source);
+  const { extraction } = await service.get(attachmentScope, fixture.rows[0]!.id);
+  const vision = createAttachmentVision({ service, scope: attachmentScope, submittedIds: [], resolveRoute: async () => ({ direct: true }), beforeReader: async () => {}, recordReader: async () => {} });
+  const tools = createAttachmentTools(service, attachmentScope, vision.view);
+  const ref = { attachmentId: fixture.rows[0]!.id, extractionId: extraction.extractionId, page: 2 };
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const failed = await tools['attachment.view']!.execute!(ref, {} as never) as any;
+    assert.equal(failed.ok, false);
+    assert.equal(failed.reasonCode, 'PDF_RENDER_FAILED');
+    assert.equal(failed.error.stage, 'pdf_render');
+    assert.equal(failed.error.retryable, false);
+    assert.equal(failed.visualReference, undefined);
+    assert.doesNotMatch(JSON.stringify(failed), /stack|base64|Damaged page text/);
+  }
+  assert.equal(fixture.originalReads(), 2, 'one extraction and one failed render; repeated view is bounded');
+  const read = await tools['attachment.read']!.execute!({ attachmentId: ref.attachmentId, extractionId: ref.extractionId, location: 'page:1' }, {} as never) as any;
+  assert.equal(read.ok, true);
+  assert.match(read.content[0].text, /42,750/);
 });

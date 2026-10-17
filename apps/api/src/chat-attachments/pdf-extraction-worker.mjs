@@ -1,21 +1,32 @@
+// @ts-check
 import { fileURLToPath } from "node:url";
-import { PDF_EXTRACTION_OPTIONS as limits, type AttachmentUnit, type ExtractionContent, type PdfStructure } from "./extraction.js";
-import type { PDFDocumentProxy, TextItem } from "pdfjs-dist/types/src/display/api.js";
+import { PDF_EXTRACTION_OPTIONS as limits } from "./pdf-options.mjs";
+/** @typedef {import("pdfjs-dist/types/src/display/api.js").PDFDocumentProxy} PDFDocumentProxy */
+/** @typedef {import("pdfjs-dist/types/src/display/api.js").TextItem} TextItem */
+/** @typedef {import("./extraction.js").PdfStructure} PdfStructure */
+/** @typedef {import("./extraction.js").ExtractionContent} ExtractionContent */
+/** @typedef {import("./extraction.js").AttachmentUnit} AttachmentUnit */
 
 // No viewer, rendering, annotation actions, JavaScript, URLs, or document attachments are opened.
-globalThis.fetch = async () => { throw new Error("PDF network access is disabled"); };
+Reflect.defineProperty(globalThis, "fetch", { value: async () => { throw new Error("PDF network access is disabled"); } });
 const warnings = [
   "PDF text follows content-stream order with geometric line breaks; columns and complex reading order may be imperfect. No headings or table cells are inferred. Tabular structure and numeric row relationships may be incomplete; verify against the page when ambiguous.",
   "Images, charts, handwriting, annotations, forms, and embedded files are not interpreted. A page without extractable text is not necessarily blank; visual interpretation requires Part 6.",
 ];
-const round = (value: number) => Number.isFinite(value) ? Math.round(value * 100) / 100 : 0;
-const short = (value: unknown, length = 240) => typeof value === "string" ? value.replace(/\x00/g, "").trim().slice(0, length) : "";
+/** @param {number} value */
+const round = (value) => Number.isFinite(value) ? Math.round(value * 100) / 100 : 0;
+/** @param {unknown} value */
+const short = (value, length = 240) => typeof value === "string" ? value.replace(/\x00/g, "").trim().slice(0, length) : "";
 
-async function bookmarks(document: PDFDocumentProxy, pdf: PdfStructure) {
+/** @param {PDFDocumentProxy} document @param {PdfStructure} pdf */
+async function bookmarks(document, pdf) {
   const pending = (await document.getOutline() ?? []).map(item => ({ item, level: 1 }));
   while (pending.length && pdf.outline.length < limits.maxBookmarks) {
-    const { item, level } = pending.shift()!;
-    let location: string | undefined;
+    const next = pending.shift();
+    if (!next) break;
+    const { item, level } = next;
+    /** @type {string | undefined} */
+    let location;
     // Only resolve internal destinations. URL/action bookmarks remain text-only labels.
     try {
       const dest = typeof item.dest === "string" ? await document.getDestination(item.dest) : item.dest;
@@ -31,10 +42,12 @@ async function bookmarks(document: PDFDocumentProxy, pdf: PdfStructure) {
   if (pending.length) pdf.outlineComplete = false;
 }
 
-process.once("message", async (input: Buffer) => {
-  let document: PDFDocumentProxy | undefined;
+process.once("message", /** @param {Buffer} input */ async (input) => {
+  /** @type {PDFDocumentProxy | undefined} */
+  let document;
+  let stage = "pdf_import";
   let currentPage = 0;
-  const parserWarnings = new Set<number>();
+  const parserWarnings = new Set();
   // PDF.js can recover internally instead of rejecting. Keep only the affected page,
   // never its diagnostic text, which can contain source content.
   const recordWarning = () => { parserWarnings.add(currentPage); };
@@ -48,6 +61,7 @@ process.once("message", async (input: Buffer) => {
   try {
     const { getDocument } = await import("pdfjs-dist/legacy/build/pdf.mjs");
     const packageRoot = new URL("./", import.meta.resolve("pdfjs-dist/package.json"));
+    stage = "pdf_open";
     document = await getDocument({
       data: Uint8Array.from(input), verbosity: 1, isEvalSupported: false,
       useWasm: false, useWorkerFetch: false, useSystemFonts: false, disableFontFace: true,
@@ -55,11 +69,13 @@ process.once("message", async (input: Buffer) => {
       cMapUrl: fileURLToPath(new URL("cmaps/", packageRoot)), cMapPacked: true,
       standardFontDataUrl: fileURLToPath(new URL("standard_fonts/", packageRoot)),
     }).promise;
-    const pdf: PdfStructure = { pageCount: document.numPages, processedPages: 0, complete: true,
+    stage = "pdf_metadata";
+    /** @type {PdfStructure} */
+    const pdf = { pageCount: document.numPages, processedPages: 0, complete: true,
       metadata: {}, outline: [], outlineComplete: true, options: limits };
     try {
       const { info: rawInfo, metadata } = await document.getMetadata();
-      const info = rawInfo as Record<string, unknown>;
+      const info = /** @type {Record<string, unknown>} */ (rawInfo);
       if (info.EncryptFilterName) throw new Error("PDF_PASSWORD_REQUIRED");
       for (const key of ["Title", "Author", "Subject", "Creator", "Producer", "CreationDate", "ModDate", "Language", "PDFFormatVersion"]) {
         const value = short(info[key]);
@@ -74,25 +90,31 @@ process.once("message", async (input: Buffer) => {
     // Extremely large files fail before walking a potentially hostile page tree.
     if (!Number.isInteger(pdf.pageCount) || pdf.pageCount < 1 || pdf.pageCount > limits.maxPages) throw new Error("EXTRACTION_LIMIT");
     try { await bookmarks(document, pdf); } catch { pdf.outlineComplete = false; warnings.push("PDF bookmarks could not be fully read."); }
-    let labels: string[] | null = null;
+    /** @type {string[] | null} */
+    let labels = null;
     try { labels = await document.getPageLabels(); } catch { warnings.push("PDF page labels could not be read."); }
-    const content: ExtractionContent = { units: [], limitations: [...warnings], pdf };
+    /** @type {ExtractionContent} */
+    const content = { units: [], limitations: [...warnings], pdf };
     if (parserWarnings.has(0)) content.limitations.push("The PDF parser reported a document-level recovery or resource warning; text or metadata may be incomplete.");
     let characters = 0;
     let items = 0;
     for (let number = 1; number <= pdf.pageCount; number++) {
+      stage = "pdf_page_text";
       currentPage = number;
-      const unit: AttachmentUnit = { location: `page:${number}`, text: "", section: [], page: {
+      /** @type {AttachmentUnit} */
+      const unit = { location: `page:${number}`, text: "", section: [], page: {
         number, ...(labels?.[number - 1] ? { label: short(labels[number - 1], 80) } : {}),
         width: 0, height: 0, rotation: 0, coordinateSpace: "pdf_user_space", textStatus: "digital_text", warnings: [], lines: [], remainingLines: 0,
       } };
-      const facts = unit.page!;
+      const facts = /** @type {NonNullable<AttachmentUnit["page"]>} */ (unit.page);
       const page = await document.getPage(number);
       const viewport = page.getViewport({ scale: 1 });
       facts.width = round(viewport.width); facts.height = round(viewport.height); facts.rotation = page.rotate;
       const reader = page.streamTextContent({ disableNormalization: true }).getReader();
-      let previous: TextItem | undefined;
-      let line: (typeof facts.lines)[number] | undefined;
+      /** @type {TextItem | undefined} */
+      let previous;
+      /** @type {(typeof facts.lines)[number] | undefined} */
+      let line;
       let pageItems = 0;
       let lineCount = 0;
       let stopped = false;
@@ -100,28 +122,28 @@ process.once("message", async (input: Buffer) => {
         while (!stopped) {
           const chunk = await reader.read();
           if (chunk.done) break;
-          for (const item of chunk.value.items as TextItem[]) {
+          for (const item of /** @type {TextItem[]} */ (chunk.value.items)) {
             if (!("str" in item)) continue;
             if (++pageItems > limits.maxPageItems || ++items > limits.maxItems || characters + item.str.length + 1 > limits.maxCharacters) {
               facts.warnings.push("Extraction stopped at the text/item limit; this page and later pages may contain omitted text.");
               pdf.complete = false; stopped = true; break;
             }
             if (!item.str && !item.hasEOL) continue;
-            const height = Math.abs(item.height) || Math.hypot(item.transform[2]!, item.transform[3]!);
-            const newLine = !previous || previous.hasEOL || Math.abs(item.transform[5]! - previous.transform[5]!) > Math.max(2, height * 0.4);
+            const height = Math.abs(item.height) || Math.hypot(item.transform[2], item.transform[3]);
+            const newLine = !previous || previous.hasEOL || Math.abs(item.transform[5] - previous.transform[5]) > Math.max(2, height * 0.4);
             let separator = "";
             if (unit.text) {
               if (newLine) separator = "\n";
-              else if (!/\s$/.test(unit.text) && !/^\s/.test(item.str) && Math.abs(item.transform[4]! - (previous!.transform[4]! + previous!.width)) > Math.max(1, height * 0.15)) separator = " ";
+              else if (previous && !/\s$/.test(unit.text) && !/^\s/.test(item.str) && Math.abs(item.transform[4] - (previous.transform[4] + previous.width)) > Math.max(1, height * 0.15)) separator = " ";
             }
             unit.text += separator;
             if (newLine) {
               lineCount++;
-              line = { textOffset: unit.text.length, length: 0, x: round(item.transform[4]!), y: round(item.transform[5]!), width: 0, height: round(height), direction: item.dir };
+              line = { textOffset: unit.text.length, length: 0, x: round(item.transform[4]), y: round(item.transform[5]), width: 0, height: round(height), direction: item.dir };
               if (facts.lines.length < limits.maxPageLines) facts.lines.push(line);
             }
             unit.text += item.str;
-            if (line) { line.length = unit.text.length - line.textOffset; line.width = round(Math.max(line.width, item.transform[4]! + item.width - line.x)); }
+            if (line) { line.length = unit.text.length - line.textOffset; line.width = round(Math.max(line.width, item.transform[4] + item.width - line.x)); }
             characters += item.str.length + separator.length;
             previous = item;
           }
@@ -164,6 +186,7 @@ process.once("message", async (input: Buffer) => {
   } catch (error) {
     const name = error instanceof Error ? error.name : "";
     const message = error instanceof Error ? error.message : "";
-    process.send?.({ code: name === "PasswordException" || message === "PDF_PASSWORD_REQUIRED" ? "PDF_PASSWORD_REQUIRED" : message === "EXTRACTION_LIMIT" ? "EXTRACTION_LIMIT" : "INVALID_PDF" });
+    process.send?.({ code: name === "PasswordException" || message === "PDF_PASSWORD_REQUIRED" ? "PDF_PASSWORD_REQUIRED" : message === "EXTRACTION_LIMIT" ? "EXTRACTION_LIMIT" : stage === "pdf_import" || message.startsWith("Setting up fake worker failed") ? "PDF_WORKER_FAILED" : "INVALID_PDF",
+      stage, stack: error instanceof Error ? error.stack?.split("\n").filter(line => /^\s+at /.test(line)).slice(0, 8) : undefined });
   } finally { clearInterval(memoryCheck); }
 });
